@@ -17,7 +17,7 @@
   "Paso uno: te armamos una página web moderna y profesional, con posicionamiento en Google.",
   "Tu web va a verse así. Cuando un empresario entre, va a pensar 'acá hay un estudio serio con el que se puede trabajar'. Y el botón principal va directo a tu WhatsApp, sin formulario intermedio.",
   "Y con el SEO que le aplicamos, aparecés primero cuando alguien busca 'contador para pyme' en tu ciudad. Esa es la fuente número uno de mensajes entrando a tu WhatsApp.",
-  "Paso dos: tres campañas publicitarias en Meta e Instagram.",
+  "Paso dos: tres campañas publicitarias en Facebook e Instagram.",
   "Te armamos tres posteos publicitarios pensados para el cliente que querés atraer. De cortesía arrancamos con diez dólares por campaña — vos podés subir el presupuesto cuando quieras. Las ads son lo que más rápido te trae gente al WhatsApp.",
   "Y esos tres posteos con ads apuntan todos a lo mismo: a que lleguen mensajes directo a tu WhatsApp. Todas las semanas.",
   "Resumiendo. Dos fuentes. Web más SEO, y posteos con ads. Las dos convergen en un mismo destino: tu WhatsApp.",
@@ -30,9 +30,9 @@
   "Te ofrecemos seguir juntos con un plan recurrente de USD 300 al mes. Te seguimos trayendo clientes todo el año.",
   "Si te cierra, la siguiente pregunta es: ¿cómo empezamos a trabajar juntos?",
   "Cinco pasos. Uno: pedimos los accesos a tu web o dominio. Dos: armamos la web nueva y te mandamos bocetos. Tres: ajustamos hasta que digas 'sí' al diseño y publicamos tu web. Cuatro: posteos más ads — tres campañas diseñadas y pensadas estratégicamente con vos, y lanzadas. Cinco: treinta días de garantía. Si no llegan prospectos, devolvemos los USD 300. Todo el ciclo lo entregamos en menos de una semana.",
-  "Tres preguntas frecuentes. Primera: ¿cómo se paga? Lo que te quede cómodo — tarjeta de crédito o débito, Stripe, Apple Pay, Google Pay, PIX, o factura con monotributo si estás en Argentina. Nos adaptamos. Segunda: ¿y si ya tengo página web, o si no tengo? Si ya tenés, la rediseñamos. Si no tenés, la creamos desde cero y la publicamos nosotros. Tercera: ¿cuánto tarda todo el proceso? Menos de una semana. Web más ads, entregados y en vivo en menos de siete días desde que arrancamos.",
+  "Tres preguntas frecuentes. Primera: ¿cómo se paga? Tarjeta, Stripe, Apple Pay, Google Pay, PIX o factura con monotributo. Segunda: ¿y si ya tengo página web, o si no tengo? Si tenés, la rediseñamos. Si no, la creamos desde cero. Tercera: ¿cuánto tarda? Menos de una semana desde que arrancamos.",
   "Ok, ¿y cómo empezamos ya?",
-  "Cuatro pasos. Meeting para conocernos y despejar dudas. Definimos el método de pago y hacemos el pago en vivo. A las veinticuatro horas te sumamos al proyecto interno y arrancamos a trabajar sobre tu estudio.",
+  "Cuatro pasos. Meeting para conocernos y despejar dudas. Definimos el método de pago. Una vez realizado el pago, a las veinticuatro horas te sumamos al proyecto interno y arrancamos a trabajar sobre tu estudio.",
   "Si esto te cierra, el link está abajo. Te esperamos adentro."
 ]
 </script>
@@ -367,43 +367,58 @@
   .recap-dst h4{font-family:'Instrument Serif',serif;font-size:40px;line-height:1.1;margin:0;font-weight:400;}
   .recap-arrow{font-family:'Instrument Serif',serif;font-size:72px;color:var(--ink-3);line-height:1;}
 
-  /* WhatsApp brand mark — inline pill with red notification badge */
+  /* WhatsApp brand mark — inline pill with red notification badge (no logo) */
   .wa{
-    display:inline-flex;align-items:center;background:#25D366;color:#fff;
-    padding:0.06em 0.4em 0.09em;border-radius:0.35em;
+    display:inline-flex;align-items:baseline;justify-content:center;
+    background:linear-gradient(180deg,#2CE073 0%,#25D366 55%,#1FB857 100%);
+    color:#fff;
+    padding:0.12em 0.46em 0.18em;border-radius:0.28em;
     font-family:'Inter Tight',sans-serif;font-weight:700;font-style:normal;
-    font-size:0.82em;line-height:1;position:relative;letter-spacing:-0.01em;
-    vertical-align:baseline;box-shadow:0 0.1em 0.25em -0.1em rgba(0,0,0,0.25);
-  }
-  .wa::before{
-    content:'';width:0.55em;height:0.55em;margin-right:0.28em;border-radius:50%;
-    background:radial-gradient(circle at 30% 30%, #fff 0 42%, #25D366 43% 100%);
-    box-shadow:inset 0 0 0 0.05em #fff;flex:none;
+    font-size:0.82em;line-height:1;position:relative;letter-spacing:-0.005em;
+    vertical-align:baseline;
+    box-shadow:
+      0 0.18em 0.42em -0.1em rgba(37,211,102,0.45),
+      inset 0 0.06em 0 rgba(255,255,255,0.28),
+      inset 0 -0.08em 0 rgba(0,0,0,0.12),
+      inset 0 0 0 0.02em rgba(255,255,255,0.08);
+    text-shadow:0 0.04em 0.08em rgba(0,0,0,0.18);
+    -webkit-font-smoothing:antialiased;
   }
   .wa .n{
-    position:absolute;top:-0.38em;right:-0.42em;background:#EF4444;color:#fff;
-    border-radius:999px;font-size:0.55em;font-weight:800;padding:0.12em 0.42em;
-    border:0.16em solid var(--paper);line-height:1;font-family:'Inter Tight',sans-serif;
-    box-shadow:0 0.15em 0.35em -0.1em rgba(0,0,0,0.3);
+    position:absolute;top:-0.45em;right:-0.55em;
+    background:linear-gradient(180deg,#F87171 0%,#DC2626 100%);
+    color:#fff;border-radius:999px;font-size:0.56em;font-weight:800;
+    padding:0.18em 0.5em;min-width:1em;text-align:center;
+    border:0.2em solid var(--paper);line-height:1;
+    font-family:'Inter Tight',sans-serif;letter-spacing:0.01em;
+    box-shadow:0 0.2em 0.45em -0.12em rgba(220,38,38,0.55),
+               inset 0 0.08em 0 rgba(255,255,255,0.22);
   }
   .dark .wa .n{border-color:var(--ink);}
 
-  /* Big WhatsApp destination mark (for flood + recap slides) */
+  /* Big WhatsApp destination mark — scaled-up pill (no logo) */
   .wa-dst{
-    display:inline-flex;align-items:center;gap:20px;background:#25D366;color:#fff;
-    padding:28px 44px;border-radius:28px;
+    display:inline-flex;align-items:baseline;justify-content:center;
+    background:linear-gradient(180deg,#2CE073 0%,#25D366 55%,#1FB857 100%);
+    color:#fff;
+    padding:26px 52px 32px;border-radius:22px;
     font-family:'Inter Tight',sans-serif;font-weight:700;font-size:72px;letter-spacing:-0.02em;
-    position:relative;box-shadow:0 24px 48px -16px rgba(37,211,102,0.4);
-  }
-  .wa-dst .icon{
-    width:72px;height:72px;border-radius:50%;background:#fff;color:#25D366;
-    display:flex;align-items:center;justify-content:center;font-size:44px;
+    line-height:1;position:relative;
+    box-shadow:
+      0 28px 56px -18px rgba(37,211,102,0.45),
+      inset 0 4px 0 rgba(255,255,255,0.28),
+      inset 0 -5px 0 rgba(0,0,0,0.12),
+      inset 0 0 0 1px rgba(255,255,255,0.08);
+    text-shadow:0 3px 5px rgba(0,0,0,0.18);
+    -webkit-font-smoothing:antialiased;
   }
   .wa-dst .n-big{
-    position:absolute;top:-22px;right:-22px;background:#EF4444;color:#fff;
-    border-radius:999px;font-size:28px;font-weight:800;padding:10px 18px;min-width:28px;
+    position:absolute;top:-26px;right:-30px;
+    background:linear-gradient(180deg,#F87171 0%,#DC2626 100%);
+    color:#fff;border-radius:999px;font-size:28px;font-weight:800;padding:12px 20px;min-width:28px;
     border:5px solid var(--paper);line-height:1;text-align:center;
-    box-shadow:0 10px 24px -6px rgba(239,68,68,0.5);
+    box-shadow:0 14px 28px -8px rgba(220,38,38,0.55),
+               inset 0 3px 0 rgba(255,255,255,0.22);
   }
 
   /* Realistic WhatsApp phone (slide 1) */
@@ -470,11 +485,17 @@
   .cta .cta-kicker{font-family:'JetBrains Mono',monospace;font-size:14px;letter-spacing:0.16em;text-transform:uppercase;color:var(--ink-3);}
   .cta.accent .cta-kicker{color:rgba(255,255,255,0.8);}
 
-  /* FAQ — bigger, cleaner */
+  /* FAQ — bigger, cleaner, easy to skim */
   .faq-xl{display:grid;grid-template-columns:repeat(3,1fr);gap:36px;width:100%;max-width:1700px;}
-  .faq-xl .faq{min-height:360px;padding:48px 42px;gap:24px;}
-  .faq-xl .faq-q{font-size:40px;line-height:1.1;}
-  .faq-xl .faq-a{font-size:22px;line-height:1.5;}
+  .faq-xl .faq{min-height:340px;padding:48px 42px;gap:24px;border-radius:26px;background:#fff;border:1px solid var(--line);box-shadow:0 18px 36px -22px rgba(0,0,0,0.15);}
+  .faq-xl .faq-icon{
+    width:64px;height:64px;border-radius:50%;background:var(--accent);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-size:34px;
+    font-family:'Instrument Serif',serif;font-weight:400;line-height:1;flex:none;
+    box-shadow:0 12px 24px -12px rgba(0,0,0,0.25);
+  }
+  .faq-xl .faq-q{font-size:38px;line-height:1.15;font-weight:400;color:var(--ink);margin:0;}
+  .faq-xl .faq-a{font-size:26px;line-height:1.45;color:var(--ink-2);font-family:'Inter Tight',sans-serif;margin:0;}
   .faq-xl .faq-sep{height:1px;background:var(--line);width:100%;}
 
 </style>
@@ -644,35 +665,36 @@
 
   <!-- 8. SEO — Google results -->
   <section data-label="SEO Google">
-    <div class="stage">
+    <div class="stage" style="padding:40px;">
       <div class="stage-mockup">
-        <div class="browser" style="width:1380px;">
-          <div class="chrome">
+        <div class="browser" style="width:1760px;">
+          <div class="chrome" style="padding:18px 24px;">
             <div class="dots"><span></span><span></span><span></span></div>
-            <div class="url">google.com/search?q=contador+para+pyme</div>
+            <div class="url" style="font-size:18px;padding:10px 18px;">google.com/search?q=contador+para+pyme</div>
           </div>
-          <div class="body goog" style="padding:30px 44px;gap:18px;">
+          <div class="body goog" style="padding:44px 64px;gap:28px;">
             <div class="goog-top">
-              <div class="goog-logo" style="font-size:38px;"><span>G</span><span>o</span><span>o</span><span>g</span><span>l</span><span>e</span></div>
-              <div class="goog-search" style="font-size:19px;padding:14px 22px;"><span class="mag">🔍</span>contador para pyme en mi ciudad</div>
+              <div class="goog-logo" style="font-size:52px;"><span>G</span><span>o</span><span>o</span><span>g</span><span>l</span><span>e</span></div>
+              <div class="goog-search" style="font-size:26px;padding:18px 28px;"><span class="mag">🔍</span>contador para pyme en mi ciudad</div>
             </div>
-            <div class="goog-tabs" style="font-size:16px;gap:30px;">
+            <div class="goog-tabs" style="font-size:22px;gap:40px;">
               <span class="active">Todo</span><span>Maps</span><span>Imágenes</span><span>Noticias</span><span>Videos</span><span>Más</span>
             </div>
-            <div class="goog-count" style="font-size:15px;">Aproximadamente 1.240.000 resultados (0,38 segundos)</div>
-            <div class="search-hit top">
-              <div class="crumb" style="font-size:15px;">estudio-perez.com › contador-pymes</div>
-              <div class="ttl" style="font-size:30px;">Estudio Contable Pérez — Contador para Pymes</div>
-              <div class="snip" style="font-size:19px;">Contabilidad mensual, impuestos y nómina para empresas. Atención por WhatsApp el mismo día.</div>
+            <div class="goog-count" style="font-size:20px;">Aproximadamente 1.240.000 resultados (0,38 segundos)</div>
+            <div class="search-hit top" style="border:4px solid #EF4444;border-radius:14px;padding:22px 28px;position:relative;background:#fff;box-shadow:0 16px 36px -18px rgba(239,68,68,0.45);">
+              <div class="crumb" style="font-size:20px;">estudio-perez.com › contador-pymes</div>
+              <div class="ttl" style="font-size:40px;line-height:1.15;">Estudio Contable Pérez — Contador para Pymes</div>
+              <div class="snip" style="font-size:24px;">Contabilidad mensual, impuestos y nómina para empresas. Atención por WhatsApp el mismo día.</div>
+              <div style="position:absolute;top:-18px;left:24px;background:#EF4444;color:#fff;font-family:'JetBrains Mono',monospace;font-size:16px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;padding:6px 14px;border-radius:999px;box-shadow:0 8px 18px -6px rgba(239,68,68,0.55);">Tu estudio</div>
             </div>
             <div class="search-hit" style="opacity:0.72;">
-              <div class="crumb" style="font-size:14px;">estudio-lopez.com.ar › servicios</div>
-              <div class="ttl" style="color:#1a0dab;font-size:26px;">Estudio López & Asociados — Asesoría Contable</div>
-              <div class="snip" style="font-size:17px;">Liquidación de impuestos y balances para pymes.</div>
+              <div class="crumb" style="font-size:18px;">estudio-lopez.com.ar › servicios</div>
+              <div class="ttl" style="color:#1a0dab;font-size:34px;">Estudio López & Asociados — Asesoría Contable</div>
+              <div class="snip" style="font-size:22px;">Liquidación de impuestos y balances para pymes.</div>
             </div>
             <div class="search-hit" style="opacity:0.55;">
-              <div class="crumb" style="font-size:14px;">contadores.ar › directorio</div>
-              <div class="ttl" style="color:#1a0dab;font-size:24px;">Directorio de contadores públicos matriculados</div>
+              <div class="crumb" style="font-size:18px;">contadores.ar › directorio</div>
+              <div class="ttl" style="color:#1a0dab;font-size:30px;">Directorio de contadores públicos matriculados</div>
             </div>
           </div>
         </div>
@@ -686,7 +708,7 @@
       <div class="paso-solo">
         <div class="paso-kicker">Paso 02</div>
         <div class="paso-emoji">📣</div>
-        <h1 class="paso-title">3 <em>campañas publicitarias</em><br/>en Meta e Instagram.</h1>
+        <h1 class="paso-title">3 <em>campañas publicitarias</em><br/>en Facebook e Instagram.</h1>
       </div>
     </div>
   </section>
@@ -746,9 +768,8 @@
           <span>↓</span><span>↓</span><span>↓</span>
         </div>
         <div class="wa-dst">
-          <div class="icon">💬</div>
           WhatsApp
-          <span class="n-big">99+</span>
+          <span class="n-big">+5</span>
         </div>
       </div>
     </div>
@@ -771,10 +792,9 @@
         </div>
         <div class="v-arrows"><span>↓</span><span>↓</span></div>
         <div class="recap-dst-wrap">
-          <div class="wa-dst" style="font-size:56px;padding:22px 36px;">
-            <div class="icon" style="width:56px;height:56px;font-size:34px;">💬</div>
+          <div class="wa-dst" style="font-size:64px;padding:22px 44px 28px;">
             Tu WhatsApp
-            <span class="n-big" style="font-size:22px;padding:8px 14px;">99+</span>
+            <span class="n-big" style="font-size:24px;padding:10px 16px;top:-22px;right:-26px;">+5</span>
           </div>
         </div>
       </div>
@@ -914,19 +934,22 @@
       <h2 class="q-title">Preguntas frecuentes.</h2>
       <div class="faq-xl">
         <div class="faq">
-          <div class="faq-q"><span class="mark">¿</span>Cómo se paga<span class="mark">?</span></div>
+          <div class="faq-icon">💳</div>
+          <div class="faq-q">¿Cómo se paga?</div>
           <div class="faq-sep"></div>
-          <div class="faq-a">Tarjeta de crédito o débito, Stripe, Apple Pay, Google Pay, PIX, o factura con monotributo si estás en Argentina. Nos adaptamos a lo que tengas.</div>
+          <div class="faq-a">Tarjeta, Stripe, Apple Pay, Google Pay, PIX o factura con monotributo.</div>
         </div>
         <div class="faq">
-          <div class="faq-q"><span class="mark">¿</span>Y si ya tengo o no tengo web<span class="mark">?</span></div>
+          <div class="faq-icon">🌐</div>
+          <div class="faq-q">¿Y si ya tengo web, o no tengo?</div>
           <div class="faq-sep"></div>
-          <div class="faq-a">Si ya tenés, la rediseñamos. Si no tenés, la creamos desde cero y la publicamos nosotros en tu dominio.</div>
+          <div class="faq-a">Si tenés, la rediseñamos. Si no, la creamos desde cero.</div>
         </div>
         <div class="faq">
-          <div class="faq-q"><span class="mark">¿</span>Cuánto tarda todo el proceso<span class="mark">?</span></div>
+          <div class="faq-icon">⏱️</div>
+          <div class="faq-q">¿Cuánto tarda?</div>
           <div class="faq-sep"></div>
-          <div class="faq-a">Menos de 1 semana. Web + ads entregados y en vivo en menos de 7 días desde que arrancamos.</div>
+          <div class="faq-a">Menos de 1 semana desde que arrancamos.</div>
         </div>
       </div>
     </div>
@@ -941,11 +964,22 @@
     </div>
   </section>
 
-  <!-- 24. CTA — pasos con emojis -->
+  <!-- 24. CTA — pasos con emojis + flecha parabólica -->
   <section data-label="Próximo paso">
     <div class="stage with-title">
       <h2 class="q-title">Agendá tu llamada de arranque.</h2>
-      <div class="cta-row" style="grid-template-columns:repeat(4,1fr);gap:26px;max-width:1700px;">
+      <div class="cta-row" style="grid-template-columns:repeat(4,1fr);gap:26px;max-width:1700px;position:relative;">
+        <svg class="paraflow" viewBox="0 0 1700 120" preserveAspectRatio="none" aria-hidden="true"
+             style="position:absolute;top:-96px;left:0;width:100%;height:110px;overflow:visible;pointer-events:none;">
+          <defs>
+            <marker id="paraArrow" markerWidth="12" markerHeight="12" refX="9" refY="6" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L10,6 L0,12 z" fill="#0e0e0d" />
+            </marker>
+          </defs>
+          <path d="M 203,100 Q 418,-30 634,100"   fill="none" stroke="#0e0e0d" stroke-width="3" stroke-linecap="round" stroke-dasharray="9 8" marker-end="url(#paraArrow)" opacity="0.7"/>
+          <path d="M 634,100 Q 850,-30 1066,100"  fill="none" stroke="#0e0e0d" stroke-width="3" stroke-linecap="round" stroke-dasharray="9 8" marker-end="url(#paraArrow)" opacity="0.7"/>
+          <path d="M 1066,100 Q 1281,-30 1497,100" fill="none" stroke="#0e0e0d" stroke-width="3" stroke-linecap="round" stroke-dasharray="9 8" marker-end="url(#paraArrow)" opacity="0.7"/>
+        </svg>
         <div class="cta" style="padding:36px 28px;min-height:340px;gap:18px;">
           <div class="cta-icon">📅</div>
           <div class="cta-kicker">Paso 1</div>
@@ -959,7 +993,7 @@
         <div class="cta" style="padding:36px 28px;min-height:340px;gap:18px;">
           <div class="cta-icon">✅</div>
           <div class="cta-kicker">Paso 3</div>
-          <h4 style="font-size:28px;">Realizamos el pago en vivo.</h4>
+          <h4 style="font-size:28px;">Realizamos el pago.</h4>
         </div>
         <div class="cta accent" style="padding:36px 28px;min-height:340px;gap:18px;">
           <div class="cta-icon">🚀</div>
