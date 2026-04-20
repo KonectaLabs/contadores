@@ -1,0 +1,595 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<title>Konecta Labs — Loom Script</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter+Tight:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="deck-stage.js"></script>
+<script type="application/json" id="speaker-notes">
+[
+  "Mira este mensaje. Así se ve el tipo de consulta que les empieza a llegar al WhatsApp a los contadores que trabajan con nosotros. No es un curioso, no es alguien preguntando cuánto cuesta hacer una declaración suelta — es un empresario con una pyme que necesita contador para sus obligaciones mensuales.",
+  "Lo que acabas de ver es un ejemplo real. Déjame contarte concretamente qué vas a recibir.",
+  "Nuestro método está diseñado para que, durante el primer mes de empezar, recibas en promedio entre 5 y 10 consultas como esa, directo a tu WhatsApp. No todos van a cerrar como clientes — eso depende de cómo los atiendas — pero el flujo de empresarios interesados va a estar ahí.",
+  "La diferencia es esta. Hoy, si te llega algo, probablemente sea así: curiosos, consulta chica, gente preguntando por recomendación. Con nuestro método, lo que entra es esto otro: empresarios que ya saben que necesitan contador y están evaluando estudios.",
+  "Antes de seguir, una pregunta clave: a quién le sirve esto?",
+  "El método funciona bien si puedes responder los WhatsApp el mismo día y tienes capacidad de sumar pymes con pagos mensuales a tu cartera. Si estás solo y saturado, o tardas dos o tres días en responder, no te conviene — la mayoría se enfría y se va con otro estudio. Prefiero decírtelo ahora a que lo descubras gastando dinero.",
+  "Bien. Ahora, cómo lo hacemos?",
+  "Con dos piezas que trabajan juntas.",
+  "Primero, rediseñamos tu página web, o la creamos desde cero si todavía no tienes. No la hacemos linda por lindo — la hacemos para que cuando un empresario entre, piense 'aquí hay un estudio serio con el que se puede trabajar'. Y le aplicamos SEO para que aparezcas en Google cuando alguien busca contador para su empresa en tu ciudad. El botón principal de la web va directo a tu WhatsApp, sin formulario intermedio.",
+  "Segundo, te creamos 3 posts para tus redes sociales y convertimos 3 de ellos en campañas publicitarias en Meta e Instagram. Las ads son lo que más rápido te trae gente al WhatsApp. Las calibramos para que solo las vean los empresarios que quieres atraer — dueños de pymes en tu zona, no cualquier persona. La combinación de ads más web optimizada es lo que genera el grueso del flujo.",
+  "Llegamos al punto clave. Cuánto cuesta esto?",
+  "La inversión total es USD 300. Cien para empezar y doscientos cuando entregamos. Para ponerlo en perspectiva: un solo cliente empresa con pagos mensuales recurrentes, de los que te vamos a empezar a traer, te devuelve toda la inversión en sus primeras una o dos facturas. Por eso los números te cierran incluso si de los 5 a 10 prospectos del primer mes terminas cerrando uno solo.",
+  "Si todo hasta aquí te cierra, la siguiente pregunta lógica es: cómo empezamos a trabajar?",
+  "En concreto. Uno: te pedimos los accesos a tu web actual o al dominio. Si no sabes cómo, lo resolvemos juntos en la llamada, no es tu problema. Dos: rediseñamos la web. Tres: te la enviamos para que la apruebes; si algo no te cierra, ajustamos hasta que digas 'sí'. Cuatro: publicamos la web y lanzamos las 3 campañas de ads. Cinco, y aquí viene la parte importante: a partir del lanzamiento te damos una ventana de 3 días. Si en esos 3 días empiezas a ver prospectos entrando a tu WhatsApp, ese es el momento de pagar los USD 200 restantes. Quiero aclarar una cosa: ese pago no depende de que hayas cerrado un cliente — cerrar lleva más tiempo y depende de ti. Solo depende de que el flujo esté entrando. Si no entra, no hay segundo pago.",
+  "Y para cerrar: qué tienes que hacer ahora?",
+  "Tres pasos. Abajo de este video te dejamos el link a un calendario. Eliges el horario que mejor te quede para una llamada de 30 minutos. En esa llamada hacemos tres cosas: resolvemos las dudas que te hayan quedado, coordinamos el pago de los USD 100 en vivo — ven con un método de pago listo, tarjeta o transferencia — y ahí queda sellado el arranque. Dentro de las 24 a 48 horas siguientes te contactamos, te sumamos al proyecto interno y te pedimos los datos que necesitamos para empezar a trabajar sobre tu estudio.",
+  "Si esto te cierra, el link está abajo. Te esperamos adentro."
+]
+</script>
+<style>
+  :root{
+    --ink:#0e0e0d;
+    --ink-2:#3a3a38;
+    --ink-3:#6b6b67;
+    --line:#d9d6cf;
+    --line-2:#ececea;
+    --paper:#f6f3ec;
+    --paper-2:#efece3;
+    --card:#ffffff;
+    --accent: oklch(0.62 0.12 155);
+    --accent-ink: oklch(0.32 0.06 155);
+    --red: oklch(0.55 0.14 25);
+  }
+  html,body{margin:0;padding:0;background:#000;color:var(--ink);font-family:'Inter Tight',system-ui,sans-serif;}
+  section{background:var(--paper);color:var(--ink);}
+
+  /* Every slide = single centered stage, nothing in corners */
+  .stage{
+    position:absolute;inset:0;
+    display:flex;align-items:center;justify-content:center;
+    padding:80px;box-sizing:border-box;
+    background:var(--paper);
+  }
+  .center{
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:56px;
+    max-width:1600px;
+    text-align:center;
+  }
+
+  .serif{font-family:'Instrument Serif',Georgia,serif;font-weight:400;letter-spacing:-0.01em;}
+
+  /* One big headline per slide */
+  .headline{
+    font-family:'Instrument Serif',serif;
+    font-size:120px;line-height:0.98;letter-spacing:-0.02em;
+    font-weight:400;color:var(--ink);
+    margin:0;
+    max-width:1400px;
+  }
+  .headline em{font-style:italic;}
+  .headline .acc{color:var(--accent-ink);}
+
+  .headline-xl{
+    font-family:'Instrument Serif',serif;
+    font-size:180px;line-height:0.95;letter-spacing:-0.03em;
+    font-weight:400;color:var(--ink);margin:0;
+  }
+
+  /* Phone / chat mockup, centered */
+  .phone{
+    width:460px;height:720px;
+    background:var(--card);border:1px solid var(--line);
+    border-radius:44px;padding:52px 22px 22px;box-sizing:border-box;
+    box-shadow:0 40px 80px -30px rgba(0,0,0,0.22);
+    display:flex;flex-direction:column;position:relative;overflow:hidden;
+    text-align:left;
+  }
+  .phone .notch{position:absolute;top:0;left:50%;transform:translateX(-50%);width:120px;height:28px;background:var(--ink);border-radius:0 0 16px 16px;}
+  .phone .statusbar{
+    display:flex;justify-content:space-between;align-items:center;
+    font-family:'JetBrains Mono',monospace;font-size:16px;color:var(--ink);margin-bottom:22px;padding:0 14px;
+  }
+  .notif{
+    background:#fff;border:1px solid var(--line);border-radius:22px;padding:20px 22px;
+    display:flex;flex-direction:column;gap:8px;
+  }
+  .notif .row1{display:flex;justify-content:space-between;align-items:center;}
+  .notif .app{display:flex;align-items:center;gap:10px;font-family:'JetBrains Mono',monospace;font-size:14px;color:var(--ink-3);letter-spacing:0.1em;text-transform:uppercase;}
+  .notif .app .sq{width:16px;height:16px;background:var(--accent);border-radius:4px;}
+  .notif .time{font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--ink-3);}
+  .notif .from{font-weight:600;font-size:20px;color:var(--ink);}
+  .notif .preview{font-size:20px;line-height:1.38;color:var(--ink-2);}
+
+  .bubble{
+    padding:20px 22px;border-radius:22px;font-size:24px;line-height:1.4;
+    background:#fff;border:1px solid var(--line);color:var(--ink);display:inline-block;
+  }
+  .bubble.in{background:#fff;border-top-left-radius:6px;}
+  .bubble.big{background:#eaf1e7;border-color:#cfddca;border-top-left-radius:6px;max-width:620px;text-align:left;}
+  .bubble .name{font-weight:600;font-size:18px;color:var(--ink);margin-bottom:6px;display:block;}
+
+  /* arrow between items */
+  .v-arrow{
+    display:inline-flex;align-items:center;justify-content:center;
+    font-family:'Instrument Serif',serif;font-size:72px;color:var(--ink-3);line-height:1;
+  }
+  .h-arrow{
+    font-family:'Instrument Serif',serif;font-size:64px;color:var(--ink-3);line-height:1;
+  }
+
+  /* two columns comparison (slide 3) */
+  .versus{
+    display:grid;grid-template-columns:1fr auto 1fr;gap:56px;align-items:center;
+    width:100%;
+  }
+  .vs-col{display:flex;flex-direction:column;gap:16px;align-items:center;}
+  .vs-label{
+    font-family:'JetBrains Mono',monospace;font-size:18px;letter-spacing:0.16em;text-transform:uppercase;
+    padding:8px 18px;border-radius:999px;
+  }
+  .vs-label.neg{border:1.5px solid var(--red);color:var(--red);}
+  .vs-label.pos{background:var(--accent);color:#fff;}
+  .strike .bubble{position:relative;opacity:0.75;}
+  .strike .bubble::after{
+    content:'';position:absolute;left:10px;right:10px;top:50%;height:2px;background:var(--red);
+  }
+  .vs-arrow{font-family:'Instrument Serif',serif;font-size:96px;color:var(--ink-3);line-height:1;}
+
+  /* qualifier lists (slide 4) */
+  .filter-grid{display:grid;grid-template-columns:1fr 1fr;gap:80px;width:100%;max-width:1400px;}
+  .filter-col{display:flex;flex-direction:column;gap:28px;align-items:flex-start;text-align:left;}
+  .filter-item{display:flex;gap:18px;align-items:flex-start;font-family:'Instrument Serif',serif;font-size:44px;line-height:1.2;color:var(--ink);font-weight:400;}
+  .filter-item .icn{flex:none;width:48px;height:48px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:26px;margin-top:6px;font-family:'Inter Tight',sans-serif;}
+  .icn.ok{background:var(--accent);color:#fff;}
+  .icn.no{border:2px solid var(--red);color:var(--red);}
+
+  /* overview 2 pieces (slide 5) */
+  .pieces{display:grid;grid-template-columns:1fr 1fr;gap:48px;width:100%;max-width:1400px;}
+  .piece{
+    border:1px solid var(--line);border-radius:24px;padding:56px 48px;
+    display:flex;flex-direction:column;gap:20px;text-align:left;
+    background:#fff;min-height:360px;
+  }
+  .piece.two{background:var(--accent);color:#fff;border-color:var(--accent);}
+  .piece .idx{font-family:'JetBrains Mono',monospace;font-size:18px;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink-3);}
+  .piece.two .idx{color:rgba(255,255,255,0.75);}
+  .piece h3{font-family:'Instrument Serif',serif;font-size:68px;line-height:1;margin:0;font-weight:400;}
+
+  /* web + seo (slide 6) */
+  .browser{
+    background:#fff;border:1px solid var(--line);border-radius:16px;overflow:hidden;
+    box-shadow:0 30px 60px -30px rgba(0,0,0,0.18);
+    display:flex;flex-direction:column;text-align:left;
+  }
+  .browser .chrome{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--line-2);}
+  .browser .dots{display:flex;gap:6px;}
+  .browser .dots span{width:11px;height:11px;border-radius:50%;background:var(--line);}
+  .browser .url{flex:1;background:var(--paper-2);border-radius:8px;padding:8px 14px;font-family:'JetBrains Mono',monospace;font-size:15px;color:var(--ink-3);}
+  .browser .body{padding:28px 32px;display:flex;flex-direction:column;gap:18px;}
+  .search-hit{display:flex;flex-direction:column;gap:4px;}
+  .search-hit .crumb{font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--ink-3);}
+  .search-hit .ttl{font-size:22px;color:#1a0dab;text-decoration:underline;line-height:1.25;}
+  .search-hit .snip{font-size:16px;color:var(--ink-2);line-height:1.4;}
+  .search-hit.top .ttl{color:var(--accent-ink);}
+
+  /* posts (slide 7) */
+  .posts-row{display:flex;gap:22px;align-items:flex-start;justify-content:center;}
+  .post{
+    width:300px;background:#fff;border:1px solid var(--line);border-radius:16px;overflow:hidden;
+    display:flex;flex-direction:column;text-align:left;
+  }
+  .post .head{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--line-2);}
+  .post .avatar{width:32px;height:32px;background:var(--ink);border-radius:50%;}
+  .post .handle{font-size:15px;font-weight:600;color:var(--ink);}
+  .post .handle small{display:block;font-weight:400;color:var(--ink-3);font-size:12px;font-family:'JetBrains Mono',monospace;}
+  .post .art{height:280px;background:var(--paper-2);border-bottom:1px solid var(--line-2);display:flex;align-items:center;justify-content:center;padding:28px;text-align:center;}
+  .post .art h5{font-family:'Instrument Serif',serif;font-size:28px;line-height:1.1;margin:0;font-weight:400;color:var(--ink);}
+  .post .foot{padding:12px 16px;display:flex;justify-content:space-between;align-items:center;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--ink-3);letter-spacing:0.1em;text-transform:uppercase;}
+  .sponsored{background:var(--ink);color:#fff;padding:3px 8px;border-radius:4px;font-size:11px;font-family:'JetBrains Mono',monospace;letter-spacing:0.08em;text-transform:uppercase;}
+
+  /* price (slide 8) */
+  .price-stack{display:flex;flex-direction:column;align-items:center;gap:40px;}
+  .price-split{display:flex;gap:40px;align-items:center;}
+  .price-split .box{
+    padding:32px 52px;border:1.5px solid var(--ink);border-radius:20px;background:#fff;
+    display:flex;flex-direction:column;gap:10px;align-items:center;min-width:340px;
+  }
+  .price-split .box .lbl{font-family:'JetBrains Mono',monospace;font-size:15px;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink-3);}
+  .price-split .box .val{font-family:'Instrument Serif',serif;font-size:72px;line-height:1;white-space:nowrap;}
+  .plus{font-family:'Instrument Serif',serif;font-size:64px;color:var(--ink-3);}
+
+  /* steps (slide 9) */
+  .timeline{
+    display:grid;grid-template-columns:repeat(5,1fr);gap:32px;width:100%;max-width:1700px;
+  }
+  .step{display:flex;flex-direction:column;align-items:center;text-align:center;gap:20px;}
+  .step .num-big{font-family:'Instrument Serif',serif;font-size:120px;line-height:0.9;color:var(--ink);margin:0;}
+  .step h4{font-family:'Instrument Serif',serif;font-size:30px;line-height:1.15;margin:0;font-weight:400;max-width:240px;}
+  .step.accent .num-big{color:var(--accent);}
+  .step.accent h4{color:var(--accent-ink);}
+
+  /* cta cards (slide 10) */
+  .cta-row{display:grid;grid-template-columns:repeat(3,1fr);gap:36px;width:100%;max-width:1600px;}
+  .cta{
+    background:#fff;border:1px solid var(--line);border-radius:22px;padding:44px 40px;
+    display:flex;flex-direction:column;gap:24px;align-items:center;text-align:center;min-height:360px;
+  }
+  .cta .idx{font-family:'Instrument Serif',serif;font-size:120px;line-height:0.9;color:var(--ink);}
+  .cta h4{font-family:'Instrument Serif',serif;font-size:36px;line-height:1.1;margin:0;font-weight:400;}
+  .cta.accent{background:var(--accent);color:#fff;border-color:var(--accent);}
+  .cta.accent .idx,.cta.accent h4{color:#fff;}
+
+  /* cierre (slide 11) */
+  .dark{background:var(--ink);}
+  .dark .stage{background:var(--ink);}
+  .dark .headline, .dark .headline-xl{color:var(--paper);}
+  .dark .acc{color:var(--accent);}
+  .arrow-down{
+    display:flex;flex-direction:column;align-items:center;gap:8px;margin-top:20px;
+  }
+  .arrow-down .line{width:2px;height:80px;background:rgba(246,243,236,0.55);}
+  .arrow-down .tip{width:0;height:0;border-left:12px solid transparent;border-right:12px solid transparent;border-top:18px solid rgba(246,243,236,0.85);}
+
+  /* slide 4 title + grid */
+  .stage.with-title{flex-direction:column;gap:80px;}
+  .q-title{font-family:'Instrument Serif',serif;font-size:88px;line-height:1;letter-spacing:-0.02em;margin:0;color:var(--ink);text-align:center;font-weight:400;white-space:nowrap;}
+  .stage.with-title{flex-direction:column;gap:100px;}
+  /* question-intro slide */
+  .q-intro{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:48px;}
+  .q-tag{
+    position:absolute;top:64px;left:72px;
+    font-family:'JetBrains Mono',monospace;font-size:18px;letter-spacing:0.18em;
+    text-transform:uppercase;color:var(--ink-3);
+  }
+  .q-ask{
+    font-family:'Instrument Serif',serif;font-size:140px;line-height:1;letter-spacing:-0.02em;
+    color:var(--ink);margin:0;text-align:center;font-weight:400;max-width:1500px;
+  }
+  .q-ask .dot{color:var(--accent);}
+
+</style>
+</head>
+<body>
+
+<deck-stage width="1920" height="1080">
+
+  <!-- 1. HERO MESSAGE -->
+  <section data-label="El mensaje">
+    <div class="stage">
+      <div class="center" style="flex-direction:row;gap:120px;">
+        <div class="phone">
+          <div class="notch"></div>
+          <div class="statusbar"><span>9:41</span><span>●●● ▲ ▮▮</span></div>
+          <div class="notif">
+            <div class="row1">
+              <div class="app"><span class="sq"></span> Mensajería · ahora</div>
+              <div class="time">9:41</div>
+            </div>
+            <div class="from">Marcelo P. — Grupo Martínez SRL</div>
+            <div class="preview">Hola, estamos buscando estudio contable para llevar la contabilidad mensual y los impuestos de nuestra empresa. Somos 20 empleados. Tienes disponibilidad para una reunión esta semana?</div>
+          </div>
+        </div>
+        <h1 class="headline" style="text-align:left;max-width:780px;font-size:104px;">
+          Así se ve<br/>una consulta <em>real</em>.
+        </h1>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2. INTRO Q1 -->
+  <section data-label="Qué vas a recibir?">
+    <div class="stage">
+      <span class="q-tag">01 / 06</span>
+      <div class="q-intro">
+        <h2 class="q-ask">Qué vas a recibir<span class="dot">?</span></h2>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3. PROMESA -->
+  <section data-label="La promesa">
+    <div class="stage">
+      <div class="center" style="gap:32px;">
+        <div style="font-family:'Instrument Serif',serif;font-size:300px;line-height:0.9;letter-spacing:-0.03em;white-space:nowrap;">
+          5<span style="color:var(--ink-3);">—</span>10
+        </div>
+        <p class="headline" style="font-size:72px;max-width:1300px;">
+          consultas así, <span class="acc">directo a tu WhatsApp</span>.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3. ANTES / DESPUÉS -->
+  <section data-label="Antes después">
+    <div class="stage">
+      <div class="center" style="width:100%;max-width:1700px;gap:48px;">
+        <div class="versus">
+          <div class="vs-col strike">
+            <div class="vs-label neg">Antes</div>
+            <div class="bubble in" style="max-width:420px;">cuánto cobras una declaración?</div>
+            <div class="bubble in" style="max-width:460px;">mi tía te quería consultar…</div>
+            <div class="bubble in" style="max-width:300px;">eres económico?</div>
+          </div>
+          <div class="vs-arrow">→</div>
+          <div class="vs-col">
+            <div class="vs-label pos">Después</div>
+            <div class="bubble big">
+              <span class="name">Marcelo P. — Grupo Martínez SRL</span>
+              Hola, estamos buscando estudio contable para llevar la contabilidad mensual y los impuestos de nuestra empresa. Somos 20 empleados. Tienes disponibilidad para una reunión esta semana?
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5. INTRO Q2 -->
+  <section data-label="A quién le sirve?">
+    <div class="stage">
+      <span class="q-tag">02 / 06</span>
+      <div class="q-intro">
+        <h2 class="q-ask">A quién le sirve esto<span class="dot">?</span></h2>
+      </div>
+    </div>
+  </section>
+
+  <!-- 6. QUALIFIER -->
+  <section data-label="A quien le sirve">
+    <div class="stage with-title">
+      <h2 class="q-title">A quién le sirve?</h2>
+      <div class="filter-grid">
+        <div class="filter-col">
+          <div class="vs-label pos">Te conviene si</div>
+          <div class="filter-item"><div class="icn ok">✓</div><div>Respondes WhatsApp el mismo día.</div></div>
+          <div class="filter-item"><div class="icn ok">✓</div><div>Tienes capacidad de sumar pymes.</div></div>
+        </div>
+        <div class="filter-col">
+          <div class="vs-label neg">No te conviene si</div>
+          <div class="filter-item"><div class="icn no">✕</div><div>Estás solo y saturado.</div></div>
+          <div class="filter-item"><div class="icn no">✕</div><div>Tardas 2 o 3 días en contestar.</div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 7. INTRO Q3 -->
+  <section data-label="Cómo lo hacemos?">
+    <div class="stage">
+      <span class="q-tag">03 / 06</span>
+      <div class="q-intro">
+        <h2 class="q-ask">Cómo lo hacemos<span class="dot">?</span></h2>
+      </div>
+    </div>
+  </section>
+
+  <!-- 8. OVERVIEW -->
+  <section data-label="El método">
+    <div class="stage">
+      <div class="center">
+        <div class="pieces">
+          <div class="piece">
+            <div class="idx">Pieza 01</div>
+            <h3>Tu web nueva<br/>+ SEO en Google</h3>
+          </div>
+          <div class="piece two">
+            <div class="idx">Pieza 02</div>
+            <h3>Posts + Campañas<br/>en Meta Ads</h3>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 6. WEB + SEO -->
+  <section data-label="Web SEO">
+    <div class="stage">
+      <div class="center" style="flex-direction:row;gap:48px;align-items:stretch;width:100%;max-width:1700px;">
+        <div class="browser" style="flex:1;">
+          <div class="chrome">
+            <div class="dots"><span></span><span></span><span></span></div>
+            <div class="url">estudio-perez.com</div>
+          </div>
+          <div class="body" style="padding:36px 40px;gap:20px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <div style="font-family:'Instrument Serif',serif;font-size:32px;">Estudio Pérez</div>
+              <div style="font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--ink-3);letter-spacing:0.12em;">INICIO · SERVICIOS · CONTACTO</div>
+            </div>
+            <div style="height:1px;background:var(--line-2);"></div>
+            <h3 style="font-family:'Instrument Serif',serif;font-size:54px;margin:8px 0 0;line-height:1.02;font-weight:400;">Contabilidad mensual<br/>para pymes.</h3>
+            <p style="margin:0;font-size:18px;color:var(--ink-2);line-height:1.45;">Impuestos, nómina y obligaciones al día.</p>
+            <div style="display:flex;gap:12px;margin-top:8px;">
+              <div style="background:var(--accent);color:#fff;padding:16px 24px;border-radius:999px;font-weight:600;font-size:20px;">Consultar por WhatsApp →</div>
+            </div>
+          </div>
+        </div>
+        <div class="browser" style="flex:1;">
+          <div class="chrome">
+            <div class="dots"><span></span><span></span><span></span></div>
+            <div class="url">google.com/search?q=contador+para+pyme</div>
+          </div>
+          <div class="body" style="padding:32px;gap:24px;">
+            <div style="font-family:'Inter Tight',sans-serif;font-size:28px;color:var(--ink);font-weight:500;">contador para pyme [ciudad]</div>
+            <div style="height:1px;background:var(--line-2);"></div>
+            <div class="search-hit top">
+              <div class="crumb">estudio-perez.com › pymes</div>
+              <div class="ttl" style="font-size:26px;">Estudio Contable Pérez — Contador para Pymes</div>
+              <div class="snip" style="font-size:18px;">Contabilidad mensual, impuestos y nómina para empresas.</div>
+            </div>
+            <div class="search-hit" style="opacity:0.5;">
+              <div class="crumb">otro-estudio.com</div>
+              <div class="ttl" style="color:#1a0dab;font-size:22px;">Estudio Contable — Servicios</div>
+              <div class="snip">Lorem ipsum dolor sit amet.</div>
+            </div>
+            <div class="search-hit" style="opacity:0.35;">
+              <div class="crumb">contadores.com</div>
+              <div class="ttl" style="color:#1a0dab;font-size:22px;">Directorio de contadores</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 7. POSTS + ADS -->
+  <section data-label="Posts Ads">
+    <div class="stage">
+      <div class="center">
+        <div class="posts-row">
+          <div class="post">
+            <div class="head">
+              <div class="avatar"></div>
+              <div class="handle">estudio.perez<small>contadores</small></div>
+            </div>
+            <div class="art">
+              <h5>5 errores que te<br/>hacen pagar<br/>impuestos de más</h5>
+            </div>
+            <div class="foot"><span>♡ 128</span><span>Ver</span></div>
+          </div>
+          <div class="post" style="transform:translateY(32px);">
+            <div class="head">
+              <div class="avatar"></div>
+              <div class="handle">estudio.perez<small><span class="sponsored">Patrocinado</span></small></div>
+            </div>
+            <div class="art" style="background:var(--ink);">
+              <h5 style="color:var(--paper);">Cuándo conviene<br/>cambiar de régimen<br/>tributario?</h5>
+            </div>
+            <div class="foot"><span>Patrocinado</span><span>WhatsApp →</span></div>
+          </div>
+          <div class="post">
+            <div class="head">
+              <div class="avatar"></div>
+              <div class="handle">estudio.perez<small>contadores</small></div>
+            </div>
+            <div class="art" style="background:var(--accent);">
+              <h5 style="color:#fff;">Cuánto le cuesta<br/>a tu pyme no<br/>tener contador?</h5>
+            </div>
+            <div class="foot"><span>♡ 94</span><span>Ver</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 11. INTRO Q4 -->
+  <section data-label="Cuánto es la inversión?">
+    <div class="stage">
+      <span class="q-tag">04 / 06</span>
+      <div class="q-intro">
+        <h2 class="q-ask">Cuánto es la inversión<span class="dot">?</span></h2>
+      </div>
+    </div>
+  </section>
+
+  <!-- 12. INVERSIÓN -->
+  <section data-label="Inversión">
+    <div class="stage">
+      <div class="center price-stack">
+        <div style="font-family:'Instrument Serif',serif;font-size:260px;line-height:0.9;letter-spacing:-0.03em;color:var(--ink);">USD&nbsp;300</div>
+        <div class="price-split">
+          <div class="box">
+            <div class="lbl">Para empezar</div>
+            <div class="val">USD 100</div>
+          </div>
+          <div class="plus">+</div>
+          <div class="box">
+            <div class="lbl">Al entregar</div>
+            <div class="val">USD 200</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 13. INTRO Q5 -->
+  <section data-label="Cómo empezamos a trabajar?">
+    <div class="stage">
+      <span class="q-tag">05 / 06</span>
+      <div class="q-intro">
+        <h2 class="q-ask">Cómo empezamos<br/>a trabajar<span class="dot">?</span></h2>
+      </div>
+    </div>
+  </section>
+
+  <!-- 14. PROCESO -->
+  <section data-label="Proceso">
+    <div class="stage with-title">
+      <h2 class="q-title">Así arrancamos.</h2>
+      <div class="timeline">
+        <div class="step">
+          <div class="num-big">1</div>
+          <h4>Accesos</h4>
+        </div>
+        <div class="step">
+          <div class="num-big">2</div>
+          <h4>Rediseño</h4>
+        </div>
+        <div class="step">
+          <div class="num-big">3</div>
+          <h4>Aprobación</h4>
+        </div>
+        <div class="step">
+          <div class="num-big">4</div>
+          <h4>Publicación + Ads</h4>
+        </div>
+        <div class="step accent">
+          <div class="num-big">5</div>
+          <h4>Ventana de 3 días · pago final</h4>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 15. INTRO Q6 -->
+  <section data-label="Qué tienes que hacer ahora?">
+    <div class="stage">
+      <span class="q-tag">06 / 06</span>
+      <div class="q-intro">
+        <h2 class="q-ask">Qué tienes que<br/>hacer ahora<span class="dot">?</span></h2>
+      </div>
+    </div>
+  </section>
+
+  <!-- 16. CTA -->
+  <section data-label="Próximo paso">
+    <div class="stage with-title">
+      <h2 class="q-title">El siguiente paso.</h2>
+      <div class="cta-row">
+        <div class="cta">
+          <div class="idx">1</div>
+          <h4>Agendas la llamada.</h4>
+        </div>
+        <div class="cta">
+          <div class="idx">2</div>
+          <h4>Dudas + pago de USD 100 en vivo.</h4>
+        </div>
+        <div class="cta accent">
+          <div class="idx">3</div>
+          <h4>24–48h: te sumamos al proyecto.</h4>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 11. CIERRE -->
+  <section data-label="Cierre" class="dark">
+    <div class="stage">
+      <div class="center">
+        <h1 class="headline-xl" style="font-size:140px;">
+          Agenda tu llamada<br/>de arranque <span class="acc">↓</span>
+        </h1>
+        <div class="arrow-down">
+          <div class="line"></div>
+          <div class="tip"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</deck-stage>
+
+</body>
+</html>
