@@ -27,9 +27,20 @@ class SpreadsheetTarget:
     gid: int | None
 
 
+def read_env_value(*env_names: str) -> str | None:
+    for env_name in env_names:
+        raw_value = os.getenv(env_name)
+        if raw_value is None:
+            continue
+        stripped = raw_value.strip()
+        if stripped:
+            return stripped
+    return None
+
+
 def build_parser() -> argparse.ArgumentParser:
-    default_sheet = os.getenv("GOOGLE_SHEET_URL")
-    default_gid = parse_int_env("GOOGLE_SHEET_GID")
+    default_sheet = read_env_value("CONTADORES_SHEET_URL", "GOOGLE_SHEET_URL")
+    default_gid = parse_int_env("CONTADORES_SHEET_GID", "GOOGLE_SHEET_GID")
 
     parser = argparse.ArgumentParser(
         description="Lee una Google Sheet y devuelve sus filas como JSON.",
@@ -39,7 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=default_sheet,
         help=(
             "URL completa de Google Sheets o directamente el spreadsheet_id. "
-            "Si no se indica, usa GOOGLE_SHEET_URL."
+            "Si no se indica, usa CONTADORES_SHEET_URL o GOOGLE_SHEET_URL."
         ),
     )
     parser.add_argument(
@@ -55,8 +66,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--service-account",
-        default=os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE"),
-        help="Ruta al JSON de la service account. También puede venir de GOOGLE_SERVICE_ACCOUNT_FILE.",
+        default=read_env_value(
+            "CONTADORES_GOOGLE_SERVICE_ACCOUNT_FILE",
+            "GOOGLE_SERVICE_ACCOUNT_FILE",
+        ),
+        help=(
+            "Ruta al JSON de la service account. También puede venir de "
+            "CONTADORES_GOOGLE_SERVICE_ACCOUNT_FILE o GOOGLE_SERVICE_ACCOUNT_FILE."
+        ),
     )
     parser.add_argument(
         "--as-records",
@@ -66,9 +83,9 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def parse_int_env(env_name: str) -> int | None:
-    raw_value = os.getenv(env_name)
-    if raw_value in {None, ""}:
+def parse_int_env(*env_names: str) -> int | None:
+    raw_value = read_env_value(*env_names)
+    if raw_value is None:
         return None
     return int(raw_value)
 
@@ -223,7 +240,7 @@ def main() -> int:
 
     if not args.sheet:
         print(
-            "Falta la sheet. Pasá --sheet o definí GOOGLE_SHEET_URL en .env.",
+            "Falta la sheet. Pasá --sheet o definí CONTADORES_SHEET_URL en .env.",
             file=sys.stderr,
         )
         return 1

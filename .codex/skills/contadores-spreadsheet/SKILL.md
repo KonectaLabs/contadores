@@ -7,20 +7,32 @@ description: Use when working with the Contadores Google Sheet that stores leads
 
 Use this skill when the task touches the Google Sheet used by the `contadores` project.
 
-This sheet is the operational source of truth for lead intake and, in the MVP, should also be the source of truth for outreach state.
+This sheet is the operational source of truth for lead intake.
+
+The runtime rule is now explicit:
+
+- `CONTADORES_SOURCE_MODE=testing` means do not poll the real sheet automatically.
+- `CONTADORES_SOURCE_MODE=live` means the sheet is allowed to feed the workflow.
 
 ## What It Is For
 
 - It stores inbound leads coming from Meta lead forms.
 - It is the simplest shared state for the workflow.
 - It can drive a poller that checks for new leads every 5 minutes.
-- It can also store conversation state for WhatsApp sequences so the app does not need a separate database in the first version.
+- In this repo, the immediate need is read access for lead ingestion and testing the WhatsApp flow safely.
 
 Read [references/spreadsheet.md](references/spreadsheet.md) when you need the exact columns, meanings, or the proposed operational fields.
 
 ## Current Connection Model
 
-The project already stores the public sheet URL in `.env`:
+The project stores sheet config in `.env`.
+
+Preferred keys:
+
+- `CONTADORES_SHEET_URL`
+- `CONTADORES_SHEET_GID`
+
+Backward-compatible aliases that still work in the reader script:
 
 - `GOOGLE_SHEET_URL`
 - `GOOGLE_SHEET_GID`
@@ -33,6 +45,7 @@ That script:
 
 - loads `.env` automatically;
 - accepts either a full Google Sheets URL or a raw spreadsheet id;
+- prefers `CONTADORES_*` env vars and falls back to `GOOGLE_*`;
 - tries public CSV export first;
 - falls back to the Google Sheets API if a service account file is provided.
 
@@ -61,6 +74,13 @@ If the sheet is private again, provide authenticated access:
 
 ```bash
 GOOGLE_SERVICE_ACCOUNT_FILE=/path/to/service-account.json \
+uv run python read_google_sheet.py --as-records
+```
+
+Or with the Contadores-specific env name:
+
+```bash
+CONTADORES_GOOGLE_SERVICE_ACCOUNT_FILE=/path/to/service-account.json \
 uv run python read_google_sheet.py --as-records
 ```
 
@@ -94,6 +114,11 @@ Treat the spreadsheet as the source of truth for:
 - when the next action should happen;
 - whether automation should stop and hand off to a human.
 
+Operational rule:
+
+- `testing` mode must work with `CONTADORES_TEST_PHONE` only.
+- `live` mode is the only mode allowed to poll this sheet on a timer.
+
 For the MVP:
 
 - read rows every 5 minutes;
@@ -103,6 +128,7 @@ For the MVP:
 - only after a successful send, update the sheet state.
 
 Do not mark a lead as contacted before the outbound message succeeds.
+Do not switch to `live` just because the code is deployed; the switch belongs in `.env`.
 
 ## Suggested Operational Pattern
 
