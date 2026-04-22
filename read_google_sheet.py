@@ -15,6 +15,8 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any
 
+from dotenv import load_dotenv
+
 
 READONLY_SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly"
 
@@ -26,17 +28,24 @@ class SpreadsheetTarget:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    default_sheet = os.getenv("GOOGLE_SHEET_URL")
+    default_gid = parse_int_env("GOOGLE_SHEET_GID")
+
     parser = argparse.ArgumentParser(
         description="Lee una Google Sheet y devuelve sus filas como JSON.",
     )
     parser.add_argument(
         "--sheet",
-        required=True,
-        help="URL completa de Google Sheets o directamente el spreadsheet_id.",
+        default=default_sheet,
+        help=(
+            "URL completa de Google Sheets o directamente el spreadsheet_id. "
+            "Si no se indica, usa GOOGLE_SHEET_URL."
+        ),
     )
     parser.add_argument(
         "--gid",
         type=int,
+        default=default_gid,
         help="gid de la pestaña. Si no se indica, se usa el del URL o la primera pestaña.",
     )
     parser.add_argument(
@@ -55,6 +64,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Convierte la primera fila en headers y devuelve records además de rows.",
     )
     return parser
+
+
+def parse_int_env(env_name: str) -> int | None:
+    raw_value = os.getenv(env_name)
+    if raw_value in {None, ""}:
+        return None
+    return int(raw_value)
 
 
 def parse_target(sheet_value: str, explicit_gid: int | None) -> SpreadsheetTarget:
@@ -201,8 +217,16 @@ def rows_to_records(headers: list[str], data_rows: list[list[str]]) -> list[dict
 
 
 def main() -> int:
+    load_dotenv()
     parser = build_parser()
     args = parser.parse_args()
+
+    if not args.sheet:
+        print(
+            "Falta la sheet. Pasá --sheet o definí GOOGLE_SHEET_URL en .env.",
+            file=sys.stderr,
+        )
+        return 1
 
     try:
         target = parse_target(args.sheet, args.gid)

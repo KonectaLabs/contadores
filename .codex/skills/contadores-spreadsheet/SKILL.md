@@ -1,0 +1,143 @@
+---
+name: contadores-spreadsheet
+description: Use when working with the Contadores Google Sheet that stores leads and conversation state. Covers what the spreadsheet is for, how to connect from Python, the current schema, public read versus authenticated write, and how to use the sheet as the source of truth for WhatsApp follow-up workflows.
+---
+
+# Contadores Spreadsheet
+
+Use this skill when the task touches the Google Sheet used by the `contadores` project.
+
+This sheet is the operational source of truth for lead intake and, in the MVP, should also be the source of truth for outreach state.
+
+## What It Is For
+
+- It stores inbound leads coming from Meta lead forms.
+- It is the simplest shared state for the workflow.
+- It can drive a poller that checks for new leads every 5 minutes.
+- It can also store conversation state for WhatsApp sequences so the app does not need a separate database in the first version.
+
+Read [references/spreadsheet.md](references/spreadsheet.md) when you need the exact columns, meanings, or the proposed operational fields.
+
+## Current Connection Model
+
+The project already stores the public sheet URL in `.env`:
+
+- `GOOGLE_SHEET_URL`
+- `GOOGLE_SHEET_GID`
+
+The repo already includes a reader script:
+
+- [`read_google_sheet.py`](/Users/fgoiriz/private/repos/contadores/read_google_sheet.py)
+
+That script:
+
+- loads `.env` automatically;
+- accepts either a full Google Sheets URL or a raw spreadsheet id;
+- tries public CSV export first;
+- falls back to the Google Sheets API if a service account file is provided.
+
+## Quick Start
+
+Install dependencies:
+
+```bash
+cd /Users/fgoiriz/private/repos/contadores
+uv sync
+```
+
+Read the current public sheet:
+
+```bash
+uv run python read_google_sheet.py --as-records
+```
+
+Read a specific range:
+
+```bash
+uv run python read_google_sheet.py --range "Hoja 1!A1:D20" --as-records
+```
+
+If the sheet is private again, provide authenticated access:
+
+```bash
+GOOGLE_SERVICE_ACCOUNT_FILE=/path/to/service-account.json \
+uv run python read_google_sheet.py --as-records
+```
+
+## Public Read Vs Authenticated Write
+
+Use this rule:
+
+- Public access is acceptable only for quick reads during development.
+- Any production workflow with personal data should keep the sheet private.
+- Any write path should use a Google service account with Editor access.
+
+For writes:
+
+1. Create a Google Cloud project.
+2. Enable Google Sheets API.
+3. Create a service account.
+4. Download the JSON key.
+5. Share the spreadsheet with that service account as `Editor`.
+6. Store the JSON path in `GOOGLE_SERVICE_ACCOUNT_FILE`.
+
+Do not rely on public spreadsheets for production contact workflows.
+
+## How To Use The Sheet In This Project
+
+Treat the spreadsheet as the source of truth for:
+
+- lead ingestion;
+- whether the lead was already contacted;
+- which message sequence the lead is in;
+- which step was already sent;
+- when the next action should happen;
+- whether automation should stop and hand off to a human.
+
+For the MVP:
+
+- read rows every 5 minutes;
+- find leads that are eligible for action;
+- lock the row before sending;
+- send the WhatsApp message;
+- only after a successful send, update the sheet state.
+
+Do not mark a lead as contacted before the outbound message succeeds.
+
+## Suggested Operational Pattern
+
+Use the existing lead columns as input data and add operational columns in the same sheet.
+
+Recommended additional columns:
+
+- `wa_status`
+- `wa_sequence`
+- `wa_step`
+- `wa_last_outbound_at`
+- `wa_last_inbound_at`
+- `wa_next_action_at`
+- `wa_message_id`
+- `wa_error`
+- `wa_lock_token`
+- `wa_lock_until`
+- `wa_human_handoff`
+- `wa_notes`
+
+These fields let the sheet replace local state in the first version.
+
+## Working Rules
+
+- Keep code simple and skimmable.
+- Prefer explicit column names over inferred positions.
+- Normalize booleans and timestamps as strings that are easy to inspect in Sheets.
+- Avoid hidden state outside the sheet unless there is a clear operational reason.
+- If multiple workers ever exist, use row locks in the sheet before sending messages.
+
+## When To Read References
+
+Read [references/spreadsheet.md](references/spreadsheet.md) when you need:
+
+- the exact current columns in the live sheet;
+- the business meaning of each field;
+- the proposed state columns for WhatsApp automation;
+- implementation notes for polling and idempotency.
