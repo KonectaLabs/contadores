@@ -1,0 +1,452 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<title>Konecta Labs — Reel export</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter+Tight:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<script src="deck-stage.js"></script>
+<script type="application/json" id="speaker-notes">
+[
+  "HOOK · 0–3s · 'Contador — así vas a recibir clientes cada semana.' Voz rápida, muestra el WhatsApp llenándose.",
+  "3–6s · 'Sin redes sociales. Sin perseguir a nadie.' Corta y directa.",
+  "6–10s · 'Te armamos una web que aparece primero en Google cuando buscan contador en tu ciudad.'",
+  "10–13s · 'Más 3 campañas de ads en Facebook e Instagram.'",
+  "13–16s · 'Todo empuja al mismo lugar: tu WhatsApp.'",
+  "16–19s · 'USD 300. Un único pago.'",
+  "19–24s · '30 días de garantía. Si no cerrás clientes, te devolvemos todo. 100% garantizado.'",
+  "24–28s · 'Agendá la reunión abajo. A las 24 horas arrancamos.'"
+]
+</script>
+<style>
+  :root{
+    --ink:#0e0e0d;
+    --ink-2:#3a3a38;
+    --ink-3:#6b6b67;
+    --line:#d9d6cf;
+    --line-2:#ececea;
+    --paper:#f6f3ec;
+    --paper-2:#efece3;
+    --card:#ffffff;
+    --accent: oklch(0.62 0.12 155);
+    --accent-ink: oklch(0.32 0.06 155);
+    --red: oklch(0.55 0.14 25);
+  }
+  html,body{margin:0;padding:0;background:#000;color:var(--ink);font-family:'Inter Tight',system-ui,sans-serif;}
+  section{background:var(--paper);color:var(--ink);}
+  .export-hidden{display:none!important;}
+
+  .stage{
+    position:absolute;inset:0;
+    display:flex;align-items:center;justify-content:center;
+    padding:80px 72px;box-sizing:border-box;
+    background:var(--paper);
+  }
+  .safe{
+    position:absolute;inset:240px 72px 260px;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:48px;text-align:center;
+  }
+
+  /* kicker label at top */
+  .kicker{
+    position:absolute;top:120px;left:50%;transform:translateX(-50%);
+    font-family:'JetBrains Mono',monospace;font-size:32px;letter-spacing:0.22em;
+    text-transform:uppercase;color:var(--ink-3);
+  }
+  .kicker .dot{color:var(--accent);}
+
+  /* massive vertical headlines */
+  .hl{
+    font-family:'Instrument Serif',serif;font-weight:400;
+    font-size:170px;line-height:0.96;letter-spacing:-0.02em;
+    color:var(--ink);margin:0;text-align:center;max-width:940px;
+  }
+  .hl em{font-style:italic;}
+  .hl .acc{color:var(--accent-ink);}
+
+  .hl-xxl{
+    font-family:'Instrument Serif',serif;font-weight:400;
+    font-size:240px;line-height:0.92;letter-spacing:-0.03em;
+    color:var(--ink);margin:0;text-align:center;
+  }
+
+  .sub{
+    font-family:'Inter Tight',sans-serif;font-weight:500;
+    font-size:54px;line-height:1.2;color:var(--ink-2);margin:0;max-width:900px;text-align:center;
+  }
+
+  .dark{background:var(--ink);}
+  .dark .stage{background:var(--ink);}
+  .dark .hl,.dark .hl-xxl{color:var(--paper);}
+  .dark .kicker{color:rgba(246,243,236,0.6);}
+  .dark .acc{color:var(--accent);}
+
+  /* highlight chip under headline */
+  .chip{
+    display:inline-flex;align-items:center;gap:14px;
+    background:var(--accent);color:#fff;border-radius:999px;
+    font-family:'Inter Tight',sans-serif;font-weight:700;font-size:48px;letter-spacing:-0.01em;
+    padding:18px 36px;
+    box-shadow:0 20px 40px -18px rgba(0,0,0,0.4);
+  }
+  .chip.ghost{background:transparent;color:var(--ink);border:3px solid var(--ink);}
+  .chip.neg{background:var(--red);}
+
+  /* CTA bottom cue — always present to feel reel-native */
+  .cta-cue{
+    position:absolute;left:0;right:0;bottom:100px;
+    display:flex;align-items:center;justify-content:center;gap:14px;
+    font-family:'JetBrains Mono',monospace;font-size:24px;letter-spacing:0.22em;
+    text-transform:uppercase;color:var(--ink-3);
+  }
+  .dark .cta-cue{color:rgba(246,243,236,0.55);}
+
+  /* emoji strip */
+  .emoji-xxl{font-size:220px;line-height:1;}
+  .emoji-xl{font-size:160px;line-height:1;}
+
+  /* WhatsApp destination pill (scaled up for vertical) */
+  .wa-dst{
+    display:inline-flex;align-items:baseline;justify-content:center;
+    background:linear-gradient(180deg,#2CE073 0%,#25D366 55%,#1FB857 100%);
+    color:#fff;padding:34px 58px 42px;border-radius:28px;
+    font-family:'Inter Tight',sans-serif;font-weight:800;font-size:108px;letter-spacing:-0.02em;
+    line-height:1;position:relative;
+    box-shadow:0 34px 68px -22px rgba(37,211,102,0.55),
+      inset 0 4px 0 rgba(255,255,255,0.28),
+      inset 0 -5px 0 rgba(0,0,0,0.14),
+      inset 0 0 0 1px rgba(255,255,255,0.08);
+    text-shadow:0 4px 6px rgba(0,0,0,0.18);
+  }
+  .wa-dst .n-big{
+    position:absolute;top:-36px;right:-40px;
+    background:linear-gradient(180deg,#F87171 0%,#DC2626 100%);
+    color:#fff;border-radius:999px;font-size:42px;font-weight:800;padding:14px 26px;min-width:36px;
+    border:6px solid var(--paper);line-height:1;text-align:center;
+    box-shadow:0 14px 28px -8px rgba(220,38,38,0.6);
+  }
+  .dark .wa-dst .n-big{border-color:var(--ink);}
+
+  /* WhatsApp phone (compact portrait) */
+  .wa-phone{
+    width:620px;height:1000px;background:#fff;
+    border:12px solid #0a0a0a;border-radius:70px;
+    box-shadow:0 60px 100px -38px rgba(0,0,0,0.5), 0 0 0 2px #1f1f1f inset;
+    overflow:hidden;position:relative;display:flex;flex-direction:column;flex:none;
+  }
+  .wa-phone .pnotch{position:absolute;top:16px;left:50%;transform:translateX(-50%);
+    width:150px;height:36px;background:#0a0a0a;border-radius:22px;z-index:20;}
+  .wa-phone .pstatus{position:relative;z-index:5;
+    background:#00A884;color:#fff;display:flex;justify-content:space-between;align-items:center;
+    padding:24px 40px 10px;padding-top:26px;
+    font-family:'Inter Tight',sans-serif;font-size:18px;font-weight:700;letter-spacing:-0.01em;}
+  .wa-phone .whead{background:#00A884;color:#fff;padding:18px 28px 14px;display:flex;justify-content:space-between;align-items:center;}
+  .wa-phone .wtitle{font-family:'Inter Tight',sans-serif;font-size:28px;font-weight:700;letter-spacing:-0.01em;}
+  .wa-phone .wfilters{background:#00A884;padding:6px 18px 16px;display:flex;gap:10px;overflow:hidden;}
+  .wa-phone .wchip{background:rgba(255,255,255,0.16);color:#fff;
+    font-family:'Inter Tight',sans-serif;font-size:16px;font-weight:500;
+    padding:7px 16px;border-radius:999px;white-space:nowrap;}
+  .wa-phone .wchip.active{background:#D9FDD3;color:#054D3B;}
+  .wa-phone .wlist{background:#fff;flex:1;overflow:hidden;display:flex;flex-direction:column;}
+  .wchat{display:flex;gap:18px;padding:18px 26px;align-items:center;position:relative;}
+  .wchat::after{content:"";position:absolute;left:100px;right:26px;bottom:0;height:1px;background:#eef0ef;}
+  .wchat:last-child::after{display:none;}
+  .wchat .wav{width:62px;height:62px;border-radius:50%;color:#fff;
+    display:flex;align-items:center;justify-content:center;
+    font-family:'Inter Tight',sans-serif;font-weight:700;font-size:20px;flex:none;
+    letter-spacing:0.01em;box-shadow:0 1px 3px rgba(0,0,0,0.08);}
+  .wchat .wbody{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px;}
+  .wchat .wrow1{display:flex;justify-content:space-between;align-items:baseline;gap:14px;}
+  .wchat .wname{font-family:'Inter Tight',sans-serif;font-size:21px;font-weight:700;color:#111b21;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:-0.005em;}
+  .wchat .wtime{font-family:'Inter Tight',sans-serif;font-size:16px;color:#667781;font-weight:600;flex:none;}
+  .wchat.unread .wtime{color:#00A884;}
+  .wchat .wrow2{display:flex;justify-content:space-between;align-items:center;gap:14px;}
+  .wchat .wprev{font-family:'Inter Tight',sans-serif;font-size:18px;color:#667781;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.25;}
+  .wchat.unread .wprev{color:#3b4a54;}
+  .wchat .wbadge{background:#25D366;color:#fff;border-radius:999px;
+    font-size:15px;padding:3px 11px;font-weight:700;min-width:28px;
+    text-align:center;flex:none;font-family:'Inter Tight',sans-serif;line-height:1.25;}
+  .wa-phone .whome{position:absolute;bottom:10px;left:50%;transform:translateX(-50%);
+    width:160px;height:5px;border-radius:999px;background:#0a0a0a;opacity:0.35;}
+
+  /* SEO result card (vertical, only top hit shown large) */
+  .seo-card{
+    background:#fff;border:6px solid #EF4444;border-radius:30px;padding:54px 60px;
+    box-shadow:0 40px 80px -28px rgba(239,68,68,0.55);
+    max-width:900px;position:relative;display:flex;flex-direction:column;gap:18px;text-align:left;
+  }
+  .seo-card .crumb{font-family:'JetBrains Mono',monospace;font-size:26px;color:var(--ink-3);}
+  .seo-card .ttl{font-family:'Inter Tight',sans-serif;font-weight:600;font-size:56px;line-height:1.12;color:var(--accent-ink);}
+  .seo-card .snip{font-family:'Inter Tight',sans-serif;font-size:30px;line-height:1.4;color:var(--ink-2);}
+  .seo-card .badge{
+    position:absolute;top:-30px;left:48px;background:#EF4444;color:#fff;
+    font-family:'JetBrains Mono',monospace;font-size:24px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;
+    padding:10px 22px;border-radius:999px;box-shadow:0 16px 28px -8px rgba(239,68,68,0.6);
+  }
+
+  /* Google style header for vertical (tiny) */
+  .goog-mini{
+    display:flex;align-items:center;gap:18px;
+    background:#fff;border:1px solid var(--line);border-radius:24px;padding:20px 30px;
+    max-width:900px;
+  }
+  .goog-mini .lg{font-family:'Inter Tight',sans-serif;font-size:40px;font-weight:500;letter-spacing:-0.02em;line-height:1;}
+  .goog-mini .lg span:nth-child(1){color:#4285F4;}
+  .goog-mini .lg span:nth-child(2){color:#DB4437;}
+  .goog-mini .lg span:nth-child(3){color:#F4B400;}
+  .goog-mini .lg span:nth-child(4){color:#4285F4;}
+  .goog-mini .lg span:nth-child(5){color:#0F9D58;}
+  .goog-mini .lg span:nth-child(6){color:#DB4437;}
+  .goog-mini .q{flex:1;font-size:28px;color:var(--ink);font-family:'Inter Tight',sans-serif;}
+
+  /* 3 ads stacked vertically */
+  .ads-col{display:flex;flex-direction:column;gap:36px;align-items:stretch;width:100%;max-width:780px;}
+  .ad-card{
+    background:#fff;border:1px solid var(--line);border-radius:28px;overflow:visible;
+    display:flex;align-items:stretch;position:relative;
+    box-shadow:0 30px 60px -28px rgba(0,0,0,0.28);
+  }
+  .ad-card .art{
+    flex:none;width:260px;background:var(--paper-2);
+    display:flex;align-items:center;justify-content:center;padding:26px;text-align:center;
+    border-top-left-radius:28px;border-bottom-left-radius:28px;
+  }
+  .ad-card .art h5{font-family:'Instrument Serif',serif;font-size:34px;line-height:1.08;margin:0;font-weight:400;color:var(--ink);}
+  .ad-card .info{flex:1;padding:28px 32px;display:flex;flex-direction:column;justify-content:center;gap:10px;}
+  .ad-card .handle{font-family:'Inter Tight',sans-serif;font-size:24px;font-weight:700;color:var(--ink);}
+  .ad-card .handle small{display:block;font-weight:400;color:var(--ink-3);font-size:18px;font-family:'JetBrains Mono',monospace;margin-top:4px;}
+  .ad-card .cta{font-family:'JetBrains Mono',monospace;font-size:20px;letter-spacing:0.14em;text-transform:uppercase;color:var(--accent-ink);}
+  .ad-card .budget{
+    position:absolute;top:-22px;right:-14px;
+    background:var(--accent);color:#fff;border-radius:999px;padding:12px 24px;
+    font-family:'JetBrains Mono',monospace;font-size:22px;font-weight:700;letter-spacing:0.04em;
+    box-shadow:0 14px 28px -8px rgba(0,0,0,0.25);border:3px solid #fff;
+  }
+  .ad-card.dark-art .art{background:var(--ink);}
+  .ad-card.dark-art .art h5{color:var(--paper);}
+  .ad-card.accent-art .art{background:var(--accent);}
+  .ad-card.accent-art .art h5{color:#fff;}
+
+  /* guarantee seal */
+  .seal{
+    width:520px;height:520px;border-radius:50%;background:var(--accent);color:#fff;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;
+    box-shadow:0 60px 120px -40px rgba(0,0,0,0.45),inset 0 0 0 12px rgba(255,255,255,0.25);
+    transform:rotate(-6deg);
+  }
+  .seal .num{font-family:'Instrument Serif',serif;font-size:230px;line-height:1;font-weight:400;}
+  .seal .pct{font-family:'Instrument Serif',serif;font-size:76px;line-height:1;font-weight:400;margin-top:-20px;}
+  .seal .lbl{font-family:'JetBrains Mono',monospace;font-size:28px;letter-spacing:0.24em;text-transform:uppercase;margin-top:18px;}
+
+  /* flood lines for hero */
+  .flood{display:flex;flex-direction:column;align-items:center;gap:30px;}
+  .flood .arr{font-family:'Instrument Serif',serif;font-size:120px;line-height:1;color:var(--ink-3);}
+
+  /* big arrow down */
+  .big-arrow{display:flex;flex-direction:column;align-items:center;gap:12px;}
+  .big-arrow .line{width:4px;height:180px;background:rgba(246,243,236,0.55);}
+  .big-arrow .tip{width:0;height:0;border-left:28px solid transparent;border-right:28px solid transparent;border-top:36px solid rgba(246,243,236,0.9);}
+</style>
+</head>
+<body>
+
+<deck-stage width="1080" height="1920" noscale>
+
+  <!-- 1. HOOK — WhatsApp lleno -->
+  <section data-label="Hook · WhatsApp lleno">
+    <div class="stage">
+      <div class="kicker"><span class="dot">//</span> CONTADOR</div>
+      <div class="safe" style="gap:40px;">
+        <h1 class="hl" style="font-size:130px;">
+          Así vas a recibir<br/><span class="acc"><em>clientes</em></span><br/>cada semana.
+        </h1>
+        <div class="wa-phone" style="transform:scale(0.78);transform-origin:top center;margin-top:-40px;">
+          <div class="pnotch"></div>
+          <div class="pstatus">
+            <span>9:41</span><span>● ● ●</span>
+          </div>
+          <div class="whead"><div class="wtitle">WhatsApp</div><div>⚙</div></div>
+          <div class="wfilters">
+            <span class="wchip active">Todos</span>
+            <span class="wchip">No leídos</span>
+            <span class="wchip">Favoritos</span>
+          </div>
+          <div class="wlist">
+            <div class="wchat unread">
+              <div class="wav" style="background:linear-gradient(135deg,#6A7FDB,#4A5FBB);">MG</div>
+              <div class="wbody">
+                <div class="wrow1"><div class="wname">Marcelo — Grupo Martínez</div><div class="wtime">9:41</div></div>
+                <div class="wrow2"><div class="wprev">Buscamos contador para pyme…</div><div class="wbadge">2</div></div>
+              </div>
+            </div>
+            <div class="wchat unread">
+              <div class="wav" style="background:linear-gradient(135deg,#E07A5F,#C05A3F);">LR</div>
+              <div class="wbody">
+                <div class="wrow1"><div class="wname">Lucía — Distribuidora Norte</div><div class="wtime">8:55</div></div>
+                <div class="wrow2"><div class="wprev">¿Atienden régimen general?</div><div class="wbadge">1</div></div>
+              </div>
+            </div>
+            <div class="wchat unread">
+              <div class="wav" style="background:linear-gradient(135deg,#3D5A80,#1D3A60);">IV</div>
+              <div class="wbody">
+                <div class="wrow1"><div class="wname">Ignacio — Cafetería Central</div><div class="wtime">8:12</div></div>
+                <div class="wrow2"><div class="wprev">Queremos cambiar de estudio</div><div class="wbadge">1</div></div>
+              </div>
+            </div>
+            <div class="wchat unread">
+              <div class="wav" style="background:linear-gradient(135deg,#9B5DE5,#7B3DC5);">RC</div>
+              <div class="wbody">
+                <div class="wrow1"><div class="wname">Romina — Constructora Sur</div><div class="wtime">Ayer</div></div>
+                <div class="wrow2"><div class="wprev">Cotizar 12 empleados</div><div class="wbadge">3</div></div>
+              </div>
+            </div>
+          </div>
+          <div class="whome"></div>
+        </div>
+      </div>
+      <div class="cta-cue">↓ Mirá hasta el final</div>
+    </div>
+  </section>
+
+  <!-- 2. Sin redes, sin perseguir -->
+  <section data-label="Sin redes, sin perseguir">
+    <div class="stage">
+      <div class="kicker"><span class="dot">//</span> SIN TRUCOS</div>
+      <div class="safe">
+        <div class="emoji-xxl">🙅‍♂️</div>
+        <h1 class="hl">
+          Sin redes<br/>sociales.<br/><span class="acc">Sin perseguir<br/>a nadie.</span>
+        </h1>
+      </div>
+      <div class="cta-cue">↓ Seguí</div>
+    </div>
+  </section>
+
+  <!-- 3. Web + SEO -->
+  <section data-label="Web + SEO">
+    <div class="stage">
+      <div class="kicker"><span class="dot">01</span> · WEB + SEO</div>
+      <div class="safe" style="gap:48px;">
+        <h1 class="hl" style="font-size:130px;">Aparecés <em>#1</em><br/>en Google.</h1>
+        <div class="goog-mini">
+          <div class="lg"><span>G</span><span>o</span><span>o</span><span>g</span><span>l</span><span>e</span></div>
+          <div class="q">contador para pyme</div>
+        </div>
+        <div class="seo-card">
+          <div class="badge">Tu estudio</div>
+          <div class="crumb">estudio-perez.com › contador-pymes</div>
+          <div class="ttl">Estudio Contable Pérez — Contador para Pymes</div>
+          <div class="snip">Contabilidad mensual, impuestos y nómina. WhatsApp el mismo día.</div>
+        </div>
+      </div>
+      <div class="cta-cue">↓ + Ads</div>
+    </div>
+  </section>
+
+  <!-- 4. Ads -->
+  <section data-label="+ 3 Ads">
+    <div class="stage">
+      <div class="kicker"><span class="dot">02</span> · ADS</div>
+      <div class="safe" style="gap:44px;">
+        <h1 class="hl" style="font-size:130px;">+ <em>3 campañas</em><br/>en Meta.</h1>
+        <div class="ads-col">
+          <div class="ad-card">
+            <div class="budget">USD 10</div>
+            <div class="art"><h5>5 errores que te hacen pagar<br/>impuestos de más</h5></div>
+            <div class="info">
+              <div class="handle">estudio.perez<small>Patrocinado</small></div>
+              <div class="cta">WhatsApp →</div>
+            </div>
+          </div>
+          <div class="ad-card dark-art">
+            <div class="budget">USD 10</div>
+            <div class="art"><h5>¿Cambiar de régimen tributario?</h5></div>
+            <div class="info">
+              <div class="handle">estudio.perez<small>Patrocinado</small></div>
+              <div class="cta">WhatsApp →</div>
+            </div>
+          </div>
+          <div class="ad-card accent-art">
+            <div class="budget">USD 10</div>
+            <div class="art"><h5>¿Cuánto cuesta<br/>no tener contador?</h5></div>
+            <div class="info">
+              <div class="handle">estudio.perez<small>Patrocinado</small></div>
+              <div class="cta">WhatsApp →</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="cta-cue">↓ Al WhatsApp</div>
+    </div>
+  </section>
+
+  <!-- 5. Todo al WhatsApp -->
+  <section data-label="Todo al WhatsApp">
+    <div class="stage">
+      <div class="kicker"><span class="dot">//</span> UN DESTINO</div>
+      <div class="safe" style="gap:50px;">
+        <h1 class="hl" style="font-size:130px;">
+          Todo empuja<br/>a <span class="acc">tu</span>
+        </h1>
+        <div class="flood">
+          <span class="arr">↓</span>
+          <div class="wa-dst">WhatsApp <span class="n-big">+5</span></div>
+        </div>
+      </div>
+      <div class="cta-cue">↓ ¿Cuánto?</div>
+    </div>
+  </section>
+
+  <!-- 6. USD 300 -->
+  <section data-label="USD 300">
+    <div class="stage">
+      <div class="kicker"><span class="dot">$</span> INVERSIÓN</div>
+      <div class="safe" style="gap:40px;">
+        <div style="font-size:180px;line-height:1;letter-spacing:0.08em;">💸</div>
+        <h1 class="hl-xxl" style="font-size:320px;">USD<br/>300</h1>
+        <p class="sub"><em>Un único pago.</em> Sin letra chica.</p>
+      </div>
+      <div class="cta-cue">↓ Y si no funciona?</div>
+    </div>
+  </section>
+
+  <!-- 7. Garantía 100% / 30 días -->
+  <section data-label="Garantía 100%">
+    <div class="stage">
+      <div class="kicker"><span class="dot">//</span> SIN RIESGO</div>
+      <div class="safe" style="gap:40px;">
+        <div class="seal">
+          <div class="num">100</div>
+          <div class="pct">%</div>
+          <div class="lbl">Garantizado</div>
+        </div>
+        <h1 class="hl" style="font-size:112px;">
+          <em>30 días.</em><br/>Si no llegan<br/>clientes,<br/><span class="acc">te devolvemos<br/>todo.</span>
+        </h1>
+      </div>
+      <div class="cta-cue">↓ Arrancá</div>
+    </div>
+  </section>
+
+  <!-- 8. CTA Cierre dark -->
+  <section data-label="CTA · Agendá" class="dark">
+    <div class="stage">
+      <div class="kicker"><span class="dot">//</span> PRÓXIMO PASO</div>
+      <div class="safe" style="gap:50px;">
+        <div class="emoji-xl">📅</div>
+        <h1 class="hl-xxl" style="font-size:180px;">
+          Agendá<br/>tu reunión
+        </h1>
+        <p class="sub" style="color:rgba(246,243,236,0.7);font-size:48px;">A las <em style="color:var(--accent);">24h</em> arrancamos con tu estudio.</p>
+        <div class="big-arrow"><div class="line"></div><div class="tip"></div></div>
+      </div>
+      <div class="cta-cue" style="bottom:70px;">Link en bio / abajo</div>
+    </div>
+  </section>
+
+</deck-stage>
+
+</body>
+</html>

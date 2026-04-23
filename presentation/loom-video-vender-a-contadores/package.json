@@ -4,7 +4,11 @@
   "type": "module",
   "scripts": {
     "sync-export": "node sync-deck-export.mjs",
-    "pptx": "node sync-deck-export.mjs && node export-pptx.mjs"
+    "pptx": "node sync-deck-export.mjs && node export-pptx.mjs",
+    "sync-export:60s": "node sync-deck-export-60s.mjs",
+    "pptx:60s": "node sync-deck-export-60s.mjs && node export-pptx-60s.mjs",
+    "sync-export:reel": "node sync-deck-export-reel.mjs",
+    "pptx:reel": "node sync-deck-export-reel.mjs && node export-pptx-reel.mjs"
   },
   "dependencies": {
     "pptxgenjs": "^3.12.0",
