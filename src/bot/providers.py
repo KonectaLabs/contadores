@@ -32,8 +32,8 @@ logger = logging.getLogger(__name__)
 
 WA_MAX_LENGTH = 4096
 DEFAULT_EMAIL_SUBJECT = "Inquiry"
-AGENTMAIL_CRM_INBOX_CLIENT_ID = "konecta-auditor-crm"
-AGENTMAIL_WEBHOOK_CLIENT_ID = "konecta-auditor-agentmail-webhook"
+AGENTMAIL_ALERT_INBOX_CLIENT_ID = "contadores-alerts"
+AGENTMAIL_WEBHOOK_CLIENT_ID = "contadores-agentmail-webhook"
 AGENTMAIL_SHARED_INBOX_IDS_ENV = "AGENTMAIL_SHARED_INBOX_IDS"
 DEFAULT_AGENTMAIL_SHARED_INBOX_IDS = (
     "maximorodriguez@agentmail.to",
@@ -409,11 +409,15 @@ class AgentMailProvider:
         self.domain = (os.getenv("AGENTMAIL_DOMAIN", "") or "").strip() or None
         self.webhook_url = self._resolve_webhook_url()
         self.webhook_secret = (os.getenv("AGENTMAIL_WEBHOOK_SECRET", "") or "").strip() or None
-        self._crm_inbox_id_env = (os.getenv("AGENTMAIL_CRM_INBOX_ID", "") or "").strip() or None
+        self._alert_inbox_id_env = (
+            (os.getenv("AGENTMAIL_ALERT_INBOX_ID", "") or "").strip()
+            or (os.getenv("AGENTMAIL_CRM_INBOX_ID", "") or "").strip()
+            or None
+        )
         self._shared_inbox_refs = self._resolve_shared_inbox_refs()
         self._http_client: httpx.AsyncClient | None = None
         self._client: AsyncAgentMail | None = None
-        self._crm_inbox: EmailInboxState | None = None
+        self._alert_inbox: EmailInboxState | None = None
         self._shared_inboxes: list[EmailInboxState] = []
         self._shared_inbox_assignments: dict[str, EmailInboxState] = {}
         self._polled_message_ids: set[str] = set()
@@ -460,26 +464,30 @@ class AgentMailProvider:
             return
         await self._http_client.aclose()
 
-    async def ensure_crm_inbox(self) -> EmailInboxState:
-        """Return the shared CRM inbox from configured existing inboxes."""
-        if self._crm_inbox is not None:
-            return self._crm_inbox
+    async def ensure_alert_inbox(self) -> EmailInboxState:
+        """Return the shared inbox used for Contadores human-review alerts."""
+        if self._alert_inbox is not None:
+            return self._alert_inbox
 
-        if self._crm_inbox_id_env:
-            self._crm_inbox = await self._resolve_existing_inbox(self._crm_inbox_id_env)
-            await self.ensure_webhook({self._crm_inbox.inbox_id})
-            return self._crm_inbox
+        if self._alert_inbox_id_env:
+            self._alert_inbox = await self._resolve_existing_inbox(self._alert_inbox_id_env)
+            await self.ensure_webhook({self._alert_inbox.inbox_id})
+            return self._alert_inbox
 
-        existing = await self._find_inbox_by_client_id(AGENTMAIL_CRM_INBOX_CLIENT_ID)
+        existing = await self._find_inbox_by_client_id(AGENTMAIL_ALERT_INBOX_CLIENT_ID)
         if existing is not None:
-            self._crm_inbox = existing
-            await self.ensure_webhook({self._crm_inbox.inbox_id})
+            self._alert_inbox = existing
+            await self.ensure_webhook({self._alert_inbox.inbox_id})
             return existing
 
         shared_inboxes = await self._load_shared_inboxes()
-        self._crm_inbox = shared_inboxes[0]
-        await self.ensure_webhook({self._crm_inbox.inbox_id})
-        return self._crm_inbox
+        self._alert_inbox = shared_inboxes[0]
+        await self.ensure_webhook({self._alert_inbox.inbox_id})
+        return self._alert_inbox
+
+    async def ensure_crm_inbox(self) -> EmailInboxState:
+        """Backward-compatible alias for older Contadores alert code."""
+        return await self.ensure_alert_inbox()
 
     async def ensure_contact_inbox(
         self,
@@ -691,14 +699,18 @@ class AgentMailProvider:
             subject=message.get("subject"),
         )
 
-    def is_crm_inbox(self, inbox_id: str | None) -> bool:
-        """Return True when the inbox id belongs to the shared CRM inbox."""
+    def is_alert_inbox(self, inbox_id: str | None) -> bool:
+        """Return True when the inbox id belongs to the shared alert inbox."""
         clean_inbox_id = (inbox_id or "").strip()
         if not clean_inbox_id:
             return False
-        if self._crm_inbox is None:
+        if self._alert_inbox is None:
             return False
-        return self._crm_inbox.inbox_id == clean_inbox_id
+        return self._alert_inbox.inbox_id == clean_inbox_id
+
+    def is_crm_inbox(self, inbox_id: str | None) -> bool:
+        """Backward-compatible alias for older alert-inbox checks."""
+        return self.is_alert_inbox(inbox_id)
 
     def _resolve_environment(self) -> AgentMailEnvironment:
         """Resolve AgentMail environment from environment variables."""
@@ -732,9 +744,9 @@ class AgentMailProvider:
         """Build the sender name shown for one dedicated contact inbox."""
         clean_address = normalize_email_address(inbox_address)
         if "@" not in clean_address:
-            return "Konecta Auditor"
+            return "Contadores"
         local_part, _, _domain = clean_address.partition("@")
-        return local_part.strip() or "Konecta Auditor"
+        return local_part.strip() or "Contadores"
 
     def _build_inbound_event_from_values(
         self,

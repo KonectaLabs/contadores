@@ -1,3 +1,3 @@
-"""Konecta-Auditor - Conversational interface for konecta-auditor orders."""
+"""Contadores backoffice and WhatsApp automation runtime."""
 
 __version__ = "0.1.0"

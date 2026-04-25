@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
@@ -19,29 +19,16 @@ from backend.contadores_strategies import (
     list_contadores_strategies,
 )
 from backend.database import (
-    Contact,
-    ContactStatus,
     ContadoresConfig,
     ContadoresEvent,
     ContadoresLead,
     ContadoresLeadStage,
     ContadoresMessage,
     ContadoresStrategyAssignment,
-    Message,
     MessageDeliveryStatus,
-    Task,
     engine,
-    normalize_contact_value,
     normalize_email,
     normalize_phone,
-)
-from backend.endpoints.messages import (
-    FIRST_MESSAGE_TASK_TYPE,
-    effective_normalized_contact_value,
-    filter_contacts_for_conversation_automation,
-    parse_outbound_delivery_status,
-    register_contact_inbound_core,
-    resolve_whatsapp_contact_by_replied_message,
 )
 
 contadores_router = APIRouter(prefix="/api/contadores", tags=["contadores"])
@@ -714,37 +701,6 @@ def list_contadores_matches_by_phone(phone: str) -> tuple[list[ContadoresLead], 
     normalized_phone = normalize_phone(phone)
     matches = ContadoresLead.list_by_normalized_phone(normalized_phone, include_archived=False)
     return matches, len(matches) > 1
-
-
-def list_auditor_matches_by_phone(phone: str) -> tuple[list[Contact], bool]:
-    """Resolve active auditor WhatsApp contacts from one phone number."""
-    normalized_value = normalize_contact_value("whatsapp", phone)
-    if not normalized_value:
-        return [], False
-    matches = [
-        item
-        for item in filter_contacts_for_conversation_automation(
-            Contact.list_by_normalized_value(
-                normalized_value,
-                status=ContactStatus.ACTIVE,
-            )
-        )
-        if item.is_whatsapp and effective_normalized_contact_value(item) == normalized_value
-    ]
-    company_ids = {item.company_id for item in matches}
-    ambiguous = len(company_ids) > 1 or len(matches) > 1
-    return matches, ambiguous
-
-
-def list_auditor_matches_by_replied_message(in_reply_to: str | None) -> tuple[list[Contact], bool]:
-    """Resolve auditor contact candidates from replied outbound id."""
-    try:
-        resolved = resolve_whatsapp_contact_by_replied_message(in_reply_to)
-    except HTTPException as exc:
-        if exc.status_code == 409:
-            return [], True
-        return [], False
-    return ([resolved] if resolved else []), False
 
 
 class ContadoresMetrics(BaseModel):
@@ -1538,7 +1494,7 @@ async def set_contadores_message_delivery_by_id(
     """Update one Contadores outbound message status by local message id."""
     updated = ContadoresMessage.update_delivery_status(
         message_id=message_id,
-        delivery_status=parse_outbound_delivery_status(command.status),
+        delivery_status=command.status,
         external_id=command.external_id,
     )
     if updated is None:
@@ -1561,7 +1517,7 @@ async def set_contadores_message_delivery_by_external_id(
         raise HTTPException(status_code=404, detail="Outbound Contadores message not found for external_id")
     updated = ContadoresMessage.update_delivery_status(
         message_id=row.id,
-        delivery_status=parse_outbound_delivery_status(command.status),
+        delivery_status=command.status,
         external_id=command.external_id,
     )
     if updated is None:
@@ -1572,12 +1528,10 @@ async def set_contadores_message_delivery_by_external_id(
 @contadores_router.post("/whatsapp/inbound", response_model=ContadoresWhatsAppInboundResponse)
 async def register_contadores_whatsapp_inbound(
     command: ContadoresWhatsAppInboundCommand,
-    background_tasks: BackgroundTasks,
 ) -> ContadoresWhatsAppInboundResponse:
-    """Route one raw WhatsApp inbound event to Contadores or Auditor safely."""
+    """Route one raw WhatsApp inbound event to a Contadores lead safely."""
     contadores_reply_matches, contadores_reply_ambiguous = list_contadores_matches_by_replied_message(command.in_reply_to)
-    auditor_reply_matches, auditor_reply_ambiguous = list_auditor_matches_by_replied_message(command.in_reply_to)
-    if contadores_reply_ambiguous or auditor_reply_ambiguous:
+    if contadores_reply_ambiguous:
         return ContadoresWhatsAppInboundResponse(
             status="ignored",
             route="ambiguous",
@@ -1585,68 +1539,16 @@ async def register_contadores_whatsapp_inbound(
         )
 
     contadores_matches = contadores_reply_matches
-    auditor_matches = auditor_reply_matches
 
-    if not contadores_matches and not auditor_matches:
+    if not contadores_matches:
         contadores_phone_matches, contadores_phone_ambiguous = list_contadores_matches_by_phone(command.phone)
-        auditor_phone_matches, auditor_phone_ambiguous = list_auditor_matches_by_phone(command.phone)
-        if contadores_phone_ambiguous or auditor_phone_ambiguous:
-            if len(contadores_phone_matches) == 1 and len(auditor_phone_matches) >= 1:
-                lead = contadores_phone_matches[0]
-                if derive_effective_lead_stage(lead) != ContadoresLeadStage.CLOSED:
-                    ContadoresLead.update_flow_state(
-                        lead.id,
-                        stage=ContadoresLeadStage.NEEDS_HUMAN,
-                        last_classification_label="needs_human",
-                        last_classification_reason="Ambiguous WhatsApp routing with auditor flow.",
-                        classification_completed_at=now_utc(),
-                    )
-                ContadoresEvent.add(
-                    lead_id=lead.id,
-                    event_type="ambiguous_whatsapp_routing",
-                    actor="bot",
-                    summary="Inbound WhatsApp could not be auto-routed because the same number exists in Contadores and Auditor.",
-                    payload={
-                        "phone": command.phone,
-                        "external_id": command.external_id,
-                        "in_reply_to": command.in_reply_to,
-                    },
-                )
+        if contadores_phone_ambiguous:
             return ContadoresWhatsAppInboundResponse(
                 status="ignored",
                 route="ambiguous",
                 reason="ambiguous_phone_match",
             )
         contadores_matches = contadores_phone_matches
-        auditor_matches = auditor_phone_matches
-
-    if contadores_matches and auditor_matches:
-        lead = contadores_matches[0]
-        if derive_effective_lead_stage(lead) != ContadoresLeadStage.CLOSED:
-            ContadoresLead.update_flow_state(
-                lead.id,
-                stage=ContadoresLeadStage.NEEDS_HUMAN,
-                last_classification_label="needs_human",
-                last_classification_reason="Ambiguous WhatsApp routing with auditor flow.",
-                classification_completed_at=now_utc(),
-            )
-        ContadoresEvent.add(
-            lead_id=lead.id,
-            event_type="ambiguous_whatsapp_routing",
-            actor="bot",
-            summary="Inbound WhatsApp matched both Contadores and Auditor.",
-            payload={
-                "phone": command.phone,
-                "external_id": command.external_id,
-                "in_reply_to": command.in_reply_to,
-            },
-        )
-        return ContadoresWhatsAppInboundResponse(
-            status="ignored",
-            route="ambiguous",
-            lead_id=lead.id,
-            reason="matched_contadores_and_auditor",
-        )
 
     if contadores_matches:
         lead = contadores_matches[0]
@@ -1692,30 +1594,6 @@ async def register_contadores_whatsapp_inbound(
             status="processed",
             route="contadores",
             lead_id=refreshed_lead.id,
-        )
-
-    if auditor_matches:
-        contact = auditor_matches[0]
-        task = Task.run_async(
-            background_tasks,
-            register_contact_inbound_core,
-            resource_id=contact.id,
-            timeout_seconds=90,
-            contact_id=contact.id,
-            message=command.text.strip(),
-            external_id=command.external_id,
-            channel="whatsapp",
-            inbox_id=None,
-            thread_id=None,
-            in_reply_to=command.in_reply_to,
-            references=None,
-        )
-        return ContadoresWhatsAppInboundResponse(
-            status="processed",
-            route="auditor",
-            company_id=contact.company_id,
-            contact_id=contact.id,
-            task_id=task.id,
         )
 
     return ContadoresWhatsAppInboundResponse(

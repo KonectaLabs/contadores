@@ -11,7 +11,7 @@ This sheet is the operational source of truth for lead intake.
 
 The runtime rule is now explicit:
 
-- `CONTADORES_SOURCE_MODE=testing` means do not poll the real sheet automatically.
+- `CONTADORES_SOURCE_MODE=testing` means do not poll the real sheet automatically; the bot imports only the synthetic lead from `CONTADORES_TEST_PHONE`.
 - `CONTADORES_SOURCE_MODE=live` means the sheet is allowed to feed the workflow.
 
 ## What It Is For
@@ -116,7 +116,7 @@ Treat the spreadsheet as the source of truth for:
 
 Operational rule:
 
-- `testing` mode must work with `CONTADORES_TEST_PHONE` only.
+- `testing` mode must work with `CONTADORES_TEST_PHONE` only and must not fetch the live sheet.
 - `live` mode is the only mode allowed to poll this sheet on a timer.
 
 For the MVP:

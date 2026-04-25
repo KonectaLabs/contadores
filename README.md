@@ -19,6 +19,7 @@ Se decide con entorno:
 - `CONTADORES_SOURCE_MODE=live`
 
 `docker-compose.yml` toma ese valor desde `.env`. Ese es el switch canónico.
+El endpoint `/api/runtime` muestra el modo activo sin exponer secretos.
 
 ## Cómo usar los modos
 
@@ -33,6 +34,7 @@ Variables mínimas:
 - `CONTADORES_LOOM_URL=...`
 
 En este modo no se debe consumir la sheet real de forma automática.
+El bot crea o actualiza un lead sintético con `CONTADORES_TEST_PHONE`.
 
 ### `live`
 
@@ -72,6 +74,12 @@ Verificar runtime:
 curl http://127.0.0.1:8000/api/runtime
 ```
 
+Verificar API de Contadores:
+
+```bash
+curl http://127.0.0.1:8000/api/contadores/config
+```
+
 ## Docker Compose
 
 ```bash
@@ -79,6 +87,12 @@ docker compose up --build
 ```
 
 Compose lee `.env`. Si querés cambiar de `testing` a `live`, cambiás `.env` y reiniciás el servicio.
+
+Servicios:
+
+- `backend`: FastAPI con login, API de Contadores y frontend.
+- `bot`: webhooks de WhatsApp/Calendly y worker de automatización.
+- `traefik`: entrada HTTP para mantener el despliegue detrás de Traefik.
 
 ## Rollout recomendado
 

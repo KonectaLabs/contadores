@@ -1,8 +1,9 @@
-"""FastAPI application for Konecta-Auditor core lab backend."""
+"""FastAPI application for the Contadores backoffice."""
+
+from __future__ import annotations
 
 import logging
 import os
-import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -18,15 +19,8 @@ from backend.auth import (
     has_valid_internal_api_token,
 )
 from backend.database import init_db
-from backend.endpoints import (
-    auth_router,
-    companies_router,
-    contadores_router,
-    crm_router,
-    messages_router,
-    tasks_router,
-)
-from backend.endpoints.tasks import mark_running_tasks_as_failed
+from backend.endpoints import auth_router, contadores_router
+from backend.runtime_settings import get_runtime_settings
 
 
 class ErrorOnlyAccessFilter(logging.Filter):
@@ -60,69 +54,18 @@ def configure_backend_logging() -> None:
 configure_backend_logging()
 logger = logging.getLogger(__name__)
 
-FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
+FRONTEND_DIR = Path(__file__).resolve().parents[1] / "frontend"
 PUBLIC_PATHS_WITHOUT_SESSION = {
     "/health",
     "/login",
     "/api/auth/login",
     "/api/auth/logout",
 }
-SHARED_COMPANY_CONTACT_MESSAGES_PATH_RE = re.compile(
-    r"^/api/companies/[^/]+/contacts/[^/]+/messages(?:/(?:inbound|[^/]+(?:/delivery)?))?$"
-)
-SHARED_COMPANY_REPORT_SCHEDULE_PATH_RE = re.compile(
-    r"^/api/companies/[^/]+/report-schedule$"
-)
-SHARED_COMPANY_SCAN_PATHS = {
-    "/api/companies",
-    "/api/companies/scan",
-    "/api/companies/discover-auditor-candidates",
-}
-INTERNAL_ONLY_COMPANY_AUDIT_DELIVERY_SUFFIXES = (
-    "/audit-delivery/generate-full-audit",
-    "/audit-delivery/mark-delivered",
-    "/audit-delivery/mark-blocked",
-)
-SHARED_COMPANY_AUDIT_DELIVERY_SUFFIXES = (
-    "/audit-delivery/ceo-email",
-    "/audit-delivery/email-content",
-    "/audit-delivery/pdf",
-)
 
 
-def is_internal_bot_path(path: str) -> bool:
-    """Return True when one path belongs to internal bot/backend transport flows."""
-    if path in {
-        "/api/messages/pending-delivery",
-        "/api/contacts/tracked-values",
-        "/api/contacts/resolve",
-        "/api/contacts/resolve-by-value",
-        "/api/messages/delivery/by-external-id",
-        "/api/companies/audit-delivery/poll-state",
-        "/api/crm/tracked-senders",
-        "/api/crm/outbound/pending",
-        "/api/crm/messages/inbound",
-        "/api/crm/report-delivery/sent",
-    }:
-        return True
-
-    if path.startswith("/api/crm/messages/") and path.endswith("/mark-sent"):
-        return True
-
-    return path.startswith("/api/companies/") and path.endswith(INTERNAL_ONLY_COMPANY_AUDIT_DELIVERY_SUFFIXES)
-
-
-def is_shared_session_or_internal_path(path: str) -> bool:
-    """Return True when one path is used by both operators and bot runtime."""
-    return (
-        path.startswith("/api/contadores/")
-        or path in SHARED_COMPANY_SCAN_PATHS
-        or SHARED_COMPANY_CONTACT_MESSAGES_PATH_RE.match(path) is not None
-        or SHARED_COMPANY_REPORT_SCHEDULE_PATH_RE.match(path) is not None
-        or (
-            path.startswith("/api/companies/") and path.endswith(SHARED_COMPANY_AUDIT_DELIVERY_SUFFIXES)
-        )
-    )
+def is_contadores_api_path(path: str) -> bool:
+    """Return True when a path belongs to the Contadores API."""
+    return path.startswith("/api/contadores/")
 
 
 def build_internal_auth_error() -> JSONResponse:
@@ -132,55 +75,42 @@ def build_internal_auth_error() -> JSONResponse:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Lifespan context manager for startup and shutdown events."""
+    """Initialize auth and database state."""
     auth_manager.reload_from_env()
-    logger.info("🔐 Auth %s.", "enabled" if auth_manager.enabled else "disabled")
+    logger.info("Auth %s.", "enabled" if auth_manager.enabled else "disabled")
+    settings = get_runtime_settings()
+    logger.info(
+        "Runtime mode: %s (ready=%s).",
+        settings.source_mode,
+        not settings.readiness_issues(),
+    )
     if auth_manager.enabled and not (os.getenv("INTERNAL_API_TOKEN") or "").strip():
-        logger.warning("⚠️ INTERNAL_API_TOKEN is not configured; bot/internal routes will reject requests.")
-    logger.info("🚀 Backend online.")
+        logger.warning("INTERNAL_API_TOKEN is not configured; bot routes will reject internal requests.")
+    logger.info("Backend online.")
     init_db()
-    mark_running_tasks_as_failed()
     yield
-    logger.info("🛑 Backend stopped.")
+    logger.info("Backend stopped.")
 
-
-API_TAGS = [
-    {
-        "name": "auth",
-        "description": "Primitive user/password login endpoints backed by TOML credentials and HttpOnly cookie sessions.",
-    },
-    {
-        "name": "companies",
-        "description": "Company flow: discover contacts, generate drafts, process inbound, produce structured reports, and render HTML artifacts.",
-    },
-    {
-        "name": "messages",
-        "description": "Conversation transcript and inbound message processing endpoints.",
-    },
-    {
-        "name": "crm",
-        "description": "CEO email inbox threads, replies, and bot-facing CRM delivery endpoints.",
-    },
-    {
-        "name": "contadores",
-        "description": "Spreadsheet leads, WhatsApp automation state, quick actions, and observability for the Contadores flow.",
-    },
-    {
-        "name": "tasks",
-        "description": "Generic background task polling endpoints.",
-    },
-    {
-        "name": "system",
-        "description": "System endpoints and frontend serving.",
-    },
-]
 
 app = FastAPI(
-    title="Konecta-Auditor",
-    description="Agnostic conversation-auditing backend powered by DSPy stages",
-    version="0.2.0",
+    title="Contadores",
+    description="Contadores backoffice, sheet intake, WhatsApp automation, and operator tools.",
+    version="0.3.0",
     lifespan=lifespan,
-    openapi_tags=API_TAGS,
+    openapi_tags=[
+        {
+            "name": "auth",
+            "description": "User/password login backed by TOML credentials and HttpOnly cookie sessions.",
+        },
+        {
+            "name": "contadores",
+            "description": "Spreadsheet leads, WhatsApp automation, quick actions, and operator observability.",
+        },
+        {
+            "name": "system",
+            "description": "System endpoints and frontend serving.",
+        },
+    ],
 )
 
 STATIC_DIR = FRONTEND_DIR / "static"
@@ -188,21 +118,18 @@ if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 app.include_router(auth_router)
-app.include_router(companies_router)
 app.include_router(contadores_router)
-app.include_router(crm_router)
-app.include_router(messages_router)
-app.include_router(tasks_router)
 
 
 @app.middleware("http")
 async def enforce_primitive_auth(request: Request, call_next):
-    """Block API/frontend access unless a valid cookie session exists."""
+    """Block API/frontend access unless a valid cookie session or internal token exists."""
     if not auth_manager.enabled:
         return await call_next(request)
 
     path = request.url.path
     internal_token_valid = has_valid_internal_api_token(request.headers.get(INTERNAL_API_TOKEN_HEADER))
+
     if path == "/login":
         session_user = auth_manager.resolve_session(request.cookies.get(SESSION_COOKIE_NAME))
         if session_user:
@@ -212,13 +139,7 @@ async def enforce_primitive_auth(request: Request, call_next):
     if path in PUBLIC_PATHS_WITHOUT_SESSION:
         return await call_next(request)
 
-    if is_internal_bot_path(path):
-        if not internal_token_valid:
-            return build_internal_auth_error()
-        request.state.authenticated_user = "internal-bot"
-        return await call_next(request)
-
-    if is_shared_session_or_internal_path(path) and internal_token_valid:
+    if is_contadores_api_path(path) and internal_token_valid:
         request.state.authenticated_user = "internal-bot"
         return await call_next(request)
 
@@ -233,9 +154,21 @@ async def enforce_primitive_auth(request: Request, call_next):
 
 
 @app.get("/health", tags=["system"])
-async def health():
+async def health() -> dict[str, object]:
     """Health check endpoint."""
-    return {"status": "ok"}
+    settings = get_runtime_settings()
+    return {
+        "status": "ok",
+        "enabled": settings.enabled,
+        "source_mode": settings.source_mode,
+        "ready": not settings.readiness_issues(),
+    }
+
+
+@app.get("/api/runtime", tags=["system"])
+async def runtime() -> dict[str, object]:
+    """Return non-secret runtime settings."""
+    return get_runtime_settings().public_dict()
 
 
 @app.get("/login", tags=["system"])
@@ -252,4 +185,4 @@ async def serve_frontend():
     index_file = FRONTEND_DIR / "index.html"
     if index_file.exists():
         return FileResponse(index_file, media_type="text/html")
-    return {"service": "konecta-auditor-core", "status": "ok"}
+    return {"service": "contadores", "status": "ok"}

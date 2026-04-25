@@ -2025,7 +2025,7 @@ class Company(SQLModel, table=True):
 
     @classmethod
     def get_report_snapshot(cls, company_id: str):
-        """Return parsed CompanyReport for one company, if available."""
+        """Return the legacy report snapshot JSON for one company, if available."""
         with Session(engine) as session:
             item = session.get(cls, company_id)
             if not item or not item.report_snapshot_json:
@@ -2033,16 +2033,14 @@ class Company(SQLModel, table=True):
             raw_snapshot = item.report_snapshot_json
 
         try:
-            from backend.ai.stage3_company_to_report import CompanyReport
-
-            return CompanyReport.model_validate_json(raw_snapshot)
+            return json.loads(raw_snapshot)
         except Exception:
             logger.exception("Failed parsing report snapshot for company_id=%s", company_id)
             return None
 
     @classmethod
     def get_report_pdf_model(cls, company_id: str):
-        """Return parsed ReportDocumentModel for one company, if available."""
+        """Return the legacy report PDF model JSON for one company, if available."""
         with Session(engine) as session:
             item = session.get(cls, company_id)
             if not item or not item.report_pdf_model_json:
@@ -2050,9 +2048,7 @@ class Company(SQLModel, table=True):
             raw_model = item.report_pdf_model_json
 
         try:
-            from backend.report_pdf import ReportDocumentModel
-
-            return ReportDocumentModel.model_validate_json(raw_model)
+            return json.loads(raw_model)
         except Exception:
             logger.exception("Failed parsing report PDF model for company_id=%s", company_id)
             return None

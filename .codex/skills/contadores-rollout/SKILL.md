@@ -27,7 +27,7 @@ Use:
 
 1. Deploy the code to the server.
 2. Keep `.env` in `testing`.
-3. Test with `CONTADORES_TEST_PHONE`.
+3. Test with `CONTADORES_TEST_PHONE`; the bot imports that phone as the only synthetic lead.
 4. Repeat as many times as needed.
 5. Only then switch `.env` to `live`.
 

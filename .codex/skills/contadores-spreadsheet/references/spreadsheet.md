@@ -31,7 +31,7 @@ The mode is controlled only by environment:
 
 Meaning:
 
-- `testing` means the system should not poll the real sheet automatically.
+- `testing` means the system should not poll the real sheet automatically and should import only the synthetic lead from `CONTADORES_TEST_PHONE`.
 - `live` means the sheet is allowed to feed the workflow.
 
 Important nuance:
@@ -134,7 +134,7 @@ For this project, the sheet is useful because it is:
 
 ## Operational Rules
 
-- In `testing`, work only with `CONTADORES_TEST_PHONE`.
+- In `testing`, work only with `CONTADORES_TEST_PHONE`; do not fetch the live sheet.
 - In `live`, the sheet becomes the intake source.
 - Use explicit column names. Do not rely on positions.
 - Deduplicate by the sheet row id.

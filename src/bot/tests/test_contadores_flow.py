@@ -64,6 +64,7 @@ def test_run_contadores_sheet_sync_iteration_imports_only_uncontacted_rows(monke
     monkeypatch.setattr(utils, "fetch_contadores_config", fake_fetch_contadores_config)
     monkeypatch.setattr(utils, "fetch_contadores_sheet_rows", fake_fetch_contadores_sheet_rows)
     monkeypatch.setattr(utils, "import_contadores_sheet_rows", fake_import_contadores_sheet_rows)
+    monkeypatch.setattr(utils, "CONTADORES_SOURCE_MODE", "live")
 
     result = asyncio.run(utils.run_contadores_sheet_sync_iteration(SimpleNamespace()))
 
@@ -82,6 +83,39 @@ def test_run_contadores_sheet_sync_iteration_imports_only_uncontacted_rows(monke
             "is_contactado": "FALSE",
         }
     ]]
+
+
+def test_run_contadores_sheet_sync_iteration_uses_testing_phone(monkeypatch) -> None:
+    """Testing mode must not read the live sheet and should import the configured test lead."""
+    imported_batches: list[list[dict[str, str | None]]] = []
+
+    async def fake_fetch_contadores_config(client):
+        del client
+        return SimpleNamespace(enabled=True, sheet_url="https://sheet", sheet_gid="0")
+
+    async def fail_if_sheet_is_fetched(*, config):
+        raise AssertionError(f"testing mode should not fetch sheet rows: {config}")
+
+    async def fake_import_contadores_sheet_rows(client, *, rows):
+        del client
+        imported_batches.append(rows)
+        return {"imported": 1, "updated": 0, "skipped": 0}
+
+    monkeypatch.setattr(utils, "fetch_contadores_config", fake_fetch_contadores_config)
+    monkeypatch.setattr(utils, "fetch_contadores_sheet_rows", fail_if_sheet_is_fetched)
+    monkeypatch.setattr(utils, "import_contadores_sheet_rows", fake_import_contadores_sheet_rows)
+    monkeypatch.setattr(utils, "CONTADORES_SOURCE_MODE", "testing")
+    monkeypatch.setattr(utils, "CONTADORES_TEST_PHONE", "+5491111111111")
+    monkeypatch.setattr(utils, "CONTADORES_TEST_NAME", "Lead Test")
+
+    result = asyncio.run(utils.run_contadores_sheet_sync_iteration(SimpleNamespace()))
+
+    assert result["status"] == "ok"
+    assert result["source_mode"] == "testing"
+    assert result["submitted"] == 1
+    assert imported_batches[0][0]["id"] == "testing-5491111111111"
+    assert imported_batches[0][0]["phone_number"] == "+5491111111111"
+    assert imported_batches[0][0]["full_name"] == "Lead Test"
 
 
 def test_dispatch_pending_contadores_messages_sends_immediately_without_random_delay(monkeypatch) -> None:
@@ -310,8 +344,8 @@ def test_send_contadores_pending_alerts_includes_direct_lead_link(monkeypatch) -
             )
         ]
 
-    async def fake_ensure_crm_inbox():
-        return SimpleNamespace(inbox_id="crm-inbox-1", inbox_address="crm@example.com")
+    async def fake_ensure_alert_inbox():
+        return SimpleNamespace(inbox_id="alerts-inbox-1", inbox_address="alerts@example.com")
 
     async def fake_send_message(**kwargs) -> DeliveryReceipt:
         sent_calls.append(kwargs)
@@ -329,7 +363,7 @@ def test_send_contadores_pending_alerts_includes_direct_lead_link(monkeypatch) -
             SimpleNamespace(),
             email_provider=SimpleNamespace(
                 configured=True,
-                ensure_crm_inbox=fake_ensure_crm_inbox,
+                ensure_alert_inbox=fake_ensure_alert_inbox,
                 send_message=fake_send_message,
             ),
         )
@@ -344,8 +378,8 @@ def test_send_contadores_pending_alerts_includes_direct_lead_link(monkeypatch) -
     ) in sent_calls[0]["text"]
 
 
-def test_process_whatsapp_message_status_event_falls_back_to_auditor_when_contadores_misses(monkeypatch) -> None:
-    """Outbound status updates should still reach Auditor rows when Contadores has no match."""
+def test_process_whatsapp_message_status_event_ignores_missing_contadores_message(monkeypatch) -> None:
+    """Unknown WhatsApp delivery ids should be ignored after the app split."""
 
     async def fake_mark_backend_contadores_message_status(client, *, external_id: str, status: str):
         del client, external_id, status
@@ -353,20 +387,7 @@ def test_process_whatsapp_message_status_event_falls_back_to_auditor_when_contad
         response = httpx.Response(404, request=request)
         raise httpx.HTTPStatusError("not found", request=request, response=response)
 
-    async def fake_update_backend_message_delivery_status_by_external_id(client, *, external_id: str, status: str):
-        del client
-        return {
-            "status": "updated",
-            "external_id": external_id,
-            "delivery_status": status,
-        }
-
     monkeypatch.setattr(utils, "mark_backend_contadores_message_status", fake_mark_backend_contadores_message_status)
-    monkeypatch.setattr(
-        utils,
-        "update_backend_message_delivery_status_by_external_id",
-        fake_update_backend_message_delivery_status_by_external_id,
-    )
 
     result = asyncio.run(
         process_whatsapp_message_status_event(
@@ -378,6 +399,6 @@ def test_process_whatsapp_message_status_event_falls_back_to_auditor_when_contad
         )
     )
 
-    assert result["route"] == "auditor"
+    assert result["status"] == "ignored"
+    assert result["reason"] == "external_id_not_found"
     assert result["provider_status"] == "sent"
-    assert result["delivery_status"] == "sent"

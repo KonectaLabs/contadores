@@ -30,7 +30,7 @@ This must come from `.env`, and `docker-compose.yml` must consume `.env`.
 1. Merge or commit the code into `main`.
 2. Deploy the server from `main`.
 3. Keep runtime in `testing`.
-4. Verify the flow with the test number.
+4. Verify the flow with the synthetic lead created from `CONTADORES_TEST_PHONE`.
 5. When the test flow is correct, change `.env` to `live`.
 6. Restart the containers.
 
@@ -43,3 +43,5 @@ It is valid to:
 - deploy the newest code on the real server;
 - keep the system in `testing`;
 - promote to `live` later with only an env change plus restart.
+
+`/api/runtime` should show the active source mode and readiness state after each restart.

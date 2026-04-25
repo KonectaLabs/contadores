@@ -122,40 +122,6 @@ def log_dispatch_activity(logger: logging.Logger, results: list[Any], state: Bot
     logger.info(waiting_message)
 
 
-def log_email_inbound_activity(logger: logging.Logger, outcomes: list[dict[str, Any]]) -> None:
-    """Log concise email inbound processing results."""
-    if not outcomes:
-        return
-
-    conversation_replies = sum(1 for item in outcomes if item.get("status") == "processed")
-    audit_replies = sum(1 for item in outcomes if item.get("status") == "stored")
-    failed = [item for item in outcomes if item.get("status") == "failed"]
-
-    if conversation_replies:
-        logger.info("📥 Saved %s to active conversations.", _count_phrase(conversation_replies, "email reply"))
-    if audit_replies:
-        logger.info("🧾 Saved %s from CEOs.", _count_phrase(audit_replies, "audit reply"))
-    for item in failed:
-        logger.error("❌ Could not save an incoming email: %s", _humanize_error(item.get("error")))
-
-
-def log_audit_delivery_activity(logger: logging.Logger, summary: dict[str, int]) -> None:
-    """Log audit delivery work only when something changed."""
-    generated_requested = int(summary.get("generated_requested", 0))
-    delivered = int(summary.get("delivered", 0))
-    blocked = int(summary.get("blocked", 0))
-
-    if generated_requested:
-        logger.info("🧾 Requested %s.", _count_phrase(generated_requested, "audit report"))
-    if delivered:
-        logger.info("📎 Sent %s to CEOs.", _count_phrase(delivered, "audit report email"))
-    if blocked:
-        logger.warning(
-            "⚠️ Blocked %s because the CEO recipient is missing or rejected.",
-            _count_phrase(blocked, "audit delivery"),
-        )
-
-
 def log_whatsapp_inbound_activity(logger: logging.Logger, result: dict[str, Any]) -> None:
     """Log one inbound WhatsApp outcome in plain language."""
     status = str(result.get("status", "")).strip().lower()

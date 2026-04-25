@@ -24,7 +24,7 @@ LOGIN_PAGE_HTML = """<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Konecta Auditor Login</title>
+  <title>Contadores Login</title>
   <style>
     :root {
       color-scheme: light;
@@ -106,7 +106,7 @@ LOGIN_PAGE_HTML = """<!doctype html>
 </head>
 <body>
   <main class="login-card">
-    <h1>Konecta Auditor</h1>
+    <h1>Contadores</h1>
     <p>Sign in to access the backoffice.</p>
     <form id="loginForm" novalidate>
       <label>
@@ -403,7 +403,7 @@ class PrimitiveAuthManager:
         except OSError as exc:
             raise RuntimeError(f"Unable to read auth file for signing at `{resolved_path}`.") from exc
         return hashlib.sha256(
-            b"konecta-auditor-auth-cookie\n" + resolved_path.as_posix().encode("utf-8") + b"\n" + raw_bytes
+            b"contadores-auth-cookie\n" + resolved_path.as_posix().encode("utf-8") + b"\n" + raw_bytes
         ).digest()
 
     @staticmethod

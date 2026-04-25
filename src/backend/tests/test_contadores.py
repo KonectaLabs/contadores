@@ -12,8 +12,6 @@ import backend.database as database_module
 import backend.endpoints.contadores as contadores_endpoints
 from backend.contadores_strategies import get_contadores_strategy
 from backend.database import (
-    Company,
-    Contact,
     ContadoresConfig,
     ContadoresLead,
     ContadoresLeadStage,
@@ -47,6 +45,24 @@ def force_loom_strategy(monkeypatch, strategy_id: str = "loom_link") -> None:
     strategy = get_contadores_strategy("loom", strategy_id)
     assert strategy is not None
     monkeypatch.setattr(contadores_endpoints, "choose_contadores_strategy", lambda **kwargs: strategy)
+
+
+def test_runtime_endpoint_reports_source_mode(monkeypatch, tmp_path) -> None:
+    """Runtime status must expose the canonical environment source mode."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("CONTADORES_SOURCE_MODE", "testing")
+    monkeypatch.setenv("CONTADORES_TEST_PHONE", "+5491111111111")
+    monkeypatch.setenv("CONTADORES_LOOM_URL", "https://www.loom.com/share/example")
+    monkeypatch.setenv("CONTADORES_CALENDLY_BASE_URL", "https://calendly.com/example")
+
+    with TestClient(app) as client:
+        response = client.get("/api/runtime")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["source_mode"] == "testing"
+    assert payload["testing_phone_configured"] is True
+    assert payload["ready"] is True
 
 
 def test_contadores_pending_delivery_keeps_full_sequence(monkeypatch, tmp_path) -> None:
@@ -391,25 +407,17 @@ def test_contadores_reply_after_24h_followup_still_advances_to_loom(monkeypatch,
 
 
 def test_contadores_inbound_routing_marks_ambiguous_phone_as_needs_human(monkeypatch, tmp_path) -> None:
-    """A shared phone number across Contadores and Auditor must not auto-route blindly."""
+    """A shared phone number across active Contadores leads must not auto-route blindly."""
     configure_contadores_db(monkeypatch, tmp_path)
     lead = ContadoresLead.upsert(
         external_lead_id="sheet-row-4",
         phone="+5491112345678",
         full_name="Dario Luna",
     )
-    company = Company.create(
-        source_url="https://example.com",
-        company_name="Example Co",
-        company_info="Company info",
-        objective="Test ambiguity handling",
-        conversation_automation_enabled=True,
-    )
-    Contact.create(
-        company_id=company.id,
-        type="whatsapp",
-        value="+5491112345678",
-        objective="Reach this lead through auditor flow",
+    other_lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-4b",
+        phone="+5491112345678",
+        full_name="Dario Luna Duplicate",
     )
 
     with TestClient(app) as client:
@@ -424,9 +432,10 @@ def test_contadores_inbound_routing_marks_ambiguous_phone_as_needs_human(monkeyp
 
     assert response.status_code == 200
     assert response.json()["route"] == "ambiguous"
-    assert response.json()["reason"] == "matched_contadores_and_auditor"
+    assert response.json()["reason"] == "ambiguous_phone_match"
     assert detail.status_code == 200
-    assert detail.json()["lead"]["stage"] == "needs_human"
+    assert detail.json()["lead"]["stage"] == "awaiting_initial_reply"
+    assert other_lead.id != lead.id
 
 
 def test_contadores_detail_uses_effective_stage_over_raw_needs_human(monkeypatch, tmp_path) -> None:

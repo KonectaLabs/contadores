@@ -25,7 +25,7 @@ Use this skill when editing or reviewing the WhatsApp automation flow.
 ## Runtime rule
 
 - This flow can be deployed while the app is still in `testing`.
-- `testing` means the flow is only exercised with `CONTADORES_TEST_PHONE`.
+- `testing` means the flow is only exercised with the synthetic lead from `CONTADORES_TEST_PHONE`.
 - `live` means the flow can start from sheet-imported leads.
 
 Read [references/sequence.md](references/sequence.md) for the exact messages and timing.
