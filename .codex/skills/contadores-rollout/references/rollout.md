@@ -45,6 +45,16 @@ For new funnels, keep their definition in the same persistent config file used
 by the UI. Do not rely on local-only edits that are absent from the server
 volume.
 
+## SQLite runtime guardrail
+
+The backend should run with one Uvicorn worker while the repo uses SQLite. The
+database file lives in `data/database.sqlite`, which is mounted into both the
+backend and bot containers. The backend engine enables WAL and a busy timeout,
+but extra backend workers still add unnecessary write contention.
+
+Only raise the worker count after moving persistence to Postgres or after adding
+a deliberate SQLite concurrency plan.
+
 ## Important nuance
 
 Deploy target and runtime mode are different things.

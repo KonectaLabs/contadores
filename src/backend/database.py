@@ -19,7 +19,7 @@ from urllib.parse import parse_qs, unquote, urlsplit, urlunsplit
 import phonenumbers
 from pydantic import BaseModel, Field as PydanticField, field_serializer
 from phonenumbers import NumberParseException
-from sqlalchemy import Column, Enum as SQLAlchemyEnum, String, UniqueConstraint, inspect
+from sqlalchemy import Column, Enum as SQLAlchemyEnum, String, UniqueConstraint, event, inspect
 from sqlalchemy.orm import aliased
 from sqlmodel import Field, Session, SQLModel, create_engine, select
 
@@ -30,7 +30,39 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 DEFAULT_DATABASE_URL = f"sqlite:///{DATA_DIR / 'database.sqlite'}"
 DATABASE_URL = os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL)
-engine = create_engine(DATABASE_URL, echo=False)
+
+
+def _is_sqlite_url(database_url: str) -> bool:
+    """Return True when SQLAlchemy is configured for SQLite."""
+    return database_url.startswith("sqlite:")
+
+
+def _build_engine():
+    """Create the SQLAlchemy engine with conservative SQLite concurrency settings."""
+    connect_args: dict[str, object] = {}
+    if _is_sqlite_url(DATABASE_URL):
+        connect_args = {
+            "check_same_thread": False,
+            "timeout": 30,
+        }
+    return create_engine(DATABASE_URL, echo=False, connect_args=connect_args)
+
+
+engine = _build_engine()
+
+
+if _is_sqlite_url(DATABASE_URL):
+
+    @event.listens_for(engine, "connect")
+    def _configure_sqlite_connection(dbapi_connection, connection_record) -> None:
+        """Use WAL and a busy timeout so reads and short writes can coexist."""
+        del connection_record
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA busy_timeout=30000")
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
 
 
 CONTACT_TYPE_ALIASES = {

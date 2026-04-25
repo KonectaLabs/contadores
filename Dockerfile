@@ -20,4 +20,4 @@ COPY src/backend/ ./src/backend/
 COPY --from=frontend-builder /app/src/frontend/dist ./src/frontend/dist
 
 EXPOSE 8000
-CMD ["uv", "run", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+CMD ["uv", "run", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

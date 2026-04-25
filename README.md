@@ -157,6 +157,12 @@ Servicios:
 - `bot`: webhooks de WhatsApp/Calendly y worker de automatización.
 - `traefik`: entrada HTTP para mantener el despliegue detrás de Traefik.
 
+El backend corre con un solo worker de Uvicorn mientras use SQLite. La base
+local queda en `data/database.sqlite`, montada como volumen persistente, y el
+engine activa WAL + busy timeout para reducir locks entre el backend y el bot.
+No subir `--workers` sin migrar a Postgres o definir otra estrategia de
+concurrencia.
+
 ## Rollout recomendado
 
 Este repo se trabaja server-first: `localhost` sirve para desarrollar, verificar, mover git, pushear y deployar. Un cambio de producto se considera terminado cuando está en el server real, salvo que explícitamente se pida local-only.

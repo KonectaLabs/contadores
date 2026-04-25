@@ -33,6 +33,9 @@ the server data volume when it must persist across deploys.
 - If something is meant to run on the server, it should be committed on `main`.
 - `docker-compose.yml` should read `.env`.
 - The server can run production infrastructure while the app still stays in `testing` mode.
+- While the project uses SQLite, keep the backend at one Uvicorn worker. SQLite
+  lives in the persistent `data/` volume and the bot also writes to it, so extra
+  backend workers can create avoidable `database is locked` failures.
 
 ## Rollout Rule
 
