@@ -1,0 +1,4 @@
+interface:
+  display_name: "Konecta Prompt Fix First"
+  short_description: "Prefer prompt fixes for LLM program behavior"
+  default_prompt: "Use $konecta-auditor-prompt-fix-first to adjust a DSPy Program behavior through Signature/prompt changes before touching Python code."

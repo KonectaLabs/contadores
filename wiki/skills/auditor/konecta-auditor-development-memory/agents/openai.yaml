@@ -1,0 +1,3 @@
+interface:
+  display_name: "Konecta Auditor Development Memory"
+  short_description: "Canonical persistent memory log for Konecta Auditor"

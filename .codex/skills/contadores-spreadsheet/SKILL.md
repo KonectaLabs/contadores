@@ -39,7 +39,7 @@ Backward-compatible aliases that still work in the reader script:
 
 The repo already includes a reader script:
 
-- [`read_google_sheet.py`](/Users/fgoiriz/private/repos/contadores/read_google_sheet.py)
+- [`src/tools/read_google_sheet.py`](/Users/fgoiriz/private/repos/contadores/src/tools/read_google_sheet.py)
 
 That script:
 
@@ -61,27 +61,27 @@ uv sync
 Read the current public sheet:
 
 ```bash
-uv run python read_google_sheet.py --as-records
+uv run python src/tools/read_google_sheet.py --as-records
 ```
 
 Read a specific range:
 
 ```bash
-uv run python read_google_sheet.py --range "Hoja 1!A1:D20" --as-records
+uv run python src/tools/read_google_sheet.py --range "Hoja 1!A1:D20" --as-records
 ```
 
 If the sheet is private again, provide authenticated access:
 
 ```bash
 GOOGLE_SERVICE_ACCOUNT_FILE=/path/to/service-account.json \
-uv run python read_google_sheet.py --as-records
+uv run python src/tools/read_google_sheet.py --as-records
 ```
 
 Or with the Contadores-specific env name:
 
 ```bash
 CONTADORES_GOOGLE_SERVICE_ACCOUNT_FILE=/path/to/service-account.json \
-uv run python read_google_sheet.py --as-records
+uv run python src/tools/read_google_sheet.py --as-records
 ```
 
 ## Public Read Vs Authenticated Write

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Konecta Auditor ICP Intake"
+  short_description: "Source and ingest real candidate companies with safe scheduling"
+  default_prompt: "Use $konecta-auditor-icp-intake to find real companies, ingest them into Konecta Auditor, and schedule report delivery safely around weekends."

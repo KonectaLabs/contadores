@@ -2,6 +2,13 @@
 
 Repo de trabajo para el flujo de captación y seguimiento de `Contadores`.
 
+## Estructura
+
+- `src/`: código de producto.
+- `wiki/`: documentación, skills y referencias de trabajo.
+- `media/`: materiales audiovisuales, decks y archivos de soporte.
+- `data/`: estado local persistente. No se commitea.
+
 ## Regla operativa importante
 
 El modo del sistema no se decide en código ni en estado persistido.
@@ -50,13 +57,13 @@ uv sync
 Leer la sheet:
 
 ```bash
-uv run python read_google_sheet.py --as-records
+uv run python src/tools/read_google_sheet.py --as-records
 ```
 
 Levantar el backend:
 
 ```bash
-uv run uvicorn backend.main:app --host 0.0.0.0 --port 8000
+PYTHONPATH=src uv run uvicorn backend.main:app --host 0.0.0.0 --port 8000
 ```
 
 Verificar runtime:

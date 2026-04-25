@@ -12,7 +12,7 @@ El PPTX final se genera siempre desde una copia exportable de **`Loom Script.htm
 ## Generar el PowerPoint
 
 ```bash
-cd presentation/loom-video-vender-a-contadores
+cd media/presentations/loom-video-vender-a-contadores
 npm install
 npx playwright install chromium   # solo la primera vez (o si falla el browser)
 npm run pptx

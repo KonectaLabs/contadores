@@ -1,0 +1,4 @@
+interface:
+  display_name: "Konecta Stack And Zen"
+  short_description: "Describe the Konecta stack, structure, and coding zen"
+  default_prompt: "Use $konecta-stack-and-zen to align this repo with the standard Konecta stack, file conventions, and development philosophy."

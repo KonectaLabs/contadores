@@ -1,0 +1,4 @@
+interface:
+  display_name: "Konecta Auditor AgentMail Email"
+  short_description: "Guide AgentMail inbox, send, receive, and webhook work"
+  default_prompt: "Use $konecta-auditor-agentmail-email to wire AgentMail into this repo's existing bot and backend email flow."

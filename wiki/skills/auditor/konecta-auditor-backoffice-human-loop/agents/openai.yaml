@@ -1,0 +1,3 @@
+interface:
+  display_name: "Konecta Backoffice Human Loop"
+  short_description: "Explain and implement the manual operator flow for project/contact chats and audit generation"

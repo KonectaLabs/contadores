@@ -1,0 +1,3 @@
+interface:
+  display_name: "Konecta Auditor Endpoint E2e"
+  short_description: "Help with agnostic conversation endpoint E2E validation"

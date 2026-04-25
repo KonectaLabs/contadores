@@ -7,7 +7,7 @@
 - Backward-compatible alias: `GOOGLE_SHEET_URL`
 - Preferred gid env var: `CONTADORES_SHEET_GID`
 - Backward-compatible alias: `GOOGLE_SHEET_GID`
-- Reader script: [`read_google_sheet.py`](/Users/fgoiriz/private/repos/contadores/read_google_sheet.py)
+- Reader script: [`src/tools/read_google_sheet.py`](/Users/fgoiriz/private/repos/contadores/src/tools/read_google_sheet.py)
 
 ## What The Spreadsheet Represents
 
@@ -92,7 +92,7 @@ If the sheet is public, the simplest path is:
 
 ```bash
 cd /Users/fgoiriz/private/repos/contadores
-uv run python read_google_sheet.py --as-records
+uv run python src/tools/read_google_sheet.py --as-records
 ```
 
 The script:
@@ -120,7 +120,7 @@ Example:
 
 ```bash
 CONTADORES_GOOGLE_SERVICE_ACCOUNT_FILE=/path/to/service-account.json \
-uv run python read_google_sheet.py --as-records
+uv run python src/tools/read_google_sheet.py --as-records
 ```
 
 ## Why The Sheet Is Useful

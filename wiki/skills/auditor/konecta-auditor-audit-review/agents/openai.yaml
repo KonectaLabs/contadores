@@ -1,0 +1,4 @@
+interface:
+  display_name: "Konecta Auditor Audit Review"
+  short_description: "Review audits, transcripts, report artifacts, and CEO delivery state"
+  default_prompt: "Use $konecta-auditor-audit-review to inspect recent or running Konecta Auditor audits and surface bugs, prompt fixes, and delivery issues."

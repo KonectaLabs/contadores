@@ -14,7 +14,7 @@ Comandos útiles:
 ```bash
 cd /Users/fgoiriz/private/repos/contadores
 uv sync
-uv run uvicorn backend.main:app --host 0.0.0.0 --port 8000
+PYTHONPATH=src uv run uvicorn backend.main:app --host 0.0.0.0 --port 8000
 ```
 
 Endpoints:

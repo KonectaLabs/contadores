@@ -7,7 +7,7 @@ __pycache__
 .mypy_cache
 .ruff_cache
 .codex
-presentation
+media
 node_modules
 dist
 build

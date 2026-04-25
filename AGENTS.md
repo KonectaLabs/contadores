@@ -20,4 +20,12 @@
   - `README.md`
   - `.env.example`
   - `.codex/skills/*`
+  - `wiki/skills/*`
 - Si cambia el flujo o el rollout, actualizar la skill del spreadsheet y la skill de rollout en el mismo cambio.
+
+## Organización
+
+- `src/` contiene el código fuente.
+- `wiki/` contiene documentación, skills y referencias.
+- `media/` contiene presentaciones, videos, imágenes y materiales exportados.
+- `data/` contiene estado persistente local y no se commitea.
