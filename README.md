@@ -68,6 +68,21 @@ Levantar el backend:
 PYTHONPATH=src uv run uvicorn backend.main:app --host 0.0.0.0 --port 8000
 ```
 
+Desarrollar el frontend:
+
+```bash
+cd src/frontend
+npm install
+npm run dev
+```
+
+Compilar el frontend que sirve FastAPI:
+
+```bash
+cd src/frontend
+npm run build
+```
+
 Verificar runtime:
 
 ```bash

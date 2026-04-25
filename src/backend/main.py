@@ -55,6 +55,7 @@ configure_backend_logging()
 logger = logging.getLogger(__name__)
 
 FRONTEND_DIR = Path(__file__).resolve().parents[1] / "frontend"
+FRONTEND_DIST_DIR = FRONTEND_DIR / "dist"
 PUBLIC_PATHS_WITHOUT_SESSION = {
     "/health",
     "/login",
@@ -112,6 +113,10 @@ app = FastAPI(
         },
     ],
 )
+
+ASSETS_DIR = FRONTEND_DIST_DIR / "assets"
+if ASSETS_DIR.exists():
+    app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
 
 STATIC_DIR = FRONTEND_DIR / "static"
 if STATIC_DIR.exists():
@@ -179,10 +184,28 @@ async def login_page():
     return HTMLResponse(LOGIN_PAGE_HTML)
 
 
+@app.get("/favicon.svg", tags=["system"])
+async def favicon_svg():
+    """Serve the frontend favicon from the Vite build output."""
+    favicon_file = FRONTEND_DIST_DIR / "favicon.svg"
+    if favicon_file.exists():
+        return FileResponse(favicon_file, media_type="image/svg+xml")
+    return JSONResponse(status_code=404, content={"detail": "favicon not found"})
+
+
+@app.get("/favicon.ico", tags=["system"])
+async def favicon_ico():
+    """Serve the SVG favicon for browsers that still request favicon.ico."""
+    return await favicon_svg()
+
+
 @app.get("/", tags=["system"])
 async def serve_frontend():
     """Serve frontend when available, otherwise return service metadata."""
-    index_file = FRONTEND_DIR / "index.html"
+    index_file = FRONTEND_DIST_DIR / "index.html"
     if index_file.exists():
         return FileResponse(index_file, media_type="text/html")
+    source_index_file = FRONTEND_DIR / "index.html"
+    if source_index_file.exists():
+        return FileResponse(source_index_file, media_type="text/html")
     return {"service": "contadores", "status": "ok"}
