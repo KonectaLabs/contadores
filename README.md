@@ -115,3 +115,15 @@ Servicios:
 2. Deployar el servidor con `.env` en `testing`.
 3. Probar varias veces con tu número usando `CONTADORES_TEST_PHONE`.
 4. Recién después cambiar `CONTADORES_SOURCE_MODE=live`.
+
+Deploy remoto:
+
+```bash
+./deploy_to_server.sh
+```
+
+Logs remotos:
+
+```bash
+./server_logs.sh
+```
