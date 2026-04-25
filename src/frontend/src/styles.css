@@ -1,3 +1,5 @@
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap");
+
 :root {
   color-scheme: light;
   font-family: "Geist", "Aptos", "Segoe UI", system-ui, sans-serif;
@@ -1423,5 +1425,531 @@ button:disabled {
 
   .strategy-chips.compact {
     justify-content: start;
+  }
+}
+
+/* Auditor-style Contadores shell. Kept at the end so it can reuse the existing component CSS. */
+:root {
+  font-family: "Space Grotesk", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  background: #eef5ef;
+  color: #102c28;
+  --bg: #eef5ef;
+  --surface: #ffffff;
+  --surface-muted: #eef5ee;
+  --line: #c8d7cb;
+  --line-strong: #90a594;
+  --text: #102c28;
+  --muted: #49665d;
+  --accent: #0f8f7a;
+  --accent-dark: #096152;
+  --initial: #0f8f7a;
+  --video: #a86428;
+  --calendly: #0f8f7a;
+  --booked: #1e7a4e;
+  --manual: #a86428;
+  --closed: #5f7f74;
+  --warn: #a86428;
+  --danger: #b23d3d;
+  --ok: #1e7a4e;
+  --shadow: 0 16px 34px rgba(6, 34, 29, 0.12), 0 1px 0 rgba(255, 255, 255, 0.82) inset;
+  --initial-bg: rgba(15, 143, 122, 0.1);
+  --video-bg: rgba(168, 100, 40, 0.12);
+  --calendly-bg: rgba(15, 143, 122, 0.12);
+  --booked-bg: rgba(30, 122, 78, 0.12);
+  --manual-bg: rgba(168, 100, 40, 0.12);
+  --closed-bg: rgba(95, 127, 116, 0.12);
+}
+
+html,
+body {
+  min-height: 100%;
+  background:
+    radial-gradient(150% 90% at 92% -18%, rgba(13, 143, 122, 0.14) 0%, rgba(13, 143, 122, 0.04) 40%, transparent 68%),
+    radial-gradient(110% 72% at 10% 2%, rgba(255, 255, 255, 0.9) 0%, rgba(255, 255, 255, 0.45) 40%, transparent 72%),
+    radial-gradient(88% 88% at 50% 110%, rgba(5, 67, 56, 0.12) 0%, transparent 75%),
+    linear-gradient(170deg, #eef5ef 0%, #dce9de 44%, #cddfcf 100%);
+}
+
+body {
+  color: var(--text);
+  font-size: 0.93rem;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.app-shell {
+  width: 100%;
+  min-height: 100dvh;
+  display: grid;
+  grid-template-columns: 336px minmax(0, 1fr);
+  margin: 0;
+  padding: 0;
+}
+
+.main {
+  min-width: 0;
+  padding: 26px clamp(20px, 3vw, 34px) 34px;
+}
+
+.sidebar {
+  position: sticky;
+  top: 0;
+  height: 100dvh;
+  background: linear-gradient(180deg, #053230 0%, #031d1c 100%);
+  border-right: 1px solid rgba(180, 210, 200, 0.12);
+  box-shadow: 4px 0 24px rgba(0, 0, 0, 0.06);
+}
+
+.sidebar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(transparent, transparent 2px, rgba(0, 0, 0, 0.05) 3px, transparent 4px);
+  opacity: 0.4;
+}
+
+.sidebar-scroll {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 24px 20px 20px;
+}
+
+.brand-block,
+.sidebar-card {
+  border: 1px solid rgba(226, 245, 236, 0.22);
+  background: rgba(233, 249, 242, 0.07);
+  color: rgba(232, 249, 240, 0.9);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.brand-block {
+  padding: 18px;
+  border-radius: 16px;
+}
+
+.brand-eyebrow,
+.sidebar-kicker {
+  margin: 0;
+  font-family: "IBM Plex Mono", Menlo, Monaco, monospace;
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: rgba(232, 249, 240, 0.68);
+}
+
+.brand-block h1 {
+  margin: 8px 0 0;
+  font-size: 1.4rem;
+  font-weight: 600;
+  line-height: 1.2;
+  background: linear-gradient(135deg, #ffffff 0%, #a4e6ce 100%);
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  text-shadow: 0 2px 10px rgba(164, 230, 206, 0.2);
+}
+
+.brand-copy,
+.sidebar-card p {
+  margin: 10px 0 0;
+  color: rgba(220, 242, 234, 0.82);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.workspace-nav {
+  display: grid;
+  gap: 8px;
+}
+
+.workspace-nav-btn {
+  min-height: 40px;
+  border: 1px solid rgba(226, 245, 236, 0.2);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #effdf6;
+  cursor: pointer;
+  font-weight: 700;
+  text-align: left;
+  padding: 0 14px;
+}
+
+.workspace-nav-btn.active {
+  background: rgba(15, 143, 122, 0.26);
+  border-color: rgba(164, 230, 206, 0.36);
+  box-shadow: 0 8px 22px rgba(15, 143, 122, 0.18);
+}
+
+.sidebar-card {
+  padding: 12px;
+  border-radius: 12px;
+}
+
+.sidebar-card h3 {
+  margin: 8px 0 0;
+  color: #eefaf4;
+  font-size: 0.95rem;
+  line-height: 1.35;
+}
+
+.sidebar-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.sidebar-stat-grid span {
+  display: grid;
+  gap: 4px;
+  min-height: 62px;
+  padding: 9px;
+  border: 1px solid rgba(226, 245, 236, 0.18);
+  border-radius: 10px;
+  background: rgba(4, 25, 22, 0.28);
+  color: rgba(232, 249, 240, 0.72);
+  font-family: "IBM Plex Mono", Menlo, Monaco, monospace;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+}
+
+.sidebar-stat-grid strong {
+  color: #effdf6;
+  font-family: "Space Grotesk", "Avenir Next", "Segoe UI", sans-serif;
+  font-size: 1rem;
+  text-transform: capitalize;
+}
+
+.sidebar .runtime-pill {
+  width: 100%;
+  justify-content: center;
+  border-color: rgba(226, 245, 236, 0.22);
+  background: rgba(233, 249, 242, 0.07);
+  color: #effdf6;
+}
+
+.sidebar .runtime-pill.ready {
+  color: #a4e6ce;
+}
+
+.sidebar .runtime-pill.blocked {
+  color: #f1c08f;
+}
+
+.topbar {
+  align-items: center;
+  padding: 0 0 18px;
+}
+
+.product-mark {
+  color: var(--accent-strong, #096152);
+  font-family: "IBM Plex Mono", Menlo, Monaco, monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.mark-dot {
+  background: var(--accent);
+  box-shadow: 0 0 0 5px rgba(15, 143, 122, 0.13);
+}
+
+.topbar h1 {
+  margin-top: 7px;
+  color: var(--text);
+  font-size: clamp(1.65rem, 2.8vw, 2.45rem);
+  font-weight: 600;
+}
+
+.icon-button,
+.filter-button,
+.filter-segment button,
+.filter-clear,
+.events-toggle,
+.action-grid button,
+.secondary-actions button,
+.manual-form button,
+.config-form button,
+.pause-callout button {
+  border-radius: 999px;
+  font-weight: 700;
+}
+
+.icon-button,
+.filter-button,
+.filter-segment button,
+.filter-clear,
+.events-toggle,
+.secondary-actions button {
+  border-color: var(--line);
+  background: rgba(255, 255, 255, 0.76);
+  color: var(--text);
+  box-shadow: 0 2px 8px rgba(6, 34, 29, 0.05);
+}
+
+.icon-button:hover,
+.filter-button:hover,
+.filter-segment button:hover,
+.filter-clear:hover,
+.events-toggle:hover,
+.secondary-actions button:hover {
+  border-color: var(--line-strong);
+  background: #ffffff;
+}
+
+.status-strip,
+.filter-panel,
+.lead-row,
+.detail-panel,
+.preset-panel,
+.operator-dock,
+.conversation-area,
+.manual-form,
+.ops-panel,
+.detail-empty,
+.empty-state,
+.message,
+.inline-empty {
+  border-color: var(--line);
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: var(--shadow);
+}
+
+.status-strip {
+  gap: 0;
+  border-radius: 18px;
+  background: rgba(200, 215, 203, 0.75);
+}
+
+.status-item {
+  min-height: 74px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.status-item span,
+.metric-tile span,
+.panel-head span,
+.fact span,
+.config-form label span,
+.manual-form label span,
+.preset-panel-head span,
+.operator-dock-head span {
+  font-family: "IBM Plex Mono", Menlo, Monaco, monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+}
+
+.metric-rail {
+  gap: 10px;
+}
+
+.metric-tile {
+  min-height: 86px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: 0 8px 20px rgba(6, 34, 29, 0.08), 0 1px 0 rgba(255, 255, 255, 0.78) inset;
+}
+
+.metric-tile::before {
+  width: 100%;
+  height: 4px;
+  inset: auto 0 0;
+  background: linear-gradient(90deg, var(--tile-color, var(--accent)) 0%, rgba(15, 143, 122, 0.08) 100%);
+}
+
+.metric-tile strong {
+  font-family: "IBM Plex Mono", Menlo, Monaco, monospace;
+}
+
+.metric-tile.active {
+  border-color: rgba(13, 138, 117, 0.35);
+  background: #ffffff;
+  box-shadow: 0 16px 34px rgba(6, 34, 29, 0.12), inset 0 0 0 1px rgba(15, 143, 122, 0.12);
+}
+
+.filter-panel {
+  border-radius: 16px;
+  padding: 12px;
+}
+
+.workspace {
+  grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
+  gap: 16px;
+}
+
+.search-box {
+  height: 44px;
+  border-color: var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.lead-list {
+  gap: 10px;
+  max-height: calc(100dvh - 318px);
+}
+
+.lead-row {
+  min-height: 118px;
+  border-radius: 16px;
+  box-shadow: 0 8px 20px rgba(6, 34, 29, 0.08), 0 1px 0 rgba(255, 255, 255, 0.78) inset;
+}
+
+.lead-row:hover {
+  border-color: rgba(13, 138, 117, 0.35);
+  box-shadow: 0 16px 34px rgba(6, 34, 29, 0.12), 0 1px 0 rgba(255, 255, 255, 0.82) inset;
+}
+
+.lead-row.active {
+  background: #ffffff;
+  box-shadow: inset 5px 0 0 var(--lead-color), 0 16px 34px rgba(6, 34, 29, 0.12);
+}
+
+.stage-badge,
+.strategy-chip,
+.message-meta em,
+.delivery {
+  border-radius: 999px;
+  font-family: "IBM Plex Mono", Menlo, Monaco, monospace;
+}
+
+.detail-panel {
+  height: calc(100dvh - 238px);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.86);
+}
+
+.detail-head h2 {
+  font-weight: 600;
+}
+
+.lead-facts {
+  border-radius: 16px;
+  background: rgba(200, 215, 203, 0.75);
+}
+
+.fact {
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.preset-panel,
+.operator-dock,
+.conversation-area,
+.manual-form {
+  border-radius: 16px;
+  background: rgba(249, 252, 249, 0.86);
+}
+
+.action-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.action-grid .preset-action {
+  min-height: 78px;
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow: 0 2px 8px rgba(6, 34, 29, 0.05);
+}
+
+.pause-callout {
+  border-radius: 16px;
+  background: rgba(168, 100, 40, 0.12);
+}
+
+.pause-callout button,
+.manual-form button,
+.config-form button {
+  background: linear-gradient(165deg, var(--accent) 0%, #0d7f6c 100%);
+  box-shadow: 0 10px 30px rgba(15, 143, 122, 0.26);
+}
+
+.message {
+  border-radius: 16px;
+  background: #ffffff;
+}
+
+.message.inbound {
+  background: rgba(255, 248, 239, 0.92);
+}
+
+.config-overlay {
+  background: rgba(16, 44, 40, 0.38);
+  backdrop-filter: blur(6px);
+}
+
+.config-drawer {
+  background: #f9fcf9;
+  box-shadow: -24px 0 58px rgba(6, 34, 29, 0.16);
+}
+
+@media (max-width: 1180px) {
+  .app-shell {
+    grid-template-columns: 292px minmax(0, 1fr);
+  }
+
+  .workspace {
+    grid-template-columns: minmax(270px, 340px) minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 940px) {
+  .app-shell {
+    display: block;
+    width: 100%;
+  }
+
+  .sidebar {
+    position: relative;
+    height: auto;
+  }
+
+  .sidebar-scroll {
+    display: grid;
+    grid-template-columns: 1fr;
+    padding: 16px;
+  }
+
+  .main {
+    padding: 16px 12px 26px;
+  }
+
+  .topbar {
+    display: grid;
+  }
+
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .detail-panel,
+  .detail-empty {
+    height: auto;
+    min-height: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .topbar-actions {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 40px;
+  }
+
+  .action-grid,
+  .secondary-actions,
+  .manual-form {
+    grid-template-columns: 1fr;
   }
 }

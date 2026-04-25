@@ -1,41 +1,41 @@
 import type { LeadStage } from "./types";
 
 const stageLabels: Record<LeadStage, string> = {
-  awaiting_initial_reply: "Primer mensaje",
-  awaiting_video_reply: "Video enviado",
+  awaiting_initial_reply: "First message",
+  awaiting_video_reply: "Video sent",
   needs_human: "Manual",
-  calendly_sent: "Calendly enviado",
-  booked: "Reservado",
-  closed: "Cerrado",
-  archived: "Archivado",
+  calendly_sent: "Calendly sent",
+  booked: "Booked",
+  closed: "Closed",
+  archived: "Archived",
 };
 
 const readableLabels: Record<string, string> = {
-  answered: "Respondido",
-  automation_paused: "Automatizacion pausada",
-  booked: "Reservado",
+  answered: "Answered",
+  automation_paused: "Automation paused",
+  booked: "Booked",
   calendly: "Calendly",
-  calendly_sent: "Calendly enviado",
-  closed: "Cerrado",
-  delivered: "Entregado",
-  failed: "Fallo",
-  initial: "Primer mensaje",
+  calendly_sent: "Calendly sent",
+  closed: "Closed",
+  delivered: "Delivered",
+  failed: "Failed",
+  initial: "First message",
   loom: "Loom",
-  manual_review: "Revision manual",
+  manual_review: "Manual review",
   needs_human: "Manual",
-  needs_human_alert_sent: "Alerta manual enviada",
-  needs_human_handoff: "Pase a manual",
-  needs_reply: "Requiere respuesta",
-  opener: "Primer mensaje",
-  queued: "En cola",
-  read: "Leido",
-  sent: "Enviado",
-  video_check: "Check video",
+  needs_human_alert_sent: "Manual alert sent",
+  needs_human_handoff: "Manual handoff",
+  needs_reply: "Needs reply",
+  opener: "First message",
+  queued: "Queued",
+  read: "Read",
+  sent: "Sent",
+  video_check: "Video check",
 };
 
 export function stageLabel(stage: LeadStage | string | null | undefined): string {
   if (!stage) {
-    return "Sin estado";
+    return "No status";
   }
   return stageLabels[stage as LeadStage] ?? humanize(stage);
 }
@@ -63,7 +63,7 @@ export function shortDate(value: string | null | undefined): string {
   if (Number.isNaN(date.getTime())) {
     return value;
   }
-  return new Intl.DateTimeFormat("es", {
+  return new Intl.DateTimeFormat("en", {
     month: "short",
     day: "2-digit",
     hour: "2-digit",
@@ -73,11 +73,11 @@ export function shortDate(value: string | null | undefined): string {
 
 export function relativeTime(value: string | null | undefined): string {
   if (!value) {
-    return "Sin actividad";
+    return "No activity";
   }
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
-    return "Sin dato";
+    return "No data";
   }
   const seconds = Math.round((date.getTime() - Date.now()) / 1000);
   const absolute = Math.abs(seconds);
@@ -86,7 +86,7 @@ export function relativeTime(value: string | null | undefined): string {
     ["hour", 3600],
     ["minute", 60],
   ];
-  const formatter = new Intl.RelativeTimeFormat("es", { numeric: "auto" });
+  const formatter = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
   for (const [unit, size] of units) {
     if (absolute >= size) {
       return formatter.format(Math.round(seconds / size), unit);
@@ -96,7 +96,7 @@ export function relativeTime(value: string | null | undefined): string {
 }
 
 export function compactNumber(value: number): string {
-  return new Intl.NumberFormat("es", { maximumFractionDigits: 1 }).format(value);
+  return new Intl.NumberFormat("en", { maximumFractionDigits: 1 }).format(value);
 }
 
 export function lastInteractionAt(lead: { last_inbound_at: string | null; last_outbound_at: string | null; created_at: string }): string {

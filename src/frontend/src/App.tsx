@@ -37,26 +37,26 @@ import type {
 const REFRESH_MS = 12000;
 
 const stageFilters: Array<{ value: LeadStage | "all"; label: string; metric?: keyof ContadoresMetrics; tone: string }> = [
-  { value: "all", label: "Todos", metric: "total", tone: "all" },
-  { value: "awaiting_initial_reply", label: "Primer mensaje", metric: "awaiting_initial_reply", tone: "initial" },
-  { value: "awaiting_video_reply", label: "Video enviado", metric: "awaiting_video_reply", tone: "video" },
+  { value: "all", label: "All", metric: "total", tone: "all" },
+  { value: "awaiting_initial_reply", label: "First message", metric: "awaiting_initial_reply", tone: "initial" },
+  { value: "awaiting_video_reply", label: "Video sent", metric: "awaiting_video_reply", tone: "video" },
   { value: "calendly_sent", label: "Calendly", metric: "calendly_sent", tone: "calendly" },
-  { value: "booked", label: "Reservados", metric: "booked", tone: "booked" },
-  { value: "closed", label: "Cerrados", metric: "closed", tone: "closed" },
+  { value: "booked", label: "Booked", metric: "booked", tone: "booked" },
+  { value: "closed", label: "Closed", metric: "closed", tone: "closed" },
   { value: "needs_human", label: "Manual", metric: "needs_human", tone: "manual" },
 ];
 
 const sendActions = [
-  { action: "send-opener", label: "Enviar primer mensaje", description: "Usa el template inicial.", icon: RocketLaunch, tone: "initial" },
-  { action: "send-loom", label: "Enviar Loom", description: "Pausa automatizacion.", icon: Play, tone: "video" },
-  { action: "send-video-check", label: "Pedir respuesta", description: "Follow-up del video.", icon: ChatCenteredText, tone: "manual" },
-  { action: "send-calendly", label: "Enviar Calendly", description: "No pausa el flujo.", icon: CalendarCheck, tone: "calendly" },
+  { action: "send-opener", label: "Send opener", description: "Uses the initial template.", icon: RocketLaunch, tone: "initial" },
+  { action: "send-loom", label: "Send Loom", description: "Pauses automation.", icon: Play, tone: "video" },
+  { action: "send-video-check", label: "Ask for reply", description: "Video follow-up.", icon: ChatCenteredText, tone: "manual" },
+  { action: "send-calendly", label: "Send Calendly", description: "Keeps the flow active.", icon: CalendarCheck, tone: "calendly" },
 ] as const;
 
 const stateActions = [
-  { action: "mark-answered", label: "Ya respondi", icon: CheckCircle },
-  { action: "mark-booked", label: "Marcar reservado", icon: CalendarCheck },
-  { action: "close", label: "Cerrar lead", icon: XCircle },
+  { action: "mark-answered", label: "Mark answered", icon: CheckCircle },
+  { action: "mark-booked", label: "Mark booked", icon: CalendarCheck },
+  { action: "close", label: "Close lead", icon: XCircle },
 ] as const;
 
 type ManualReplyFilter = "" | "needs_reply" | "answered";
@@ -149,7 +149,7 @@ export function App() {
     loadDashboard()
       .catch((reason) => {
         if (!cancelled) {
-          setError(reason instanceof Error ? reason.message : "No se pudo cargar el panel.");
+          setError(reason instanceof Error ? reason.message : "Could not load the dashboard.");
         }
       })
       .finally(() => {
@@ -166,7 +166,7 @@ export function App() {
     const timer = window.setInterval(() => {
       if (document.visibilityState === "visible") {
         loadDashboard().catch((reason) => {
-          setError(reason instanceof Error ? reason.message : "Fallo la actualizacion automatica.");
+          setError(reason instanceof Error ? reason.message : "Automatic refresh failed.");
         });
       }
     }, REFRESH_MS);
@@ -179,7 +179,7 @@ export function App() {
       return;
     }
     loadDetail(selectedLeadId).catch((reason) => {
-      setError(reason instanceof Error ? reason.message : "No se pudo cargar el lead.");
+      setError(reason instanceof Error ? reason.message : "Could not load the lead.");
     });
   }, [loadDetail, selectedLeadId]);
 
@@ -191,7 +191,7 @@ export function App() {
         await loadDetail(selectedLeadId);
       }
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "No se pudo actualizar.");
+      setError(reason instanceof Error ? reason.message : "Could not refresh.");
     } finally {
       setLoading(false);
     }
@@ -211,7 +211,7 @@ export function App() {
       await loadDashboard();
       await loadDetail(leadId);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "No se pudo ejecutar la accion.");
+      setError(reason instanceof Error ? reason.message : "Could not run the action.");
     } finally {
       setActionBusy(null);
     }
@@ -230,7 +230,7 @@ export function App() {
       await loadDashboard();
       await loadDetail(leadId);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "No se pudo reactivar la automatizacion.");
+      setError(reason instanceof Error ? reason.message : "Could not resume automation.");
     } finally {
       setActionBusy(null);
     }
@@ -253,7 +253,7 @@ export function App() {
       await loadDashboard();
       await loadDetail(leadId);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "No se pudo enviar el mensaje manual.");
+      setError(reason instanceof Error ? reason.message : "Could not send the manual message.");
     } finally {
       setActionBusy(null);
     }
@@ -268,7 +268,7 @@ export function App() {
       });
       await loadDashboard();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "No se pudo guardar la config.");
+      setError(reason instanceof Error ? reason.message : "Could not save config.");
     } finally {
       setActionBusy(null);
     }
@@ -291,29 +291,73 @@ export function App() {
 
   return (
     <div className="app-shell">
-      <header className="topbar">
-        <div>
-          <div className="product-mark">
-            <span className="mark-dot" />
-            <span>Contadores Ops</span>
+      <aside className="sidebar">
+        <div className="sidebar-scroll">
+          <section className="brand-block">
+            <p className="brand-eyebrow">Konecta Contadores</p>
+            <h1>WhatsApp Relay</h1>
+            <p className="brand-copy">Track lead replies, send approved sequence steps, and keep human handoff clean.</p>
+          </section>
+
+          <div className="workspace-nav" aria-label="Workspace">
+            <button type="button" className="workspace-nav-btn active" aria-pressed="true">Contadores</button>
           </div>
-          <h1>Panel de seguimiento WhatsApp</h1>
-        </div>
-        <div className="topbar-actions">
+
           <RuntimePill runtime={runtime} />
-          <button className="icon-button labeled" type="button" onClick={() => setShowAdvancedFilters((value) => !value)} title="Filtros">
-            <Funnel size={18} weight="bold" />
-            <span>Filtros{activeFilterCount ? ` (${activeFilterCount})` : ""}</span>
-          </button>
-          <button className="icon-button labeled" type="button" onClick={() => setShowConfig(true)} title="Config">
-            <GearSix size={18} weight="bold" />
-            <span>Config</span>
-          </button>
-          <button className="icon-button" type="button" onClick={refreshAll} disabled={loading} title="Actualizar">
-            <ArrowClockwise size={18} weight="bold" />
-          </button>
+
+          <section className="sidebar-card">
+            <p className="sidebar-kicker">Current Focus</p>
+            <h3>{selectedLead?.full_name || "No lead selected"}</h3>
+            <p>{selectedLead ? `${selectedLead.phone} · ${stageLabel(selectedLead.stage)}` : "Open a lead to inspect messages, state, and manual controls."}</p>
+          </section>
+
+          <section className="sidebar-card">
+            <p className="sidebar-kicker">Runtime</p>
+            <div className="sidebar-stat-grid">
+              <span>
+                <strong>{runtime?.source_mode ?? "-"}</strong>
+                Mode
+              </span>
+              <span>
+                <strong>{runtime?.ready ? "Ready" : "Review"}</strong>
+                Status
+              </span>
+              <span>
+                <strong>{compactNumber(metrics?.needs_human ?? 0)}</strong>
+                Manual
+              </span>
+              <span>
+                <strong>{compactNumber(metrics?.booked ?? 0)}</strong>
+                Booked
+              </span>
+            </div>
+          </section>
         </div>
-      </header>
+      </aside>
+
+      <main className="main">
+        <header className="topbar">
+          <div>
+            <div className="product-mark">
+              <span className="mark-dot" />
+              <span>Contadores Ops</span>
+            </div>
+            <h1>WhatsApp Follow-Up</h1>
+          </div>
+          <div className="topbar-actions">
+            <button className="icon-button labeled" type="button" onClick={() => setShowAdvancedFilters((value) => !value)} title="Filters">
+              <Funnel size={18} weight="bold" />
+              <span>Filters{activeFilterCount ? ` (${activeFilterCount})` : ""}</span>
+            </button>
+            <button className="icon-button labeled" type="button" onClick={() => setShowConfig(true)} title="Config">
+              <GearSix size={18} weight="bold" />
+              <span>Config</span>
+            </button>
+            <button className="icon-button" type="button" onClick={refreshAll} disabled={loading} title="Refresh">
+              <ArrowClockwise size={18} weight="bold" />
+            </button>
+          </div>
+        </header>
 
       {error ? (
         <div className="error-banner" role="alert">
@@ -325,11 +369,11 @@ export function App() {
         </div>
       ) : null}
 
-      <section className="status-strip" aria-label="Estado actual">
-        <StatusItem label="Modo" value={runtime?.source_mode ?? "-"} tone={runtime?.source_mode === "live" ? "live" : "testing"} />
-        <StatusItem label="Listo" value={runtime?.ready ? "Si" : "Revisar"} tone={runtime?.ready ? "ok" : "warn"} />
-        <StatusItem label="Actualizacion" value={lastRefreshAt ? relativeTime(lastRefreshAt) : "Iniciando"} tone="neutral" />
-        <StatusItem label="Ultima sync" value={shortDate(leadList?.config.last_sheet_sync_at)} tone="neutral" />
+      <section className="status-strip" aria-label="Current status">
+        <StatusItem label="Mode" value={runtime?.source_mode ?? "-"} tone={runtime?.source_mode === "live" ? "live" : "testing"} />
+        <StatusItem label="Ready" value={runtime?.ready ? "Yes" : "Review"} tone={runtime?.ready ? "ok" : "warn"} />
+        <StatusItem label="Refresh" value={lastRefreshAt ? relativeTime(lastRefreshAt) : "Starting"} tone="neutral" />
+        <StatusItem label="Last sync" value={shortDate(leadList?.config.last_sheet_sync_at)} tone="neutral" />
       </section>
 
       <MetricsBar metrics={metrics} activeStage={stageFilter} onStageChange={setStageFilter} />
@@ -345,16 +389,16 @@ export function App() {
         />
       ) : null}
 
-      <main className="workspace">
-        <section className="lead-column" aria-label="Lista de leads">
+      <div className="workspace">
+        <section className="lead-column" aria-label="Lead list">
           <div className="toolbar">
             <label className="search-box">
               <MagnifyingGlass size={17} weight="bold" />
-              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar leads" />
+              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search leads" />
             </label>
             {activeFilterCount ? (
               <button className="filter-button" type="button" onClick={clearFilters}>
-                Limpiar
+                Clear
               </button>
             ) : null}
           </div>
@@ -367,7 +411,7 @@ export function App() {
           />
         </section>
 
-        <section className="detail-column" aria-label="Detalle del lead">
+        <section className="detail-column" aria-label="Lead detail">
           <LeadDetail
             detail={detail}
             fallbackLead={selectedLead}
@@ -380,7 +424,7 @@ export function App() {
             onResume={resumeAutomation}
           />
         </section>
-      </main>
+      </div>
 
       {showConfig ? (
         <ConfigDrawer
@@ -391,6 +435,7 @@ export function App() {
           onSave={saveConfig}
         />
       ) : null}
+      </main>
     </div>
   );
 }
@@ -400,7 +445,7 @@ function RuntimePill({ runtime }: { runtime: RuntimeSettings | null }) {
   return (
     <div className={`runtime-pill ${ready ? "ready" : "blocked"}`}>
       {ready ? <CheckCircle size={16} weight="fill" /> : <WarningCircle size={16} weight="fill" />}
-      <span>{runtime ? `modo ${runtime.source_mode}` : "cargando"}</span>
+      <span>{runtime ? `${runtime.source_mode} mode` : "loading"}</span>
     </div>
   );
 }
@@ -421,40 +466,40 @@ function AdvancedFilters({
   onClear: () => void;
 }) {
   return (
-    <section className="filter-panel" aria-label="Filtros avanzados de leads">
+    <section className="filter-panel" aria-label="Advanced lead filters">
       <div>
-        <span>Filtros</span>
-        <strong>{activeFilterCount ? `${activeFilterCount} activos` : "Vista principal"}</strong>
+        <span>Filters</span>
+        <strong>{activeFilterCount ? `${activeFilterCount} active` : "Main view"}</strong>
       </div>
-      <div className="filter-segment" aria-label="Filtros de respuesta manual">
+      <div className="filter-segment" aria-label="Manual reply filters">
         <button
           type="button"
           className={!manualReplyFilter ? "active" : ""}
           onClick={() => onManualReplyChange("")}
         >
-          Todos
+          All
         </button>
         <button
           type="button"
           className={manualReplyFilter === "needs_reply" ? "active warn" : ""}
           onClick={() => onManualReplyChange("needs_reply")}
         >
-          Necesitan respuesta
+          Needs reply
         </button>
         <button
           type="button"
           className={manualReplyFilter === "answered" ? "active ok" : ""}
           onClick={() => onManualReplyChange("answered")}
         >
-          Ya respondidos
+          Answered
         </button>
       </div>
       <label className="archive-toggle">
         <input type="checkbox" checked={includeArchived} onChange={(event) => onArchivedChange(event.target.checked)} />
-        <span>Mostrar archivados</span>
+        <span>Show archived</span>
       </label>
       <button className="filter-clear" type="button" onClick={onClear} disabled={!activeFilterCount}>
-        Limpiar
+        Clear
       </button>
     </section>
   );
@@ -479,7 +524,7 @@ function MetricsBar({
   onStageChange: (stage: LeadStage | "all") => void;
 }) {
   return (
-    <section className="metric-rail" aria-label="Filtros por etapa">
+    <section className="metric-rail" aria-label="Stage filters">
       {stageFilters.map((filter) => {
         const count = filter.metric && metrics ? metrics[filter.metric] : 0;
         return (
@@ -523,8 +568,8 @@ function LeadList({
     return (
       <div className="empty-state">
         <ListChecks size={26} weight="bold" />
-        <h2>No hay leads en esta vista</h2>
-        <p>Ajusta filtros o espera la proxima sync.</p>
+        <h2>No leads in this view</h2>
+        <p>Adjust filters or wait for the next sync.</p>
       </div>
     );
   }
@@ -537,7 +582,7 @@ function LeadList({
         return (
           <button key={lead.id} className={`lead-row stage-${lead.stage} ${active ? "active" : ""}`} type="button" onClick={() => onSelect(lead.id)}>
             <div className="lead-row-top">
-              <strong>{lead.full_name || "Lead sin nombre"}</strong>
+              <strong>{lead.full_name || "Unnamed lead"}</strong>
               <StageBadge stage={lead.stage} />
             </div>
             <div className="lead-row-meta">
@@ -545,9 +590,9 @@ function LeadList({
               <span>{relativeTime(lastAt)}</span>
             </div>
             <div className="lead-row-bottom">
-              <span>{lead.platform || "Sin origen"}</span>
+              <span>{lead.platform || "No source"}</span>
               <StrategyChips assignments={lead.strategy_assignments} compact />
-              {lead.manual_reply_status === "needs_reply" ? <em>requiere respuesta</em> : null}
+              {lead.manual_reply_status === "needs_reply" ? <em>needs reply</em> : null}
             </div>
           </button>
         );
@@ -588,8 +633,8 @@ function LeadDetail({
     return (
       <div className="detail-empty">
         <UserFocus size={32} weight="bold" />
-        <h2>Selecciona un lead</h2>
-        <p>Abri un lead para ver mensajes, estado y controles manuales.</p>
+        <h2>Select a lead</h2>
+        <p>Open a lead to inspect messages, state, and manual controls.</p>
       </div>
     );
   }
@@ -602,8 +647,8 @@ function LeadDetail({
             <Phone size={15} weight="bold" />
             <span>{lead.phone}</span>
           </div>
-          <h2>{lead.full_name || "Lead sin nombre"}</h2>
-          <p>{lead.email || "Sin email"} · {lead.platform || "Sin origen"}</p>
+          <h2>{lead.full_name || "Unnamed lead"}</h2>
+          <p>{lead.email || "No email"} · {lead.platform || "No source"}</p>
         </div>
         <StageBadge stage={lead.stage} large />
       </div>
@@ -611,29 +656,29 @@ function LeadDetail({
       <StrategyChips assignments={lead.strategy_assignments} />
 
       <div className="lead-facts">
-        <Fact label="Entrante" value={shortDate(lead.last_inbound_at)} />
-        <Fact label="Enviado" value={shortDate(lead.last_outbound_at)} />
-        <Fact label="Manual" value={lead.manual_reply_status ? humanize(lead.manual_reply_status) : "Sin pendiente"} />
-        <Fact label="Automatizacion" value={lead.automation_paused ? "Pausada" : "Activa"} />
+        <Fact label="Inbound" value={shortDate(lead.last_inbound_at)} />
+        <Fact label="Outbound" value={shortDate(lead.last_outbound_at)} />
+        <Fact label="Manual" value={lead.manual_reply_status ? humanize(lead.manual_reply_status) : "No pending"} />
+        <Fact label="Automation" value={lead.automation_paused ? "Paused" : "Active"} />
       </div>
 
       {lead.automation_paused ? (
         <div className="pause-callout">
           <PauseCircle size={18} weight="fill" />
           <div>
-            <strong>Automatizacion pausada</strong>
+            <strong>Automation paused</strong>
             <span>{humanize(lead.automation_paused_reason || "manual review")}</span>
           </div>
           <button type="button" onClick={onResume} disabled={actionBusy === "resume"}>
-            Reactivar
+            Resume
           </button>
         </div>
       ) : null}
 
-      <div className="preset-panel" aria-label="Mensajes preparados">
+      <div className="preset-panel" aria-label="Prepared messages">
         <div className="preset-panel-head">
-            <span>Mensajes</span>
-            <strong>Enviar mensaje preparado</strong>
+            <span>Messages</span>
+            <strong>Send prepared message</strong>
         </div>
         <div className="action-grid">
           {sendActions.map((item) => {
@@ -660,12 +705,12 @@ function LeadDetail({
       <div className="conversation-area">
         <div className="timeline-wrap">
           <div className="section-title conversation-title">
-            <h3>Conversacion</h3>
+            <h3>Conversation</h3>
             <div className="section-actions">
-              <span>{loading ? "Actualizando" : `${detail?.messages.length ?? 0} mensajes`}</span>
+              <span>{loading ? "Refreshing" : `${detail?.messages.length ?? 0} messages`}</span>
               <button className="events-toggle" type="button" onClick={() => setShowEvents((value) => !value)}>
                 <Clock size={15} weight="bold" />
-                {showEvents ? "Ocultar eventos" : `Eventos (${detail?.events.length ?? 0})`}
+                {showEvents ? "Hide events" : `Events (${detail?.events.length ?? 0})`}
               </button>
             </div>
           </div>
@@ -678,28 +723,28 @@ function LeadDetail({
         </div>
       </div>
 
-      <section className="operator-dock" aria-label="Controles manuales">
+      <section className="operator-dock" aria-label="Manual controls">
         <div className="operator-dock-head">
           <div>
             <span>Manual</span>
-            <h3>Mensaje y estado</h3>
+            <h3>Message and state</h3>
           </div>
           <StageBadge stage="needs_human" />
         </div>
 
         <form className="manual-form" onSubmit={onManualSubmit}>
           <label>
-            <span>Mensaje manual de WhatsApp</span>
+            <span>Manual WhatsApp message</span>
             <textarea
               value={manualText}
               onChange={(event) => onManualTextChange(event.target.value)}
-              placeholder="Escribi el mensaje exacto que queres enviar..."
+              placeholder="Write the exact message you want to send..."
               rows={2}
             />
           </label>
           <button type="submit" disabled={!manualText.trim() || Boolean(actionBusy)}>
             <PaperPlaneTilt size={16} weight="bold" />
-            Enviar manual
+            Send manual
           </button>
         </form>
 
@@ -716,13 +761,13 @@ function LeadDetail({
           {lead.stage === "closed" ? (
             <button type="button" onClick={() => onQuickAction("reopen")} disabled={Boolean(actionBusy)}>
               <Play size={15} weight="bold" />
-              Reabrir
+              Reopen
             </button>
           ) : null}
           {lead.stage === "archived" ? (
             <button type="button" onClick={() => onQuickAction("unarchive")} disabled={Boolean(actionBusy)}>
               <Archive size={15} weight="bold" />
-              Desarchivar
+              Unarchive
             </button>
           ) : null}
         </div>
@@ -748,7 +793,7 @@ function StrategyChips({
 
   const visibleAssignments = compact ? assignments.slice(0, 1) : assignments.slice(0, 3);
   return (
-    <div className={`strategy-chips ${compact ? "compact" : ""}`} aria-label="Estrategias asignadas">
+    <div className={`strategy-chips ${compact ? "compact" : ""}`} aria-label="Assigned strategies">
       {visibleAssignments.map((assignment) => (
         <span
           className={`strategy-chip strategy-tone-${strategyToneIndex(assignment.strategy_id || assignment.strategy_label)}`}
@@ -787,7 +832,7 @@ function MessageTimeline({ messages, loading }: { messages: MessageItem[]; loadi
     return (
       <div className="inline-empty">
         <ChatCenteredText size={20} weight="bold" />
-        <span>Sin mensajes todavia.</span>
+        <span>No messages yet.</span>
       </div>
     );
   }
@@ -797,7 +842,7 @@ function MessageTimeline({ messages, loading }: { messages: MessageItem[]; loadi
       {messages.map((message) => (
         <article key={message.id} className={`message ${message.from_me ? "outbound" : "inbound"}`}>
           <div className="message-meta">
-            <strong>{message.from_me ? "Enviado" : "Recibido"}</strong>
+            <strong>{message.from_me ? "Outbound" : "Received"}</strong>
             <span>{shortDate(message.created_at)}</span>
             {message.sequence_step ? <em>{humanize(message.sequence_step)}</em> : null}
           </div>
@@ -814,7 +859,7 @@ function EventTimeline({ events }: { events: Array<{ id: number; event_type: str
     return (
       <div className="inline-empty">
         <Clock size={20} weight="bold" />
-        <span>Sin eventos todavia.</span>
+        <span>No events yet.</span>
       </div>
     );
   }
@@ -847,14 +892,14 @@ function ConfigDrawer({
 }) {
   return (
     <div className="config-overlay" role="dialog" aria-modal="true" aria-label="Config">
-      <button className="config-backdrop" type="button" aria-label="Cerrar config" onClick={onClose} />
+      <button className="config-backdrop" type="button" aria-label="Close config" onClick={onClose} />
       <section className="config-drawer">
         <header className="drawer-head">
           <div>
             <span>Config</span>
-            <h2>Fuente y secuencia</h2>
+            <h2>Source and sequence</h2>
           </div>
-          <button className="icon-button" type="button" onClick={onClose} aria-label="Cerrar config">
+          <button className="icon-button" type="button" onClick={onClose} aria-label="Close config">
             <XCircle size={18} weight="bold" />
           </button>
         </header>
@@ -915,21 +960,21 @@ function ConfigPanel({
       <div className="panel-head">
         <div>
           <span>Runtime</span>
-          <h2>Fuente y secuencia</h2>
+          <h2>Source and sequence</h2>
         </div>
         <GearSix size={19} weight="bold" />
       </div>
 
       <div className="runtime-stack">
-        <Fact label="Modo" value={runtime?.source_mode ?? "-"} />
-        <Fact label="Sheet" value={runtime?.sheet_configured ? "Configurado" : "Falta"} />
-        <Fact label="Test phone" value={runtime?.testing_phone_configured ? "Configurado" : "Falta"} />
+        <Fact label="Mode" value={runtime?.source_mode ?? "-"} />
+        <Fact label="Sheet" value={runtime?.sheet_configured ? "Configured" : "Missing"} />
+        <Fact label="Test phone" value={runtime?.testing_phone_configured ? "Configured" : "Missing"} />
       </div>
 
       <form className="config-form" onSubmit={handleSubmit}>
         <label className="toggle-line">
           <input type="checkbox" checked={draft.enabled} onChange={(event) => setDraft((current) => ({ ...current, enabled: event.target.checked }))} />
-          <span>Automatizacion activa</span>
+          <span>Automation active</span>
         </label>
         <label>
           <span>Loom URL</span>
@@ -941,7 +986,7 @@ function ConfigPanel({
         </label>
         <div className="form-grid">
           <label>
-            <span>Sync sheet cada</span>
+            <span>Sync sheet every</span>
             <input
               type="number"
               min={60}
@@ -950,7 +995,7 @@ function ConfigPanel({
             />
           </label>
           <label>
-            <span>Espera post-Loom</span>
+            <span>Post-Loom wait</span>
             <input
               type="number"
               min={60}
@@ -960,11 +1005,11 @@ function ConfigPanel({
           </label>
         </div>
         <label>
-          <span>Emails de alerta</span>
+          <span>Alert emails</span>
           <input value={draft.alert_emails} onChange={(event) => setDraft((current) => ({ ...current, alert_emails: event.target.value }))} />
         </label>
         <button type="submit" disabled={saving || !config}>
-          {saving ? "Guardando" : "Guardar config"}
+          {saving ? "Saving" : "Save config"}
         </button>
       </form>
     </section>
