@@ -1,0 +1,33 @@
+http:
+  routers:
+    didactiqo-education:
+      rule: "Host(`didactiqo.fgoiriz.com`) || Host(`didactiqo.com`)"
+      priority: 100
+      entryPoints:
+        - web
+      service: didactiqo-education
+    backend:
+      rule: "HostRegexp(`.+\\..+`) && !HostRegexp(`\\d+\\.\\d+\\.\\d+\\.\\d+`) && PathPrefix(`/`)"
+      priority: 1
+      entryPoints:
+        - web
+      service: backend
+    bot:
+      rule: "HostRegexp(`.+\\..+`) && !HostRegexp(`\\d+\\.\\d+\\.\\d+\\.\\d+`) && PathPrefix(`/webhook`)"
+      priority: 10
+      entryPoints:
+        - web
+      service: bot
+  services:
+    didactiqo-education:
+      loadBalancer:
+        servers:
+          - url: "http://host.docker.internal:3417"
+    backend:
+      loadBalancer:
+        servers:
+          - url: "http://backend:8000"
+    bot:
+      loadBalancer:
+        servers:
+          - url: "http://bot:8100"
