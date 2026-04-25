@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -96,6 +97,8 @@ STRATEGIES: tuple[ContadoresSequenceStrategy, ...] = (
     LoomMp4Strategy(),
 )
 
+ContadoresStrategyWeights = Mapping[str, Mapping[str, int]]
+
 
 def list_contadores_strategies() -> list[ContadoresSequenceStrategy]:
     """Return every configured strategy."""
@@ -117,11 +120,23 @@ def get_contadores_strategy(step: str, strategy_id: str) -> ContadoresSequenceSt
     return None
 
 
+def get_contadores_strategy_weight(
+    strategy: ContadoresSequenceStrategy,
+    strategy_weights: ContadoresStrategyWeights | None = None,
+) -> int:
+    """Return the effective rollout weight for one strategy."""
+    configured_weight = (strategy_weights or {}).get(strategy.step, {}).get(strategy.id)
+    if configured_weight is None:
+        configured_weight = strategy.weight
+    return max(0, int(configured_weight))
+
+
 def choose_contadores_strategy(
     *,
     step: str,
     lead_id: str,
     strategy_id: str | None = None,
+    strategy_weights: ContadoresStrategyWeights | None = None,
 ) -> ContadoresSequenceStrategy:
     """Choose a weighted strategy for a lead using stable random bucketing."""
     if strategy_id:
@@ -134,7 +149,10 @@ def choose_contadores_strategy(
     if not strategies:
         raise ValueError(f"No Contadores strategies configured for step: {step}")
 
-    total_weight = sum(max(0, int(strategy.weight)) for strategy in strategies)
+    total_weight = sum(
+        get_contadores_strategy_weight(strategy, strategy_weights)
+        for strategy in strategies
+    )
     if total_weight <= 0:
         return strategies[0]
 
@@ -142,7 +160,7 @@ def choose_contadores_strategy(
     bucket = int(hashlib.sha256(bucket_source).hexdigest(), 16) % total_weight
     running_total = 0
     for strategy in strategies:
-        running_total += max(0, int(strategy.weight))
+        running_total += get_contadores_strategy_weight(strategy, strategy_weights)
         if bucket < running_total:
             return strategy
     return strategies[-1]

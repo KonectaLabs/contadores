@@ -16,6 +16,7 @@ from backend.contadores_strategies import (
     LOOM_STEP,
     build_loom_intro_text as build_strategy_loom_intro_text,
     choose_contadores_strategy,
+    get_contadores_strategy_weight,
     list_contadores_strategies,
 )
 from backend.database import (
@@ -266,13 +267,14 @@ def lead_matches_strategy_filter(
 
 def build_contadores_strategy_stats() -> "ContadoresStrategyStatsResponse":
     """Aggregate strategy assignment and conversion counts."""
+    config = ContadoresConfig.get()
     stats: dict[tuple[str, str], dict[str, Any]] = {}
     for strategy in list_contadores_strategies():
         stats[(strategy.step, strategy.id)] = {
             "step": strategy.step,
             "strategy_id": strategy.id,
             "strategy_label": strategy.label,
-            "weight": strategy.weight,
+            "weight": get_contadores_strategy_weight(strategy, config.strategy_weights),
             "assigned": 0,
             "sent": 0,
             "delivered": 0,
@@ -391,6 +393,7 @@ def build_config_response(config: ContadoresConfig) -> "ContadoresConfigResponse
         initial_reply_quiet_seconds=config.initial_reply_quiet_seconds,
         post_loom_min_seconds=config.post_loom_min_seconds,
         post_loom_quiet_seconds=config.post_loom_quiet_seconds,
+        strategy_weights=config.strategy_weights,
         last_sheet_sync_at=format_timestamp_seconds(config.last_sheet_sync_at),
         last_sheet_sync_status=config.last_sheet_sync_status,
         last_sheet_sync_note=config.last_sheet_sync_note,
@@ -563,6 +566,7 @@ def send_loom_sequence(
         step=LOOM_STEP,
         lead_id=lead.id,
         strategy_id=strategy_id,
+        strategy_weights=config.strategy_weights,
     )
     assignment = ContadoresStrategyAssignment.add(
         lead_id=lead.id,
@@ -761,6 +765,7 @@ class ContadoresConfigResponse(BaseModel):
     initial_reply_quiet_seconds: int
     post_loom_min_seconds: int
     post_loom_quiet_seconds: int
+    strategy_weights: dict[str, dict[str, int]] = Field(default_factory=dict)
     last_sheet_sync_at: str | None = None
     last_sheet_sync_status: str | None = None
     last_sheet_sync_note: str | None = None
@@ -780,6 +785,7 @@ class UpdateContadoresConfigCommand(BaseModel):
     initial_reply_quiet_seconds: int | None = Field(default=None, ge=1)
     post_loom_min_seconds: int | None = Field(default=None, ge=60)
     post_loom_quiet_seconds: int | None = Field(default=None, ge=1)
+    strategy_weights: dict[str, dict[str, int]] | None = None
 
 
 class ContadoresLeadSummary(BaseModel):
@@ -1065,6 +1071,7 @@ async def update_contadores_config(
         initial_reply_quiet_seconds=command.initial_reply_quiet_seconds,
         post_loom_min_seconds=command.post_loom_min_seconds,
         post_loom_quiet_seconds=command.post_loom_quiet_seconds,
+        strategy_weights=command.strategy_weights,
     )
     return build_config_response(config)
 

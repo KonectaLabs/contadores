@@ -18,6 +18,9 @@ Use:
 
 ## Branch And Deploy Rule
 
+- The project is server-first by default.
+- Treat `localhost` only as the workbench for development, validation, git, push, and deploy.
+- When the user asks for a product change or asks whether it is done, assume the expected end state is deployed on the real server unless they explicitly say local-only.
 - `main` is the operational branch.
 - If something is meant to run on the server, it should be committed on `main`.
 - `docker-compose.yml` should read `.env`.

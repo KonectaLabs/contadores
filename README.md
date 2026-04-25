@@ -95,6 +95,12 @@ Verificar API de Contadores:
 curl http://127.0.0.1:8000/api/contadores/config
 ```
 
+Configurar pesos de estrategias:
+
+- `CONTADORES_STRATEGY_WEIGHTS_JSON='{"loom":{"loom_link":0,"loom_mp4":100}}'`
+- También se puede cambiar desde `Settings` en el backoffice.
+- Los pesos son porcentajes de rollout por paso. Cambiarlos afecta nuevas asignaciones; las asignaciones ya guardadas no se reescriben.
+
 ## Docker Compose
 
 ```bash
@@ -111,10 +117,13 @@ Servicios:
 
 ## Rollout recomendado
 
+Este repo se trabaja server-first: `localhost` sirve para desarrollar, verificar, mover git, pushear y deployar. Un cambio de producto se considera terminado cuando está en el server real, salvo que explícitamente se pida local-only.
+
 1. Trabajar y mergear directo a `main`.
-2. Deployar el servidor con `.env` en `testing`.
-3. Probar varias veces con tu número usando `CONTADORES_TEST_PHONE`.
-4. Recién después cambiar `CONTADORES_SOURCE_MODE=live`.
+2. Pushear `main`.
+3. Deployar el servidor con `.env` en `testing`.
+4. Probar varias veces con tu número usando `CONTADORES_TEST_PHONE`.
+5. Recién después cambiar `CONTADORES_SOURCE_MODE=live`.
 
 Deploy remoto:
 

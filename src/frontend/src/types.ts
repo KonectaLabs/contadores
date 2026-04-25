@@ -35,6 +35,7 @@ export interface ContadoresConfig {
   initial_reply_quiet_seconds: number;
   post_loom_min_seconds: number;
   post_loom_quiet_seconds: number;
+  strategy_weights: Record<string, Record<string, number>>;
   last_sheet_sync_at: string | null;
   last_sheet_sync_status: string | null;
   last_sheet_sync_note: string | null;

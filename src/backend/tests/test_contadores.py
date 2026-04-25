@@ -119,6 +119,43 @@ def test_contadores_zero_weight_strategy_is_not_auto_assigned() -> None:
     assert chosen_ids == {"loom_mp4"}
 
 
+def test_contadores_strategy_weights_are_configurable(monkeypatch, tmp_path) -> None:
+    """Config weights should drive automatic strategy assignment and stats display."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    config = ContadoresConfig.update(
+        enabled=True,
+        strategy_weights={"loom": {"loom_link": 100, "loom_mp4": 0}},
+    )
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-config-weight",
+        phone="+5491111111199",
+        full_name="Weight Lead",
+    )
+
+    contadores_endpoints.send_loom_sequence(lead=lead, config=config)
+
+    with TestClient(app) as client:
+        config_response = client.get("/api/contadores/config")
+        stats_response = client.get("/api/contadores/strategy-stats")
+        pending_response = client.get("/api/contadores/messages/pending-delivery")
+
+    assert config_response.status_code == 200
+    assert config_response.json()["strategy_weights"] == {
+        "loom": {"loom_link": 100, "loom_mp4": 0}
+    }
+
+    assert stats_response.status_code == 200
+    items = {item["strategy_id"]: item for item in stats_response.json()["items"]}
+    assert items["loom_link"]["weight"] == 100
+    assert items["loom_mp4"]["weight"] == 0
+
+    assert pending_response.status_code == 200
+    assert [item["strategy_id"] for item in pending_response.json()["messages"]] == [
+        "loom_link",
+        "loom_link",
+    ]
+
+
 def test_contadores_strategy_stats_count_calendly_and_booked(monkeypatch, tmp_path) -> None:
     """Strategy stats should aggregate assigned leads and downstream milestones."""
     configure_contadores_db(monkeypatch, tmp_path)

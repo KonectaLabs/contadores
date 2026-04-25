@@ -116,6 +116,7 @@ Treat the spreadsheet as the source of truth for:
 
 Operational rule:
 
+- Product work is server-first by default; `localhost` is only for development, validation, git, push, and deploy.
 - `testing` mode must work with `CONTADORES_TEST_PHONE` only and must not fetch the live sheet.
 - `live` mode is the only mode allowed to poll this sheet on a timer.
 

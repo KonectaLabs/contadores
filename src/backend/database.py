@@ -690,6 +690,45 @@ def _default_contadores_post_loom_min_seconds() -> int:
     return max(60, int(os.getenv("CONTADORES_POST_LOOM_MIN_SECONDS", "300")))
 
 
+def _normalize_contadores_strategy_weights(value: Any) -> dict[str, dict[str, int]]:
+    """Normalize configured strategy rollout weights."""
+    if not isinstance(value, dict):
+        return {}
+
+    normalized: dict[str, dict[str, int]] = {}
+    for raw_step, raw_strategies in value.items():
+        step = str(raw_step or "").strip()
+        if not step or not isinstance(raw_strategies, dict):
+            continue
+
+        strategy_weights: dict[str, int] = {}
+        for raw_strategy_id, raw_weight in raw_strategies.items():
+            strategy_id = str(raw_strategy_id or "").strip()
+            if not strategy_id:
+                continue
+            try:
+                strategy_weights[strategy_id] = min(100, max(0, int(raw_weight)))
+            except (TypeError, ValueError):
+                continue
+
+        if strategy_weights:
+            normalized[step] = strategy_weights
+    return normalized
+
+
+def _default_contadores_strategy_weights_json() -> str:
+    """Return configured strategy weights from env as JSON text."""
+    raw_value = (os.getenv("CONTADORES_STRATEGY_WEIGHTS_JSON", "") or "").strip()
+    if not raw_value:
+        return "{}"
+    try:
+        payload = json.loads(raw_value)
+    except json.JSONDecodeError:
+        logger.warning("Ignoring invalid CONTADORES_STRATEGY_WEIGHTS_JSON.")
+        return "{}"
+    return json.dumps(_normalize_contadores_strategy_weights(payload), ensure_ascii=True)
+
+
 def _normalize_contadores_calendly_base_url(base_url: str | None) -> str:
     """Return a usable Calendly base URL for Contadores."""
     default_url = "https://calendly.com/yoelkravchuk/konecta-meet"
@@ -740,6 +779,7 @@ class ContadoresConfig(SQLModel, table=True):
     post_loom_quiet_seconds: int = Field(
         default_factory=lambda: max(1, int(os.getenv("CONTADORES_POST_LOOM_QUIET_SECONDS", "30")))
     )
+    strategy_weights_json: str = Field(default_factory=_default_contadores_strategy_weights_json)
     last_sheet_sync_at: datetime | None = Field(default=None)
     last_sheet_sync_status: str | None = Field(default=None)
     last_sheet_sync_note: str | None = Field(default=None)
@@ -759,6 +799,15 @@ class ContadoresConfig(SQLModel, table=True):
             for item in payload
             if normalize_email(str(item))
         ]
+
+    @property
+    def strategy_weights(self) -> dict[str, dict[str, int]]:
+        """Return configured strategy rollout weights by step and strategy id."""
+        try:
+            payload = json.loads(self.strategy_weights_json or "{}")
+        except json.JSONDecodeError:
+            payload = {}
+        return _normalize_contadores_strategy_weights(payload)
 
     @classmethod
     def get(cls) -> "ContadoresConfig":
@@ -803,6 +852,7 @@ class ContadoresConfig(SQLModel, table=True):
         initial_reply_quiet_seconds: int | None = None,
         post_loom_min_seconds: int | None = None,
         post_loom_quiet_seconds: int | None = None,
+        strategy_weights: dict[str, dict[str, int]] | None = None,
     ) -> "ContadoresConfig":
         """Update the singleton config row."""
         with Session(engine) as session:
@@ -835,6 +885,11 @@ class ContadoresConfig(SQLModel, table=True):
                 item.post_loom_min_seconds = max(60, int(post_loom_min_seconds))
             if post_loom_quiet_seconds is not None:
                 item.post_loom_quiet_seconds = max(1, int(post_loom_quiet_seconds))
+            if strategy_weights is not None:
+                item.strategy_weights_json = json.dumps(
+                    _normalize_contadores_strategy_weights(strategy_weights),
+                    ensure_ascii=True,
+                )
             item.updated_at = datetime.now(timezone.utc)
             session.add(item)
             session.commit()
@@ -3304,6 +3359,7 @@ def init_db() -> None:
     ensure_contadores_closed_state_columns()
     ensure_contadores_manual_reply_columns()
     ensure_contadores_strategy_columns()
+    ensure_contadores_config_strategy_weights_column()
     logger.info(f"Database initialized at {DATABASE_URL}")
 
 
@@ -3399,6 +3455,21 @@ def ensure_contadores_strategy_columns() -> None:
                 f"CREATE INDEX IF NOT EXISTS ix_contadores_messages_{column_name} "
                 f"ON contadores_messages ({column_name})"
             )
+
+
+def ensure_contadores_config_strategy_weights_column() -> None:
+    """Add configurable strategy weights to existing Contadores config tables."""
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        if "contadores_config" not in inspector.get_table_names():
+            return
+        config_columns = {column["name"] for column in inspector.get_columns("contadores_config")}
+        if "strategy_weights_json" in config_columns:
+            return
+        connection.exec_driver_sql(
+            "ALTER TABLE contadores_config ADD COLUMN strategy_weights_json TEXT NOT NULL DEFAULT '{}'"
+        )
+        logger.info("Added missing contadores_config.strategy_weights_json column.")
 
 
 def ensure_company_tags_column() -> None:

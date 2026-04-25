@@ -39,6 +39,8 @@ Important nuance:
 - deploy target and runtime mode are different things;
 - the app can be deployed on the real server and still remain in `testing`;
 - moving to `live` should happen with an `.env` change, not with code changes.
+- product changes are expected to end on the real server by default;
+- `localhost` is only the development, validation, git, push, and deploy workbench.
 
 ## Current Columns
 

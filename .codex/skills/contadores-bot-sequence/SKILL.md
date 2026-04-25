@@ -13,7 +13,9 @@ Use this skill when editing or reviewing the WhatsApp automation flow.
 2. Wait for any reply.
 3. Wait 30 seconds of silence.
 4. Send the Loom intro text.
-5. Send the Loom URL alone.
+5. Send the configured Loom strategy:
+   - `loom_link`: Loom URL alone.
+   - `loom_mp4`: WhatsApp MP4 from `data/contadores/videos/loom_60_seconds_captions.mp4`.
 6. Wait 10 minutes.
 7. If there is still no reply, send `¿Terminaste de ver el video?`
 8. Once there are 30 seconds of silence after the post-Loom replies, classify:
@@ -27,5 +29,6 @@ Use this skill when editing or reviewing the WhatsApp automation flow.
 - This flow can be deployed while the app is still in `testing`.
 - `testing` means the flow is only exercised with the synthetic lead from `CONTADORES_TEST_PHONE`.
 - `live` means the flow can start from sheet-imported leads.
+- Strategy rollout weights live in Contadores config as `strategy_weights` and can be seeded with `CONTADORES_STRATEGY_WEIGHTS_JSON`.
 
 Read [references/sequence.md](references/sequence.md) for the exact messages and timing.

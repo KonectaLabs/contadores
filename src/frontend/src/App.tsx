@@ -44,6 +44,7 @@ const sendOptions = [
 type ManualReplyFilter = "" | "needs_reply" | "answered";
 type DetailTab = "messages" | "events" | "strategies";
 type SendKind = (typeof sendOptions)[number]["value"];
+type StrategyWeights = Record<string, Record<string, number>>;
 type QuickActionName =
   | "send-opener"
   | "send-loom"
@@ -828,19 +829,29 @@ function ConfigDrawer({
     loom_url: "",
     calendly_base_url: "",
     alert_emails: "",
+    strategy_weights: {} as StrategyWeights,
   });
+  const [draftReady, setDraftReady] = useState(false);
 
   useEffect(() => {
-    if (!config) {
+    if (!config || draftReady) {
       return;
+    }
+    const strategyWeights: StrategyWeights = {};
+    for (const item of strategyStats) {
+      strategyWeights[item.step] = strategyWeights[item.step] ?? {};
+      strategyWeights[item.step][item.strategy_id] =
+        config.strategy_weights?.[item.step]?.[item.strategy_id] ?? item.weight ?? 0;
     }
     setDraft({
       enabled: config.enabled,
       loom_url: config.loom_url,
       calendly_base_url: config.calendly_base_url,
       alert_emails: config.alert_emails.join(", "),
+      strategy_weights: strategyWeights,
     });
-  }, [config]);
+    setDraftReady(true);
+  }, [config, draftReady, strategyStats]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -849,7 +860,22 @@ function ConfigDrawer({
       loom_url: draft.loom_url,
       calendly_base_url: draft.calendly_base_url,
       alert_emails: draft.alert_emails.split(",").map((item) => item.trim()).filter(Boolean),
+      strategy_weights: draft.strategy_weights,
     });
+  }
+
+  function updateStrategyWeight(item: StrategyStatsItem, value: string) {
+    const nextWeight = Math.min(100, Math.max(0, Number.parseInt(value || "0", 10) || 0));
+    setDraft((current) => ({
+      ...current,
+      strategy_weights: {
+        ...current.strategy_weights,
+        [item.step]: {
+          ...(current.strategy_weights[item.step] ?? {}),
+          [item.strategy_id]: nextWeight,
+        },
+      },
+    }));
   }
 
   return (
@@ -886,7 +912,11 @@ function ConfigDrawer({
             <span>Alert Emails</span>
             <input value={draft.alert_emails} onChange={(event) => setDraft((current) => ({ ...current, alert_emails: event.target.value }))} />
           </label>
-          <StrategyStatsPanel items={strategyStats} />
+          <StrategyStatsPanel
+            items={strategyStats}
+            weights={draft.strategy_weights}
+            onWeightChange={updateStrategyWeight}
+          />
         </div>
         <footer className="ct-drawer-foot">
           <button type="submit" className="ct-btn ct-btn-primary" disabled={saving || !config}>{saving ? "Saving..." : "Save Config"}</button>
@@ -896,7 +926,15 @@ function ConfigDrawer({
   );
 }
 
-function StrategyStatsPanel({ items }: { items: StrategyStatsItem[] }) {
+function StrategyStatsPanel({
+  items,
+  weights,
+  onWeightChange,
+}: {
+  items: StrategyStatsItem[];
+  weights: StrategyWeights;
+  onWeightChange: (item: StrategyStatsItem, value: string) => void;
+}) {
   if (!items.length) {
     return (
       <section className="ct-strategy-panel" aria-label="Strategy performance">
@@ -919,8 +957,18 @@ function StrategyStatsPanel({ items }: { items: StrategyStatsItem[] }) {
           <article className="ct-strategy-row" key={`${item.step}:${item.strategy_id}`}>
             <div>
               <strong>{item.strategy_label || formatStrategyLabel(item.strategy_id)}</strong>
-              <span>{formatStrategyLabel(item.step)} · {item.weight}% weight</span>
+              <span>{formatStrategyLabel(item.step)} · current weight</span>
             </div>
+            <label className="ct-strategy-weight">
+              <input
+                type="number"
+                min="0"
+                max="100"
+                value={weights[item.step]?.[item.strategy_id] ?? item.weight}
+                onChange={(event) => onWeightChange(item, event.target.value)}
+              />
+              <span>%</span>
+            </label>
             <div className="ct-strategy-metrics">
               <span>{item.assigned} assigned</span>
               <span>{formatRate(item.calendly_rate)} Calendly</span>

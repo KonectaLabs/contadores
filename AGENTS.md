@@ -9,6 +9,9 @@
 
 ## Deploy
 
+- Este repo se trabaja pensando siempre en el server real.
+- `localhost` es solo una herramienta para desarrollar, verificar, mover git, pushear y deployar.
+- Si el usuario pide un cambio de producto o pregunta si ya quedó, asumir que debe quedar deployado en el server, no solo funcionando local.
 - La rama operativa es `main`.
 - Si algo se va a deployar, debe quedar committeado en `main`.
 - `docker-compose.yml` debe leer `.env`.
