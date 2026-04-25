@@ -2119,6 +2119,10 @@ body {
   color: var(--ct-ink);
 }
 
+#contadoresView .ct-nav-add {
+  color: var(--ct-accent-strong);
+}
+
 #contadoresView .ct-topbar-tools {
   display: flex;
   align-items: center;
@@ -2147,6 +2151,8 @@ body {
 
 #contadoresView .ct-search input:focus,
 #contadoresView .ct-field input:focus,
+#contadoresView .ct-field select:focus,
+#contadoresView .ct-field textarea:focus,
 #contadoresView .ct-modal-field textarea:focus,
 #contadoresView .ct-manual textarea:focus {
   outline: none;
@@ -2213,6 +2219,117 @@ body {
   gap: 12px;
   padding: 18px 24px 28px;
   overflow: hidden;
+}
+
+#contadoresView .ct-funnel-setup {
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 16px;
+  padding: 18px 24px 28px;
+  overflow: auto;
+}
+
+#contadoresView .ct-funnel-hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 22px;
+  border: 1px solid var(--ct-line);
+  border-radius: var(--ct-radius);
+  background: var(--ct-surface);
+}
+
+#contadoresView .ct-funnel-hero h2 {
+  margin: 6px 0 8px;
+  color: var(--ct-ink);
+  font: 700 26px/1.1 var(--font-sans);
+}
+
+#contadoresView .ct-funnel-hero p {
+  max-width: 780px;
+  margin: 0;
+  color: var(--ct-ink-muted);
+  font: 500 13px/1.5 var(--font-sans);
+}
+
+#contadoresView .ct-funnel-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+#contadoresView .ct-funnel-card,
+#contadoresView .ct-funnel-copy {
+  padding: 16px;
+  border: 1px solid var(--ct-line);
+  border-radius: var(--ct-radius);
+  background: var(--ct-surface);
+}
+
+#contadoresView .ct-funnel-card {
+  display: grid;
+  gap: 7px;
+}
+
+#contadoresView .ct-funnel-card span,
+#contadoresView .ct-copy-row > span {
+  color: var(--ct-ink-muted);
+  font: 700 10px/1 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+#contadoresView .ct-funnel-card strong {
+  color: var(--ct-ink);
+  font: 700 16px/1.2 var(--font-sans);
+}
+
+#contadoresView .ct-funnel-card p,
+#contadoresView .ct-copy-row p,
+#contadoresView .ct-config-path {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--ct-ink-muted);
+  font: 500 12px/1.4 var(--font-mono);
+}
+
+#contadoresView .ct-funnel-copy {
+  display: grid;
+  gap: 12px;
+}
+
+#contadoresView .ct-funnel-copy h3 {
+  margin: 0;
+  color: var(--ct-ink);
+  font: 700 16px/1.2 var(--font-sans);
+}
+
+#contadoresView .ct-copy-row {
+  display: grid;
+  gap: 6px;
+  padding-top: 12px;
+  border-top: 1px solid var(--ct-line-soft);
+}
+
+#contadoresView .ct-copy-row blockquote {
+  margin: 0;
+  padding: 10px 12px;
+  border-left: 3px solid var(--ct-accent);
+  border-radius: var(--ct-radius-sm);
+  background: var(--ct-accent-soft);
+  color: var(--ct-ink);
+  font: 500 13px/1.45 var(--font-sans);
+  white-space: pre-wrap;
+}
+
+#contadoresView .ct-config-path {
+  justify-self: start;
+  padding: 8px 10px;
+  border: 1px solid var(--ct-line);
+  border-radius: var(--ct-radius-sm);
+  background: var(--ct-surface);
 }
 
 #contadoresView .ct-pipeline {
@@ -2949,6 +3066,10 @@ body {
   box-shadow: -16px 0 36px rgba(32, 33, 36, 0.16);
 }
 
+#contadoresView .ct-drawer-panel.wide {
+  width: min(720px, 96vw);
+}
+
 #contadoresView .ct-drawer-head,
 #contadoresView .ct-modal-head {
   display: flex;
@@ -3011,15 +3132,38 @@ body {
   text-transform: uppercase;
 }
 
-#contadoresView .ct-field input {
+#contadoresView .ct-field input,
+#contadoresView .ct-field select,
+#contadoresView .ct-field textarea {
   width: 100%;
-  height: 36px;
-  padding: 0 12px;
   border: 1px solid var(--ct-line);
   border-radius: var(--ct-radius);
   background: var(--ct-surface);
   color: var(--ct-ink);
   font: 500 13px/1 var(--font-sans);
+}
+
+#contadoresView .ct-field input,
+#contadoresView .ct-field select {
+  height: 36px;
+  padding: 0 12px;
+}
+
+#contadoresView .ct-field textarea {
+  min-height: 78px;
+  resize: vertical;
+  padding: 10px 12px;
+  line-height: 1.45;
+}
+
+#contadoresView .ct-field select {
+  appearance: none;
+}
+
+#contadoresView .ct-field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
 }
 
 #contadoresView .ct-field-hint {
@@ -3245,6 +3389,10 @@ body {
   #contadoresView .ct-pipeline {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
+
+  #contadoresView .ct-funnel-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 980px) {
@@ -3300,6 +3448,14 @@ body {
     padding: 16px 16px 24px;
   }
 
+  #contadoresView .ct-funnel-setup {
+    padding: 16px 16px 24px;
+  }
+
+  #contadoresView .ct-funnel-hero {
+    display: grid;
+  }
+
   #contadoresView .ct-pipeline {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -3330,6 +3486,11 @@ body {
 @media (max-width: 520px) {
   #contadoresView .ct-pipeline {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  #contadoresView .ct-funnel-grid,
+  #contadoresView .ct-field-grid {
+    grid-template-columns: 1fr;
   }
 
   #contadoresView .ct-topbar-tools {

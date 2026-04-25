@@ -7,6 +7,11 @@ description: Use when working on the WhatsApp sequence, message copy, timing win
 
 Use this skill when editing or reviewing the WhatsApp automation flow.
 
+Contadores is now the first configured funnel in the multi-funnel platform.
+Default copy, template names, video strategy definitions, and strategy weights
+come from the funnel definition layer. If `data/funnels.json` exists, it can
+override the built-in Contadores definition.
+
 ## Current sequence
 
 1. Send opener as a WhatsApp template.
@@ -30,5 +35,7 @@ Use this skill when editing or reviewing the WhatsApp automation flow.
 - `testing` means the flow is only exercised with the synthetic lead from `CONTADORES_TEST_PHONE`.
 - `live` means the flow can start from sheet-imported leads.
 - Strategy rollout weights live in Contadores config as `strategy_weights` and can be seeded with `CONTADORES_STRATEGY_WEIGHTS_JSON`.
+- Funnel definitions live in `FUNNELS_CONFIG_PATH` or `data/funnels.json`.
+  The UI and Codex edit the same file.
 
 Read [references/sequence.md](references/sequence.md) for the exact messages and timing.

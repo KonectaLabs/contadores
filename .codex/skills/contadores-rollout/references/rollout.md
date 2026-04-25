@@ -8,6 +8,10 @@ The switch is:
 
 This must come from `.env`, and `docker-compose.yml` must consume `.env`.
 
+Funnel definitions live in `FUNNELS_CONFIG_PATH` or `data/funnels.json`.
+That file is the shared UI/Codex config surface for niche funnels. It is not the
+runtime mode switch.
+
 ## Minimum testing config
 
 - `CONTADORES_ENABLED=true`
@@ -15,6 +19,7 @@ This must come from `.env`, and `docker-compose.yml` must consume `.env`.
 - `CONTADORES_TEST_PHONE=...`
 - `CONTADORES_LOOM_URL=...`
 - `CONTADORES_CALENDLY_BASE_URL=...`
+- `FUNNELS_CONFIG_PATH=data/funnels.json`
 
 ## Minimum live config
 
@@ -35,6 +40,10 @@ This must come from `.env`, and `docker-compose.yml` must consume `.env`.
 6. Verify the flow with the synthetic lead created from `CONTADORES_TEST_PHONE`.
 7. When the test flow is correct, change `.env` to `live`.
 8. Restart the containers.
+
+For new funnels, keep their definition in the same persistent config file used
+by the UI. Do not rely on local-only edits that are absent from the server
+volume.
 
 ## Important nuance
 

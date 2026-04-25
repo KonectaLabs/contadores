@@ -16,6 +16,14 @@ Use:
 - `CONTADORES_SOURCE_MODE=testing`
 - `CONTADORES_SOURCE_MODE=live`
 
+The multi-funnel config file is separate from the runtime switch:
+
+- `FUNNELS_CONFIG_PATH`, usually `data/funnels.json`
+- if unset, the app uses `data/funnels.json`
+
+This file stores funnel definitions added from the UI or by Codex. Keep it in
+the server data volume when it must persist across deploys.
+
 ## Branch And Deploy Rule
 
 - The project is server-first by default.
@@ -33,5 +41,8 @@ Use:
 3. Test with `CONTADORES_TEST_PHONE`; the bot imports that phone as the only synthetic lead.
 4. Repeat as many times as needed.
 5. Only then switch `.env` to `live`.
+
+For a new niche funnel, create/edit the funnel definition first, deploy code,
+test that funnel in `testing`, then promote that funnel to `live`.
 
 Read [references/rollout.md](references/rollout.md) for the exact env variables and the recommended sequence.

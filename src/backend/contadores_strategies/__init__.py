@@ -1,4 +1,4 @@
-"""Code-defined Contadores sequence strategies."""
+"""Configurable Contadores sequence strategies."""
 
 from __future__ import annotations
 
@@ -7,9 +7,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from backend.funnel_config import FunnelDefinition, FunnelStrategyDefinition, get_contadores_funnel
 
 LOOM_STEP = "loom"
-LOOM_MP4_PATH = "data/contadores/videos/loom_60_seconds_captions.mp4"
 
 
 @dataclass(frozen=True)
@@ -24,91 +24,74 @@ class ContadoresOutboundDraft:
 
 
 class ContadoresSequenceStrategy:
-    """Base class for one code-defined Contadores strategy."""
+    """Base class for one Contadores strategy."""
 
     step: str = ""
     id: str = ""
     label: str = ""
     weight: int = 1
 
+    def __init__(self, *, funnel: FunnelDefinition | None = None):
+        self.funnel = funnel or get_contadores_funnel()
+
     def build_messages(self, *, lead: Any, config: Any) -> list[ContadoresOutboundDraft]:
         """Return the outbound drafts for this lead."""
         raise NotImplementedError
 
 
-class LoomLinkStrategy(ContadoresSequenceStrategy):
-    """Send the existing Loom URL as a text link."""
+class ConfiguredContadoresStrategy(ContadoresSequenceStrategy):
+    """Strategy loaded from the funnel definition."""
 
-    step = LOOM_STEP
-    id = "loom_link"
-    label = "Loom link"
-    weight = 0
+    def __init__(self, *, funnel: FunnelDefinition, definition: FunnelStrategyDefinition):
+        super().__init__(funnel=funnel)
+        self.definition = definition
+        self.step = definition.step
+        self.id = definition.id
+        self.label = definition.label
+        self.weight = definition.weight
 
     def build_messages(self, *, lead: Any, config: Any) -> list[ContadoresOutboundDraft]:
         del lead
+        text = self.definition.message_text.strip()
+        if self.definition.delivery == "link" and not text:
+            text = str(getattr(config, "loom_url", "") or self.funnel.loom_url).strip()
+        if not text:
+            text = self.label
         return [
             ContadoresOutboundDraft(
                 text=build_loom_intro_text(),
                 sequence_step="loom_intro",
             ),
             ContadoresOutboundDraft(
-                text=str(config.loom_url or "").strip(),
-                sequence_step="loom_url",
+                text=text,
+                sequence_step=self.definition.sequence_step,
+                media_type=self.definition.media_type,
+                media_path=self.definition.media_path,
+                media_caption=self.definition.media_caption,
             ),
         ]
-
-
-class LoomMp4Strategy(ContadoresSequenceStrategy):
-    """Send the explanation video directly as a WhatsApp MP4."""
-
-    step = LOOM_STEP
-    id = "loom_mp4"
-    label = "WhatsApp MP4"
-    weight = 100
-
-    def build_messages(self, *, lead: Any, config: Any) -> list[ContadoresOutboundDraft]:
-        del lead, config
-        return [
-            ContadoresOutboundDraft(
-                text=build_loom_intro_text(),
-                sequence_step="loom_intro",
-            ),
-            ContadoresOutboundDraft(
-                text="Video de explicación enviado por WhatsApp.",
-                sequence_step="loom_video",
-                media_type="video",
-                media_path=LOOM_MP4_PATH,
-            ),
-        ]
-
-
-def build_loom_intro_text() -> str:
-    """Return the shared pre-video explanation text."""
-    return (
-        "Perfecto. Te cuento rápido:\n"
-        "Los contadores que trabajan con nosotros reciben un flujo de prospectos y posibles "
-        "clientes que les llega directo al WhatsApp de forma automática.\n"
-        "Te invito a que veas este video donde te explicamos la propuesta a detalle:"
-    )
-
-
-STRATEGIES: tuple[ContadoresSequenceStrategy, ...] = (
-    LoomLinkStrategy(),
-    LoomMp4Strategy(),
-)
 
 ContadoresStrategyWeights = Mapping[str, Mapping[str, int]]
 
 
 def list_contadores_strategies() -> list[ContadoresSequenceStrategy]:
     """Return every configured strategy."""
-    return list(STRATEGIES)
+    funnel = get_contadores_funnel()
+    return [
+        ConfiguredContadoresStrategy(funnel=funnel, definition=definition)
+        for definition in funnel.strategies
+    ]
+
+
+def build_loom_intro_text() -> str:
+    """Return the shared pre-video explanation text."""
+    return get_contadores_funnel().loom_intro_text
 
 
 def list_contadores_strategies_by_step(step: str) -> list[ContadoresSequenceStrategy]:
     """Return configured strategies for one sequence step."""
     clean_step = (step or "").strip()
-    return [strategy for strategy in STRATEGIES if strategy.step == clean_step]
+    return [strategy for strategy in list_contadores_strategies() if strategy.step == clean_step]
 
 
 def get_contadores_strategy(step: str, strategy_id: str) -> ContadoresSequenceStrategy | None:

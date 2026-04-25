@@ -1,5 +1,8 @@
 # Sequence Reference
 
+These are the built-in Contadores defaults. Runtime can override them through
+the funnel definition file at `FUNNELS_CONFIG_PATH` or `data/funnels.json`.
+
 ## Message 1
 
 Template opener:

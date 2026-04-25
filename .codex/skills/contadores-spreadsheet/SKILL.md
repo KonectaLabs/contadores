@@ -9,6 +9,11 @@ Use this skill when the task touches the Google Sheet used by the `contadores` p
 
 This sheet is the operational source of truth for lead intake.
 
+Contadores is now one funnel in a multi-funnel platform. The built-in
+Contadores sheet settings can still come from `CONTADORES_SHEET_URL` and
+`CONTADORES_SHEET_GID`, while new funnels store their sheet URL/GID in the
+shared funnel config file (`FUNNELS_CONFIG_PATH` or `data/funnels.json`).
+
 The runtime rule is now explicit:
 
 - `CONTADORES_SOURCE_MODE=testing` means do not poll the real sheet automatically; the bot imports only the synthetic lead from `CONTADORES_TEST_PHONE`.
@@ -119,6 +124,9 @@ Operational rule:
 - Product work is server-first by default; `localhost` is only for development, validation, git, push, and deploy.
 - `testing` mode must work with `CONTADORES_TEST_PHONE` only and must not fetch the live sheet.
 - `live` mode is the only mode allowed to poll this sheet on a timer.
+- New niche funnels should define their own sheet source in the funnel config.
+  A future shared sheet can use `sheet_source_filter` to restrict rows by
+  source/niche.
 
 For the MVP:
 

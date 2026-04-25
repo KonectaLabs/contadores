@@ -24,6 +24,55 @@ export interface RuntimeSettings {
   alert_emails: string[];
 }
 
+export type FunnelSourceMode = "testing" | "live";
+export type FunnelStrategyDelivery = "link" | "video";
+
+export interface FunnelStrategyDefinition {
+  step: string;
+  id: string;
+  label: string;
+  weight: number;
+  delivery: FunnelStrategyDelivery;
+  sequence_step: string;
+  message_text: string;
+  media_type: string | null;
+  media_path: string | null;
+  media_caption: string | null;
+}
+
+export interface FunnelDefinition {
+  id: string;
+  label: string;
+  enabled: boolean;
+  source_mode: FunnelSourceMode;
+  test_phone: string;
+  test_name: string;
+  sheet_url: string | null;
+  sheet_gid: string | null;
+  sheet_source_filter: string | null;
+  sheet_poll_seconds: number;
+  template_language: string;
+  opener_text: string;
+  opener_template_name: string | null;
+  opener_followup_text: string;
+  opener_followup_template_name: string | null;
+  loom_intro_text: string;
+  loom_url: string;
+  video_check_text: string;
+  calendly_intro_text: string;
+  calendly_base_url: string;
+  alert_emails: string[];
+  initial_reply_quiet_seconds: number;
+  post_loom_min_seconds: number;
+  post_loom_quiet_seconds: number;
+  strategies: FunnelStrategyDefinition[];
+}
+
+export interface FunnelListResponse {
+  config_path: string;
+  funnels: FunnelDefinition[];
+}
+
 export interface ContadoresConfig {
   enabled: boolean;
   sheet_url: string | null;

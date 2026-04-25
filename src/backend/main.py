@@ -19,7 +19,7 @@ from backend.auth import (
     has_valid_internal_api_token,
 )
 from backend.database import init_db
-from backend.endpoints import auth_router, contadores_router
+from backend.endpoints import auth_router, contadores_router, funnels_router
 from backend.runtime_settings import get_runtime_settings
 
 
@@ -108,6 +108,10 @@ app = FastAPI(
             "description": "Spreadsheet leads, WhatsApp automation, quick actions, and operator observability.",
         },
         {
+            "name": "funnels",
+            "description": "File-backed niche funnel definitions used by the CRM and Codex.",
+        },
+        {
             "name": "system",
             "description": "System endpoints and frontend serving.",
         },
@@ -124,6 +128,7 @@ if STATIC_DIR.exists():
 
 app.include_router(auth_router)
 app.include_router(contadores_router)
+app.include_router(funnels_router)
 
 
 @app.middleware("http")

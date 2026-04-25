@@ -1,6 +1,9 @@
 # Contadores
 
 Repo de trabajo para el flujo de captación y seguimiento de `Contadores`.
+El producto esta migrando a una plataforma de funnels por nicho: `contadores`
+es el primer funnel operativo, y otros nichos se configuran desde la UI o desde
+un archivo JSON persistente.
 
 ## Estructura
 
@@ -8,6 +11,39 @@ Repo de trabajo para el flujo de captación y seguimiento de `Contadores`.
 - `wiki/`: documentación, skills y referencias de trabajo.
 - `media/`: materiales audiovisuales, decks y archivos de soporte.
 - `data/`: estado local persistente. No se commitea.
+
+## Funnels por nicho
+
+El backend siempre expone un funnel default `contadores`.
+
+Los funnels agregados desde la UI se guardan en:
+
+- `FUNNELS_CONFIG_PATH`, si esta definido.
+- `data/funnels.json`, si no esta definido.
+
+Ese archivo es compartido por la UI y por Codex: un operador puede crear o
+editar un funnel visualmente y Codex puede editar el mismo JSON cuando se le
+pide agregar un nicho como `abogados`.
+
+Ver funnels configurados:
+
+```bash
+curl http://127.0.0.1:8000/api/funnels
+```
+
+Cada funnel contiene:
+
+- nombre e id del nicho;
+- modo `testing|live`;
+- telefono sintetico de prueba;
+- sheet URL/GID y filtro opcional;
+- opener/template inicial;
+- follow-up template;
+- texto del video;
+- estrategia `loom_link` o `loom_mp4`;
+- Calendly;
+- emails de alerta;
+- ventanas de espera.
 
 ## Regla operativa importante
 
@@ -93,6 +129,12 @@ Verificar API de Contadores:
 
 ```bash
 curl http://127.0.0.1:8000/api/contadores/config
+```
+
+Verificar API de funnels:
+
+```bash
+curl http://127.0.0.1:8000/api/funnels
 ```
 
 Configurar pesos de estrategias:

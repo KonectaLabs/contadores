@@ -31,12 +31,10 @@ from backend.database import (
     normalize_email,
     normalize_phone,
 )
+from backend.funnel_config import get_contadores_funnel
 
 contadores_router = APIRouter(prefix="/api/contadores", tags=["contadores"])
 
-CONTADORES_TEMPLATE_NAME = "contadores_intro_es_v2"
-CONTADORES_OPENER_FOLLOWUP_TEMPLATE_NAME = "contadores_opener_followup_24h_es_v1"
-CONTADORES_TEMPLATE_LANGUAGE = "es"
 OPENER_FOLLOWUP_SEQUENCE_STEP = "opener_followup_24h"
 OPENER_FOLLOWUP_RETRY_SEQUENCE_STEP = "opener_followup_24h_template_retry_20260424"
 OPENER_FOLLOWUP_DELAY = timedelta(hours=24)
@@ -64,7 +62,7 @@ def ensure_utc_datetime(value: datetime | None) -> datetime | None:
 
 def build_opener_text() -> str:
     """Return the rendered opener text used in transcript history."""
-    return "Hola, llenaste el formulario para contadores sobre como conseguir clientes a tu whatsapp. Es correcto?"
+    return get_contadores_funnel().opener_text
 
 
 def build_loom_intro_text() -> str:
@@ -74,30 +72,27 @@ def build_loom_intro_text() -> str:
 
 def build_opener_followup_text() -> str:
     """Return the reminder sent 24 hours after the opener when there is no reply."""
-    return "Queria compartirte informacion sobre como podes obtener clientes para tu estudio contable"
+    return get_contadores_funnel().opener_followup_text
 
 
 def resolve_contadores_template_name(sequence_step: str | None) -> str | None:
     """Return the WhatsApp template name for template-backed Contadores steps."""
+    funnel = get_contadores_funnel()
     if sequence_step == "opener":
-        return CONTADORES_TEMPLATE_NAME
+        return funnel.opener_template_name
     if sequence_step in {OPENER_FOLLOWUP_SEQUENCE_STEP, OPENER_FOLLOWUP_RETRY_SEQUENCE_STEP}:
-        return CONTADORES_OPENER_FOLLOWUP_TEMPLATE_NAME
+        return funnel.opener_followup_template_name
     return None
 
 
 def build_video_check_text() -> str:
     """Return the follow-up prompt sent after the Loom wait window."""
-    return "¿Terminaste de ver el video?"
+    return get_contadores_funnel().video_check_text
 
 
 def build_calendly_intro_text() -> str:
     """Return the Calendly follow-up text."""
-    return (
-        "Para avanzar solo falta -> Reunion, nos conocemos -> definimos medio de pago -> "
-        "pagas 300 USD -> empezamos a trabajar para vos a las 24 horas.\n\n"
-        "Elige el horario que mejor te quede:"
-    )
+    return get_contadores_funnel().calendly_intro_text
 
 
 def build_classifier_context() -> str:
@@ -1449,6 +1444,7 @@ async def list_pending_contadores_delivery_messages(
         lead = ContadoresLead.get_by_id(row.lead_id)
         if lead is None:
             continue
+        funnel = get_contadores_funnel()
         template_name = resolve_contadores_template_name(row.sequence_step)
         items.append(
             PendingContadoresDeliveryMessage(
@@ -1471,7 +1467,7 @@ async def list_pending_contadores_delivery_messages(
                 media_caption=row.media_caption,
                 contact_has_inbound=ContadoresMessage.has_inbound_for_lead(lead.id),
                 whatsapp_template_name=template_name,
-                whatsapp_template_language=CONTADORES_TEMPLATE_LANGUAGE if template_name else None,
+                whatsapp_template_language=funnel.template_language if template_name else None,
                 whatsapp_template_body_params=[],
             )
         )

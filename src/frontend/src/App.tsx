@@ -5,6 +5,8 @@ import type {
   ContadoresConfig,
   ContadoresMetrics,
   EventItem,
+  FunnelDefinition,
+  FunnelListResponse,
   LeadDetailResponse,
   LeadListResponse,
   LeadStage,
@@ -45,6 +47,7 @@ type ManualReplyFilter = "" | "needs_reply" | "answered";
 type DetailTab = "messages" | "events" | "strategies";
 type SendKind = (typeof sendOptions)[number]["value"];
 type StrategyWeights = Record<string, Record<string, number>>;
+type FunnelEditorMode = "create" | "edit";
 type QuickActionName =
   | "send-opener"
   | "send-loom"
@@ -70,6 +73,9 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
 
 export function App() {
   const [runtime, setRuntime] = useState<RuntimeSettings | null>(null);
+  const [funnels, setFunnels] = useState<FunnelDefinition[]>([]);
+  const [funnelConfigPath, setFunnelConfigPath] = useState("");
+  const [selectedFunnelId, setSelectedFunnelId] = useState("contadores");
   const [leadList, setLeadList] = useState<LeadListResponse | null>(null);
   const [strategyStats, setStrategyStats] = useState<StrategyStatsItem[]>([]);
   const [detail, setDetail] = useState<LeadDetailResponse | null>(null);
@@ -84,6 +90,8 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [actionBusy, setActionBusy] = useState<string | null>(null);
   const [showConfig, setShowConfig] = useState(false);
+  const [showFunnelEditor, setShowFunnelEditor] = useState(false);
+  const [funnelEditorMode, setFunnelEditorMode] = useState<FunnelEditorMode>("edit");
   const [showSendModal, setShowSendModal] = useState(false);
   const [sendKind, setSendKind] = useState<SendKind>("custom");
   const [manualText, setManualText] = useState("");
@@ -91,6 +99,8 @@ export function App() {
 
   const metrics = leadList?.metrics;
   const config = leadList?.config ?? detail?.config ?? null;
+  const selectedFunnel = funnels.find((funnel) => funnel.id === selectedFunnelId) ?? funnels[0] ?? null;
+  const isContadoresFunnel = selectedFunnelId === "contadores";
 
   const selectedLead = useMemo(() => {
     if (detail?.lead.id === selectedLeadId) {
@@ -103,6 +113,28 @@ export function App() {
   }, [detail, leadList, selectedLeadId]);
 
   const loadDashboard = useCallback(async () => {
+    setError(null);
+    const [runtimePayload, funnelPayload] = await Promise.all([
+      apiFetch<RuntimeSettings>("/api/runtime"),
+      apiFetch<FunnelListResponse>("/api/funnels"),
+    ]);
+
+    setRuntime(runtimePayload);
+    setFunnels(funnelPayload.funnels ?? []);
+    setFunnelConfigPath(funnelPayload.config_path || "");
+
+    if (!selectedFunnelId || !funnelPayload.funnels.some((funnel) => funnel.id === selectedFunnelId)) {
+      setSelectedFunnelId(funnelPayload.funnels[0]?.id ?? "contadores");
+    }
+
+    if (selectedFunnelId !== "contadores") {
+      setLeadList(null);
+      setStrategyStats([]);
+      setDetail(null);
+      setSelectedLeadId(null);
+      return;
+    }
+
     const params = new URLSearchParams({ limit: "500", archived: "false" });
     if (stageFilter !== "all") {
       params.set("stage", stageFilter);
@@ -121,14 +153,11 @@ export function App() {
       params.set("query", debouncedQuery.trim());
     }
 
-    setError(null);
-    const [runtimePayload, leadsPayload, strategyPayload] = await Promise.all([
-      apiFetch<RuntimeSettings>("/api/runtime"),
+    const [leadsPayload, strategyPayload] = await Promise.all([
       apiFetch<LeadListResponse>(`/api/contadores/leads?${params.toString()}`),
       apiFetch<StrategyStatsResponse>("/api/contadores/strategy-stats"),
     ]);
 
-    setRuntime(runtimePayload);
     setLeadList(leadsPayload);
     setStrategyStats(strategyPayload.items ?? []);
 
@@ -138,7 +167,7 @@ export function App() {
       }
       return leadsPayload.leads[0]?.id ?? null;
     });
-  }, [debouncedQuery, manualReplyFilter, stageFilter, strategyFilter.step, strategyFilter.strategyId]);
+  }, [debouncedQuery, manualReplyFilter, selectedFunnelId, stageFilter, strategyFilter.step, strategyFilter.strategyId]);
 
   const loadDetail = useCallback(async (leadId: string) => {
     setDetailLoading(true);
@@ -187,7 +216,7 @@ export function App() {
   }, [loadDashboard]);
 
   useEffect(() => {
-    if (!selectedLeadId) {
+    if (!selectedLeadId || !isContadoresFunnel) {
       setDetail(null);
       return;
     }
@@ -195,17 +224,17 @@ export function App() {
     loadDetail(selectedLeadId).catch((reason) => {
       setError(reason instanceof Error ? reason.message : "Could not load the lead.");
     });
-  }, [loadDetail, selectedLeadId]);
+  }, [isContadoresFunnel, loadDetail, selectedLeadId]);
 
   async function refreshAll() {
     setLoading(true);
     try {
       await loadDashboard();
-      if (selectedLeadId) {
+      if (selectedLeadId && isContadoresFunnel) {
         await loadDetail(selectedLeadId);
       }
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not refresh Contadores.");
+      setError(reason instanceof Error ? reason.message : "Could not refresh funnels.");
     } finally {
       setLoading(false);
     }
@@ -319,31 +348,72 @@ export function App() {
     }
   }
 
+  async function saveFunnel(nextFunnel: FunnelDefinition) {
+    setActionBusy("funnel-config");
+    try {
+      const method = funnelEditorMode === "create" ? "POST" : "PUT";
+      const path = funnelEditorMode === "create" ? "/api/funnels" : `/api/funnels/${nextFunnel.id}`;
+      const saved = await apiFetch<FunnelDefinition>(path, {
+        method,
+        body: JSON.stringify(nextFunnel),
+      });
+      setSelectedFunnelId(saved.id);
+      setShowFunnelEditor(false);
+      await loadDashboard();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not save funnel.");
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
+  function openCreateFunnel() {
+    setFunnelEditorMode("create");
+    setShowFunnelEditor(true);
+  }
+
+  function openEditFunnel() {
+    setFunnelEditorMode("edit");
+    setShowFunnelEditor(true);
+  }
+
   const visibleCount = leadList?.leads.length ?? 0;
   const totalCount = metrics?.total ?? 0;
   const syncStatus = config?.last_sheet_sync_status
     ? `${config.last_sheet_sync_status} · ${config.last_sheet_sync_at ? relativeTime(config.last_sheet_sync_at) : "never"}`
-    : runtime
+    : isContadoresFunnel && runtime
       ? `${runtime.source_mode} mode`
-      : "Sync idle";
+      : selectedFunnel
+        ? `${selectedFunnel.source_mode} mode`
+        : "Sync idle";
 
   return (
     <section id="contadoresView" className="contadores-view" data-app="contadores">
       <header className="ct-topbar">
         <div className="ct-topbar-brand">
-          <span className="ct-brand-mark" aria-hidden="true">CT</span>
+          <span className="ct-brand-mark" aria-hidden="true">{monogram(selectedFunnel?.label || "Funnels")}</span>
           <div className="ct-brand-copy">
-            <p className="ct-brand-word">Contadores</p>
+            <p className="ct-brand-word">{selectedFunnel?.label || "Funnels"}</p>
             <span className={`ct-sync-badge ${config?.last_sheet_sync_status === "ok" ? "has-unread" : ""}`}>{syncStatus}</span>
           </div>
         </div>
 
         <nav className="ct-topbar-nav" aria-label="Backoffice sections">
-          <button type="button" className="ct-nav-btn active">Contadores</button>
+          {funnels.map((funnel) => (
+            <button
+              key={funnel.id}
+              type="button"
+              className={`ct-nav-btn ${selectedFunnelId === funnel.id ? "active" : ""}`}
+              onClick={() => setSelectedFunnelId(funnel.id)}
+            >
+              {funnel.label}
+            </button>
+          ))}
+          <button type="button" className="ct-nav-btn ct-nav-add" onClick={openCreateFunnel}>+ Funnel</button>
         </nav>
 
         <div className="ct-topbar-tools">
-          <label className="ct-search">
+          <label className="ct-search" hidden={!isContadoresFunnel}>
             <span className="ct-search-icon" aria-hidden="true" />
             <input
               value={query}
@@ -353,7 +423,10 @@ export function App() {
               autoComplete="off"
             />
           </label>
-          <button type="button" className="ct-icon-btn" onClick={() => setShowConfig(true)}>Settings</button>
+          <button type="button" className="ct-icon-btn" onClick={openEditFunnel} disabled={!selectedFunnel}>Funnel</button>
+          {isContadoresFunnel ? (
+            <button type="button" className="ct-icon-btn" onClick={() => setShowConfig(true)}>Runtime</button>
+          ) : null}
           <button type="button" className="ct-icon-btn" onClick={refreshAll} disabled={loading}>Refresh</button>
         </div>
       </header>
@@ -365,6 +438,13 @@ export function App() {
         </div>
       ) : null}
 
+      {!isContadoresFunnel ? (
+        <FunnelSetupView
+          funnel={selectedFunnel}
+          configPath={funnelConfigPath}
+          onEdit={openEditFunnel}
+        />
+      ) : (
       <div className="ct-surface">
         <section className="ct-pipeline" aria-label="Lead stages">
           {stageFilters.map((filter) => (
@@ -488,6 +568,7 @@ export function App() {
           </section>
         </div>
       </div>
+      )}
 
       {showConfig ? (
         <ConfigDrawer
@@ -497,6 +578,16 @@ export function App() {
           saving={actionBusy === "config"}
           onClose={() => setShowConfig(false)}
           onSave={saveConfig}
+        />
+      ) : null}
+
+      {showFunnelEditor ? (
+        <FunnelEditorDrawer
+          mode={funnelEditorMode}
+          funnel={funnelEditorMode === "edit" ? selectedFunnel : null}
+          saving={actionBusy === "funnel-config"}
+          onClose={() => setShowFunnelEditor(false)}
+          onSave={saveFunnel}
         />
       ) : null}
 
@@ -512,6 +603,283 @@ export function App() {
         />
       ) : null}
     </section>
+  );
+}
+
+function FunnelSetupView({
+  funnel,
+  configPath,
+  onEdit,
+}: {
+  funnel: FunnelDefinition | null;
+  configPath: string;
+  onEdit: () => void;
+}) {
+  if (!funnel) {
+    return (
+      <div className="ct-funnel-setup">
+        <p className="ct-empty">No funnel selected.</p>
+      </div>
+    );
+  }
+
+  const mp4Strategy = funnel.strategies.find((strategy) => strategy.delivery === "video");
+  const linkStrategy = funnel.strategies.find((strategy) => strategy.delivery === "link");
+
+  return (
+    <section className="ct-funnel-setup" aria-label="Funnel setup">
+      <header className="ct-funnel-hero">
+        <div>
+          <p className="ct-detail-kicker">Niche funnel</p>
+          <h2>{funnel.label}</h2>
+          <p>
+            This funnel is configured but does not have a dedicated lead workspace yet. Edit the funnel copy,
+            sheet source, video strategy, and Calendly step here; Contadores remains the live operational section.
+          </p>
+        </div>
+        <button type="button" className="ct-btn ct-btn-primary" onClick={onEdit}>Edit funnel</button>
+      </header>
+
+      <div className="ct-funnel-grid">
+        <article className="ct-funnel-card">
+          <span>Source</span>
+          <strong>{funnel.source_mode}</strong>
+          <p>{funnel.sheet_url ? "Sheet connected" : "No sheet URL yet"}{funnel.sheet_gid ? ` · gid ${funnel.sheet_gid}` : ""}</p>
+        </article>
+        <article className="ct-funnel-card">
+          <span>Testing</span>
+          <strong>{funnel.test_phone || "No phone"}</strong>
+          <p>{funnel.test_name || "Synthetic lead name not set"}</p>
+        </article>
+        <article className="ct-funnel-card">
+          <span>Video</span>
+          <strong>{mp4Strategy?.media_path ? "WhatsApp MP4" : linkStrategy ? "Link" : "Not configured"}</strong>
+          <p>{mp4Strategy?.media_path || funnel.loom_url || "-"}</p>
+        </article>
+        <article className="ct-funnel-card">
+          <span>Calendly</span>
+          <strong>{funnel.calendly_base_url ? "Ready" : "Missing"}</strong>
+          <p>{funnel.calendly_base_url || "-"}</p>
+        </article>
+      </div>
+
+      <section className="ct-funnel-copy">
+        <h3>Sequence copy</h3>
+        <div className="ct-copy-row">
+          <span>Opener template</span>
+          <p>{funnel.opener_template_name || "No template"}</p>
+          <blockquote>{funnel.opener_text}</blockquote>
+        </div>
+        <div className="ct-copy-row">
+          <span>Video intro</span>
+          <blockquote>{funnel.loom_intro_text}</blockquote>
+        </div>
+        <div className="ct-copy-row">
+          <span>Calendly handoff</span>
+          <blockquote>{funnel.calendly_intro_text}</blockquote>
+        </div>
+      </section>
+
+      <p className="ct-config-path">Config file: {configPath || "data/funnels.json"}</p>
+    </section>
+  );
+}
+
+function FunnelEditorDrawer({
+  mode,
+  funnel,
+  saving,
+  onClose,
+  onSave,
+}: {
+  mode: FunnelEditorMode;
+  funnel: FunnelDefinition | null;
+  saving: boolean;
+  onClose: () => void;
+  onSave: (funnel: FunnelDefinition) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState<FunnelDefinition>(() => funnel ?? buildBlankFunnel());
+  const videoStrategy = draft.strategies.find((strategy) => strategy.delivery === "video") ?? draft.strategies[1];
+
+  function update<K extends keyof FunnelDefinition>(key: K, value: FunnelDefinition[K]) {
+    setDraft((current) => ({ ...current, [key]: value }));
+  }
+
+  function updateStrategyMediaPath(value: string) {
+    setDraft((current) => ({
+      ...current,
+      strategies: current.strategies.map((strategy) => (
+        strategy.delivery === "video" ? { ...strategy, media_path: value.trim() || null } : strategy
+      )),
+    }));
+  }
+
+  function updateStrategyWeight(strategyId: string, value: string) {
+    const weight = Math.min(100, Math.max(0, Number.parseInt(value || "0", 10) || 0));
+    setDraft((current) => ({
+      ...current,
+      strategies: current.strategies.map((strategy) => (
+        strategy.id === strategyId ? { ...strategy, weight } : strategy
+      )),
+    }));
+  }
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await onSave({
+      ...draft,
+      id: slugifyClient(draft.id || draft.label),
+      alert_emails: draft.alert_emails.map((item) => item.trim()).filter(Boolean),
+      sheet_url: draft.sheet_url?.trim() || null,
+      sheet_gid: draft.sheet_gid?.trim() || null,
+      sheet_source_filter: draft.sheet_source_filter?.trim() || null,
+      opener_template_name: draft.opener_template_name?.trim() || null,
+      opener_followup_template_name: draft.opener_followup_template_name?.trim() || null,
+    });
+  }
+
+  return (
+    <aside className="ct-drawer open" aria-hidden="false" aria-label="Funnel editor">
+      <button className="ct-drawer-overlay" type="button" onClick={onClose} aria-label="Close funnel editor" />
+      <form className="ct-drawer-panel wide" role="dialog" aria-modal="false" aria-labelledby="ctFunnelDrawerTitle" onSubmit={submit}>
+        <header className="ct-drawer-head">
+          <div>
+            <p className="ct-drawer-kicker">{mode === "create" ? "New funnel" : "Funnel config"}</p>
+            <h3 id="ctFunnelDrawerTitle">{mode === "create" ? "Add Niche Funnel" : draft.label}</h3>
+            <p className="ct-drawer-note">Saved to the shared funnel config file used by the UI and Codex.</p>
+          </div>
+          <button type="button" className="ct-icon-btn" onClick={onClose}>Close</button>
+        </header>
+
+        <div className="ct-drawer-body">
+          <div className="ct-field-grid">
+            <label className="ct-field">
+              <span>Funnel ID</span>
+              <input value={draft.id} disabled={mode === "edit"} onChange={(event) => update("id", slugifyClient(event.target.value))} />
+            </label>
+            <label className="ct-field">
+              <span>Label</span>
+              <input value={draft.label} onChange={(event) => update("label", event.target.value)} />
+            </label>
+          </div>
+
+          <label className="ct-field ct-field-toggle">
+            <span>Enabled</span>
+            <div className="ct-toggle-row">
+              <input type="checkbox" checked={draft.enabled} onChange={(event) => update("enabled", event.target.checked)} />
+              <p className="ct-field-hint">Disabled funnels stay visible but should not run automation.</p>
+            </div>
+          </label>
+
+          <div className="ct-field-grid">
+            <label className="ct-field">
+              <span>Source Mode</span>
+              <select value={draft.source_mode} onChange={(event) => update("source_mode", event.target.value as FunnelDefinition["source_mode"])}>
+                <option value="testing">testing</option>
+                <option value="live">live</option>
+              </select>
+            </label>
+            <label className="ct-field">
+              <span>Sheet Poll Seconds</span>
+              <input type="number" min="60" value={draft.sheet_poll_seconds} onChange={(event) => update("sheet_poll_seconds", Number(event.target.value) || 300)} />
+            </label>
+          </div>
+
+          <div className="ct-field-grid">
+            <label className="ct-field">
+              <span>Test Phone</span>
+              <input value={draft.test_phone} onChange={(event) => update("test_phone", event.target.value)} />
+            </label>
+            <label className="ct-field">
+              <span>Test Name</span>
+              <input value={draft.test_name} onChange={(event) => update("test_name", event.target.value)} />
+            </label>
+          </div>
+
+          <label className="ct-field">
+            <span>Sheet URL</span>
+            <input value={draft.sheet_url ?? ""} onChange={(event) => update("sheet_url", event.target.value || null)} />
+          </label>
+
+          <div className="ct-field-grid">
+            <label className="ct-field">
+              <span>Sheet GID</span>
+              <input value={draft.sheet_gid ?? ""} onChange={(event) => update("sheet_gid", event.target.value || null)} />
+            </label>
+            <label className="ct-field">
+              <span>Sheet Source Filter</span>
+              <input value={draft.sheet_source_filter ?? ""} onChange={(event) => update("sheet_source_filter", event.target.value || null)} />
+            </label>
+          </div>
+
+          <label className="ct-field">
+            <span>Opener Template</span>
+            <input value={draft.opener_template_name ?? ""} onChange={(event) => update("opener_template_name", event.target.value || null)} />
+          </label>
+          <label className="ct-field">
+            <span>Opener Text</span>
+            <textarea value={draft.opener_text} onChange={(event) => update("opener_text", event.target.value)} rows={3} />
+          </label>
+
+          <label className="ct-field">
+            <span>Follow-up Template</span>
+            <input value={draft.opener_followup_template_name ?? ""} onChange={(event) => update("opener_followup_template_name", event.target.value || null)} />
+          </label>
+          <label className="ct-field">
+            <span>Follow-up Text</span>
+            <textarea value={draft.opener_followup_text} onChange={(event) => update("opener_followup_text", event.target.value)} rows={3} />
+          </label>
+
+          <label className="ct-field">
+            <span>Video Intro Text</span>
+            <textarea value={draft.loom_intro_text} onChange={(event) => update("loom_intro_text", event.target.value)} rows={4} />
+          </label>
+
+          <div className="ct-field-grid">
+            <label className="ct-field">
+              <span>Loom URL</span>
+              <input value={draft.loom_url} onChange={(event) => update("loom_url", event.target.value)} />
+            </label>
+            <label className="ct-field">
+              <span>MP4 Path</span>
+              <input value={videoStrategy?.media_path ?? ""} onChange={(event) => updateStrategyMediaPath(event.target.value)} />
+            </label>
+          </div>
+
+          <div className="ct-field-grid">
+            {draft.strategies.map((strategy) => (
+              <label className="ct-field" key={strategy.id}>
+                <span>{strategy.label} Weight</span>
+                <input type="number" min="0" max="100" value={strategy.weight} onChange={(event) => updateStrategyWeight(strategy.id, event.target.value)} />
+              </label>
+            ))}
+          </div>
+
+          <label className="ct-field">
+            <span>Video Check Text</span>
+            <input value={draft.video_check_text} onChange={(event) => update("video_check_text", event.target.value)} />
+          </label>
+
+          <label className="ct-field">
+            <span>Calendly Text</span>
+            <textarea value={draft.calendly_intro_text} onChange={(event) => update("calendly_intro_text", event.target.value)} rows={4} />
+          </label>
+          <label className="ct-field">
+            <span>Calendly URL</span>
+            <input value={draft.calendly_base_url} onChange={(event) => update("calendly_base_url", event.target.value)} />
+          </label>
+          <label className="ct-field">
+            <span>Alert Emails</span>
+            <input value={draft.alert_emails.join(", ")} onChange={(event) => update("alert_emails", event.target.value.split(",").map((item) => item.trim()))} />
+          </label>
+        </div>
+
+        <footer className="ct-drawer-foot">
+          <button type="button" className="ct-btn ct-btn-ghost" onClick={onClose}>Cancel</button>
+          <button type="submit" className="ct-btn ct-btn-primary" disabled={saving}>{saving ? "Saving..." : "Save funnel"}</button>
+        </footer>
+      </form>
+    </aside>
   );
 }
 
@@ -1051,6 +1419,66 @@ function SendModal({
       </form>
     </div>
   );
+}
+
+function buildBlankFunnel(): FunnelDefinition {
+  return {
+    id: "nuevo-funnel",
+    label: "Nuevo Funnel",
+    enabled: true,
+    source_mode: "testing",
+    test_phone: "",
+    test_name: "Lead Test",
+    sheet_url: null,
+    sheet_gid: null,
+    sheet_source_filter: null,
+    sheet_poll_seconds: 300,
+    template_language: "es",
+    opener_text: "Hola, completaste el formulario sobre como podemos ayudarte. Es correcto?",
+    opener_template_name: "",
+    opener_followup_text: "Queria compartirte informacion sobre la propuesta que viste en el anuncio.",
+    opener_followup_template_name: "",
+    loom_intro_text: "Perfecto. Te cuento rapido como funciona y que obtenes si trabajamos juntos:",
+    loom_url: "",
+    video_check_text: "Terminaste de ver el video?",
+    calendly_intro_text: "Para avanzar, el siguiente paso es elegir un horario en el calendario:",
+    calendly_base_url: "https://calendly.com",
+    alert_emails: [],
+    initial_reply_quiet_seconds: 30,
+    post_loom_min_seconds: 600,
+    post_loom_quiet_seconds: 30,
+    strategies: [
+      {
+        step: "loom",
+        id: "loom_link",
+        label: "Video link",
+        weight: 0,
+        delivery: "link",
+        sequence_step: "loom_url",
+        message_text: "",
+        media_type: null,
+        media_path: null,
+        media_caption: null,
+      },
+      {
+        step: "loom",
+        id: "loom_mp4",
+        label: "WhatsApp MP4",
+        weight: 100,
+        delivery: "video",
+        sequence_step: "loom_video",
+        message_text: "Video de explicacion enviado por WhatsApp.",
+        media_type: "video",
+        media_path: "",
+        media_caption: null,
+      },
+    ],
+  };
+}
+
+function slugifyClient(value: string): string {
+  const normalized = value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return normalized || "nuevo-funnel";
 }
 
 function formatStageLabel(stage: LeadStage | string | null | undefined): string {
