@@ -1,18 +1,41 @@
 import type { LeadStage } from "./types";
 
 const stageLabels: Record<LeadStage, string> = {
-  awaiting_initial_reply: "Initial reply",
-  awaiting_video_reply: "Video reply",
-  needs_human: "Needs human",
-  calendly_sent: "Calendly sent",
-  booked: "Booked",
-  closed: "Closed",
-  archived: "Archived",
+  awaiting_initial_reply: "Primer mensaje",
+  awaiting_video_reply: "Video enviado",
+  needs_human: "Manual",
+  calendly_sent: "Calendly enviado",
+  booked: "Reservado",
+  closed: "Cerrado",
+  archived: "Archivado",
+};
+
+const readableLabels: Record<string, string> = {
+  answered: "Respondido",
+  automation_paused: "Automatizacion pausada",
+  booked: "Reservado",
+  calendly: "Calendly",
+  calendly_sent: "Calendly enviado",
+  closed: "Cerrado",
+  delivered: "Entregado",
+  failed: "Fallo",
+  initial: "Primer mensaje",
+  loom: "Loom",
+  manual_review: "Revision manual",
+  needs_human: "Manual",
+  needs_human_alert_sent: "Alerta manual enviada",
+  needs_human_handoff: "Pase a manual",
+  needs_reply: "Requiere respuesta",
+  opener: "Primer mensaje",
+  queued: "En cola",
+  read: "Leido",
+  sent: "Enviado",
+  video_check: "Check video",
 };
 
 export function stageLabel(stage: LeadStage | string | null | undefined): string {
   if (!stage) {
-    return "Unknown";
+    return "Sin estado";
   }
   return stageLabels[stage as LeadStage] ?? humanize(stage);
 }
@@ -20,6 +43,10 @@ export function stageLabel(stage: LeadStage | string | null | undefined): string
 export function humanize(value: string | null | undefined): string {
   if (!value) {
     return "-";
+  }
+  const normalized = value.trim().toLowerCase();
+  if (readableLabels[normalized]) {
+    return readableLabels[normalized];
   }
   return value
     .replace(/[_-]+/g, " ")
@@ -36,7 +63,7 @@ export function shortDate(value: string | null | undefined): string {
   if (Number.isNaN(date.getTime())) {
     return value;
   }
-  return new Intl.DateTimeFormat(undefined, {
+  return new Intl.DateTimeFormat("es", {
     month: "short",
     day: "2-digit",
     hour: "2-digit",
@@ -46,11 +73,11 @@ export function shortDate(value: string | null | undefined): string {
 
 export function relativeTime(value: string | null | undefined): string {
   if (!value) {
-    return "No activity";
+    return "Sin actividad";
   }
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
-    return "Unknown";
+    return "Sin dato";
   }
   const seconds = Math.round((date.getTime() - Date.now()) / 1000);
   const absolute = Math.abs(seconds);
@@ -59,7 +86,7 @@ export function relativeTime(value: string | null | undefined): string {
     ["hour", 3600],
     ["minute", 60],
   ];
-  const formatter = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+  const formatter = new Intl.RelativeTimeFormat("es", { numeric: "auto" });
   for (const [unit, size] of units) {
     if (absolute >= size) {
       return formatter.format(Math.round(seconds / size), unit);
@@ -69,11 +96,7 @@ export function relativeTime(value: string | null | undefined): string {
 }
 
 export function compactNumber(value: number): string {
-  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value);
-}
-
-export function percent(value: number): string {
-  return `${Math.round(value * 100)}%`;
+  return new Intl.NumberFormat("es", { maximumFractionDigits: 1 }).format(value);
 }
 
 export function lastInteractionAt(lead: { last_inbound_at: string | null; last_outbound_at: string | null; created_at: string }): string {
