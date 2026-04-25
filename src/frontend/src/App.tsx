@@ -32,19 +32,20 @@ import type {
   MessageItem,
   QuickActionResponse,
   RuntimeSettings,
+  StrategyAssignment,
   StrategyStatsResponse,
 } from "./types";
 
 const REFRESH_MS = 12000;
 
-const stageFilters: Array<{ value: LeadStage | "all"; label: string; metric?: keyof ContadoresMetrics }> = [
-  { value: "all", label: "All", metric: "total" },
-  { value: "needs_human", label: "Needs human", metric: "needs_human" },
-  { value: "awaiting_initial_reply", label: "Initial reply", metric: "awaiting_initial_reply" },
-  { value: "awaiting_video_reply", label: "Video reply", metric: "awaiting_video_reply" },
-  { value: "calendly_sent", label: "Calendly", metric: "calendly_sent" },
-  { value: "booked", label: "Booked", metric: "booked" },
-  { value: "closed", label: "Closed", metric: "closed" },
+const stageFilters: Array<{ value: LeadStage | "all"; label: string; metric?: keyof ContadoresMetrics; tone: string }> = [
+  { value: "all", label: "All", metric: "total", tone: "all" },
+  { value: "awaiting_initial_reply", label: "Initial reply", metric: "awaiting_initial_reply", tone: "initial" },
+  { value: "awaiting_video_reply", label: "Video reply", metric: "awaiting_video_reply", tone: "video" },
+  { value: "calendly_sent", label: "Calendly", metric: "calendly_sent", tone: "calendly" },
+  { value: "booked", label: "Booked", metric: "booked", tone: "booked" },
+  { value: "closed", label: "Closed", metric: "closed", tone: "closed" },
+  { value: "needs_human", label: "Needs human", metric: "needs_human", tone: "manual" },
 ];
 
 const sendActions = [
@@ -394,7 +395,7 @@ function MetricsBar({
           <button
             key={filter.value}
             type="button"
-            className={`metric-tile ${activeStage === filter.value ? "active" : ""}`}
+            className={`metric-tile tone-${filter.tone} ${activeStage === filter.value ? "active" : ""}`}
             onClick={() => onStageChange(filter.value)}
           >
             <span>{filter.label}</span>
@@ -454,6 +455,7 @@ function LeadList({
             </div>
             <div className="lead-row-bottom">
               <span>{lead.platform || "unknown source"}</span>
+              <StrategyChips assignments={lead.strategy_assignments} compact />
               {lead.manual_reply_status === "needs_reply" ? <em>reply needed</em> : null}
             </div>
           </button>
@@ -510,6 +512,8 @@ function LeadDetail({
         <StageBadge stage={lead.stage} large />
       </div>
 
+      <StrategyChips assignments={lead.strategy_assignments} />
+
       <div className="lead-facts">
         <Fact label="Last inbound" value={shortDate(lead.last_inbound_at)} />
         <Fact label="Last outbound" value={shortDate(lead.last_outbound_at)} />
@@ -542,46 +546,6 @@ function LeadDetail({
         })}
       </div>
 
-      <form className="manual-form" onSubmit={onManualSubmit}>
-        <label>
-          <span>Manual WhatsApp message</span>
-          <textarea
-            value={manualText}
-            onChange={(event) => onManualTextChange(event.target.value)}
-            placeholder="Write the exact message to queue..."
-            rows={4}
-          />
-        </label>
-        <button type="submit" disabled={!manualText.trim() || Boolean(actionBusy)}>
-          <PaperPlaneTilt size={16} weight="bold" />
-          Queue message
-        </button>
-      </form>
-
-      <div className="secondary-actions">
-        {stateActions.map((item) => {
-          const Icon = item.icon;
-          return (
-            <button key={item.action} type="button" onClick={() => onQuickAction(item.action)} disabled={Boolean(actionBusy)}>
-              <Icon size={15} weight="bold" />
-              {item.label}
-            </button>
-          );
-        })}
-        {lead.stage === "closed" ? (
-          <button type="button" onClick={() => onQuickAction("reopen")} disabled={Boolean(actionBusy)}>
-            <Play size={15} weight="bold" />
-            Reopen
-          </button>
-        ) : null}
-        {lead.stage === "archived" ? (
-          <button type="button" onClick={() => onQuickAction("unarchive")} disabled={Boolean(actionBusy)}>
-            <Archive size={15} weight="bold" />
-            Unarchive
-          </button>
-        ) : null}
-      </div>
-
       <div className="timeline-wrap">
         <div className="section-title">
           <h3>Conversation</h3>
@@ -597,12 +561,96 @@ function LeadDetail({
         </div>
         <EventTimeline events={detail?.events ?? []} />
       </div>
+
+      <section className="operator-dock" aria-label="Manual operator controls">
+        <div className="operator-dock-head">
+          <div>
+            <span>Manual handoff</span>
+            <h3>Operator controls</h3>
+          </div>
+          <StageBadge stage="needs_human" />
+        </div>
+
+        <form className="manual-form" onSubmit={onManualSubmit}>
+          <label>
+            <span>Manual WhatsApp message</span>
+            <textarea
+              value={manualText}
+              onChange={(event) => onManualTextChange(event.target.value)}
+              placeholder="Write the exact message to queue..."
+              rows={4}
+            />
+          </label>
+          <button type="submit" disabled={!manualText.trim() || Boolean(actionBusy)}>
+            <PaperPlaneTilt size={16} weight="bold" />
+            Queue message
+          </button>
+        </form>
+
+        <div className="secondary-actions">
+          {stateActions.map((item) => {
+            const Icon = item.icon;
+            return (
+              <button key={item.action} type="button" onClick={() => onQuickAction(item.action)} disabled={Boolean(actionBusy)}>
+                <Icon size={15} weight="bold" />
+                {item.label}
+              </button>
+            );
+          })}
+          {lead.stage === "closed" ? (
+            <button type="button" onClick={() => onQuickAction("reopen")} disabled={Boolean(actionBusy)}>
+              <Play size={15} weight="bold" />
+              Reopen
+            </button>
+          ) : null}
+          {lead.stage === "archived" ? (
+            <button type="button" onClick={() => onQuickAction("unarchive")} disabled={Boolean(actionBusy)}>
+              <Archive size={15} weight="bold" />
+              Unarchive
+            </button>
+          ) : null}
+        </div>
+      </section>
     </div>
   );
 }
 
 function StageBadge({ stage, large = false }: { stage: LeadStage; large?: boolean }) {
   return <span className={`stage-badge ${stage} ${large ? "large" : ""}`}>{stageLabel(stage)}</span>;
+}
+
+function StrategyChips({
+  assignments,
+  compact = false,
+}: {
+  assignments: StrategyAssignment[];
+  compact?: boolean;
+}) {
+  if (!assignments.length) {
+    return null;
+  }
+
+  const visibleAssignments = compact ? assignments.slice(0, 1) : assignments.slice(0, 3);
+  return (
+    <div className={`strategy-chips ${compact ? "compact" : ""}`} aria-label="Assigned strategies">
+      {visibleAssignments.map((assignment) => (
+        <span
+          className={`strategy-chip strategy-tone-${strategyToneIndex(assignment.strategy_id || assignment.strategy_label)}`}
+          key={`${assignment.step}-${assignment.strategy_id}-${assignment.id}`}
+        >
+          {compact ? assignment.strategy_label : `${humanize(assignment.step)} · ${assignment.strategy_label}`}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function strategyToneIndex(value: string): number {
+  let hash = 0;
+  for (const character of value || "strategy") {
+    hash = (hash + character.charCodeAt(0)) % 5;
+  }
+  return hash;
 }
 
 function Fact({ label, value }: { label: string; value: string }) {
@@ -796,7 +844,7 @@ function StrategyPanel({ stats }: { stats: StrategyStatsResponse | null }) {
       ) : (
         <div className="strategy-table">
           {topRows.map((row) => (
-            <div className="strategy-row" key={`${row.step}-${row.strategy_id}`}>
+            <div className={`strategy-row strategy-tone-${strategyToneIndex(row.strategy_id || row.strategy_label)}`} key={`${row.step}-${row.strategy_id}`}>
               <div>
                 <strong>{row.strategy_label}</strong>
                 <span>{humanize(row.step)} · {row.assigned} assigned</span>
