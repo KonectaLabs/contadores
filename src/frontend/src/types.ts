@@ -114,6 +114,7 @@ export interface StrategyAssignment {
 
 export interface LeadSummary {
   id: string;
+  funnel_id: string;
   external_lead_id: string;
   phone: string;
   normalized_phone: string;

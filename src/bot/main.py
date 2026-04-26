@@ -30,7 +30,7 @@ try:
         BOT_TICK_SECONDS,
         build_backend_client,
         dispatch_pending_contadores_messages,
-        fetch_contadores_config,
+        fetch_funnels,
         fetch_pending_contadores_outbound,
         process_whatsapp_inbound_event,
         process_whatsapp_message_status_event,
@@ -57,7 +57,7 @@ except ImportError:
         BOT_TICK_SECONDS,
         build_backend_client,
         dispatch_pending_contadores_messages,
-        fetch_contadores_config,
+        fetch_funnels,
         fetch_pending_contadores_outbound,
         process_whatsapp_inbound_event,
         process_whatsapp_message_status_event,
@@ -121,27 +121,39 @@ async def run_worker_iteration(
     whatsapp_provider: WhatsAppProvider,
 ) -> None:
     """Advance automation, send alerts, and dispatch pending WhatsApp messages."""
-    contadores_automation_summary = await run_contadores_automation_iteration(backend_client)
-    if any(
-        contadores_automation_summary.get(key)
-        for key in [
-            "opener_sent",
-            "loom_sent",
-            "video_checks_sent",
-            "classified_wants_to_proceed",
-            "classified_needs_human",
-            "calendly_sent",
-        ]
-    ):
-        logger.info("Contadores automation summary: %s", contadores_automation_summary)
+    funnels = await fetch_funnels(backend_client)
+    if not funnels:
+        return
 
-    contadores_alert_results = await send_contadores_pending_alerts(
-        backend_client,
-        email_provider=email_provider,
-    )
-    sent_alerts = [item for item in contadores_alert_results if item.get("status") == "sent"]
-    if sent_alerts:
-        logger.info("Contadores alerts sent: %s", sent_alerts)
+    for funnel in funnels:
+        if not funnel.enabled:
+            continue
+        automation_summary = await run_contadores_automation_iteration(
+            backend_client,
+            funnel_id=funnel.id,
+        )
+        if any(
+            automation_summary.get(key)
+            for key in [
+                "opener_sent",
+                "loom_sent",
+                "video_checks_sent",
+                "classified_wants_to_proceed",
+                "classified_needs_human",
+                "calendly_sent",
+            ]
+        ):
+            logger.info("%s automation summary: %s", funnel.label, automation_summary)
+
+        alert_results = await send_contadores_pending_alerts(
+            backend_client,
+            email_provider=email_provider,
+            funnel_id=funnel.id,
+            funnel_label=funnel.label,
+        )
+        sent_alerts = [item for item in alert_results if item.get("status") == "sent"]
+        if sent_alerts:
+            logger.info("%s alerts sent: %s", funnel.label, sent_alerts)
 
     pending_contadores = await fetch_pending_contadores_outbound(backend_client, limit=200)
     contadores_dispatch_results = await dispatch_pending_contadores_messages(
@@ -159,7 +171,7 @@ async def run_worker_loop(
     whatsapp_provider: WhatsAppProvider,
 ) -> None:
     """Run the continuous Contadores worker loop."""
-    last_contadores_sheet_sync_at = 0.0
+    last_sheet_sync_at_by_funnel: dict[str, float] = {}
     try:
         while True:
             try:
@@ -171,17 +183,25 @@ async def run_worker_loop(
                 note_backend_recovered(logger, LOG_STATE)
 
                 now = asyncio.get_running_loop().time()
-                contadores_config = await fetch_contadores_config(backend_client)
-                sheet_poll_seconds = max(60, int(contadores_config.sheet_poll_seconds or 300))
-                if now - last_contadores_sheet_sync_at >= sheet_poll_seconds:
-                    last_contadores_sheet_sync_at = now
+                for funnel in await fetch_funnels(backend_client):
+                    if not funnel.enabled:
+                        continue
+                    sheet_poll_seconds = max(60, int(funnel.sheet_poll_seconds or 300))
+                    last_sync_at = last_sheet_sync_at_by_funnel.get(funnel.id, 0.0)
+                    if now - last_sync_at < sheet_poll_seconds:
+                        continue
+                    last_sheet_sync_at_by_funnel[funnel.id] = now
                     try:
-                        sheet_summary = await run_contadores_sheet_sync_iteration(backend_client)
+                        sheet_summary = await run_contadores_sheet_sync_iteration(
+                            backend_client,
+                            funnel_id=funnel.id,
+                            funnel=funnel,
+                        )
                     except Exception:
-                        logger.exception("Contadores sheet sync iteration failed.")
+                        logger.exception("%s sheet sync iteration failed.", funnel.label)
                     else:
                         if sheet_summary.get("status") == "ok":
-                            logger.info("Contadores sheet sync summary: %s", sheet_summary)
+                            logger.info("%s sheet sync summary: %s", funnel.label, sheet_summary)
             except httpx.HTTPStatusError as exc:
                 status_code = exc.response.status_code if exc.response else "unknown"
                 request_url = str(exc.request.url) if exc.request else "unknown"

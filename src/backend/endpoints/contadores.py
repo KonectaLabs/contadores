@@ -18,10 +18,9 @@ from sqlmodel import Session, select
 from backend.ai.contadores_post_loom_classifier import PostLoomReplyClassifierProgram
 from backend.contadores_strategies import (
     LOOM_STEP,
-    build_loom_intro_text as build_strategy_loom_intro_text,
-    choose_contadores_strategy,
+    choose_funnel_strategy,
     get_contadores_strategy_weight,
-    list_contadores_strategies,
+    list_funnel_strategies,
 )
 from backend.database import (
     ContadoresConfig,
@@ -37,7 +36,7 @@ from backend.database import (
     normalize_phone,
 )
 from backend.funnel_config import get_contadores_funnel
-from backend.funnel_config import get_file_backed_funnel, upsert_funnel
+from backend.funnel_config import get_file_backed_funnel, get_funnel, upsert_funnel
 
 contadores_router = APIRouter(prefix="/api/contadores", tags=["contadores"])
 
@@ -67,29 +66,38 @@ def ensure_utc_datetime(value: datetime | None) -> datetime | None:
     return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
 
 
-def build_opener_text() -> str:
+def resolve_funnel(funnel_id: str | None = None):
+    """Return a configured funnel, defaulting to Contadores."""
+    return get_funnel(funnel_id or "contadores") or get_contadores_funnel()
+
+
+def build_opener_text(funnel_id: str | None = None) -> str:
     """Return the rendered opener text used in transcript history."""
-    return get_contadores_funnel().opener_text
+    return resolve_funnel(funnel_id).opener_text
 
 
-def build_loom_intro_text() -> str:
+def build_loom_intro_text(funnel_id: str | None = None) -> str:
     """Return the pre-Loom explanatory text."""
-    return build_strategy_loom_intro_text()
+    return resolve_funnel(funnel_id).loom_intro_text
 
 
-def build_opener_followup_text() -> str:
+def build_opener_followup_text(funnel_id: str | None = None) -> str:
     """Return the reminder sent 24 hours after the opener when there is no reply."""
-    return get_contadores_funnel().opener_followup_text
+    return resolve_funnel(funnel_id).opener_followup_text
 
 
-def build_manual_ping_text() -> str:
+def build_manual_ping_text(funnel_id: str | None = None) -> str:
     """Return the manual ping text used to reopen a WhatsApp window."""
-    return get_contadores_funnel().manual_ping_text
+    return resolve_funnel(funnel_id).manual_ping_text
 
 
-def resolve_contadores_template_name(sequence_step: str | None) -> str | None:
+def resolve_contadores_template_name(
+    sequence_step: str | None,
+    *,
+    funnel_id: str | None = None,
+) -> str | None:
     """Return the WhatsApp template name for template-backed Contadores steps."""
-    funnel = get_contadores_funnel()
+    funnel = resolve_funnel(funnel_id)
     if sequence_step == "opener":
         return funnel.opener_template_name
     if sequence_step in {OPENER_FOLLOWUP_SEQUENCE_STEP, OPENER_FOLLOWUP_RETRY_SEQUENCE_STEP}:
@@ -99,14 +107,14 @@ def resolve_contadores_template_name(sequence_step: str | None) -> str | None:
     return None
 
 
-def build_video_check_text() -> str:
+def build_video_check_text(funnel_id: str | None = None) -> str:
     """Return the follow-up prompt sent after the Loom wait window."""
-    return get_contadores_funnel().video_check_text
+    return resolve_funnel(funnel_id).video_check_text
 
 
-def build_calendly_intro_text() -> str:
+def build_calendly_intro_text(funnel_id: str | None = None) -> str:
     """Return the Calendly follow-up text."""
-    return get_contadores_funnel().calendly_intro_text
+    return resolve_funnel(funnel_id).calendly_intro_text
 
 
 def build_classifier_context() -> str:
@@ -160,8 +168,16 @@ def apply_funnel_to_config(config: ContadoresConfig, funnel) -> ContadoresConfig
 
 def get_effective_contadores_config() -> ContadoresConfig:
     """Return runtime config, preferring `data/funnels.json` when Contadores is file-backed."""
+    return get_effective_funnel_config("contadores")
+
+
+def get_effective_funnel_config(funnel_id: str | None = None) -> ContadoresConfig:
+    """Return runtime config for one funnel, overlaying file-backed fields when present."""
     config = ContadoresConfig.get()
-    funnel = get_file_backed_funnel("contadores")
+    clean_funnel_id = (funnel_id or "contadores").strip() or "contadores"
+    funnel = get_file_backed_funnel(clean_funnel_id)
+    if funnel is None and clean_funnel_id != "contadores":
+        funnel = get_funnel(clean_funnel_id)
     if funnel is None:
         return config
     return apply_funnel_to_config(config, funnel)
@@ -310,10 +326,10 @@ def build_contadores_metrics(leads: list[ContadoresLead]) -> "ContadoresMetrics"
     )
 
 
-def group_strategy_assignments_by_lead() -> dict[str, list[ContadoresStrategyAssignment]]:
+def group_strategy_assignments_by_lead(funnel_id: str = "contadores") -> dict[str, list[ContadoresStrategyAssignment]]:
     """Return strategy assignments grouped by lead id."""
     grouped: dict[str, list[ContadoresStrategyAssignment]] = {}
-    for assignment in ContadoresStrategyAssignment.list_all():
+    for assignment in ContadoresStrategyAssignment.list_all(funnel_id=funnel_id):
         grouped.setdefault(assignment.lead_id, []).append(assignment)
     return grouped
 
@@ -341,11 +357,12 @@ def lead_matches_strategy_filter(
     return False
 
 
-def build_contadores_strategy_stats() -> "ContadoresStrategyStatsResponse":
+def build_contadores_strategy_stats(funnel_id: str = "contadores") -> "ContadoresStrategyStatsResponse":
     """Aggregate strategy assignment and conversion counts."""
-    config = get_effective_contadores_config()
+    funnel = resolve_funnel(funnel_id)
+    config = get_effective_funnel_config(funnel.id)
     stats: dict[tuple[str, str], dict[str, Any]] = {}
-    for strategy in list_contadores_strategies():
+    for strategy in list_funnel_strategies(funnel):
         stats[(strategy.step, strategy.id)] = {
             "step": strategy.step,
             "strategy_id": strategy.id,
@@ -358,14 +375,14 @@ def build_contadores_strategy_stats() -> "ContadoresStrategyStatsResponse":
             "booked": 0,
         }
 
-    assignments = ContadoresStrategyAssignment.list_all()
+    assignments = ContadoresStrategyAssignment.list_all(funnel_id=funnel.id)
     with Session(engine) as session:
         message_rows = list(
             session.exec(
                 select(ContadoresMessage).where(ContadoresMessage.strategy_assignment_id.is_not(None))
             ).all()
         )
-        lead_rows = list(session.exec(select(ContadoresLead)).all())
+        lead_rows = list(session.exec(select(ContadoresLead).where(ContadoresLead.funnel_id == funnel.id)).all())
 
     messages_by_assignment: dict[int, list[ContadoresMessage]] = {}
     for row in message_rows:
@@ -498,6 +515,7 @@ def build_lead_summary(
     effective_stage = derive_effective_lead_stage(lead)
     return ContadoresLeadSummary(
         id=lead.id,
+        funnel_id=lead.funnel_id,
         external_lead_id=lead.external_lead_id,
         phone=lead.phone,
         normalized_phone=lead.normalized_phone,
@@ -678,7 +696,7 @@ def send_opener_sequence(*, lead: ContadoresLead) -> list[ContadoresMessage]:
     """Queue the first template-backed opener message."""
     opener = enqueue_lead_outbound(
         lead=lead,
-        text=build_opener_text(),
+        text=build_opener_text(lead.funnel_id),
         sequence_step="opener",
     )
     ContadoresLead.update_flow_state(
@@ -697,7 +715,9 @@ def send_loom_sequence(
     assigned_by: str = "system",
 ) -> list[ContadoresMessage]:
     """Queue the selected Loom/video strategy."""
-    strategy = choose_contadores_strategy(
+    funnel = resolve_funnel(lead.funnel_id)
+    strategy = choose_funnel_strategy(
+        funnel=funnel,
         step=LOOM_STEP,
         lead_id=lead.id,
         strategy_id=strategy_id,
@@ -740,7 +760,7 @@ def send_opener_followup(*, lead: ContadoresLead) -> list[ContadoresMessage]:
     """Queue the 24-hour opener reminder without changing the lead stage."""
     row = enqueue_lead_outbound(
         lead=lead,
-        text=build_opener_followup_text(),
+        text=build_opener_followup_text(lead.funnel_id),
         sequence_step=OPENER_FOLLOWUP_SEQUENCE_STEP,
     )
     return [row]
@@ -750,7 +770,7 @@ def send_manual_ping_template(*, lead: ContadoresLead) -> list[ContadoresMessage
     """Queue the operator-triggered ping template."""
     row = enqueue_lead_outbound(
         lead=lead,
-        text=build_manual_ping_text(),
+        text=build_manual_ping_text(lead.funnel_id),
         sequence_step=MANUAL_PING_SEQUENCE_STEP,
     )
     return [row]
@@ -760,7 +780,7 @@ def send_video_check(*, lead: ContadoresLead) -> list[ContadoresMessage]:
     """Queue the post-Loom follow-up question."""
     row = enqueue_lead_outbound(
         lead=lead,
-        text=build_video_check_text(),
+        text=build_video_check_text(lead.funnel_id),
         sequence_step="video_check",
     )
     ContadoresLead.update_flow_state(
@@ -775,7 +795,7 @@ def send_calendly_sequence(*, lead: ContadoresLead, config: ContadoresConfig) ->
     """Queue the Calendly explanation text + configured URL."""
     intro = enqueue_lead_outbound(
         lead=lead,
-        text=build_calendly_intro_text(),
+        text=build_calendly_intro_text(lead.funnel_id),
         sequence_step="calendly_intro",
     )
     calendly_url = enqueue_lead_outbound(
@@ -937,6 +957,7 @@ class ContadoresLeadSummary(BaseModel):
     """List/detail summary for one lead."""
 
     id: str
+    funnel_id: str = "contadores"
     external_lead_id: str
     phone: str
     normalized_phone: str
@@ -1043,6 +1064,7 @@ class ImportContadoresLeadRow(BaseModel):
 class ImportContadoresLeadsCommand(BaseModel):
     """Batch import command from bot sheet sync."""
 
+    funnel_id: str = "contadores"
     rows: list[ImportContadoresLeadRow] = Field(default_factory=list)
 
 
@@ -1200,9 +1222,11 @@ class ContadoresCalendlyWebhookCommand(BaseModel):
 
 
 @contadores_router.get("/config", response_model=ContadoresConfigResponse)
-async def get_contadores_config() -> ContadoresConfigResponse:
+async def get_contadores_config(
+    funnel_id: str = Query(default="contadores"),
+) -> ContadoresConfigResponse:
     """Return current Contadores config."""
-    return build_config_response(get_effective_contadores_config())
+    return build_config_response(get_effective_funnel_config(funnel_id))
 
 
 @contadores_router.put("/config", response_model=ContadoresConfigResponse)
@@ -1237,6 +1261,7 @@ async def import_contadores_leads(
     skipped = 0
     lead_ids: list[str] = []
 
+    funnel_id = (command.funnel_id or "").strip() or "contadores"
     for row in command.rows:
         raw_contacted = str(row.is_contactado or "").strip().lower()
         if raw_contacted in {"true", "1", "yes"}:
@@ -1246,9 +1271,11 @@ async def import_contadores_leads(
         if not normalize_phone(phone):
             skipped += 1
             continue
-        existing = ContadoresLead.get_by_external_lead_id(row.id)
+        external_lead_id = row.id if funnel_id == "contadores" else f"{funnel_id}:{row.id}"
+        existing = ContadoresLead.get_by_external_lead_id(external_lead_id, funnel_id=funnel_id)
         lead = ContadoresLead.upsert(
-            external_lead_id=row.id,
+            funnel_id=funnel_id,
+            external_lead_id=external_lead_id,
             phone=phone,
             full_name=row.full_name,
             email=row.email,
@@ -1264,7 +1291,7 @@ async def import_contadores_leads(
                 event_type="sheet_import_created",
                 actor="bot",
                 summary="Lead imported from spreadsheet.",
-                payload={"external_lead_id": row.id},
+                payload={"external_lead_id": external_lead_id, "funnel_id": funnel_id},
             )
         else:
             updated += 1
@@ -1273,7 +1300,7 @@ async def import_contadores_leads(
                 event_type="sheet_import_updated",
                 actor="bot",
                 summary="Lead refreshed from spreadsheet.",
-                payload={"external_lead_id": row.id},
+                payload={"external_lead_id": external_lead_id, "funnel_id": funnel_id},
             )
 
     ContadoresConfig.mark_sheet_sync(
@@ -1289,14 +1316,17 @@ async def import_contadores_leads(
 
 
 @contadores_router.get("/strategy-stats", response_model=ContadoresStrategyStatsResponse)
-async def get_contadores_strategy_stats() -> ContadoresStrategyStatsResponse:
+async def get_contadores_strategy_stats(
+    funnel_id: str = Query(default="contadores"),
+) -> ContadoresStrategyStatsResponse:
     """Return strategy assignment and conversion stats."""
-    return build_contadores_strategy_stats()
+    return build_contadores_strategy_stats(funnel_id=funnel_id)
 
 
 @contadores_router.get("/leads", response_model=ContadoresLeadListResponse)
 async def list_contadores_leads(
     limit: int = Query(default=300, ge=1, le=1000),
+    funnel_id: str = Query(default="contadores"),
     stage: str | None = None,
     platform: str | None = None,
     strategy_step: str | None = None,
@@ -1308,14 +1338,15 @@ async def list_contadores_leads(
     query: str | None = None,
 ) -> ContadoresLeadListResponse:
     """List leads with list-view metrics and lightweight filtering."""
-    config = get_effective_contadores_config()
+    config = get_effective_funnel_config(funnel_id)
     normalized_stage = ContadoresLead.normalize_stage(stage) if stage is not None else None
     base_leads = ContadoresLead.list_recent(
         limit=1000,
+        funnel_id=funnel_id,
         platform=platform,
         include_archived=True,
     )
-    assignments_by_lead = group_strategy_assignments_by_lead()
+    assignments_by_lead = group_strategy_assignments_by_lead(funnel_id)
     metric_leads: list[ContadoresLead] = []
     visible_leads: list[ContadoresLead] = []
     query_value = (query or "").strip().lower()
@@ -1384,11 +1415,11 @@ async def list_contadores_leads(
 @contadores_router.get("/leads/{lead_id}", response_model=ContadoresLeadDetailResponse)
 async def get_contadores_lead_detail(lead_id: str) -> ContadoresLeadDetailResponse:
     """Return detail timeline for one lead."""
-    config = get_effective_contadores_config()
     lead = ContadoresLead.get_by_id(lead_id)
     if lead is None:
         raise HTTPException(status_code=404, detail="Lead not found")
-    assignments_by_lead = group_strategy_assignments_by_lead()
+    config = get_effective_funnel_config(lead.funnel_id)
+    assignments_by_lead = group_strategy_assignments_by_lead(lead.funnel_id)
     messages = [build_message_response(item) for item in ContadoresMessage.list_by_lead(lead_id)]
     events = [build_event_response(item) for item in ContadoresEvent.list_by_lead(lead_id)]
     return ContadoresLeadDetailResponse(
@@ -1445,10 +1476,10 @@ async def create_contadores_manual_message(
     command: CreateContadoresMessageCommand,
 ) -> ContadoresQuickActionResponse:
     """Queue one manual outbound WhatsApp message."""
-    config = get_effective_contadores_config()
     lead = ContadoresLead.get_by_id(lead_id)
     if lead is None:
         raise HTTPException(status_code=404, detail="Lead not found")
+    config = get_effective_funnel_config(lead.funnel_id)
     row = enqueue_lead_outbound(
         lead=lead,
         text=command.text.strip(),
@@ -1480,10 +1511,10 @@ async def run_contadores_quick_action(
     action: str,
 ) -> ContadoresQuickActionResponse:
     """Run one operator quick action."""
-    config = get_effective_contadores_config()
     lead = ContadoresLead.get_by_id(lead_id)
     if lead is None:
         raise HTTPException(status_code=404, detail="Lead not found")
+    config = get_effective_funnel_config(lead.funnel_id)
 
     queued_rows: list[ContadoresMessage] = []
     normalized_action = (action or "").strip().lower()
@@ -1491,7 +1522,7 @@ async def run_contadores_quick_action(
     if normalized_action == "send-opener":
         queued_rows = send_opener_sequence(lead=lead)
     elif normalized_action == "send-manual-ping":
-        if not get_contadores_funnel().manual_ping_template_name:
+        if not resolve_funnel(lead.funnel_id).manual_ping_template_name:
             raise HTTPException(status_code=400, detail="Manual ping template is not configured")
         queued_rows = send_manual_ping_template(lead=lead)
     elif normalized_action == "send-loom":
@@ -1594,10 +1625,10 @@ async def run_contadores_quick_action(
 @contadores_router.post("/leads/{lead_id}/resume-automation", response_model=ContadoresQuickActionResponse)
 async def resume_contadores_automation(lead_id: str) -> ContadoresQuickActionResponse:
     """Clear automation_paused and infer the right stage so the bot resumes."""
-    config = get_effective_contadores_config()
     lead = ContadoresLead.get_by_id(lead_id)
     if lead is None:
         raise HTTPException(status_code=404, detail="Lead not found")
+    config = get_effective_funnel_config(lead.funnel_id)
     target_stage = infer_resume_stage_from_timestamps(lead)
     updated = ContadoresLead.update_flow_state(
         lead.id,
@@ -1628,8 +1659,8 @@ async def list_pending_contadores_delivery_messages(
         lead = ContadoresLead.get_by_id(row.lead_id)
         if lead is None:
             continue
-        funnel = get_contadores_funnel()
-        template_name = resolve_contadores_template_name(row.sequence_step)
+        funnel = resolve_funnel(lead.funnel_id)
+        template_name = resolve_contadores_template_name(row.sequence_step, funnel_id=lead.funnel_id)
         items.append(
             PendingContadoresDeliveryMessage(
                 message_id=row.id or 0,
@@ -1794,13 +1825,15 @@ async def register_contadores_whatsapp_inbound(
 
 
 @contadores_router.post("/automation/tick", response_model=ContadoresAutomationTickResponse)
-async def run_contadores_automation_tick() -> ContadoresAutomationTickResponse:
+async def run_contadores_automation_tick(
+    funnel_id: str = Query(default="contadores"),
+) -> ContadoresAutomationTickResponse:
     """Advance Contadores automation state and queue due outbound messages."""
-    config = get_effective_contadores_config()
+    config = get_effective_funnel_config(funnel_id)
     if not config.enabled:
         return ContadoresAutomationTickResponse(status="disabled")
 
-    leads = ContadoresLead.list_recent(limit=1000, include_archived=False)
+    leads = ContadoresLead.list_recent(limit=1000, funnel_id=funnel_id, include_archived=False)
     classifier = PostLoomReplyClassifierProgram()
     now = now_utc()
     opener_sent = 0
@@ -1941,11 +1974,13 @@ async def run_contadores_automation_tick() -> ContadoresAutomationTickResponse:
 
 
 @contadores_router.get("/alerts/pending", response_model=PendingContadoresAlertsResponse)
-async def list_pending_contadores_alerts() -> PendingContadoresAlertsResponse:
+async def list_pending_contadores_alerts(
+    funnel_id: str = Query(default="contadores"),
+) -> PendingContadoresAlertsResponse:
     """List leads waiting for needs_human alert emails."""
-    config = get_effective_contadores_config()
+    config = get_effective_funnel_config(funnel_id)
     items: list[PendingContadoresAlertItem] = []
-    for lead in ContadoresLead.list_needs_human_without_notification(limit=100):
+    for lead in ContadoresLead.list_needs_human_without_notification(funnel_id=funnel_id, limit=100):
         if derive_effective_lead_stage(lead) != ContadoresLeadStage.NEEDS_HUMAN:
             continue
         if derive_manual_reply_status(lead) == "answered":
@@ -1972,13 +2007,13 @@ async def mark_contadores_alerted(
     command: MarkContadoresAlertedCommand,
 ) -> ContadoresLeadSummary:
     """Mark that the needs_human notification email was sent."""
-    config = get_effective_contadores_config()
     updated = ContadoresLead.update_flow_state(
         lead_id,
         needs_human_notified_at=command.sent_at or now_utc(),
     )
     if updated is None:
         raise HTTPException(status_code=404, detail="Lead not found")
+    config = get_effective_funnel_config(updated.funnel_id)
     ContadoresConfig.mark_alert_sent(sent_at=command.sent_at or now_utc())
     ContadoresEvent.add(
         lead_id=lead_id,
@@ -1995,7 +2030,6 @@ async def mark_contadores_booked(
     lead_id: str = Query(..., min_length=1),
 ) -> ContadoresLeadSummary:
     """Manually mark one lead as booked."""
-    config = get_effective_contadores_config()
     updated = ContadoresLead.update_flow_state(
         lead_id,
         stage=ContadoresLeadStage.BOOKED,
@@ -2003,6 +2037,7 @@ async def mark_contadores_booked(
     )
     if updated is None:
         raise HTTPException(status_code=404, detail="Lead not found")
+    config = get_effective_funnel_config(updated.funnel_id)
     ContadoresEvent.add(
         lead_id=lead_id,
         event_type="manual_booked",
@@ -2017,10 +2052,10 @@ async def register_contadores_calendly_event(
     command: ContadoresCalendlyWebhookCommand,
 ) -> ContadoresLeadSummary:
     """Mark booked from a Calendly webhook token."""
-    config = get_effective_contadores_config()
     lead = ContadoresLead.get_by_calendly_tracking_token(command.token)
     if lead is None:
         raise HTTPException(status_code=404, detail="Lead not found for Calendly token")
+    config = get_effective_funnel_config(lead.funnel_id)
     if command.event_type.strip().lower() in {"invitee.created", "booking_created", "scheduled"}:
         updated = ContadoresLead.update_flow_state(
             lead.id,

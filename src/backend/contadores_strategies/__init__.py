@@ -59,7 +59,7 @@ class ConfiguredContadoresStrategy(ContadoresSequenceStrategy):
             text = self.label
         return [
             ContadoresOutboundDraft(
-                text=build_loom_intro_text(),
+                text=self.funnel.loom_intro_text,
                 sequence_step="loom_intro",
             ),
             ContadoresOutboundDraft(
@@ -77,6 +77,11 @@ ContadoresStrategyWeights = Mapping[str, Mapping[str, int]]
 def list_contadores_strategies() -> list[ContadoresSequenceStrategy]:
     """Return every configured strategy."""
     funnel = get_contadores_funnel()
+    return list_funnel_strategies(funnel)
+
+
+def list_funnel_strategies(funnel: FunnelDefinition) -> list[ContadoresSequenceStrategy]:
+    """Return every configured strategy for one funnel."""
     return [
         ConfiguredContadoresStrategy(funnel=funnel, definition=definition)
         for definition in funnel.strategies
@@ -90,14 +95,28 @@ def build_loom_intro_text() -> str:
 
 def list_contadores_strategies_by_step(step: str) -> list[ContadoresSequenceStrategy]:
     """Return configured strategies for one sequence step."""
+    return list_funnel_strategies_by_step(get_contadores_funnel(), step)
+
+
+def list_funnel_strategies_by_step(funnel: FunnelDefinition, step: str) -> list[ContadoresSequenceStrategy]:
+    """Return configured strategies for one funnel and sequence step."""
     clean_step = (step or "").strip()
-    return [strategy for strategy in list_contadores_strategies() if strategy.step == clean_step]
+    return [strategy for strategy in list_funnel_strategies(funnel) if strategy.step == clean_step]
 
 
 def get_contadores_strategy(step: str, strategy_id: str) -> ContadoresSequenceStrategy | None:
     """Return one configured strategy by step and id."""
+    return get_funnel_strategy(get_contadores_funnel(), step, strategy_id)
+
+
+def get_funnel_strategy(
+    funnel: FunnelDefinition,
+    step: str,
+    strategy_id: str,
+) -> ContadoresSequenceStrategy | None:
+    """Return one configured strategy by funnel, step, and id."""
     clean_strategy_id = (strategy_id or "").strip()
-    for strategy in list_contadores_strategies_by_step(step):
+    for strategy in list_funnel_strategies_by_step(funnel, step):
         if strategy.id == clean_strategy_id:
             return strategy
     return None
@@ -122,15 +141,33 @@ def choose_contadores_strategy(
     strategy_weights: ContadoresStrategyWeights | None = None,
 ) -> ContadoresSequenceStrategy:
     """Choose a weighted strategy for a lead using stable random bucketing."""
+    return choose_funnel_strategy(
+        funnel=get_contadores_funnel(),
+        step=step,
+        lead_id=lead_id,
+        strategy_id=strategy_id,
+        strategy_weights=strategy_weights,
+    )
+
+
+def choose_funnel_strategy(
+    *,
+    funnel: FunnelDefinition,
+    step: str,
+    lead_id: str,
+    strategy_id: str | None = None,
+    strategy_weights: ContadoresStrategyWeights | None = None,
+) -> ContadoresSequenceStrategy:
+    """Choose a weighted strategy for one funnel using stable random bucketing."""
     if strategy_id:
-        strategy = get_contadores_strategy(step, strategy_id)
+        strategy = get_funnel_strategy(funnel, step, strategy_id)
         if strategy is None:
-            raise ValueError(f"Unknown Contadores strategy: {step}/{strategy_id}")
+            raise ValueError(f"Unknown strategy for {funnel.id}: {step}/{strategy_id}")
         return strategy
 
-    strategies = list_contadores_strategies_by_step(step)
+    strategies = list_funnel_strategies_by_step(funnel, step)
     if not strategies:
-        raise ValueError(f"No Contadores strategies configured for step: {step}")
+        raise ValueError(f"No strategies configured for {funnel.id} step: {step}")
 
     total_weight = sum(
         get_contadores_strategy_weight(strategy, strategy_weights)
@@ -139,7 +176,7 @@ def choose_contadores_strategy(
     if total_weight <= 0:
         return strategies[0]
 
-    bucket_source = f"{step}:{lead_id}".encode("utf-8")
+    bucket_source = f"{funnel.id}:{step}:{lead_id}".encode("utf-8")
     bucket = int(hashlib.sha256(bucket_source).hexdigest(), 16) % total_weight
     running_total = 0
     for strategy in strategies:

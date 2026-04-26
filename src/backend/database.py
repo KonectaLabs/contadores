@@ -960,6 +960,7 @@ class ContadoresLead(SQLModel, table=True):
     __tablename__ = "contadores_leads"
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    funnel_id: str = Field(default="contadores", index=True)
     external_lead_id: str = Field(sa_column=Column(String, unique=True, index=True, nullable=False))
     phone: str = Field(default="")
     normalized_phone: str = Field(default="", index=True)
@@ -1012,13 +1013,20 @@ class ContadoresLead(SQLModel, table=True):
             return item
 
     @classmethod
-    def get_by_external_lead_id(cls, external_lead_id: str) -> Optional["ContadoresLead"]:
+    def get_by_external_lead_id(
+        cls,
+        external_lead_id: str,
+        *,
+        funnel_id: str | None = None,
+    ) -> Optional["ContadoresLead"]:
         """Get one lead by sheet external id."""
         clean_external_lead_id = (external_lead_id or "").strip()
         if not clean_external_lead_id:
             return None
         with Session(engine) as session:
             statement = select(cls).where(cls.external_lead_id == clean_external_lead_id).limit(1)
+            if funnel_id is not None:
+                statement = statement.where(cls.funnel_id == ((funnel_id or "").strip() or "contadores"))
             item = session.exec(statement).first()
             if item:
                 session.expunge(item)
@@ -1063,6 +1071,7 @@ class ContadoresLead(SQLModel, table=True):
         cls,
         *,
         limit: int = 500,
+        funnel_id: str | None = None,
         stage: ContadoresLeadStage | str | None = None,
         platform: str | None = None,
         include_archived: bool = True,
@@ -1070,6 +1079,8 @@ class ContadoresLead(SQLModel, table=True):
         """List recent leads with optional filters."""
         with Session(engine) as session:
             statement = select(cls)
+            if funnel_id is not None:
+                statement = statement.where(cls.funnel_id == ((funnel_id or "").strip() or "contadores"))
             if stage is not None:
                 statement = statement.where(cls.stage == cls.normalize_stage(stage))
             if platform is not None:
@@ -1083,7 +1094,12 @@ class ContadoresLead(SQLModel, table=True):
             return items
 
     @classmethod
-    def list_needs_human_without_notification(cls, *, limit: int = 100) -> list["ContadoresLead"]:
+    def list_needs_human_without_notification(
+        cls,
+        *,
+        funnel_id: str | None = None,
+        limit: int = 100,
+    ) -> list["ContadoresLead"]:
         """List leads that entered needs_human and still require alerting."""
         with Session(engine) as session:
             statement = (
@@ -1095,6 +1111,8 @@ class ContadoresLead(SQLModel, table=True):
                 .order_by(cls.updated_at, cls.created_at, cls.id)
                 .limit(limit)
             )
+            if funnel_id is not None:
+                statement = statement.where(cls.funnel_id == ((funnel_id or "").strip() or "contadores"))
             items = list(session.exec(statement).all())
             for item in items:
                 session.expunge(item)
@@ -1104,6 +1122,7 @@ class ContadoresLead(SQLModel, table=True):
     def upsert(
         cls,
         *,
+        funnel_id: str = "contadores",
         external_lead_id: str,
         phone: str,
         full_name: str | None = None,
@@ -1124,6 +1143,7 @@ class ContadoresLead(SQLModel, table=True):
             now = datetime.now(timezone.utc)
             if item is None:
                 item = cls(
+                    funnel_id=(funnel_id or "").strip() or "contadores",
                     external_lead_id=external_lead_id.strip(),
                     phone=phone.strip(),
                     normalized_phone=normalized_phone,
@@ -1143,6 +1163,7 @@ class ContadoresLead(SQLModel, table=True):
                 return item
 
             item.phone = phone.strip()
+            item.funnel_id = (funnel_id or "").strip() or item.funnel_id or "contadores"
             item.normalized_phone = normalized_phone
             item.full_name = (full_name or "").strip() or None
             item.email = (normalize_email(email) or None) if email else None
@@ -1314,10 +1335,13 @@ class ContadoresStrategyAssignment(SQLModel, table=True):
             return row
 
     @classmethod
-    def list_all(cls) -> list["ContadoresStrategyAssignment"]:
+    def list_all(cls, *, funnel_id: str | None = None) -> list["ContadoresStrategyAssignment"]:
         """List all persisted assignments in assignment order."""
         with Session(engine) as session:
-            statement = select(cls).order_by(cls.assigned_at, cls.id)
+            statement = select(cls).join(ContadoresLead, ContadoresLead.id == cls.lead_id)
+            if funnel_id is not None:
+                statement = statement.where(ContadoresLead.funnel_id == ((funnel_id or "").strip() or "contadores"))
+            statement = statement.order_by(cls.assigned_at, cls.id)
             rows = list(session.exec(statement).all())
             for row in rows:
                 session.expunge(row)
@@ -1620,6 +1644,7 @@ class ContadoresEvent(SQLModel, table=True):
     __tablename__ = "contadores_events"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    funnel_id: str = Field(default="contadores", index=True)
     lead_id: str | None = Field(default=None, foreign_key="contadores_leads.id", index=True)
     event_type: str = Field(default="", index=True)
     actor: str | None = Field(default=None)
@@ -1634,6 +1659,7 @@ class ContadoresEvent(SQLModel, table=True):
         event_type: str,
         summary: str,
         lead_id: str | None = None,
+        funnel_id: str | None = None,
         actor: str | None = None,
         payload: dict[str, Any] | list[Any] | None = None,
         created_at: datetime | None = None,
@@ -1641,7 +1667,13 @@ class ContadoresEvent(SQLModel, table=True):
         """Persist one observability event."""
         with Session(engine) as session:
             now = created_at or datetime.now(timezone.utc)
+            resolved_funnel_id = (funnel_id or "").strip() or "contadores"
+            if lead_id:
+                lead = session.get(ContadoresLead, lead_id)
+                if lead:
+                    resolved_funnel_id = lead.funnel_id or resolved_funnel_id
             row = cls(
+                funnel_id=resolved_funnel_id,
                 lead_id=lead_id,
                 event_type=(event_type or "").strip(),
                 actor=(actor or "").strip() or None,
@@ -3402,9 +3434,38 @@ def init_db() -> None:
     ensure_contadores_automation_paused_columns()
     ensure_contadores_closed_state_columns()
     ensure_contadores_manual_reply_columns()
+    ensure_contadores_funnel_columns()
     ensure_contadores_strategy_columns()
     ensure_contadores_config_strategy_weights_column()
     logger.info(f"Database initialized at {DATABASE_URL}")
+
+
+def ensure_contadores_funnel_columns() -> None:
+    """Add funnel_id columns for multi-funnel Contadores-style flows."""
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        table_names = set(inspector.get_table_names())
+        if "contadores_leads" in table_names:
+            lead_columns = {column["name"] for column in inspector.get_columns("contadores_leads")}
+            if "funnel_id" not in lead_columns:
+                connection.exec_driver_sql(
+                    "ALTER TABLE contadores_leads ADD COLUMN funnel_id TEXT NOT NULL DEFAULT 'contadores'"
+                )
+                logger.info("Added missing contadores_leads.funnel_id column.")
+            connection.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS ix_contadores_leads_funnel_id ON contadores_leads (funnel_id)"
+            )
+
+        if "contadores_events" in table_names:
+            event_columns = {column["name"] for column in inspector.get_columns("contadores_events")}
+            if "funnel_id" not in event_columns:
+                connection.exec_driver_sql(
+                    "ALTER TABLE contadores_events ADD COLUMN funnel_id TEXT NOT NULL DEFAULT 'contadores'"
+                )
+                logger.info("Added missing contadores_events.funnel_id column.")
+            connection.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS ix_contadores_events_funnel_id ON contadores_events (funnel_id)"
+            )
 
 
 def ensure_contadores_automation_paused_columns() -> None:

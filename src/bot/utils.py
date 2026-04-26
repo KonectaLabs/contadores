@@ -70,6 +70,26 @@ class ContadoresConfigPayload(BaseModel):
     calendly_webhook_configured: bool = False
 
 
+class FunnelConfigPayload(BaseModel):
+    """One configured niche funnel from the backend."""
+
+    id: str
+    label: str
+    enabled: bool
+    source_mode: SourceMode = "testing"
+    test_phone: str = ""
+    test_name: str = ""
+    sheet_url: str | None = None
+    sheet_gid: str | None = None
+    sheet_poll_seconds: int = 300
+
+
+class FunnelListPayload(BaseModel):
+    """Configured funnels payload."""
+
+    funnels: list[FunnelConfigPayload] = Field(default_factory=list)
+
+
 class PendingContadoresDeliveryMessage(BaseModel):
     """One Contadores outbound message awaiting WhatsApp dispatch."""
 
@@ -203,6 +223,13 @@ async def fetch_contadores_config(client: httpx.AsyncClient) -> ContadoresConfig
     return ContadoresConfigPayload.model_validate(response.json())
 
 
+async def fetch_funnels(client: httpx.AsyncClient) -> list[FunnelConfigPayload]:
+    """Fetch configured funnels from the backend."""
+    response = await client.get(backend_url("/api/funnels"))
+    response.raise_for_status()
+    return FunnelListPayload.model_validate(response.json()).funnels
+
+
 async def fetch_pending_contadores_outbound(
     client: httpx.AsyncClient,
     *,
@@ -255,12 +282,13 @@ async def fetch_contadores_sheet_rows(
 async def import_contadores_sheet_rows(
     client: httpx.AsyncClient,
     *,
+    funnel_id: str = "contadores",
     rows: list[dict[str, str | None]],
 ) -> dict[str, Any]:
     """Send fetched sheet rows to the backend for upsert."""
     response = await client.post(
         backend_url("/api/contadores/leads/import"),
-        json={"rows": rows},
+        json={"funnel_id": funnel_id, "rows": rows},
     )
     response.raise_for_status()
     payload = response.json()
@@ -289,19 +317,26 @@ def build_importable_sheet_row(row: dict[str, str]) -> dict[str, str | None]:
     }
 
 
-def build_testing_lead_row() -> dict[str, str | None] | None:
+def build_testing_lead_row(
+    *,
+    funnel_id: str = "contadores",
+    test_phone: str | None = None,
+    test_name: str | None = None,
+) -> dict[str, str | None] | None:
     """Build the synthetic lead row used when the runtime source is testing."""
-    if not CONTADORES_TEST_PHONE:
+    resolved_phone = (test_phone if test_phone is not None else CONTADORES_TEST_PHONE).strip()
+    resolved_name = (test_name if test_name is not None else CONTADORES_TEST_NAME).strip()
+    if not resolved_phone:
         return None
-    phone_digits = "".join(ch for ch in CONTADORES_TEST_PHONE if ch.isdigit())
-    row_id = f"testing-{phone_digits or 'lead'}"
+    phone_digits = "".join(ch for ch in resolved_phone if ch.isdigit())
+    row_id = f"testing-{funnel_id}-{phone_digits or 'lead'}"
     return {
         "id": row_id,
         "created_time": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "platform": "testing",
         "email": None,
-        "full_name": CONTADORES_TEST_NAME,
-        "phone_number": CONTADORES_TEST_PHONE,
+        "full_name": resolved_name,
+        "phone_number": resolved_phone,
         "lead_status": "testing",
         "is_contactado": "FALSE",
     }
@@ -309,34 +344,56 @@ def build_testing_lead_row() -> dict[str, str | None] | None:
 
 async def run_contadores_sheet_sync_iteration(
     client: httpx.AsyncClient,
+    *,
+    funnel_id: str = "contadores",
+    funnel: FunnelConfigPayload | None = None,
 ) -> dict[str, Any]:
     """Fetch the public Contadores sheet and import new live leads."""
-    config = await fetch_contadores_config(client)
+    config = await fetch_contadores_config(client) if funnel is None else ContadoresConfigPayload(
+        enabled=funnel.enabled,
+        sheet_url=funnel.sheet_url,
+        sheet_gid=funnel.sheet_gid,
+        sheet_poll_seconds=funnel.sheet_poll_seconds,
+        loom_url="",
+        calendly_base_url="",
+        alert_emails=[],
+        initial_reply_quiet_seconds=30,
+        post_loom_min_seconds=300,
+        post_loom_quiet_seconds=30,
+    )
     if not config.enabled:
-        return {"status": "disabled"}
+        return {"status": "disabled", "funnel_id": funnel_id}
 
-    if CONTADORES_SOURCE_MODE == "testing":
-        test_row = build_testing_lead_row()
+    source_mode = funnel.source_mode if funnel is not None else CONTADORES_SOURCE_MODE
+    if source_mode == "testing":
+        test_row = build_testing_lead_row(
+            funnel_id=funnel_id,
+            test_phone=funnel.test_phone if funnel else None,
+            test_name=funnel.test_name if funnel else None,
+        )
         if test_row is None:
             return {
                 "status": "misconfigured",
-                "source_mode": "testing",
+                "funnel_id": funnel_id,
+                "source_mode": source_mode,
                 "reason": "missing_CONTADORES_TEST_PHONE",
                 "fetched": 0,
                 "submitted": 0,
             }
-        result = await import_contadores_sheet_rows(client, rows=[test_row])
+        result = await import_contadores_sheet_rows(client, funnel_id=funnel_id, rows=[test_row])
         result["status"] = "ok"
-        result["source_mode"] = "testing"
+        result["funnel_id"] = funnel_id
+        result["source_mode"] = source_mode
         result["fetched"] = 1
         result["submitted"] = 1
         return result
 
     rows = await fetch_contadores_sheet_rows(config=config)
     filtered_rows = [build_importable_sheet_row(row) for row in rows if keep_sheet_row_for_import(row)]
-    result = await import_contadores_sheet_rows(client, rows=filtered_rows)
+    result = await import_contadores_sheet_rows(client, funnel_id=funnel_id, rows=filtered_rows)
     result["status"] = "ok"
-    result["source_mode"] = "live"
+    result["funnel_id"] = funnel_id
+    result["source_mode"] = source_mode
     result["fetched"] = len(rows)
     result["submitted"] = len(filtered_rows)
     return result
@@ -344,9 +401,14 @@ async def run_contadores_sheet_sync_iteration(
 
 async def run_contadores_automation_iteration(
     client: httpx.AsyncClient,
+    *,
+    funnel_id: str = "contadores",
 ) -> dict[str, Any]:
     """Ask the backend to advance Contadores automation state."""
-    response = await client.post(backend_url("/api/contadores/automation/tick"))
+    response = await client.post(
+        backend_url("/api/contadores/automation/tick"),
+        params={"funnel_id": funnel_id},
+    )
     response.raise_for_status()
     return ContadoresAutomationTickResponse.model_validate(response.json()).model_dump()
 
@@ -473,9 +535,14 @@ async def process_whatsapp_message_status_event(
 
 async def fetch_pending_contadores_alerts(
     client: httpx.AsyncClient,
+    *,
+    funnel_id: str = "contadores",
 ) -> list[PendingContadoresAlertItem]:
     """Fetch Contadores leads waiting for human notification emails."""
-    response = await client.get(backend_url("/api/contadores/alerts/pending"))
+    response = await client.get(
+        backend_url("/api/contadores/alerts/pending"),
+        params={"funnel_id": funnel_id},
+    )
     response.raise_for_status()
     payload = PendingContadoresAlertsResponse.model_validate(response.json())
     return payload.items
@@ -498,9 +565,11 @@ async def send_contadores_pending_alerts(
     client: httpx.AsyncClient,
     *,
     email_provider: AgentMailProvider,
+    funnel_id: str = "contadores",
+    funnel_label: str = "Contadores",
 ) -> list[dict[str, Any]]:
     """Send Contadores needs-human notification emails when required."""
-    items = await fetch_pending_contadores_alerts(client)
+    items = await fetch_pending_contadores_alerts(client, funnel_id=funnel_id)
     if not items:
         return []
     if not email_provider.configured:
@@ -529,7 +598,7 @@ async def send_contadores_pending_alerts(
 
         body = "\n".join(
             [
-                "Se freno la automatizacion de Contadores y requiere revision humana.",
+                f"Se freno la automatizacion de {funnel_label} y requiere revision humana.",
                 "",
                 f"Lead ID: {item.lead_id}",
                 f"Lead link: {build_contadores_lead_review_url(item.lead_id)}",
@@ -549,7 +618,7 @@ async def send_contadores_pending_alerts(
                 inbox_address=alert_inbox.inbox_address,
                 recipient=recipient,
                 text=body,
-                subject=f"[Contadores] needs_human {item.phone}",
+                subject=f"[{funnel_label}] needs_human {item.phone}",
                 attachments=None,
                 thread_id=None,
                 in_reply_to=None,

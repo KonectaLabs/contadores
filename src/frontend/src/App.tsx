@@ -102,7 +102,7 @@ export function App() {
   const metrics = leadList?.metrics;
   const config = leadList?.config ?? detail?.config ?? null;
   const selectedFunnel = funnels.find((funnel) => funnel.id === selectedFunnelId) ?? funnels[0] ?? null;
-  const isContadoresFunnel = selectedFunnelId === "contadores";
+  const isContadoresFunnel = true;
 
   const selectedLead = useMemo(() => {
     if (detail?.lead.id === selectedLeadId) {
@@ -129,15 +129,10 @@ export function App() {
       setSelectedFunnelId(funnelPayload.funnels[0]?.id ?? "contadores");
     }
 
-    if (selectedFunnelId !== "contadores") {
-      setLeadList(null);
-      setStrategyStats([]);
-      setDetail(null);
-      setSelectedLeadId(null);
-      return;
-    }
-
-    const params = new URLSearchParams({ limit: "500", archived: "false" });
+    const activeFunnelId = funnelPayload.funnels.some((funnel) => funnel.id === selectedFunnelId)
+      ? selectedFunnelId
+      : funnelPayload.funnels[0]?.id ?? "contadores";
+    const params = new URLSearchParams({ limit: "500", archived: "false", funnel_id: activeFunnelId });
     if (stageFilter !== "all") {
       params.set("stage", stageFilter);
     }
@@ -157,7 +152,7 @@ export function App() {
 
     const [leadsPayload, strategyPayload] = await Promise.all([
       apiFetch<LeadListResponse>(`/api/contadores/leads?${params.toString()}`),
-      apiFetch<StrategyStatsResponse>("/api/contadores/strategy-stats"),
+      apiFetch<StrategyStatsResponse>(`/api/contadores/strategy-stats?funnel_id=${encodeURIComponent(activeFunnelId)}`),
     ]);
 
     setLeadList(leadsPayload);
