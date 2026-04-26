@@ -37,6 +37,7 @@ from backend.database import (
     normalize_phone,
 )
 from backend.funnel_config import get_contadores_funnel
+from backend.funnel_config import get_file_backed_funnel, upsert_funnel
 
 contadores_router = APIRouter(prefix="/api/contadores", tags=["contadores"])
 
@@ -131,6 +132,73 @@ def build_calendly_url(*, base_url: str) -> str:
             parsed.fragment,
         )
     )
+
+
+def build_funnel_strategy_weights(funnel) -> dict[str, dict[str, int]]:
+    """Return rollout weights encoded in a funnel definition."""
+    weights: dict[str, dict[str, int]] = {}
+    for strategy in funnel.strategies:
+        weights.setdefault(strategy.step, {})[strategy.id] = strategy.weight
+    return weights
+
+
+def apply_funnel_to_config(config: ContadoresConfig, funnel) -> ContadoresConfig:
+    """Overlay file-backed funnel fields onto the legacy runtime config row."""
+    config.enabled = funnel.enabled
+    config.sheet_url = funnel.sheet_url
+    config.sheet_gid = funnel.sheet_gid
+    config.sheet_poll_seconds = funnel.sheet_poll_seconds
+    config.loom_url = funnel.loom_url
+    config.calendly_base_url = funnel.calendly_base_url
+    config.alert_emails_json = json.dumps(funnel.alert_emails)
+    config.initial_reply_quiet_seconds = funnel.initial_reply_quiet_seconds
+    config.post_loom_min_seconds = funnel.post_loom_min_seconds
+    config.post_loom_quiet_seconds = funnel.post_loom_quiet_seconds
+    config.strategy_weights_json = json.dumps(build_funnel_strategy_weights(funnel), ensure_ascii=True)
+    return config
+
+
+def get_effective_contadores_config() -> ContadoresConfig:
+    """Return runtime config, preferring `data/funnels.json` when Contadores is file-backed."""
+    config = ContadoresConfig.get()
+    funnel = get_file_backed_funnel("contadores")
+    if funnel is None:
+        return config
+    return apply_funnel_to_config(config, funnel)
+
+
+def apply_config_update_to_file_backed_funnel(command: "UpdateContadoresConfigCommand") -> None:
+    """Persist rollout-control edits into the shared funnel config file when enabled."""
+    funnel = get_file_backed_funnel("contadores")
+    if funnel is None:
+        return
+
+    updates: dict[str, Any] = {}
+    for field_name in [
+        "enabled",
+        "sheet_url",
+        "sheet_gid",
+        "sheet_poll_seconds",
+        "loom_url",
+        "calendly_base_url",
+        "alert_emails",
+        "initial_reply_quiet_seconds",
+        "post_loom_min_seconds",
+        "post_loom_quiet_seconds",
+    ]:
+        value = getattr(command, field_name)
+        if value is not None:
+            updates[field_name] = value
+
+    next_funnel = funnel.model_copy(update=updates)
+    if command.strategy_weights is not None:
+        strategies = []
+        for strategy in next_funnel.strategies:
+            weight = command.strategy_weights.get(strategy.step, {}).get(strategy.id, strategy.weight)
+            strategies.append(strategy.model_copy(update={"weight": max(0, min(100, int(weight)))}))
+        next_funnel = next_funnel.model_copy(update={"strategies": strategies})
+
+    upsert_funnel(next_funnel)
 
 
 def parse_event_payload(payload_json: str) -> dict[str, Any]:
@@ -275,7 +343,7 @@ def lead_matches_strategy_filter(
 
 def build_contadores_strategy_stats() -> "ContadoresStrategyStatsResponse":
     """Aggregate strategy assignment and conversion counts."""
-    config = ContadoresConfig.get()
+    config = get_effective_contadores_config()
     stats: dict[tuple[str, str], dict[str, Any]] = {}
     for strategy in list_contadores_strategies():
         stats[(strategy.step, strategy.id)] = {
@@ -1134,7 +1202,7 @@ class ContadoresCalendlyWebhookCommand(BaseModel):
 @contadores_router.get("/config", response_model=ContadoresConfigResponse)
 async def get_contadores_config() -> ContadoresConfigResponse:
     """Return current Contadores config."""
-    return build_config_response(ContadoresConfig.get())
+    return build_config_response(get_effective_contadores_config())
 
 
 @contadores_router.put("/config", response_model=ContadoresConfigResponse)
@@ -1142,6 +1210,7 @@ async def update_contadores_config(
     command: UpdateContadoresConfigCommand,
 ) -> ContadoresConfigResponse:
     """Update Contadores config."""
+    apply_config_update_to_file_backed_funnel(command)
     config = ContadoresConfig.update(
         enabled=command.enabled,
         sheet_url=command.sheet_url,
@@ -1155,7 +1224,7 @@ async def update_contadores_config(
         post_loom_quiet_seconds=command.post_loom_quiet_seconds,
         strategy_weights=command.strategy_weights,
     )
-    return build_config_response(config)
+    return build_config_response(get_effective_contadores_config())
 
 
 @contadores_router.post("/leads/import", response_model=ImportContadoresLeadsResponse)
@@ -1239,7 +1308,7 @@ async def list_contadores_leads(
     query: str | None = None,
 ) -> ContadoresLeadListResponse:
     """List leads with list-view metrics and lightweight filtering."""
-    config = ContadoresConfig.get()
+    config = get_effective_contadores_config()
     normalized_stage = ContadoresLead.normalize_stage(stage) if stage is not None else None
     base_leads = ContadoresLead.list_recent(
         limit=1000,
@@ -1315,7 +1384,7 @@ async def list_contadores_leads(
 @contadores_router.get("/leads/{lead_id}", response_model=ContadoresLeadDetailResponse)
 async def get_contadores_lead_detail(lead_id: str) -> ContadoresLeadDetailResponse:
     """Return detail timeline for one lead."""
-    config = ContadoresConfig.get()
+    config = get_effective_contadores_config()
     lead = ContadoresLead.get_by_id(lead_id)
     if lead is None:
         raise HTTPException(status_code=404, detail="Lead not found")
@@ -1376,7 +1445,7 @@ async def create_contadores_manual_message(
     command: CreateContadoresMessageCommand,
 ) -> ContadoresQuickActionResponse:
     """Queue one manual outbound WhatsApp message."""
-    config = ContadoresConfig.get()
+    config = get_effective_contadores_config()
     lead = ContadoresLead.get_by_id(lead_id)
     if lead is None:
         raise HTTPException(status_code=404, detail="Lead not found")
@@ -1411,7 +1480,7 @@ async def run_contadores_quick_action(
     action: str,
 ) -> ContadoresQuickActionResponse:
     """Run one operator quick action."""
-    config = ContadoresConfig.get()
+    config = get_effective_contadores_config()
     lead = ContadoresLead.get_by_id(lead_id)
     if lead is None:
         raise HTTPException(status_code=404, detail="Lead not found")
@@ -1525,7 +1594,7 @@ async def run_contadores_quick_action(
 @contadores_router.post("/leads/{lead_id}/resume-automation", response_model=ContadoresQuickActionResponse)
 async def resume_contadores_automation(lead_id: str) -> ContadoresQuickActionResponse:
     """Clear automation_paused and infer the right stage so the bot resumes."""
-    config = ContadoresConfig.get()
+    config = get_effective_contadores_config()
     lead = ContadoresLead.get_by_id(lead_id)
     if lead is None:
         raise HTTPException(status_code=404, detail="Lead not found")
@@ -1727,7 +1796,7 @@ async def register_contadores_whatsapp_inbound(
 @contadores_router.post("/automation/tick", response_model=ContadoresAutomationTickResponse)
 async def run_contadores_automation_tick() -> ContadoresAutomationTickResponse:
     """Advance Contadores automation state and queue due outbound messages."""
-    config = ContadoresConfig.get()
+    config = get_effective_contadores_config()
     if not config.enabled:
         return ContadoresAutomationTickResponse(status="disabled")
 
@@ -1874,7 +1943,7 @@ async def run_contadores_automation_tick() -> ContadoresAutomationTickResponse:
 @contadores_router.get("/alerts/pending", response_model=PendingContadoresAlertsResponse)
 async def list_pending_contadores_alerts() -> PendingContadoresAlertsResponse:
     """List leads waiting for needs_human alert emails."""
-    config = ContadoresConfig.get()
+    config = get_effective_contadores_config()
     items: list[PendingContadoresAlertItem] = []
     for lead in ContadoresLead.list_needs_human_without_notification(limit=100):
         if derive_effective_lead_stage(lead) != ContadoresLeadStage.NEEDS_HUMAN:
@@ -1903,7 +1972,7 @@ async def mark_contadores_alerted(
     command: MarkContadoresAlertedCommand,
 ) -> ContadoresLeadSummary:
     """Mark that the needs_human notification email was sent."""
-    config = ContadoresConfig.get()
+    config = get_effective_contadores_config()
     updated = ContadoresLead.update_flow_state(
         lead_id,
         needs_human_notified_at=command.sent_at or now_utc(),
@@ -1926,7 +1995,7 @@ async def mark_contadores_booked(
     lead_id: str = Query(..., min_length=1),
 ) -> ContadoresLeadSummary:
     """Manually mark one lead as booked."""
-    config = ContadoresConfig.get()
+    config = get_effective_contadores_config()
     updated = ContadoresLead.update_flow_state(
         lead_id,
         stage=ContadoresLeadStage.BOOKED,
@@ -1948,7 +2017,7 @@ async def register_contadores_calendly_event(
     command: ContadoresCalendlyWebhookCommand,
 ) -> ContadoresLeadSummary:
     """Mark booked from a Calendly webhook token."""
-    config = ContadoresConfig.get()
+    config = get_effective_contadores_config()
     lead = ContadoresLead.get_by_calendly_tracking_token(command.token)
     if lead is None:
         raise HTTPException(status_code=404, detail="Lead not found for Calendly token")

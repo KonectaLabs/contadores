@@ -223,7 +223,7 @@ def build_contadores_sheet_csv_url(config: ContadoresConfigPayload) -> str | Non
     base_url = (config.sheet_url or "").strip()
     if not base_url:
         return None
-    if "output=csv" in base_url:
+    if any(marker in base_url for marker in ["output=csv", "format=csv", "tqx=out:csv"]):
         return base_url
 
     gid = (config.sheet_gid or "").strip()

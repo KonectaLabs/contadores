@@ -314,6 +314,15 @@ def get_funnel(funnel_id: str = CONTADORES_FUNNEL_ID) -> FunnelDefinition | None
     return None
 
 
+def get_file_backed_funnel(funnel_id: str = CONTADORES_FUNNEL_ID) -> FunnelDefinition | None:
+    """Return one funnel only when it is explicitly present in the shared config file."""
+    clean_id = slugify_funnel_id(funnel_id)
+    for funnel in _read_config_file(get_funnels_config_path()):
+        if funnel.id == clean_id:
+            return funnel
+    return None
+
+
 def get_contadores_funnel() -> FunnelDefinition:
     """Return the Contadores funnel definition."""
     return get_funnel(CONTADORES_FUNNEL_ID) or build_default_contadores_funnel()
