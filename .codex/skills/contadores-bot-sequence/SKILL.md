@@ -29,6 +29,17 @@ override the built-in Contadores definition.
 9. If `wants_to_proceed`, send the Calendly text and then the Calendly URL.
 10. If `needs_human`, stop automation and alert the operators.
 
+## Manual-only template
+
+Operators can send `contadores_manual_ping_es_v1` from the backoffice to reopen
+the WhatsApp 24-hour window:
+
+`Hola, queria saber en que situacion quedamos y si queres que retomemos la conversacion`
+
+This is not part of the automatic sequence and is not the 24-hour opener
+follow-up. It is only queued by a manual operator action and pauses automation
+for that lead.
+
 ## Runtime rule
 
 - This flow can be deployed while the app is still in `testing`.

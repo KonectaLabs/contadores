@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 
 ENV_WA_ACCESS_TOKEN = "WA_ACCESS_TOKEN"
 ENV_WA_BUSINESS_ACCOUNT_ID = "WA_BUSINESS_ACCOUNT_ID"
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 load_dotenv(PROJECT_ROOT / ".env", override=False)
 

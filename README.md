@@ -39,6 +39,7 @@ Cada funnel contiene:
 - sheet URL/GID y filtro opcional;
 - opener/template inicial;
 - follow-up template;
+- ping template manual para reabrir la ventana de WhatsApp;
 - texto del video;
 - estrategia `loom_link` o `loom_mp4`;
 - Calendly;
@@ -142,6 +143,12 @@ Configurar pesos de estrategias:
 - `CONTADORES_STRATEGY_WEIGHTS_JSON='{"loom":{"loom_link":0,"loom_mp4":100}}'`
 - También se puede cambiar desde `Settings` en el backoffice.
 - Los pesos son porcentajes de rollout por paso. Cambiarlos afecta nuevas asignaciones; las asignaciones ya guardadas no se reescriben.
+
+Template manual de ping:
+
+- Nombre default: `contadores_manual_ping_es_v1`.
+- Texto default: `Hola, queria saber en que situacion quedamos y si queres que retomemos la conversacion`.
+- Se envia solo desde la accion manual del backoffice; no participa del tick automatico ni del follow-up de 24 horas.
 
 ## Docker Compose
 

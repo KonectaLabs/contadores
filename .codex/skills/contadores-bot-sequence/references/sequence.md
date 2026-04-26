@@ -29,6 +29,17 @@ If there is no reply 10 minutes after the Loom send:
 
 `¿Terminaste de ver el video?`
 
+## Manual ping template
+
+Operator-triggered only:
+
+Template name: `contadores_manual_ping_es_v1`
+
+`Hola, queria saber en que situacion quedamos y si queres que retomemos la conversacion`
+
+This ping is for reopening the WhatsApp 24-hour window from the CRM. It must not
+be sent by automation ticks and must not replace the 24-hour opener follow-up.
+
 ## Calendly handoff
 
 When classification says `wants_to_proceed`, send:

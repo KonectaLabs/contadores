@@ -19,6 +19,10 @@ def test_funnels_endpoint_exposes_default_contadores(monkeypatch, tmp_path) -> N
     assert payload["config_path"] == str(tmp_path / "funnels.json")
     assert payload["funnels"][0]["id"] == "contadores"
     assert payload["funnels"][0]["opener_template_name"] == "contadores_intro_es_v2"
+    assert payload["funnels"][0]["manual_ping_template_name"] == "contadores_manual_ping_es_v1"
+    assert payload["funnels"][0]["manual_ping_text"] == (
+        "Hola, queria saber en que situacion quedamos y si queres que retomemos la conversacion"
+    )
 
 
 def test_funnels_endpoint_persists_new_niche(monkeypatch, tmp_path) -> None:
@@ -77,4 +81,3 @@ def test_funnels_endpoint_persists_new_niche(monkeypatch, tmp_path) -> None:
     assert list_response.status_code == 200
     ids = [item["id"] for item in list_response.json()["funnels"]]
     assert ids == ["contadores", "abogados"]
-

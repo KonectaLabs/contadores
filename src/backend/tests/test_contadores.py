@@ -236,6 +236,38 @@ def test_contadores_pending_delivery_exposes_new_opener_template_without_params(
     ]
 
 
+def test_manual_ping_action_queues_template_and_pauses_automation(monkeypatch, tmp_path) -> None:
+    """The operator-only ping should be template-backed without joining automation ticks."""
+    monkeypatch.setenv("FUNNELS_CONFIG_PATH", str(tmp_path / "funnels.json"))
+    configure_contadores_db(monkeypatch, tmp_path)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-manual-ping",
+        phone="+5491888888888",
+        full_name="Ping Lead",
+    )
+
+    with TestClient(app) as client:
+        action_response = client.post(f"/api/contadores/leads/{lead.id}/actions/send-manual-ping")
+        pending_response = client.get("/api/contadores/messages/pending-delivery")
+        detail_response = client.get(f"/api/contadores/leads/{lead.id}")
+
+    assert action_response.status_code == 200
+    assert pending_response.status_code == 200
+    messages = pending_response.json()["messages"]
+    assert len(messages) == 1
+    assert messages[0]["text"] == (
+        "Hola, queria saber en que situacion quedamos y si queres que retomemos la conversacion"
+    )
+    assert messages[0]["sequence_step"] == "manual_ping_template"
+    assert messages[0]["whatsapp_template_name"] == "contadores_manual_ping_es_v1"
+    assert messages[0]["whatsapp_template_language"] == "es"
+
+    assert detail_response.status_code == 200
+    lead_payload = detail_response.json()["lead"]
+    assert lead_payload["stage"] == "needs_human"
+    assert lead_payload["automation_paused"] is True
+
+
 def test_contadores_config_normalizes_generic_calendly_base_url(monkeypatch, tmp_path) -> None:
     """A generic Calendly host should collapse to the configured meeting URL."""
     configure_contadores_db(monkeypatch, tmp_path)

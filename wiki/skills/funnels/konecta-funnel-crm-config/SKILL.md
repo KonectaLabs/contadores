@@ -24,6 +24,8 @@ Each funnel needs:
 - `opener_template_name`;
 - `opener_followup_text`;
 - `opener_followup_template_name`;
+- `manual_ping_text`;
+- `manual_ping_template_name`;
 - `loom_intro_text`;
 - `video_check_text`;
 - `calendly_intro_text`;
@@ -64,7 +66,7 @@ Use the current safe rollout discipline:
 
 ## WhatsApp Template Rule
 
-Initial outbound contact and no-reply follow-ups should be WhatsApp templates. Reply-triggered messages can be regular WhatsApp messages or media.
+Initial outbound contact, no-reply follow-ups, and operator-triggered manual pings can be WhatsApp templates. Reply-triggered messages can be regular WhatsApp messages or media. Manual pings are CRM actions only; do not wire them into automation ticks.
 
 Use:
 
@@ -73,4 +75,3 @@ uv run python src/scripts/whatsapp_templates.py
 ```
 
 for template operations.
-

@@ -37,6 +37,7 @@ const stageFilters: Array<{
 
 const sendOptions = [
   { value: "custom", title: "Custom message", help: "Write your own WhatsApp reply." },
+  { value: "send-manual-ping", title: "Manual ping", help: "Send the approved ping template to reopen WhatsApp." },
   { value: "send-opener", title: "Opener", help: "Queue the default opener template." },
   { value: "send-loom", title: "Loom sequence", help: "Queue the Loom video introduction messages." },
   { value: "send-video-check", title: "Video check", help: "Ask if they watched the Loom." },
@@ -50,6 +51,7 @@ type StrategyWeights = Record<string, Record<string, number>>;
 type FunnelEditorMode = "create" | "edit";
 type QuickActionName =
   | "send-opener"
+  | "send-manual-ping"
   | "send-loom"
   | "send-video-check"
   | "send-calendly"
@@ -292,11 +294,7 @@ export function App() {
         if (!text) {
           return;
         }
-        await apiFetch<QuickActionResponse>(`/api/contadores/leads/${leadId}/messages/manual`, {
-          method: "POST",
-          body: JSON.stringify({ text }),
-        });
-        setManualText("");
+        await queueCustomManualMessage(leadId, text);
       } else {
         await apiFetch<QuickActionResponse>(`/api/contadores/leads/${leadId}/actions/${sendKind}`, {
           method: "POST",
@@ -310,6 +308,34 @@ export function App() {
     } finally {
       setActionBusy(null);
     }
+  }
+
+  async function submitManualDock(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const leadId = selectedLead?.id ?? selectedLeadId;
+    const text = manualText.trim();
+    if (!leadId || !text) {
+      return;
+    }
+
+    setActionBusy("manual-dock");
+    try {
+      await queueCustomManualMessage(leadId, text);
+      await loadDashboard();
+      await loadDetail(leadId);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not send the message.");
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
+  async function queueCustomManualMessage(leadId: string, text: string) {
+    await apiFetch<QuickActionResponse>(`/api/contadores/leads/${leadId}/messages/manual`, {
+      method: "POST",
+      body: JSON.stringify({ text }),
+    });
+    setManualText("");
   }
 
   async function deleteLead() {
@@ -563,7 +589,7 @@ export function App() {
               disabled={!selectedLead || Boolean(actionBusy)}
               value={manualText}
               onChange={setManualText}
-              onSubmit={submitSendModal}
+              onSubmit={submitManualDock}
             />
           </section>
         </div>
@@ -671,6 +697,11 @@ function FunnelSetupView({
           <blockquote>{funnel.opener_text}</blockquote>
         </div>
         <div className="ct-copy-row">
+          <span>Manual ping template</span>
+          <p>{funnel.manual_ping_template_name || "No template"}</p>
+          <blockquote>{funnel.manual_ping_text}</blockquote>
+        </div>
+        <div className="ct-copy-row">
           <span>Video intro</span>
           <blockquote>{funnel.loom_intro_text}</blockquote>
         </div>
@@ -735,6 +766,8 @@ function FunnelEditorDrawer({
       sheet_source_filter: draft.sheet_source_filter?.trim() || null,
       opener_template_name: draft.opener_template_name?.trim() || null,
       opener_followup_template_name: draft.opener_followup_template_name?.trim() || null,
+      manual_ping_template_name: draft.manual_ping_template_name?.trim() || null,
+      manual_ping_text: draft.manual_ping_text.trim(),
     });
   }
 
@@ -828,6 +861,15 @@ function FunnelEditorDrawer({
           <label className="ct-field">
             <span>Follow-up Text</span>
             <textarea value={draft.opener_followup_text} onChange={(event) => update("opener_followup_text", event.target.value)} rows={3} />
+          </label>
+
+          <label className="ct-field">
+            <span>Manual Ping Template</span>
+            <input value={draft.manual_ping_template_name ?? ""} onChange={(event) => update("manual_ping_template_name", event.target.value || null)} />
+          </label>
+          <label className="ct-field">
+            <span>Manual Ping Text</span>
+            <textarea value={draft.manual_ping_text} onChange={(event) => update("manual_ping_text", event.target.value)} rows={3} />
           </label>
 
           <label className="ct-field">
@@ -1438,6 +1480,8 @@ function buildBlankFunnel(): FunnelDefinition {
     opener_template_name: "",
     opener_followup_text: "Queria compartirte informacion sobre la propuesta que viste en el anuncio.",
     opener_followup_template_name: "",
+    manual_ping_text: "Hola, queria saber en que situacion quedamos y si queres que retomemos la conversacion",
+    manual_ping_template_name: "",
     loom_intro_text: "Perfecto. Te cuento rapido como funciona y que obtenes si trabajamos juntos:",
     loom_url: "",
     video_check_text: "Terminaste de ver el video?",

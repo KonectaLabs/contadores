@@ -37,6 +37,7 @@ contadores_router = APIRouter(prefix="/api/contadores", tags=["contadores"])
 
 OPENER_FOLLOWUP_SEQUENCE_STEP = "opener_followup_24h"
 OPENER_FOLLOWUP_RETRY_SEQUENCE_STEP = "opener_followup_24h_template_retry_20260424"
+MANUAL_PING_SEQUENCE_STEP = "manual_ping_template"
 OPENER_FOLLOWUP_DELAY = timedelta(hours=24)
 
 
@@ -75,6 +76,11 @@ def build_opener_followup_text() -> str:
     return get_contadores_funnel().opener_followup_text
 
 
+def build_manual_ping_text() -> str:
+    """Return the manual ping text used to reopen a WhatsApp window."""
+    return get_contadores_funnel().manual_ping_text
+
+
 def resolve_contadores_template_name(sequence_step: str | None) -> str | None:
     """Return the WhatsApp template name for template-backed Contadores steps."""
     funnel = get_contadores_funnel()
@@ -82,6 +88,8 @@ def resolve_contadores_template_name(sequence_step: str | None) -> str | None:
         return funnel.opener_template_name
     if sequence_step in {OPENER_FOLLOWUP_SEQUENCE_STEP, OPENER_FOLLOWUP_RETRY_SEQUENCE_STEP}:
         return funnel.opener_followup_template_name
+    if sequence_step == MANUAL_PING_SEQUENCE_STEP:
+        return funnel.manual_ping_template_name
     return None
 
 
@@ -602,6 +610,16 @@ def send_opener_followup(*, lead: ContadoresLead) -> list[ContadoresMessage]:
         lead=lead,
         text=build_opener_followup_text(),
         sequence_step=OPENER_FOLLOWUP_SEQUENCE_STEP,
+    )
+    return [row]
+
+
+def send_manual_ping_template(*, lead: ContadoresLead) -> list[ContadoresMessage]:
+    """Queue the operator-triggered ping template."""
+    row = enqueue_lead_outbound(
+        lead=lead,
+        text=build_manual_ping_text(),
+        sequence_step=MANUAL_PING_SEQUENCE_STEP,
     )
     return [row]
 
@@ -1307,9 +1325,13 @@ async def run_contadores_quick_action(
 
     queued_rows: list[ContadoresMessage] = []
     normalized_action = (action or "").strip().lower()
-    pausing_send_actions = {"send-opener", "send-loom", "send-video-check"}
+    pausing_send_actions = {"send-opener", "send-loom", "send-video-check", "send-manual-ping"}
     if normalized_action == "send-opener":
         queued_rows = send_opener_sequence(lead=lead)
+    elif normalized_action == "send-manual-ping":
+        if not get_contadores_funnel().manual_ping_template_name:
+            raise HTTPException(status_code=400, detail="Manual ping template is not configured")
+        queued_rows = send_manual_ping_template(lead=lead)
     elif normalized_action == "send-loom":
         queued_rows = send_loom_sequence(lead=lead, config=config, assigned_by="operator")
     elif normalized_action == "send-video-check":

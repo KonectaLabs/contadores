@@ -19,6 +19,9 @@ CONTADORES_FUNNEL_ID = "contadores"
 DEFAULT_CONTADORES_LOOM_URL = "https://www.loom.com/share/36b054dea1c94bbaa7470014c2337fca"
 DEFAULT_CONTADORES_CALENDLY_URL = "https://calendly.com/yoelkravchuk/konecta-meet"
 DEFAULT_CONTADORES_VIDEO_PATH = "data/contadores/videos/loom_60_seconds_captions.mp4"
+DEFAULT_MANUAL_PING_TEXT = (
+    "Hola, queria saber en que situacion quedamos y si queres que retomemos la conversacion"
+)
 
 
 def slugify_funnel_id(value: str) -> str:
@@ -120,6 +123,8 @@ class FunnelDefinition(BaseModel):
     opener_template_name: str | None = None
     opener_followup_text: str
     opener_followup_template_name: str | None = None
+    manual_ping_text: str = DEFAULT_MANUAL_PING_TEXT
+    manual_ping_template_name: str | None = None
     loom_intro_text: str
     loom_url: str = ""
     video_check_text: str
@@ -144,6 +149,7 @@ class FunnelDefinition(BaseModel):
         "template_language",
         "opener_text",
         "opener_followup_text",
+        "manual_ping_text",
         "loom_intro_text",
         "loom_url",
         "video_check_text",
@@ -155,7 +161,14 @@ class FunnelDefinition(BaseModel):
         """Strip text fields."""
         return (value or "").strip()
 
-    @field_validator("sheet_url", "sheet_gid", "sheet_source_filter", "opener_template_name", "opener_followup_template_name")
+    @field_validator(
+        "sheet_url",
+        "sheet_gid",
+        "sheet_source_filter",
+        "opener_template_name",
+        "opener_followup_template_name",
+        "manual_ping_template_name",
+    )
     @classmethod
     def strip_nullable_text(cls, value: str | None) -> str | None:
         """Normalize blank optional strings to null."""
@@ -204,6 +217,8 @@ def build_default_contadores_funnel() -> FunnelDefinition:
         opener_template_name="contadores_intro_es_v2",
         opener_followup_text="Queria compartirte informacion sobre como podes obtener clientes para tu estudio contable",
         opener_followup_template_name="contadores_opener_followup_24h_es_v1",
+        manual_ping_text=DEFAULT_MANUAL_PING_TEXT,
+        manual_ping_template_name="contadores_manual_ping_es_v1",
         loom_intro_text=(
             "Perfecto. Te cuento rapido:\n"
             "Los contadores que trabajan con nosotros reciben un flujo de prospectos y posibles "
@@ -252,7 +267,7 @@ def build_default_contadores_funnel() -> FunnelDefinition:
 def _merge_default_with_override(default: FunnelDefinition, override: FunnelDefinition) -> FunnelDefinition:
     """Overlay a file-backed definition onto the built-in default."""
     payload = default.model_dump()
-    override_payload = override.model_dump()
+    override_payload = override.model_dump(exclude_unset=True)
     payload.update(override_payload)
     return FunnelDefinition.model_validate(payload)
 
@@ -329,4 +344,3 @@ def upsert_funnel(funnel: FunnelDefinition) -> FunnelDefinition:
     if saved is None:
         raise RuntimeError("Funnel was not saved.")
     return saved
-

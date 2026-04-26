@@ -56,6 +56,8 @@ export interface FunnelDefinition {
   opener_template_name: string | null;
   opener_followup_text: string;
   opener_followup_template_name: string | null;
+  manual_ping_text: string;
+  manual_ping_template_name: string | null;
   loom_intro_text: string;
   loom_url: string;
   video_check_text: string;
