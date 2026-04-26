@@ -121,7 +121,7 @@ def build_classifier_context() -> str:
     """Return stable classifier context instructions for post-Loom replies."""
     return (
         "Ya se enviaron: opener, explicación breve, video/propuesta y eventualmente la pregunta "
-        "'¿Terminaste de ver el video?'. Clasificá si la persona claramente quiere avanzar "
+        "'¿conseguiste ver el video?'. Clasificá si la persona claramente quiere avanzar "
         "al siguiente paso o si necesita intervención humana."
     )
 

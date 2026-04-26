@@ -27,7 +27,7 @@ Send immediately after message 2:
 
 If there is no reply 10 minutes after the Loom send:
 
-`¿Terminaste de ver el video?`
+`¿conseguiste ver el video?`
 
 ## Manual ping template
 

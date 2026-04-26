@@ -49,7 +49,7 @@ def test_funnels_endpoint_persists_new_niche(monkeypatch, tmp_path) -> None:
         "opener_followup_template_name": "abogados_followup_es_v1",
         "loom_intro_text": "Perfecto. Te cuento rapido como traemos consultas a tu estudio:",
         "loom_url": "https://www.loom.com/share/abogados",
-        "video_check_text": "Terminaste de ver el video?",
+        "video_check_text": "conseguiste ver el video?",
         "calendly_intro_text": "Para avanzar, elegi un horario:",
         "calendly_base_url": "https://calendly.com/konecta/abogados",
         "alert_emails": ["facu@example.com"],

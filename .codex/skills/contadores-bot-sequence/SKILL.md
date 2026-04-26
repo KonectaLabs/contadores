@@ -22,7 +22,7 @@ override the built-in Contadores definition.
    - `loom_link`: Loom URL alone.
    - `loom_mp4`: WhatsApp MP4 from `data/contadores/videos/loom_60_seconds_captions.mp4`.
 6. Wait 10 minutes.
-7. If there is still no reply, send `¿Terminaste de ver el video?`
+7. If there is still no reply, send `¿conseguiste ver el video?`
 8. Once there are 30 seconds of silence after the post-Loom replies, classify:
    - `wants_to_proceed`
    - `needs_human`

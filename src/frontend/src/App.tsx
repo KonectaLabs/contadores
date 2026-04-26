@@ -1726,7 +1726,7 @@ function buildBlankFunnel(): FunnelDefinition {
     manual_ping_template_name: "",
     loom_intro_text: "Perfecto. Te cuento rapido como funciona y que obtenes si trabajamos juntos:",
     loom_url: "",
-    video_check_text: "Terminaste de ver el video?",
+    video_check_text: "conseguiste ver el video?",
     calendly_intro_text: "Para avanzar, el siguiente paso es elegir un horario en el calendario:",
     calendly_base_url: "https://calendly.com",
     alert_emails: [],

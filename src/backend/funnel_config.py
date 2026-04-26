@@ -226,7 +226,7 @@ def build_default_contadores_funnel() -> FunnelDefinition:
             "Te invito a que veas este video donde te explicamos la propuesta a detalle:"
         ),
         loom_url=(os.getenv("CONTADORES_LOOM_URL", DEFAULT_CONTADORES_LOOM_URL) or DEFAULT_CONTADORES_LOOM_URL).strip(),
-        video_check_text="Terminaste de ver el video?",
+        video_check_text="conseguiste ver el video?",
         calendly_intro_text=(
             "Para avanzar solo falta -> Reunion, nos conocemos -> definimos medio de pago -> "
             "pagas 300 USD -> empezamos a trabajar para vos a las 24 horas.\n\n"
