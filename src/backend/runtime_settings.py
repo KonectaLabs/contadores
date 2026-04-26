@@ -115,7 +115,7 @@ def get_runtime_settings() -> RuntimeSettings:
         test_name=_read_str("CONTADORES_TEST_NAME", default="Test Contador"),
         sheet_url=_read_str("CONTADORES_SHEET_URL", "GOOGLE_SHEET_URL", default=""),
         sheet_gid=_read_str("CONTADORES_SHEET_GID", "GOOGLE_SHEET_GID", default=""),
-        sheet_poll_seconds=_read_int("CONTADORES_SHEET_POLL_SECONDS", default=300),
+        sheet_poll_seconds=max(30, _read_int("CONTADORES_SHEET_POLL_SECONDS", default=30)),
         loom_url=_read_str("CONTADORES_LOOM_URL", default=""),
         calendly_base_url=_read_str(
             "CONTADORES_CALENDLY_BASE_URL",

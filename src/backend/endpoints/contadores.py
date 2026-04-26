@@ -943,7 +943,7 @@ class UpdateContadoresConfigCommand(BaseModel):
     enabled: bool | None = None
     sheet_url: str | None = None
     sheet_gid: str | None = None
-    sheet_poll_seconds: int | None = Field(default=None, ge=60)
+    sheet_poll_seconds: int | None = Field(default=None, ge=30)
     loom_url: str | None = None
     calendly_base_url: str | None = None
     alert_emails: list[str] | None = None

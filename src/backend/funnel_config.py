@@ -117,7 +117,7 @@ class FunnelDefinition(BaseModel):
     sheet_url: str | None = None
     sheet_gid: str | None = None
     sheet_source_filter: str | None = None
-    sheet_poll_seconds: int = Field(default=300, ge=60)
+    sheet_poll_seconds: int = Field(default=30, ge=30)
     template_language: str = "es"
     opener_text: str
     opener_template_name: str | None = None
@@ -208,7 +208,7 @@ def build_default_contadores_funnel() -> FunnelDefinition:
         test_name=(os.getenv("CONTADORES_TEST_NAME", "Test Contador") or "Test Contador").strip(),
         sheet_url=(os.getenv("CONTADORES_SHEET_URL", "") or "").strip() or None,
         sheet_gid=(os.getenv("CONTADORES_SHEET_GID", "") or "").strip() or None,
-        sheet_poll_seconds=_read_int("CONTADORES_SHEET_POLL_SECONDS", default=300, minimum=60),
+        sheet_poll_seconds=_read_int("CONTADORES_SHEET_POLL_SECONDS", default=30, minimum=30),
         template_language="es",
         opener_text=(
             "Hola, llenaste el formulario para contadores sobre como conseguir clientes "

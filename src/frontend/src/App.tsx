@@ -809,7 +809,7 @@ function FunnelEditorDrawer({
             </label>
             <label className="ct-field">
               <span>Sheet Poll Seconds</span>
-              <input type="number" min="60" value={draft.sheet_poll_seconds} onChange={(event) => update("sheet_poll_seconds", Number(event.target.value) || 300)} />
+              <input type="number" min="30" value={draft.sheet_poll_seconds} onChange={(event) => update("sheet_poll_seconds", Number(event.target.value) || 30)} />
             </label>
           </div>
 
@@ -1512,7 +1512,7 @@ function buildBlankFunnel(): FunnelDefinition {
     sheet_url: null,
     sheet_gid: null,
     sheet_source_filter: null,
-    sheet_poll_seconds: 300,
+    sheet_poll_seconds: 30,
     template_language: "es",
     opener_text: "Hola, completaste el formulario sobre como podemos ayudarte. Es correcto?",
     opener_template_name: "",

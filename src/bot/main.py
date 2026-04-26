@@ -186,7 +186,7 @@ async def run_worker_loop(
                 for funnel in await fetch_funnels(backend_client):
                     if not funnel.enabled:
                         continue
-                    sheet_poll_seconds = max(60, int(funnel.sheet_poll_seconds or 300))
+                    sheet_poll_seconds = max(30, int(funnel.sheet_poll_seconds or 30))
                     last_sync_at = last_sheet_sync_at_by_funnel.get(funnel.id, 0.0)
                     if now - last_sync_at < sheet_poll_seconds:
                         continue

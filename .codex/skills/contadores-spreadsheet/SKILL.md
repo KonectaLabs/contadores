@@ -23,7 +23,7 @@ The runtime rule is now explicit:
 
 - It stores inbound leads coming from Meta lead forms.
 - It is the simplest shared state for the workflow.
-- It can drive a poller that checks for new leads every 5 minutes.
+- It can drive a poller that checks for new leads every 30 seconds.
 - In this repo, the immediate need is read access for lead ingestion and testing the WhatsApp flow safely.
 
 Read [references/spreadsheet.md](references/spreadsheet.md) when you need the exact columns, meanings, or the proposed operational fields.
@@ -130,7 +130,7 @@ Operational rule:
 
 For the MVP:
 
-- read rows every 5 minutes;
+- read rows every 30 seconds;
 - find leads that are eligible for action;
 - lock the row before sending;
 - send the WhatsApp message;

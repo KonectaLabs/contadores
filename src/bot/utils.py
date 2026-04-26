@@ -81,7 +81,7 @@ class FunnelConfigPayload(BaseModel):
     test_name: str = ""
     sheet_url: str | None = None
     sheet_gid: str | None = None
-    sheet_poll_seconds: int = 300
+    sheet_poll_seconds: int = 30
 
 
 class FunnelListPayload(BaseModel):

@@ -56,8 +56,9 @@ def test_run_contadores_sheet_sync_iteration_imports_only_uncontacted_rows(monke
             },
         ]
 
-    async def fake_import_contadores_sheet_rows(client, *, rows):
+    async def fake_import_contadores_sheet_rows(client, *, funnel_id="contadores", rows):
         del client
+        del funnel_id
         imported_batches.append(rows)
         return {"imported": 1, "updated": 0, "skipped": 0}
 
@@ -96,8 +97,9 @@ def test_run_contadores_sheet_sync_iteration_uses_testing_phone(monkeypatch) -> 
     async def fail_if_sheet_is_fetched(*, config):
         raise AssertionError(f"testing mode should not fetch sheet rows: {config}")
 
-    async def fake_import_contadores_sheet_rows(client, *, rows):
+    async def fake_import_contadores_sheet_rows(client, *, funnel_id="contadores", rows):
         del client
+        del funnel_id
         imported_batches.append(rows)
         return {"imported": 1, "updated": 0, "skipped": 0}
 
@@ -113,7 +115,7 @@ def test_run_contadores_sheet_sync_iteration_uses_testing_phone(monkeypatch) -> 
     assert result["status"] == "ok"
     assert result["source_mode"] == "testing"
     assert result["submitted"] == 1
-    assert imported_batches[0][0]["id"] == "testing-5491111111111"
+    assert imported_batches[0][0]["id"] == "testing-contadores-5491111111111"
     assert imported_batches[0][0]["phone_number"] == "+5491111111111"
     assert imported_batches[0][0]["full_name"] == "Lead Test"
 
@@ -329,8 +331,9 @@ def test_send_contadores_pending_alerts_includes_direct_lead_link(monkeypatch) -
     sent_calls: list[dict[str, str | None]] = []
     marked_leads: list[str] = []
 
-    async def fake_fetch_pending_contadores_alerts(client):
+    async def fake_fetch_pending_contadores_alerts(client, *, funnel_id="contadores"):
         del client
+        del funnel_id
         return [
             PendingContadoresAlertItem(
                 lead_id="7bc8899e-f7ed-4c0b-90f4-ce9739b9b4fe",

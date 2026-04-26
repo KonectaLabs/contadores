@@ -18,6 +18,7 @@ def test_funnels_endpoint_exposes_default_contadores(monkeypatch, tmp_path) -> N
     payload = response.json()
     assert payload["config_path"] == str(tmp_path / "funnels.json")
     assert payload["funnels"][0]["id"] == "contadores"
+    assert payload["funnels"][0]["sheet_poll_seconds"] == 30
     assert payload["funnels"][0]["opener_template_name"] == "contadores_intro_es_v2"
     assert payload["funnels"][0]["manual_ping_template_name"] == "contadores_manual_ping_es_v1"
     assert payload["funnels"][0]["manual_ping_text"] == (
@@ -40,7 +41,7 @@ def test_funnels_endpoint_persists_new_niche(monkeypatch, tmp_path) -> None:
         "sheet_url": None,
         "sheet_gid": None,
         "sheet_source_filter": None,
-        "sheet_poll_seconds": 300,
+        "sheet_poll_seconds": 30,
         "template_language": "es",
         "opener_text": "Hola, completaste el formulario para abogados. Es correcto?",
         "opener_template_name": "abogados_intro_es_v1",

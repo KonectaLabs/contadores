@@ -786,7 +786,7 @@ class ContadoresConfig(SQLModel, table=True):
     sheet_url: str | None = Field(default_factory=lambda: (os.getenv("CONTADORES_SHEET_URL", "") or None))
     sheet_gid: str | None = Field(default_factory=lambda: (os.getenv("CONTADORES_SHEET_GID", "") or None))
     sheet_poll_seconds: int = Field(
-        default_factory=lambda: max(60, int(os.getenv("CONTADORES_SHEET_POLL_SECONDS", "300")))
+        default_factory=lambda: max(30, int(os.getenv("CONTADORES_SHEET_POLL_SECONDS", "30")))
     )
     loom_url: str = Field(
         default_factory=lambda: (
@@ -861,6 +861,12 @@ class ContadoresConfig(SQLModel, table=True):
                 session.add(item)
                 session.commit()
                 session.refresh(item)
+            if "CONTADORES_SHEET_POLL_SECONDS" not in os.environ and item.sheet_poll_seconds == 300:
+                item.sheet_poll_seconds = 30
+                item.updated_at = datetime.now(timezone.utc)
+                session.add(item)
+                session.commit()
+                session.refresh(item)
             normalized_calendly_base_url = _normalize_contadores_calendly_base_url(item.calendly_base_url)
             if item.calendly_base_url != normalized_calendly_base_url:
                 item.calendly_base_url = normalized_calendly_base_url
@@ -899,7 +905,7 @@ class ContadoresConfig(SQLModel, table=True):
             if sheet_gid is not None:
                 item.sheet_gid = (sheet_gid or "").strip() or None
             if sheet_poll_seconds is not None:
-                item.sheet_poll_seconds = max(60, int(sheet_poll_seconds))
+                item.sheet_poll_seconds = max(30, int(sheet_poll_seconds))
             if loom_url is not None:
                 item.loom_url = (loom_url or "").strip() or item.loom_url
             if calendly_base_url is not None:
