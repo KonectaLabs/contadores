@@ -56,6 +56,72 @@ def test_build_inbound_event_from_message_reaction_fallback() -> None:
     assert event.text == "[reaction] 👍"
 
 
+def test_build_inbound_event_from_media_only_message() -> None:
+    provider = build_provider()
+    msg = SimpleNamespace(
+        from_me=False,
+        text=None,
+        caption=None,
+        reaction=None,
+        image=SimpleNamespace(
+            id="media-image-1",
+            filename="lead-photo.jpg",
+            mime_type="image/jpeg",
+            sha256="sha-image",
+        ),
+        from_user=SimpleNamespace(wa_id="5491122233344"),
+        id="wamid.image.1",
+        type=SimpleNamespace(value="image"),
+    )
+
+    event = provider._build_inbound_event_from_message(msg)
+
+    assert event is not None
+    assert event.text == "[image]"
+    assert event.media_type == "image"
+    assert event.media_id == "media-image-1"
+    assert event.media_filename == "lead-photo.jpg"
+    assert event.media_mime_type == "image/jpeg"
+    assert event.media_sha256 == "sha-image"
+
+
+def test_downloads_inbound_media_to_data_path(tmp_path) -> None:
+    class FakeMedia:
+        id = "media-doc-1"
+        filename = "duda.pdf"
+        mime_type = "application/pdf"
+        sha256 = "sha-doc"
+
+        async def download(self, *, path, filename, **kwargs):
+            del kwargs
+            target = path / filename
+            target.write_bytes(b"pdf-bytes")
+            return target
+
+    provider = build_provider()
+    provider.inbound_media_dir = tmp_path / "data" / "contadores" / "inbound_media"
+    provider.inbound_media_data_dir = tmp_path / "data"
+    provider.inbound_media_chunk_size = None
+    msg = SimpleNamespace(
+        timestamp=datetime(2026, 4, 26, tzinfo=timezone.utc),
+        document=FakeMedia(),
+    )
+    event = providers.WhatsAppInboundEvent(
+        phone="5491122233344",
+        text="[document]",
+        external_id="wamid.document.1",
+        media_id="media-doc-1",
+        media_type="document",
+        media_filename="duda.pdf",
+    )
+
+    updated = asyncio.run(provider._attach_downloaded_message_media(event, msg))
+
+    assert updated is not None
+    assert updated.media_path == "data/contadores/inbound_media/2026/04/26/wamid.document.1_media-doc-1.pdf"
+    assert (tmp_path / updated.media_path).read_bytes() == b"pdf-bytes"
+
+
 def test_build_inbound_event_from_callback_button() -> None:
     provider = build_provider()
     btn = SimpleNamespace(

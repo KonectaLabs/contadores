@@ -150,6 +150,13 @@ Template manual de ping:
 - Texto default: `Hola, queria saber en que situacion quedamos y si queres que retomemos la conversacion`.
 - Se envia solo desde la accion manual del backoffice; no participa del tick automatico ni del follow-up de 24 horas.
 
+Media entrante por WhatsApp:
+
+- El bot descarga imagenes, videos, audios, documentos y stickers entrantes.
+- Por defecto se guardan en `data/contadores/inbound_media`.
+- El backend sirve esos archivos por rutas autenticadas del tipo `/api/contadores/messages/{message_id}/media`.
+- `WA_INBOUND_MEDIA_DIR` permite cambiar el directorio si apunta al volumen persistente compartido por backend y bot.
+
 ## Docker Compose
 
 ```bash

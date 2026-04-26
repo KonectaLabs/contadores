@@ -163,6 +163,11 @@ export interface MessageItem {
   media_type: string | null;
   media_path: string | null;
   media_caption: string | null;
+  media_mime_type: string | null;
+  media_filename: string | null;
+  media_sha256: string | null;
+  media_id: string | null;
+  media_url: string | null;
   created_at: string;
 }
 

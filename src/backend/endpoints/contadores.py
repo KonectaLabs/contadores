@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import json
+import mimetypes
+import os
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
@@ -26,6 +30,7 @@ from backend.database import (
     ContadoresLeadStage,
     ContadoresMessage,
     ContadoresStrategyAssignment,
+    DATA_DIR,
     MessageDeliveryStatus,
     engine,
     normalize_email,
@@ -482,8 +487,54 @@ def build_message_response(message: ContadoresMessage) -> "ContadoresMessageResp
         media_type=message.media_type,
         media_path=message.media_path,
         media_caption=message.media_caption,
+        media_mime_type=message.media_mime_type,
+        media_filename=message.media_filename,
+        media_sha256=message.media_sha256,
+        media_id=message.media_id,
+        media_url=build_message_media_url(message),
         created_at=format_timestamp_seconds(message.created_at) or "",
     )
+
+
+def build_message_media_url(message: ContadoresMessage) -> str | None:
+    """Return the protected API URL for a stored message attachment."""
+    if not message.id or not (message.media_path or "").strip():
+        return None
+    return f"/api/contadores/messages/{message.id}/media"
+
+
+def allowed_message_media_roots() -> list[Path]:
+    """Return filesystem roots from which stored message media may be served."""
+    roots = [DATA_DIR.expanduser().resolve()]
+    configured_media_dir = (os.getenv("WA_INBOUND_MEDIA_DIR", "") or "").strip()
+    if configured_media_dir:
+        roots.append(Path(configured_media_dir).expanduser().resolve())
+    return roots
+
+
+def resolve_message_media_file(media_path: str | None) -> Path | None:
+    """Resolve one stored data/... media path without allowing path traversal."""
+    clean_path = (media_path or "").strip()
+    if not clean_path:
+        return None
+
+    media_roots = allowed_message_media_roots()
+    data_dir = media_roots[0]
+    candidate = Path(clean_path).expanduser()
+    if candidate.is_absolute():
+        resolved = candidate.resolve()
+    else:
+        parts = candidate.parts
+        relative_parts = parts[1:] if parts and parts[0] == "data" else parts
+        resolved = data_dir.joinpath(*relative_parts).resolve()
+
+    for root in media_roots:
+        try:
+            resolved.relative_to(root)
+        except ValueError:
+            continue
+        return resolved
+    return None
 
 
 def build_event_response(event: ContadoresEvent) -> "ContadoresEventResponse":
@@ -858,6 +909,11 @@ class ContadoresMessageResponse(BaseModel):
     media_type: str | None = None
     media_path: str | None = None
     media_caption: str | None = None
+    media_mime_type: str | None = None
+    media_filename: str | None = None
+    media_sha256: str | None = None
+    media_id: str | None = None
+    media_url: str | None = None
     created_at: str
 
 
@@ -997,6 +1053,13 @@ class ContadoresWhatsAppInboundCommand(BaseModel):
     text: str = Field(min_length=1)
     external_id: str | None = None
     in_reply_to: str | None = None
+    media_id: str | None = None
+    media_type: str | None = None
+    media_path: str | None = None
+    media_mime_type: str | None = None
+    media_filename: str | None = None
+    media_sha256: str | None = None
+    media_caption: str | None = None
 
 
 class ContadoresWhatsAppInboundResponse(BaseModel):
@@ -1258,6 +1321,29 @@ async def get_contadores_lead_detail(lead_id: str) -> ContadoresLeadDetailRespon
         config=build_config_response(config),
         messages=messages,
         events=events,
+    )
+
+
+@contadores_router.get("/messages/{message_id}/media")
+async def get_contadores_message_media(message_id: int) -> FileResponse:
+    """Serve one stored WhatsApp media file through authenticated backend access."""
+    message = ContadoresMessage.get_by_id(message_id)
+    if message is None:
+        raise HTTPException(status_code=404, detail="Contadores message not found")
+    media_file = resolve_message_media_file(message.media_path)
+    if media_file is None or not media_file.is_file():
+        raise HTTPException(status_code=404, detail="Contadores media not found")
+
+    media_type = (
+        (message.media_mime_type or "").strip()
+        or mimetypes.guess_type(media_file.name)[0]
+        or "application/octet-stream"
+    )
+    return FileResponse(
+        media_file,
+        media_type=media_type,
+        filename=(message.media_filename or media_file.name),
+        content_disposition_type="inline",
     )
 
 
@@ -1582,13 +1668,27 @@ async def register_contadores_whatsapp_inbound(
             from_me=False,
             text=command.text,
             external_id=command.external_id,
+            media_type=command.media_type,
+            media_path=command.media_path,
+            media_caption=command.media_caption,
+            media_mime_type=command.media_mime_type,
+            media_filename=command.media_filename,
+            media_sha256=command.media_sha256,
+            media_id=command.media_id,
         )
         ContadoresEvent.add(
             lead_id=lead.id,
             event_type="whatsapp_inbound_received",
             actor="bot",
             summary="Inbound WhatsApp received for Contadores lead.",
-            payload={"message_id": row.id, "in_reply_to": command.in_reply_to},
+            payload={
+                "message_id": row.id,
+                "in_reply_to": command.in_reply_to,
+                "media_type": command.media_type,
+                "media_path": command.media_path,
+                "media_mime_type": command.media_mime_type,
+                "media_filename": command.media_filename,
+            },
         )
         refreshed_lead = ContadoresLead.get_by_id(lead.id) or lead
         if derive_effective_lead_stage(refreshed_lead) == ContadoresLeadStage.CLOSED:

@@ -612,6 +612,58 @@ def test_contadores_post_calendly_inbound_returns_to_needs_human(monkeypatch, tm
     assert [item["lead_id"] for item in alerts.json()["items"]] == [lead.id]
 
 
+def test_contadores_inbound_media_is_persisted_and_served(monkeypatch, tmp_path) -> None:
+    """Inbound WhatsApp media metadata should be stored and served through the backend."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    data_dir = tmp_path / "data"
+    media_file = data_dir / "contadores" / "inbound_media" / "lead-photo.jpg"
+    media_file.parent.mkdir(parents=True)
+    media_file.write_bytes(b"image-bytes")
+    monkeypatch.setattr(database_module, "DATA_DIR", data_dir)
+    monkeypatch.setattr(contadores_endpoints, "DATA_DIR", data_dir)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-media",
+        phone="+5491444444499",
+        full_name="Media Reply",
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/contadores/whatsapp/inbound",
+            json={
+                "phone": lead.phone,
+                "text": "[image]",
+                "external_id": "wamid.image.1",
+                "media_id": "media-image-1",
+                "media_type": "image",
+                "media_path": "data/contadores/inbound_media/lead-photo.jpg",
+                "media_mime_type": "image/jpeg",
+                "media_filename": "lead-photo.jpg",
+                "media_sha256": "sha-image",
+                "media_caption": "Foto del comprobante",
+            },
+        )
+        detail = client.get(f"/api/contadores/leads/{lead.id}")
+        media = client.get("/api/contadores/messages/1/media")
+
+    assert response.status_code == 200
+    assert response.json()["route"] == "contadores"
+
+    assert detail.status_code == 200
+    message = detail.json()["messages"][0]
+    assert message["media_type"] == "image"
+    assert message["media_path"] == "data/contadores/inbound_media/lead-photo.jpg"
+    assert message["media_mime_type"] == "image/jpeg"
+    assert message["media_filename"] == "lead-photo.jpg"
+    assert message["media_id"] == "media-image-1"
+    assert message["media_url"] == "/api/contadores/messages/1/media"
+
+    assert media.status_code == 200
+    assert media.content == b"image-bytes"
+    assert media.headers["content-type"] == "image/jpeg"
+    assert media.headers["content-disposition"].startswith("inline;")
+
+
 def test_contadores_manual_reply_can_be_marked_answered(monkeypatch, tmp_path) -> None:
     """Operators must be able to clear a manual reply cue without sending another message."""
     configure_contadores_db(monkeypatch, tmp_path)

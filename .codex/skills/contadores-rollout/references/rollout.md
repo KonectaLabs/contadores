@@ -12,6 +12,10 @@ Funnel definitions live in `FUNNELS_CONFIG_PATH` or `data/funnels.json`.
 That file is the shared UI/Codex config surface for niche funnels. It is not the
 runtime mode switch.
 
+Inbound WhatsApp media lives in `data/contadores/inbound_media` by default. If
+`WA_INBOUND_MEDIA_DIR` is set, it must still be a persistent directory shared by
+the bot that downloads files and the backend that serves them.
+
 ## Minimum testing config
 
 - `CONTADORES_ENABLED=true`
@@ -20,6 +24,7 @@ runtime mode switch.
 - `CONTADORES_LOOM_URL=...`
 - `CONTADORES_CALENDLY_BASE_URL=...`
 - `FUNNELS_CONFIG_PATH=data/funnels.json`
+- optional: `WA_INBOUND_MEDIA_DIR=...`
 
 ## Minimum live config
 
@@ -29,6 +34,7 @@ runtime mode switch.
 - `CONTADORES_SHEET_GID=...`
 - `CONTADORES_LOOM_URL=...`
 - `CONTADORES_CALENDLY_BASE_URL=...`
+- optional: `WA_INBOUND_MEDIA_DIR=...`
 
 ## Safe release sequence
 

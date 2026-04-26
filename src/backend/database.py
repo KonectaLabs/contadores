@@ -1348,6 +1348,10 @@ class ContadoresMessage(SQLModel, table=True):
     media_type: str | None = Field(default=None, index=True)
     media_path: str | None = Field(default=None)
     media_caption: str | None = Field(default=None)
+    media_mime_type: str | None = Field(default=None)
+    media_filename: str | None = Field(default=None)
+    media_sha256: str | None = Field(default=None)
+    media_id: str | None = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
 
     @classmethod
@@ -1368,6 +1372,10 @@ class ContadoresMessage(SQLModel, table=True):
         media_type: str | None = None,
         media_path: str | None = None,
         media_caption: str | None = None,
+        media_mime_type: str | None = None,
+        media_filename: str | None = None,
+        media_sha256: str | None = None,
+        media_id: str | None = None,
         created_at: datetime | None = None,
     ) -> "ContadoresMessage":
         """Persist one lead message and keep lead activity timestamps updated."""
@@ -1391,6 +1399,10 @@ class ContadoresMessage(SQLModel, table=True):
                 media_type=(media_type or "").strip() or None,
                 media_path=(media_path or "").strip() or None,
                 media_caption=(media_caption or "").strip() or None,
+                media_mime_type=(media_mime_type or "").strip() or None,
+                media_filename=(media_filename or "").strip() or None,
+                media_sha256=(media_sha256 or "").strip() or None,
+                media_id=(media_id or "").strip() or None,
                 created_at=now,
             )
             session.add(row)
@@ -3468,6 +3480,10 @@ def ensure_contadores_strategy_columns() -> None:
             "media_type": "TEXT",
             "media_path": "TEXT",
             "media_caption": "TEXT",
+            "media_mime_type": "TEXT",
+            "media_filename": "TEXT",
+            "media_sha256": "TEXT",
+            "media_id": "TEXT",
         }
         for column_name, column_type in column_definitions.items():
             if column_name in message_columns:
@@ -3482,6 +3498,7 @@ def ensure_contadores_strategy_columns() -> None:
             "strategy_step",
             "strategy_id",
             "media_type",
+            "media_id",
         ]:
             connection.exec_driver_sql(
                 f"CREATE INDEX IF NOT EXISTS ix_contadores_messages_{column_name} "

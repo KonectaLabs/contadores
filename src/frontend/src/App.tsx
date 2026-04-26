@@ -1092,12 +1092,55 @@ function MessageTimeline({ messages, loading, hasLead }: { messages: MessageItem
                   <span>{meta.join(" · ")}</span>
                 </div>
               </div>
+              <MessageMedia message={message} />
               <p className="crm-message-body">{message.text || ""}</p>
             </article>
           </div>
         );
       })}
     </div>
+  );
+}
+
+function MessageMedia({ message }: { message: MessageItem }) {
+  if (!message.media_url) {
+    return null;
+  }
+
+  const mediaType = String(message.media_type || "").toLowerCase();
+  const filename = message.media_filename || message.media_path?.split("/").pop() || "WhatsApp media";
+  const label = message.media_caption || filename || humanize(mediaType || "file");
+
+  if (mediaType === "image" || mediaType === "sticker") {
+    return (
+      <figure className={`crm-message-media ${mediaType}`}>
+        <img src={message.media_url} alt={label} loading="lazy" />
+        {message.media_caption ? <figcaption>{message.media_caption}</figcaption> : null}
+      </figure>
+    );
+  }
+
+  if (mediaType === "video") {
+    return (
+      <div className="crm-message-media video">
+        <video controls preload="metadata" src={message.media_url} />
+      </div>
+    );
+  }
+
+  if (mediaType === "audio") {
+    return (
+      <div className="crm-message-media audio">
+        <audio controls src={message.media_url} />
+      </div>
+    );
+  }
+
+  return (
+    <a className="crm-message-file" href={message.media_url} target="_blank" rel="noreferrer">
+      <span>{humanize(mediaType || "file")}</span>
+      <strong>{filename}</strong>
+    </a>
   );
 }
 
