@@ -64,9 +64,9 @@ PUBLIC_PATHS_WITHOUT_SESSION = {
 }
 
 
-def is_contadores_api_path(path: str) -> bool:
-    """Return True when a path belongs to the Contadores API."""
-    return path.startswith("/api/contadores/")
+def is_internal_bot_api_path(path: str) -> bool:
+    """Return True when a path belongs to bot-consumed internal APIs."""
+    return path.startswith("/api/contadores/") or path == "/api/funnels"
 
 
 def build_internal_auth_error() -> JSONResponse:
@@ -149,7 +149,7 @@ async def enforce_primitive_auth(request: Request, call_next):
     if path in PUBLIC_PATHS_WITHOUT_SESSION:
         return await call_next(request)
 
-    if is_contadores_api_path(path) and internal_token_valid:
+    if is_internal_bot_api_path(path) and internal_token_valid:
         request.state.authenticated_user = "internal-bot"
         return await call_next(request)
 
