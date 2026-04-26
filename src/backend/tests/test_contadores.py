@@ -301,6 +301,84 @@ def test_manual_ping_action_queues_template_and_pauses_automation(monkeypatch, t
     assert lead_payload["automation_paused"] is True
 
 
+def test_bulk_manual_ping_queues_selected_leads(monkeypatch, tmp_path) -> None:
+    """Operators can apply the manual ping template to selected chats in one request."""
+    monkeypatch.setenv("FUNNELS_CONFIG_PATH", str(tmp_path / "funnels.json"))
+    configure_contadores_db(monkeypatch, tmp_path)
+    first = ContadoresLead.upsert(
+        external_lead_id="bulk-ping-1",
+        phone="+5491888888801",
+        full_name="Bulk One",
+    )
+    second = ContadoresLead.upsert(
+        external_lead_id="bulk-ping-2",
+        phone="+5491888888802",
+        full_name="Bulk Two",
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/contadores/leads/bulk-action",
+            json={
+                "lead_ids": [first.id, second.id],
+                "action": "send-manual-ping",
+            },
+        )
+        pending_response = client.get("/api/contadores/messages/pending-delivery")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 2
+    assert payload["succeeded"] == 2
+    assert payload["failed"] == 0
+    assert len(payload["queued_message_ids"]) == 2
+    assert [item["ok"] for item in payload["results"]] == [True, True]
+
+    messages = pending_response.json()["messages"]
+    assert [item["lead_id"] for item in messages] == [first.id, second.id]
+    assert {item["sequence_step"] for item in messages} == {"manual_ping_template"}
+    assert {item["whatsapp_template_name"] for item in messages} == {"contadores_manual_ping_es_v1"}
+
+
+def test_bulk_custom_message_pauses_selected_leads(monkeypatch, tmp_path) -> None:
+    """Custom batch messages should pause automation for each selected lead."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    first = ContadoresLead.upsert(
+        external_lead_id="bulk-custom-1",
+        phone="+5491888888811",
+        full_name="Custom One",
+    )
+    second = ContadoresLead.upsert(
+        external_lead_id="bulk-custom-2",
+        phone="+5491888888812",
+        full_name="Custom Two",
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/contadores/leads/bulk-action",
+            json={
+                "lead_ids": [first.id, second.id],
+                "action": "custom",
+                "text": "Hola, retomo por aca.",
+            },
+        )
+        first_detail = client.get(f"/api/contadores/leads/{first.id}")
+        second_detail = client.get(f"/api/contadores/leads/{second.id}")
+        pending_response = client.get("/api/contadores/messages/pending-delivery")
+
+    assert response.status_code == 200
+    assert response.json()["succeeded"] == 2
+    assert first_detail.json()["lead"]["stage"] == "needs_human"
+    assert first_detail.json()["lead"]["automation_paused"] is True
+    assert second_detail.json()["lead"]["stage"] == "needs_human"
+    assert second_detail.json()["lead"]["automation_paused"] is True
+    assert [item["text"] for item in pending_response.json()["messages"]] == [
+        "Hola, retomo por aca.",
+        "Hola, retomo por aca.",
+    ]
+
+
 def test_contadores_config_normalizes_generic_calendly_base_url(monkeypatch, tmp_path) -> None:
     """A generic Calendly host should collapse to the configured meeting URL."""
     configure_contadores_db(monkeypatch, tmp_path)

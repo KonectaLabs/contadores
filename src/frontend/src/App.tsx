@@ -2,6 +2,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { apiFetch } from "./api";
 import { compactNumber, humanize, lastInteractionAt, relativeTime, shortDate } from "./format";
 import type {
+  BulkActionResponse,
   ContadoresConfig,
   ContadoresMetrics,
   EventItem,
@@ -47,8 +48,16 @@ const sendOptions = [
 type ManualReplyFilter = "" | "needs_reply" | "answered";
 type DetailTab = "messages" | "events" | "strategies";
 type SendKind = (typeof sendOptions)[number]["value"];
+type BulkSendKind = SendKind;
 type StrategyWeights = Record<string, Record<string, number>>;
 type FunnelEditorMode = "create" | "edit";
+type TemplateTextField = "opener_text" | "opener_followup_text" | "manual_ping_text";
+type TemplateNameField = "opener_template_name" | "opener_followup_template_name" | "manual_ping_template_name";
+type TemplateChoice = {
+  label: string;
+  templateId: string;
+  text: string;
+};
 type QuickActionName =
   | "send-opener"
   | "send-manual-ping"
@@ -95,8 +104,11 @@ export function App() {
   const [showFunnelEditor, setShowFunnelEditor] = useState(false);
   const [funnelEditorMode, setFunnelEditorMode] = useState<FunnelEditorMode>("edit");
   const [showSendModal, setShowSendModal] = useState(false);
+  const [showBulkSendModal, setShowBulkSendModal] = useState(false);
   const [sendKind, setSendKind] = useState<SendKind>("custom");
+  const [bulkSendKind, setBulkSendKind] = useState<BulkSendKind>("send-manual-ping");
   const [manualText, setManualText] = useState("");
+  const [selectedLeadIds, setSelectedLeadIds] = useState<string[]>([]);
   const debouncedQuery = useDebouncedValue(query, 250);
 
   const metrics = leadList?.metrics;
@@ -113,6 +125,9 @@ export function App() {
     }
     return leadList.leads.find((lead) => lead.id === selectedLeadId) ?? null;
   }, [detail, leadList, selectedLeadId]);
+  const visibleLeadIds = useMemo(() => (leadList?.leads ?? []).map((lead) => lead.id), [leadList]);
+  const selectedVisibleCount = selectedLeadIds.filter((leadId) => visibleLeadIds.includes(leadId)).length;
+  const allVisibleSelected = visibleLeadIds.length > 0 && selectedVisibleCount === visibleLeadIds.length;
 
   const loadDashboard = useCallback(async () => {
     setError(null);
@@ -175,6 +190,10 @@ export function App() {
       setDetailLoading(false);
     }
   }, []);
+
+  useEffect(() => {
+    setSelectedLeadIds((current) => current.filter((leadId) => visibleLeadIds.includes(leadId)));
+  }, [visibleLeadIds]);
 
   useEffect(() => {
     if (stageFilter !== "needs_human" && manualReplyFilter) {
@@ -305,6 +324,42 @@ export function App() {
     }
   }
 
+  async function submitBulkSendModal(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const leadIds = selectedLeadIds.filter((leadId) => visibleLeadIds.includes(leadId));
+    if (!leadIds.length) {
+      return;
+    }
+
+    setActionBusy("bulk-send-modal");
+    try {
+      const payload = await apiFetch<BulkActionResponse>("/api/contadores/leads/bulk-action", {
+        method: "POST",
+        body: JSON.stringify({
+          lead_ids: leadIds,
+          action: bulkSendKind,
+          text: bulkSendKind === "custom" ? manualText.trim() : null,
+        }),
+      });
+      if (payload.failed) {
+        setError(`${payload.succeeded} sent, ${payload.failed} failed. Check selection and funnel templates.`);
+      }
+      setShowBulkSendModal(false);
+      setSelectedLeadIds([]);
+      if (bulkSendKind === "custom") {
+        setManualText("");
+      }
+      await loadDashboard();
+      if (selectedLeadId && isContadoresFunnel) {
+        await loadDetail(selectedLeadId);
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not run the bulk action.");
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
   async function submitManualDock(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const leadId = selectedLead?.id ?? selectedLeadId;
@@ -396,6 +451,18 @@ export function App() {
   function openEditFunnel() {
     setFunnelEditorMode("edit");
     setShowFunnelEditor(true);
+  }
+
+  function toggleLeadSelection(leadId: string) {
+    setSelectedLeadIds((current) => (
+      current.includes(leadId)
+        ? current.filter((item) => item !== leadId)
+        : [...current, leadId]
+    ));
+  }
+
+  function toggleAllVisibleLeads() {
+    setSelectedLeadIds(allVisibleSelected ? [] : visibleLeadIds);
   }
 
   const visibleCount = leadList?.leads.length ?? 0;
@@ -528,11 +595,35 @@ export function App() {
               <h3>Leads</h3>
               <p className="ct-leads-summary">{visibleCount ? `${visibleCount} ${visibleCount === 1 ? "lead" : "leads"}` : "No matches"}</p>
             </div>
+            <div className="ct-bulk-toolbar">
+              <label className="ct-bulk-check">
+                <input
+                  type="checkbox"
+                  checked={allVisibleSelected}
+                  disabled={!visibleLeadIds.length}
+                  onChange={toggleAllVisibleLeads}
+                />
+                <span>{allVisibleSelected ? "All visible selected" : "Select visible"}</span>
+              </label>
+              <button
+                type="button"
+                className="ct-btn ct-btn-ghost"
+                disabled={!selectedLeadIds.length || Boolean(actionBusy)}
+                onClick={() => {
+                  setBulkSendKind("send-manual-ping");
+                  setShowBulkSendModal(true);
+                }}
+              >
+                Bulk action
+              </button>
+            </div>
             <LeadList
               leads={leadList?.leads ?? []}
               selectedLeadId={selectedLeadId}
+              selectedLeadIds={selectedLeadIds}
               loading={loading}
               onSelect={setSelectedLeadId}
+              onToggleSelected={toggleLeadSelection}
             />
           </aside>
 
@@ -616,11 +707,26 @@ export function App() {
         <SendModal
           kind={sendKind}
           text={manualText}
+          funnel={selectedFunnel}
           busy={actionBusy === "send-modal"}
           onKindChange={setSendKind}
           onTextChange={setManualText}
           onClose={() => setShowSendModal(false)}
           onSubmit={submitSendModal}
+        />
+      ) : null}
+
+      {showBulkSendModal ? (
+        <BulkSendModal
+          kind={bulkSendKind}
+          text={manualText}
+          funnel={selectedFunnel}
+          selectedCount={selectedLeadIds.length}
+          busy={actionBusy === "bulk-send-modal"}
+          onKindChange={setBulkSendKind}
+          onTextChange={setManualText}
+          onClose={() => setShowBulkSendModal(false)}
+          onSubmit={submitBulkSendModal}
         />
       ) : null}
     </section>
@@ -923,13 +1029,17 @@ function FunnelEditorDrawer({
 function LeadList({
   leads,
   selectedLeadId,
+  selectedLeadIds,
   loading,
   onSelect,
+  onToggleSelected,
 }: {
   leads: LeadSummary[];
   selectedLeadId: string | null;
+  selectedLeadIds: string[];
   loading: boolean;
   onSelect: (leadId: string) => void;
+  onToggleSelected: (leadId: string) => void;
 }) {
   if (loading && !leads.length) {
     return <div className="ct-leads-list"><p className="ct-empty">Loading leads...</p></div>;
@@ -945,30 +1055,42 @@ function LeadList({
         const tone = leadTone(lead);
         const turn = manualTurn(lead);
         const strategyTag = strategyTagForLead(lead);
+        const checked = selectedLeadIds.includes(lead.id);
         return (
-          <button
-            type="button"
-            className={`ct-lead ${lead.id === selectedLeadId ? "active" : ""}`}
+          <div
+            className={`ct-lead-row ${lead.id === selectedLeadId ? "active" : ""} ${checked ? "selected" : ""}`}
             key={lead.id}
-            onClick={() => onSelect(lead.id)}
           >
-            <div className="ct-lead-avatar" data-tone={tone}>{monogram(lead.full_name || lead.phone || "CT")}</div>
-            <div className="ct-lead-body">
-              <div className="ct-lead-top">
-                <h4 className="ct-lead-name">{lead.full_name || lead.phone || "Lead"}</h4>
-                <div className="ct-lead-tags">
-                  <span className="ct-lead-stage" data-tone={tone}>{formatStageLabel(lead.stage)}</span>
-                  {strategyTag ? <span className="ct-lead-strategy-tag">{strategyTag}</span> : null}
-                  {turn ? <span className={`ct-lead-turn ${turn}`}>{turn === "needs_reply" ? "Needs reply" : "Answered"}</span> : null}
+            <label className="ct-lead-check" aria-label={`Select ${lead.full_name || lead.phone || "lead"}`}>
+              <input
+                type="checkbox"
+                checked={checked}
+                onChange={() => onToggleSelected(lead.id)}
+              />
+            </label>
+            <button
+              type="button"
+              className="ct-lead"
+              onClick={() => onSelect(lead.id)}
+            >
+              <div className="ct-lead-avatar" data-tone={tone}>{monogram(lead.full_name || lead.phone || "CT")}</div>
+              <div className="ct-lead-body">
+                <div className="ct-lead-top">
+                  <h4 className="ct-lead-name">{lead.full_name || lead.phone || "Lead"}</h4>
+                  <div className="ct-lead-tags">
+                    <span className="ct-lead-stage" data-tone={tone}>{formatStageLabel(lead.stage)}</span>
+                    {strategyTag ? <span className="ct-lead-strategy-tag">{strategyTag}</span> : null}
+                    {turn ? <span className={`ct-lead-turn ${turn}`}>{turn === "needs_reply" ? "Needs reply" : "Answered"}</span> : null}
+                  </div>
                 </div>
+                <div className="ct-lead-meta">
+                  <span className="ct-lead-meta-main">{lead.phone || "-"}</span>
+                  <span className="ct-lead-time">{relativeTime(lastInteractionAt(lead))}</span>
+                </div>
+                <p className="ct-lead-preview">{leadPreview(lead)}</p>
               </div>
-              <div className="ct-lead-meta">
-                <span className="ct-lead-meta-main">{lead.phone || "-"}</span>
-                <span className="ct-lead-time">{relativeTime(lastInteractionAt(lead))}</span>
-              </div>
-              <p className="ct-lead-preview">{leadPreview(lead)}</p>
-            </div>
-          </button>
+            </button>
+          </div>
         );
       })}
     </div>
@@ -1432,6 +1554,7 @@ function StrategyStatsPanel({
 function SendModal({
   kind,
   text,
+  funnel,
   busy,
   onKindChange,
   onTextChange,
@@ -1440,6 +1563,7 @@ function SendModal({
 }: {
   kind: SendKind;
   text: string;
+  funnel: FunnelDefinition | null;
   busy: boolean;
   onKindChange: (kind: SendKind) => void;
   onTextChange: (value: string) => void;
@@ -1494,6 +1618,86 @@ function SendModal({
           <button type="button" className="ct-btn ct-btn-ghost" onClick={onClose}>Cancel</button>
           <button type="submit" className="ct-btn ct-btn-primary" disabled={busy || (kind === "custom" && !text.trim())}>
             {busy ? "Sending..." : pausesAutomation ? "Send and pause automation" : "Send and mark Calendly sent"}
+          </button>
+        </footer>
+      </form>
+    </div>
+  );
+}
+
+function BulkSendModal({
+  kind,
+  text,
+  funnel,
+  selectedCount,
+  busy,
+  onKindChange,
+  onTextChange,
+  onClose,
+  onSubmit,
+}: {
+  kind: BulkSendKind;
+  text: string;
+  funnel: FunnelDefinition | null;
+  selectedCount: number;
+  busy: boolean;
+  onKindChange: (kind: BulkSendKind) => void;
+  onTextChange: (value: string) => void;
+  onClose: () => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  const pausesAutomation = kind !== "send-calendly";
+
+  return (
+    <div className="ct-modal open" aria-hidden="false">
+      <button className="ct-modal-overlay" type="button" onClick={onClose} aria-label="Close bulk action" />
+      <form className="ct-modal-panel" role="dialog" aria-modal="true" aria-labelledby="ctBulkSendModalTitle" onSubmit={onSubmit}>
+        <header className="ct-modal-head">
+          <div>
+            <h3 id="ctBulkSendModalTitle">Bulk action</h3>
+            <p className="ct-modal-subtitle">{selectedCount} selected chats</p>
+          </div>
+          <button type="button" className="ct-icon-btn" onClick={onClose}>Close</button>
+        </header>
+        <div className="ct-modal-body">
+          <p className="ct-modal-warning">
+            <strong>Heads up:</strong> this will apply to every selected chat in the current list.
+            {pausesAutomation ? " Sending this pauses automation for those leads." : " Calendly will mark them as Calendly sent."}
+          </p>
+
+          <fieldset className="ct-send-options">
+            <legend className="ct-sr-only">Bulk message type</legend>
+            {sendOptions.map((option) => (
+              <label className="ct-send-option" key={option.value}>
+                <input
+                  type="radio"
+                  name="ctBulkSendKind"
+                  value={option.value}
+                  checked={kind === option.value}
+                  onChange={() => onKindChange(option.value)}
+                />
+                <div>
+                  <strong>{option.title}</strong>
+                  <span>{sendOptionPreview(option.value, funnel) || option.help}</span>
+                </div>
+              </label>
+            ))}
+          </fieldset>
+
+          <label className="ct-modal-field" hidden={kind !== "custom"}>
+            <span>Custom message</span>
+            <textarea
+              value={text}
+              onChange={(event) => onTextChange(event.target.value)}
+              rows={4}
+              placeholder="Write the WhatsApp message to send..."
+            />
+          </label>
+        </div>
+        <footer className="ct-modal-foot">
+          <button type="button" className="ct-btn ct-btn-ghost" onClick={onClose}>Cancel</button>
+          <button type="submit" className="ct-btn ct-btn-primary" disabled={busy || !selectedCount || (kind === "custom" && !text.trim())}>
+            {busy ? "Sending..." : `Apply to ${selectedCount}`}
           </button>
         </footer>
       </form>
@@ -1556,6 +1760,59 @@ function buildBlankFunnel(): FunnelDefinition {
       },
     ],
   };
+}
+
+function buildTemplateChoices(funnel: FunnelDefinition): TemplateChoice[] {
+  const rawChoices: TemplateChoice[] = [
+    {
+      label: "Opener",
+      templateId: funnel.opener_template_name ?? "",
+      text: funnel.opener_text,
+    },
+    {
+      label: "Follow-up",
+      templateId: funnel.opener_followup_template_name ?? "",
+      text: funnel.opener_followup_text,
+    },
+    {
+      label: "Manual ping",
+      templateId: funnel.manual_ping_template_name ?? "",
+      text: funnel.manual_ping_text,
+    },
+  ];
+
+  const seen = new Set<string>();
+  return rawChoices.filter((choice) => {
+    const templateId = choice.templateId.trim();
+    if (!templateId || seen.has(templateId)) {
+      return false;
+    }
+    seen.add(templateId);
+    return true;
+  });
+}
+
+function truncateForOption(value: string): string {
+  const cleanValue = value.replace(/\s+/g, " ").trim();
+  if (cleanValue.length <= 96) {
+    return cleanValue || "Sin contenido";
+  }
+  return `${cleanValue.slice(0, 93)}...`;
+}
+
+function sendOptionPreview(kind: SendKind, funnel: FunnelDefinition | null): string {
+  if (!funnel) {
+    return "";
+  }
+  const previews: Partial<Record<SendKind, string>> = {
+    "send-manual-ping": funnel.manual_ping_text,
+    "send-opener": funnel.opener_text,
+    "send-loom": funnel.loom_intro_text,
+    "send-video-check": funnel.video_check_text,
+    "send-calendly": `${funnel.calendly_intro_text}\n${funnel.calendly_base_url}`,
+  };
+  const preview = previews[kind]?.trim();
+  return preview ? truncateForOption(preview) : "";
 }
 
 function slugifyClient(value: string): string {

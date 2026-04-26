@@ -2500,6 +2500,37 @@ body {
   font: 500 11px/1 var(--font-mono);
 }
 
+#contadoresView .ct-bulk-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--ct-line-soft);
+  background: var(--ct-surface-2);
+}
+
+#contadoresView .ct-bulk-check,
+#contadoresView .ct-lead-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--ct-ink-muted);
+  font: 600 11px/1 var(--font-mono);
+  cursor: pointer;
+}
+
+#contadoresView .ct-bulk-check input,
+#contadoresView .ct-lead-check input {
+  accent-color: var(--ct-accent);
+}
+
+#contadoresView .ct-bulk-toolbar .ct-btn {
+  height: 30px;
+  padding: 0 10px;
+  font-size: 11px;
+}
+
 #contadoresView .ct-leads-list {
   flex: 1 1 auto;
   min-height: 0;
@@ -2508,6 +2539,34 @@ body {
   gap: 4px;
   overflow-y: auto;
   padding: 4px;
+}
+
+#contadoresView .ct-lead-row {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: center;
+  gap: 4px;
+  border: 1px solid transparent;
+  border-radius: var(--ct-radius);
+}
+
+#contadoresView .ct-lead-row:hover {
+  background: var(--ct-surface-2);
+}
+
+#contadoresView .ct-lead-row.active {
+  border-color: rgba(15, 118, 110, 0.3);
+  background: var(--ct-accent-soft);
+}
+
+#contadoresView .ct-lead-row.selected {
+  border-color: rgba(15, 118, 110, 0.42);
+}
+
+#contadoresView .ct-lead-check {
+  justify-content: center;
+  align-self: stretch;
+  padding-left: 8px;
 }
 
 #contadoresView .ct-lead {
@@ -3157,6 +3216,12 @@ body {
   margin: 0;
   color: var(--ct-ink-soft);
   font: 500 11px/1.4 var(--font-mono);
+}
+
+#contadoresView .ct-modal-subtitle {
+  margin: 0;
+  color: var(--ct-ink-soft);
+  font: 600 11px/1.3 var(--font-mono);
 }
 
 #contadoresView .ct-drawer-body {

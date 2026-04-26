@@ -847,6 +847,121 @@ def queue_manual_action_event(lead_id: str, action: str, actor: str = "operator"
     )
 
 
+def queue_manual_message_for_lead(*, lead: ContadoresLead, text: str) -> list[ContadoresMessage]:
+    """Queue one custom operator message and pause automation for the lead."""
+    row = enqueue_lead_outbound(
+        lead=lead,
+        text=text.strip(),
+        sequence_step="manual",
+    )
+    ContadoresLead.update_flow_state(
+        lead.id,
+        stage=ContadoresLeadStage.NEEDS_HUMAN,
+        automation_paused=True,
+        automation_paused_reason="manual_message",
+    )
+    ContadoresEvent.add(
+        lead_id=lead.id,
+        event_type="manual_send_queued",
+        actor="operator",
+        summary="Manual outbound message queued. Automation paused.",
+        payload={"message_id": row.id},
+    )
+    return [row]
+
+
+def run_quick_action_for_lead(
+    *,
+    lead: ContadoresLead,
+    action: str,
+    config: ContadoresConfig,
+) -> tuple[ContadoresLead, list[ContadoresMessage]]:
+    """Run one operator quick action and return the refreshed lead plus queued rows."""
+    queued_rows: list[ContadoresMessage] = []
+    normalized_action = (action or "").strip().lower()
+    pausing_send_actions = {"send-opener", "send-loom", "send-video-check", "send-manual-ping"}
+
+    if normalized_action == "send-opener":
+        queued_rows = send_opener_sequence(lead=lead)
+    elif normalized_action == "send-manual-ping":
+        if not resolve_funnel(lead.funnel_id).manual_ping_template_name:
+            raise HTTPException(status_code=400, detail="Manual ping template is not configured")
+        queued_rows = send_manual_ping_template(lead=lead)
+    elif normalized_action == "send-loom":
+        queued_rows = send_loom_sequence(lead=lead, config=config, assigned_by="operator")
+    elif normalized_action == "send-video-check":
+        queued_rows = send_video_check(lead=lead)
+    elif normalized_action == "send-calendly":
+        queued_rows = send_calendly_sequence(lead=lead, config=config)
+    elif normalized_action == "mark-booked":
+        updated = ContadoresLead.update_flow_state(
+            lead.id,
+            stage=ContadoresLeadStage.BOOKED,
+            booked_at=now_utc(),
+        )
+        queue_manual_action_event(lead.id, normalized_action)
+        return updated or lead, []
+    elif normalized_action == "mark-answered":
+        updated = ContadoresLead.update_flow_state(
+            lead.id,
+            manual_reply_handled_at=now_utc(),
+        )
+        ContadoresEvent.add(
+            lead_id=lead.id,
+            event_type="manual_reply_marked_answered",
+            actor="operator",
+            summary="Operator marked the current manual reply as already answered.",
+            payload={"action": normalized_action},
+        )
+        return updated or lead, []
+    elif normalized_action == "close":
+        updated = ContadoresLead.update_flow_state(
+            lead.id,
+            stage=ContadoresLeadStage.CLOSED,
+            closed_at=now_utc(),
+            stage_before_closed=resolve_stage_before_closing(lead),
+        )
+        queue_manual_action_event(lead.id, normalized_action)
+        return updated or lead, []
+    elif normalized_action == "reopen":
+        updated = ContadoresLead.update_flow_state(
+            lead.id,
+            stage=resolve_stage_after_reopening(lead),
+            clear_closed_at=True,
+            clear_stage_before_closed=True,
+        )
+        queue_manual_action_event(lead.id, normalized_action)
+        return updated or lead, []
+    elif normalized_action == "archive":
+        updated = ContadoresLead.update_flow_state(
+            lead.id,
+            stage=ContadoresLeadStage.ARCHIVED,
+            archived_at=now_utc(),
+        )
+        queue_manual_action_event(lead.id, normalized_action)
+        return updated or lead, []
+    elif normalized_action == "unarchive":
+        updated = ContadoresLead.update_flow_state(
+            lead.id,
+            stage=ContadoresLeadStage.AWAITING_INITIAL_REPLY,
+            clear_archived_at=True,
+        )
+        queue_manual_action_event(lead.id, normalized_action)
+        return updated or lead, []
+    else:
+        raise HTTPException(status_code=404, detail="Unknown quick action")
+
+    if normalized_action in pausing_send_actions:
+        ContadoresLead.update_flow_state(
+            lead.id,
+            stage=ContadoresLeadStage.NEEDS_HUMAN,
+            automation_paused=True,
+            automation_paused_reason=f"manual_{normalized_action}",
+        )
+    queue_manual_action_event(lead.id, normalized_action)
+    return ContadoresLead.get_by_id(lead.id) or lead, queued_rows
+
+
 def list_contadores_matches_by_replied_message(in_reply_to: str | None) -> tuple[list[ContadoresLead], bool]:
     """Resolve Contadores lead candidates from replied outbound WhatsApp id."""
     replied_external_id = (in_reply_to or "").strip()
@@ -1083,11 +1198,40 @@ class CreateContadoresMessageCommand(BaseModel):
     text: str = Field(min_length=1)
 
 
+class BulkContadoresActionCommand(BaseModel):
+    """Batch action payload for selected operator chats."""
+
+    lead_ids: list[str] = Field(default_factory=list, min_length=1, max_length=500)
+    action: str = Field(min_length=1)
+    text: str | None = None
+
+
 class ContadoresQuickActionResponse(BaseModel):
     """Result after one quick action or manual queue."""
 
     lead: ContadoresLeadSummary
     queued_message_ids: list[int] = Field(default_factory=list)
+
+
+class ContadoresBulkActionItem(BaseModel):
+    """Result for one lead in a batch action."""
+
+    lead_id: str
+    ok: bool
+    lead: ContadoresLeadSummary | None = None
+    queued_message_ids: list[int] = Field(default_factory=list)
+    error: str | None = None
+
+
+class ContadoresBulkActionResponse(BaseModel):
+    """Batch action result for selected operator chats."""
+
+    action: str
+    total: int
+    succeeded: int
+    failed: int
+    queued_message_ids: list[int] = Field(default_factory=list)
+    results: list[ContadoresBulkActionItem] = Field(default_factory=list)
 
 
 class DeleteContadoresLeadResponse(BaseModel):
@@ -1480,28 +1624,85 @@ async def create_contadores_manual_message(
     if lead is None:
         raise HTTPException(status_code=404, detail="Lead not found")
     config = get_effective_funnel_config(lead.funnel_id)
-    row = enqueue_lead_outbound(
-        lead=lead,
-        text=command.text.strip(),
-        sequence_step="manual",
-    )
-    ContadoresLead.update_flow_state(
-        lead.id,
-        stage=ContadoresLeadStage.NEEDS_HUMAN,
-        automation_paused=True,
-        automation_paused_reason="manual_message",
-    )
-    ContadoresEvent.add(
-        lead_id=lead.id,
-        event_type="manual_send_queued",
-        actor="operator",
-        summary="Manual outbound message queued. Automation paused.",
-        payload={"message_id": row.id},
-    )
+    queued_rows = queue_manual_message_for_lead(lead=lead, text=command.text)
     updated = ContadoresLead.get_by_id(lead.id) or lead
     return ContadoresQuickActionResponse(
         lead=build_lead_summary(updated, config=config),
-        queued_message_ids=[row.id or 0],
+        queued_message_ids=[row.id or 0 for row in queued_rows],
+    )
+
+
+@contadores_router.post("/leads/bulk-action", response_model=ContadoresBulkActionResponse)
+async def run_contadores_bulk_action(
+    command: BulkContadoresActionCommand,
+) -> ContadoresBulkActionResponse:
+    """Run one operator action for selected chats."""
+    normalized_action = command.action.strip().lower()
+    clean_lead_ids = list(dict.fromkeys(item.strip() for item in command.lead_ids if item.strip()))
+    if not clean_lead_ids:
+        raise HTTPException(status_code=400, detail="Select at least one lead")
+
+    if normalized_action == "custom":
+        message_text = (command.text or "").strip()
+        if not message_text:
+            raise HTTPException(status_code=400, detail="Custom message text is required")
+
+    results: list[ContadoresBulkActionItem] = []
+    queued_message_ids: list[int] = []
+
+    for lead_id in clean_lead_ids:
+        lead = ContadoresLead.get_by_id(lead_id)
+        if lead is None:
+            results.append(
+                ContadoresBulkActionItem(
+                    lead_id=lead_id,
+                    ok=False,
+                    error="Lead not found",
+                )
+            )
+            continue
+
+        config = get_effective_funnel_config(lead.funnel_id)
+        try:
+            if normalized_action == "custom":
+                queued_rows = queue_manual_message_for_lead(lead=lead, text=command.text or "")
+                updated = ContadoresLead.get_by_id(lead.id) or lead
+            else:
+                updated, queued_rows = run_quick_action_for_lead(
+                    lead=lead,
+                    action=normalized_action,
+                    config=config,
+                )
+        except HTTPException as exc:
+            results.append(
+                ContadoresBulkActionItem(
+                    lead_id=lead_id,
+                    ok=False,
+                    error=str(exc.detail),
+                )
+            )
+            continue
+
+        item_message_ids = [row.id or 0 for row in queued_rows]
+        queued_message_ids.extend(item_message_ids)
+        results.append(
+            ContadoresBulkActionItem(
+                lead_id=lead_id,
+                ok=True,
+                lead=build_lead_summary(updated, config=config),
+                queued_message_ids=item_message_ids,
+            )
+        )
+
+    succeeded = sum(1 for item in results if item.ok)
+    failed = len(results) - succeeded
+    return ContadoresBulkActionResponse(
+        action=normalized_action,
+        total=len(results),
+        succeeded=succeeded,
+        failed=failed,
+        queued_message_ids=queued_message_ids,
+        results=results,
     )
 
 
@@ -1516,106 +1717,11 @@ async def run_contadores_quick_action(
         raise HTTPException(status_code=404, detail="Lead not found")
     config = get_effective_funnel_config(lead.funnel_id)
 
-    queued_rows: list[ContadoresMessage] = []
-    normalized_action = (action or "").strip().lower()
-    pausing_send_actions = {"send-opener", "send-loom", "send-video-check", "send-manual-ping"}
-    if normalized_action == "send-opener":
-        queued_rows = send_opener_sequence(lead=lead)
-    elif normalized_action == "send-manual-ping":
-        if not resolve_funnel(lead.funnel_id).manual_ping_template_name:
-            raise HTTPException(status_code=400, detail="Manual ping template is not configured")
-        queued_rows = send_manual_ping_template(lead=lead)
-    elif normalized_action == "send-loom":
-        queued_rows = send_loom_sequence(lead=lead, config=config, assigned_by="operator")
-    elif normalized_action == "send-video-check":
-        queued_rows = send_video_check(lead=lead)
-    elif normalized_action == "send-calendly":
-        queued_rows = send_calendly_sequence(lead=lead, config=config)
-    elif normalized_action == "mark-booked":
-        updated = ContadoresLead.update_flow_state(
-            lead.id,
-            stage=ContadoresLeadStage.BOOKED,
-            booked_at=now_utc(),
-        )
-        queue_manual_action_event(lead.id, normalized_action)
-        return ContadoresQuickActionResponse(
-            lead=build_lead_summary(updated or lead, config=config),
-            queued_message_ids=[],
-        )
-    elif normalized_action == "mark-answered":
-        updated = ContadoresLead.update_flow_state(
-            lead.id,
-            manual_reply_handled_at=now_utc(),
-        )
-        ContadoresEvent.add(
-            lead_id=lead.id,
-            event_type="manual_reply_marked_answered",
-            actor="operator",
-            summary="Operator marked the current manual reply as already answered.",
-            payload={"action": normalized_action},
-        )
-        return ContadoresQuickActionResponse(
-            lead=build_lead_summary(updated or lead, config=config),
-            queued_message_ids=[],
-        )
-    elif normalized_action == "close":
-        updated = ContadoresLead.update_flow_state(
-            lead.id,
-            stage=ContadoresLeadStage.CLOSED,
-            closed_at=now_utc(),
-            stage_before_closed=resolve_stage_before_closing(lead),
-        )
-        queue_manual_action_event(lead.id, normalized_action)
-        return ContadoresQuickActionResponse(
-            lead=build_lead_summary(updated or lead, config=config),
-            queued_message_ids=[],
-        )
-    elif normalized_action == "reopen":
-        updated = ContadoresLead.update_flow_state(
-            lead.id,
-            stage=resolve_stage_after_reopening(lead),
-            clear_closed_at=True,
-            clear_stage_before_closed=True,
-        )
-        queue_manual_action_event(lead.id, normalized_action)
-        return ContadoresQuickActionResponse(
-            lead=build_lead_summary(updated or lead, config=config),
-            queued_message_ids=[],
-        )
-    elif normalized_action == "archive":
-        updated = ContadoresLead.update_flow_state(
-            lead.id,
-            stage=ContadoresLeadStage.ARCHIVED,
-            archived_at=now_utc(),
-        )
-        queue_manual_action_event(lead.id, normalized_action)
-        return ContadoresQuickActionResponse(
-            lead=build_lead_summary(updated or lead, config=config),
-            queued_message_ids=[],
-        )
-    elif normalized_action == "unarchive":
-        updated = ContadoresLead.update_flow_state(
-            lead.id,
-            stage=ContadoresLeadStage.AWAITING_INITIAL_REPLY,
-            clear_archived_at=True,
-        )
-        queue_manual_action_event(lead.id, normalized_action)
-        return ContadoresQuickActionResponse(
-            lead=build_lead_summary(updated or lead, config=config),
-            queued_message_ids=[],
-        )
-    else:
-        raise HTTPException(status_code=404, detail="Unknown quick action")
-
-    if normalized_action in pausing_send_actions:
-        ContadoresLead.update_flow_state(
-            lead.id,
-            stage=ContadoresLeadStage.NEEDS_HUMAN,
-            automation_paused=True,
-            automation_paused_reason=f"manual_{normalized_action}",
-        )
-    queue_manual_action_event(lead.id, normalized_action)
-    updated = ContadoresLead.get_by_id(lead.id) or lead
+    updated, queued_rows = run_quick_action_for_lead(
+        lead=lead,
+        action=action,
+        config=config,
+    )
     return ContadoresQuickActionResponse(
         lead=build_lead_summary(updated, config=config),
         queued_message_ids=[row.id or 0 for row in queued_rows],

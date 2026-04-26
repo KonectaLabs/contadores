@@ -200,6 +200,23 @@ export interface QuickActionResponse {
   queued_message_ids: number[];
 }
 
+export interface BulkActionItem {
+  lead_id: string;
+  ok: boolean;
+  lead: LeadSummary | null;
+  queued_message_ids: number[];
+  error: string | null;
+}
+
+export interface BulkActionResponse {
+  action: string;
+  total: number;
+  succeeded: number;
+  failed: number;
+  queued_message_ids: number[];
+  results: BulkActionItem[];
+}
+
 export interface StrategyStatsItem {
   step: string;
   strategy_id: string;
