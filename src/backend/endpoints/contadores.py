@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import mimetypes
-import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -497,19 +497,32 @@ def build_message_response(message: ContadoresMessage) -> "ContadoresMessageResp
 
 
 def build_message_media_url(message: ContadoresMessage) -> str | None:
-    """Return the protected API URL for a stored message attachment."""
-    if not message.id or not (message.media_path or "").strip():
+    """Return the protected API URL for shared outbound media."""
+    media_path = (message.media_path or "").strip()
+    if not message.from_me or not media_path:
         return None
-    return f"/api/contadores/messages/{message.id}/media"
+    return f"/api/contadores/media/{encode_media_path_token(media_path)}"
 
 
 def allowed_message_media_roots() -> list[Path]:
     """Return filesystem roots from which stored message media may be served."""
-    roots = [DATA_DIR.expanduser().resolve()]
-    configured_media_dir = (os.getenv("WA_INBOUND_MEDIA_DIR", "") or "").strip()
-    if configured_media_dir:
-        roots.append(Path(configured_media_dir).expanduser().resolve())
-    return roots
+    return [DATA_DIR.expanduser().resolve()]
+
+
+def encode_media_path_token(media_path: str) -> str:
+    """Encode one media path into a URL-safe stable token."""
+    raw = (media_path or "").strip().encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def decode_media_path_token(media_path_token: str) -> str:
+    """Decode one URL-safe media path token."""
+    clean_token = (media_path_token or "").strip()
+    padding = "=" * (-len(clean_token) % 4)
+    try:
+        return base64.urlsafe_b64decode(f"{clean_token}{padding}".encode("ascii")).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        return ""
 
 
 def resolve_message_media_file(media_path: str | None) -> Path | None:
@@ -1053,13 +1066,6 @@ class ContadoresWhatsAppInboundCommand(BaseModel):
     text: str = Field(min_length=1)
     external_id: str | None = None
     in_reply_to: str | None = None
-    media_id: str | None = None
-    media_type: str | None = None
-    media_path: str | None = None
-    media_mime_type: str | None = None
-    media_filename: str | None = None
-    media_sha256: str | None = None
-    media_caption: str | None = None
 
 
 class ContadoresWhatsAppInboundResponse(BaseModel):
@@ -1328,25 +1334,22 @@ async def get_contadores_lead_detail(lead_id: str) -> ContadoresLeadDetailRespon
     )
 
 
-@contadores_router.get("/messages/{message_id}/media")
-async def get_contadores_message_media(message_id: int) -> FileResponse:
-    """Serve one stored WhatsApp media file through authenticated backend access."""
-    message = ContadoresMessage.get_by_id(message_id)
-    if message is None:
-        raise HTTPException(status_code=404, detail="Contadores message not found")
-    media_file = resolve_message_media_file(message.media_path)
+@contadores_router.get("/media/{media_path_token}")
+async def get_contadores_media_by_path(media_path_token: str) -> FileResponse:
+    """Serve one shared outbound media file through authenticated backend access."""
+    media_path = decode_media_path_token(media_path_token)
+    media_file = resolve_message_media_file(media_path)
     if media_file is None or not media_file.is_file():
         raise HTTPException(status_code=404, detail="Contadores media not found")
 
     media_type = (
-        (message.media_mime_type or "").strip()
-        or mimetypes.guess_type(media_file.name)[0]
+        mimetypes.guess_type(media_file.name)[0]
         or "application/octet-stream"
     )
     return FileResponse(
         media_file,
         media_type=media_type,
-        filename=(message.media_filename or media_file.name),
+        filename=media_file.name,
         content_disposition_type="inline",
     )
 
@@ -1672,13 +1675,6 @@ async def register_contadores_whatsapp_inbound(
             from_me=False,
             text=command.text,
             external_id=command.external_id,
-            media_type=command.media_type,
-            media_path=command.media_path,
-            media_caption=command.media_caption,
-            media_mime_type=command.media_mime_type,
-            media_filename=command.media_filename,
-            media_sha256=command.media_sha256,
-            media_id=command.media_id,
         )
         ContadoresEvent.add(
             lead_id=lead.id,
@@ -1688,10 +1684,6 @@ async def register_contadores_whatsapp_inbound(
             payload={
                 "message_id": row.id,
                 "in_reply_to": command.in_reply_to,
-                "media_type": command.media_type,
-                "media_path": command.media_path,
-                "media_mime_type": command.media_mime_type,
-                "media_filename": command.media_filename,
             },
         )
         refreshed_lead = ContadoresLead.get_by_id(lead.id) or lead

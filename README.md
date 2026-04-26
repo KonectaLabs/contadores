@@ -10,6 +10,7 @@ un archivo JSON persistente.
 - `src/`: código de producto.
 - `wiki/`: documentación, skills y referencias de trabajo.
 - `media/`: materiales audiovisuales, decks y archivos de soporte.
+- `abogados/`: materiales, presentaciones y skills entrenadas del funnel de abogados.
 - `data/`: estado local persistente. No se commitea.
 
 ## Funnels por nicho
@@ -150,12 +151,12 @@ Template manual de ping:
 - Texto default: `Hola, queria saber en que situacion quedamos y si queres que retomemos la conversacion`.
 - Se envia solo desde la accion manual del backoffice; no participa del tick automatico ni del follow-up de 24 horas.
 
-Media entrante por WhatsApp:
+Media en WhatsApp:
 
-- El bot descarga imagenes, videos, audios, documentos y stickers entrantes.
-- Por defecto se guardan en `data/contadores/inbound_media`.
-- El backend sirve esos archivos por rutas autenticadas del tipo `/api/contadores/messages/{message_id}/media`.
-- `WA_INBOUND_MEDIA_DIR` permite cambiar el directorio si apunta al volumen persistente compartido por backend y bot.
+- La media que envian los leads no se descarga ni se muestra en el backoffice.
+- Si un lead envia solo media sin texto, se guarda un placeholder textual como `[image]` o `[video]`.
+- Los videos salientes de estrategia usan el `media_path` configurado, por ejemplo `data/contadores/videos/loom_60_seconds_captions.mp4`.
+- El frontend sirve esos videos desde una URL estable basada en `media_path`, asi el mismo archivo se reutiliza para todos los leads que recibieron ese video.
 
 ## Docker Compose
 

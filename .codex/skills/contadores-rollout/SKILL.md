@@ -24,10 +24,10 @@ The multi-funnel config file is separate from the runtime switch:
 This file stores funnel definitions added from the UI or by Codex. Keep it in
 the server data volume when it must persist across deploys.
 
-Inbound WhatsApp media is also persistent state. By default the bot stores it
-under `data/contadores/inbound_media`, which must stay in the shared `data`
-volume mounted into both backend and bot. Only set `WA_INBOUND_MEDIA_DIR` when
-it still points at shared persistent storage.
+WhatsApp strategy videos should be referenced by `media_path` under the shared
+`data` volume. The bot sends that configured file, and the frontend serves the
+same path through one stable media URL. Do not download or persist media sent by
+leads.
 
 ## Branch And Deploy Rule
 

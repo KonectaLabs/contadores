@@ -645,15 +645,9 @@ def test_contadores_post_calendly_inbound_returns_to_needs_human(monkeypatch, tm
     assert [item["lead_id"] for item in alerts.json()["items"]] == [lead.id]
 
 
-def test_contadores_inbound_media_is_persisted_and_served(monkeypatch, tmp_path) -> None:
-    """Inbound WhatsApp media metadata should be stored and served through the backend."""
+def test_contadores_inbound_media_payload_is_not_persisted(monkeypatch, tmp_path) -> None:
+    """Media sent by leads should not be stored or exposed as files."""
     configure_contadores_db(monkeypatch, tmp_path)
-    data_dir = tmp_path / "data"
-    media_file = data_dir / "contadores" / "inbound_media" / "lead-photo.jpg"
-    media_file.parent.mkdir(parents=True)
-    media_file.write_bytes(b"image-bytes")
-    monkeypatch.setattr(database_module, "DATA_DIR", data_dir)
-    monkeypatch.setattr(contadores_endpoints, "DATA_DIR", data_dir)
     lead = ContadoresLead.upsert(
         external_lead_id="sheet-row-media",
         phone="+5491444444499",
@@ -677,23 +671,63 @@ def test_contadores_inbound_media_is_persisted_and_served(monkeypatch, tmp_path)
             },
         )
         detail = client.get(f"/api/contadores/leads/{lead.id}")
-        media = client.get("/api/contadores/messages/1/media")
 
     assert response.status_code == 200
     assert response.json()["route"] == "contadores"
 
     assert detail.status_code == 200
     message = detail.json()["messages"][0]
-    assert message["media_type"] == "image"
-    assert message["media_path"] == "data/contadores/inbound_media/lead-photo.jpg"
-    assert message["media_mime_type"] == "image/jpeg"
-    assert message["media_filename"] == "lead-photo.jpg"
-    assert message["media_id"] == "media-image-1"
-    assert message["media_url"] == "/api/contadores/messages/1/media"
+    assert message["text"] == "[image]"
+    assert message["media_type"] is None
+    assert message["media_path"] is None
+    assert message["media_url"] is None
 
+
+def test_contadores_outbound_video_uses_stable_media_path_url(monkeypatch, tmp_path) -> None:
+    """Repeated outbound strategy videos should point at one shared media URL."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    data_dir = tmp_path / "data"
+    media_file = data_dir / "contadores" / "videos" / "strategy-video.mp4"
+    media_file.parent.mkdir(parents=True)
+    media_file.write_bytes(b"video-bytes")
+    monkeypatch.setattr(database_module, "DATA_DIR", data_dir)
+    monkeypatch.setattr(contadores_endpoints, "DATA_DIR", data_dir)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-video",
+        phone="+5491444444488",
+        full_name="Video Reply",
+    )
+    media_path = "data/contadores/videos/strategy-video.mp4"
+    first = ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=True,
+        text="Video de explicacion enviado por WhatsApp.",
+        delivery_status=MessageDeliveryStatus.DELIVERED,
+        media_type="video",
+        media_path=media_path,
+    )
+    second = ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=True,
+        text="Video de explicacion enviado por WhatsApp.",
+        delivery_status=MessageDeliveryStatus.DELIVERED,
+        media_type="video",
+        media_path=media_path,
+    )
+
+    with TestClient(app) as client:
+        detail = client.get(f"/api/contadores/leads/{lead.id}")
+        messages = detail.json()["messages"]
+        media = client.get(messages[0]["media_url"])
+
+    assert detail.status_code == 200
+    assert messages[0]["id"] == first.id
+    assert messages[1]["id"] == second.id
+    assert messages[0]["media_url"] == messages[1]["media_url"]
+    assert messages[0]["media_url"].startswith("/api/contadores/media/")
     assert media.status_code == 200
-    assert media.content == b"image-bytes"
-    assert media.headers["content-type"] == "image/jpeg"
+    assert media.content == b"video-bytes"
+    assert media.headers["content-type"] == "video/mp4"
     assert media.headers["content-disposition"].startswith("inline;")
 
 
