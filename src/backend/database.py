@@ -147,6 +147,8 @@ def _normalize_parsed_phone(parsed: phonenumbers.PhoneNumber) -> str:
         if national_number.startswith("9"):
             national_number = national_number[1:]
         return f"549{national_number}" if national_number else ""
+    if country_code == "56" and len(national_number) == 8:
+        return f"569{national_number}"
     return f"{country_code}{national_number}"
 
 
@@ -176,10 +178,9 @@ def normalize_phone(value: str) -> str:
     except NumberParseException:
         return digits
 
-    if not phonenumbers.is_possible_number(parsed):
-        return digits
-
     normalized = _normalize_parsed_phone(parsed)
+    if not phonenumbers.is_possible_number(parsed):
+        return normalized if normalized != digits and normalized.startswith("569") else digits
     return normalized or digits
 
 
