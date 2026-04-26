@@ -65,6 +65,39 @@ def test_runtime_endpoint_reports_source_mode(monkeypatch, tmp_path) -> None:
     assert payload["ready"] is True
 
 
+def test_contadores_import_skips_invalid_phone_rows(monkeypatch, tmp_path) -> None:
+    """One malformed sheet phone should not fail the whole import batch."""
+    configure_contadores_db(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/contadores/leads/import",
+            json={
+                "rows": [
+                    {
+                        "id": "sheet-invalid-phone",
+                        "phone_number": "sin telefono",
+                        "full_name": "Invalid Phone",
+                    },
+                    {
+                        "id": "sheet-valid-phone",
+                        "phone_number": "+5491111111111",
+                        "full_name": "Valid Phone",
+                    },
+                ]
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["imported"] == 1
+    assert payload["updated"] == 0
+    assert payload["skipped"] == 1
+    assert len(payload["lead_ids"]) == 1
+    assert ContadoresLead.get_by_external_lead_id("sheet-invalid-phone") is None
+    assert ContadoresLead.get_by_external_lead_id("sheet-valid-phone") is not None
+
+
 def test_contadores_pending_delivery_keeps_full_sequence(monkeypatch, tmp_path) -> None:
     """Loom intro and Loom URL must both remain visible to the bot outbox."""
     configure_contadores_db(monkeypatch, tmp_path)

@@ -1167,10 +1167,14 @@ async def import_contadores_leads(
         if raw_contacted in {"true", "1", "yes"}:
             skipped += 1
             continue
+        phone = row.phone_number.replace("p:", "").strip()
+        if not normalize_phone(phone):
+            skipped += 1
+            continue
         existing = ContadoresLead.get_by_external_lead_id(row.id)
         lead = ContadoresLead.upsert(
             external_lead_id=row.id,
-            phone=row.phone_number.replace("p:", "").strip(),
+            phone=phone,
             full_name=row.full_name,
             email=row.email,
             platform=row.platform,
