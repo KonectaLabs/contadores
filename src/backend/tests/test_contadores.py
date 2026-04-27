@@ -649,6 +649,34 @@ def test_contadores_inbound_routing_marks_ambiguous_phone_as_needs_human(monkeyp
     assert other_lead.id != lead.id
 
 
+def test_contadores_inbound_matches_mexico_52_and_521_variants(monkeypatch, tmp_path) -> None:
+    """WhatsApp can send Mexico numbers with 521 while sheets often store 52."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-mx",
+        phone="+523314184390",
+        full_name="Mexico Lead",
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/contadores/whatsapp/inbound",
+            json={
+                "phone": "5213314184390",
+                "text": "Hola, vengo del anuncio.",
+                "external_id": "wamid.mx.1",
+            },
+        )
+        detail = client.get(f"/api/contadores/leads/{lead.id}")
+
+    assert response.status_code == 200
+    assert response.json()["route"] == "contadores"
+    assert response.json()["lead_id"] == lead.id
+    assert detail.status_code == 200
+    assert detail.json()["lead"]["first_reply_received_at"] is not None
+    assert detail.json()["messages"][0]["external_id"] == "wamid.mx.1"
+
+
 def test_contadores_ctwa_referral_creates_lead_and_reaches_loom(monkeypatch, tmp_path) -> None:
     """A configured Click-to-WhatsApp ad should start the funnel after the opener step."""
     monkeypatch.setenv("FUNNELS_CONFIG_PATH", str(tmp_path / "funnels.json"))

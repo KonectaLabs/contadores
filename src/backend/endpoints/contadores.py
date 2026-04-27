@@ -1058,14 +1058,32 @@ def list_contadores_matches_by_replied_message(in_reply_to: str | None) -> tuple
     return matches, len(matches) > 1
 
 
+def build_phone_lookup_variants(phone: str) -> list[str]:
+    """Return normalized phone keys that can represent the same WhatsApp sender."""
+    normalized_phone = normalize_phone(phone)
+    if not normalized_phone:
+        return []
+
+    variants = [normalized_phone]
+    if normalized_phone.startswith("521") and len(normalized_phone) == 13:
+        variants.append(f"52{normalized_phone[3:]}")
+    elif normalized_phone.startswith("52") and len(normalized_phone) == 12:
+        variants.append(f"521{normalized_phone[2:]}")
+
+    return list(dict.fromkeys(variants))
+
+
 def list_contadores_matches_by_phone(
     phone: str,
     *,
     funnel_id: str | None = None,
 ) -> tuple[list[ContadoresLead], bool]:
     """Resolve Contadores leads from normalized phone."""
-    normalized_phone = normalize_phone(phone)
-    matches = ContadoresLead.list_by_normalized_phone(normalized_phone, include_archived=False)
+    matches_by_id: dict[str, ContadoresLead] = {}
+    for normalized_phone in build_phone_lookup_variants(phone):
+        for lead in ContadoresLead.list_by_normalized_phone(normalized_phone, include_archived=False):
+            matches_by_id[lead.id] = lead
+    matches = list(matches_by_id.values())
     if funnel_id is not None:
         clean_funnel_id = (funnel_id or "").strip() or "contadores"
         matches = [lead for lead in matches if lead.funnel_id == clean_funnel_id]
