@@ -125,11 +125,33 @@ def log_dispatch_activity(logger: logging.Logger, results: list[Any], state: Bot
 def log_whatsapp_inbound_activity(logger: logging.Logger, result: dict[str, Any]) -> None:
     """Log one inbound WhatsApp outcome in plain language."""
     status = str(result.get("status", "")).strip().lower()
+    referral = result.get("referral") if isinstance(result.get("referral"), dict) else {}
     if status == "processed":
+        if referral:
+            logger.info(
+                "📥 Saved a WhatsApp reply to the conversation (route=%s phone=%s referral_source_id=%s ctwa_clid=%s).",
+                result.get("route") or "-",
+                result.get("phone") or "-",
+                referral.get("source_id") or "-",
+                referral.get("ctwa_clid") or "-",
+            )
+            return
         logger.info("📥 Saved a WhatsApp reply to the conversation.")
         return
     if status == "ignored":
-        logger.warning("⚠️ Ignored a WhatsApp reply because no matching contact was found.")
+        logger.warning(
+            "⚠️ Ignored a WhatsApp reply (reason=%s route=%s phone=%s external_id=%s in_reply_to=%s "
+            "referral_source_type=%s referral_source_id=%s ctwa_clid=%s headline=%r).",
+            result.get("reason") or "unknown",
+            result.get("route") or "-",
+            result.get("phone") or "-",
+            result.get("external_id") or "-",
+            result.get("in_reply_to") or "-",
+            referral.get("source_type") or "-",
+            referral.get("source_id") or "-",
+            referral.get("ctwa_clid") or "-",
+            referral.get("headline") or "",
+        )
         return
     logger.info("📥 Processed a WhatsApp webhook update.")
 

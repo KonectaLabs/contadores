@@ -567,6 +567,9 @@ async def process_whatsapp_inbound_event(
     result = await process_contadores_whatsapp_inbound_event(client, event=event)
     result["phone"] = event.phone
     result["in_reply_to"] = event.in_reply_to
+    result["external_id"] = event.external_id
+    if event.referral:
+        result["referral"] = event.referral.model_dump(exclude_none=True)
     return result
 
 
