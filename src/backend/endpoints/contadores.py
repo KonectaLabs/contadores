@@ -18,6 +18,7 @@ from sqlmodel import Session, select
 from backend.ai.contadores_post_loom_classifier import PostLoomReplyClassifierProgram
 from backend.contadores_strategies import (
     LOOM_STEP,
+    choose_contadores_strategy as choose_default_contadores_strategy,
     choose_funnel_strategy,
     get_contadores_strategy_weight,
     list_funnel_strategies,
@@ -37,6 +38,7 @@ from backend.database import (
 )
 from backend.funnel_config import get_contadores_funnel
 from backend.funnel_config import get_file_backed_funnel, get_funnel, upsert_funnel
+from backend.funnel_config import list_funnels_by_whatsapp_referral_source_id
 
 contadores_router = APIRouter(prefix="/api/contadores", tags=["contadores"])
 
@@ -148,6 +150,22 @@ def build_funnel_strategy_weights(funnel) -> dict[str, dict[str, int]]:
     for strategy in funnel.strategies:
         weights.setdefault(strategy.step, {})[strategy.id] = strategy.weight
     return weights
+
+
+def choose_contadores_strategy(
+    *,
+    step: str,
+    lead_id: str,
+    strategy_id: str | None = None,
+    strategy_weights: dict[str, dict[str, int]] | None = None,
+):
+    """Compatibility wrapper for Contadores strategy selection."""
+    return choose_default_contadores_strategy(
+        step=step,
+        lead_id=lead_id,
+        strategy_id=strategy_id,
+        strategy_weights=strategy_weights,
+    )
 
 
 def apply_funnel_to_config(config: ContadoresConfig, funnel) -> ContadoresConfig:
@@ -716,13 +734,21 @@ def send_loom_sequence(
 ) -> list[ContadoresMessage]:
     """Queue the selected Loom/video strategy."""
     funnel = resolve_funnel(lead.funnel_id)
-    strategy = choose_funnel_strategy(
-        funnel=funnel,
-        step=LOOM_STEP,
-        lead_id=lead.id,
-        strategy_id=strategy_id,
-        strategy_weights=config.strategy_weights,
-    )
+    if funnel.id == "contadores":
+        strategy = choose_contadores_strategy(
+            step=LOOM_STEP,
+            lead_id=lead.id,
+            strategy_id=strategy_id,
+            strategy_weights=config.strategy_weights,
+        )
+    else:
+        strategy = choose_funnel_strategy(
+            funnel=funnel,
+            step=LOOM_STEP,
+            lead_id=lead.id,
+            strategy_id=strategy_id,
+            strategy_weights=config.strategy_weights,
+        )
     assignment = ContadoresStrategyAssignment.add(
         lead_id=lead.id,
         step=strategy.step,
@@ -774,6 +800,22 @@ def send_manual_ping_template(*, lead: ContadoresLead) -> list[ContadoresMessage
         sequence_step=MANUAL_PING_SEQUENCE_STEP,
     )
     return [row]
+
+
+def send_manual_ping_and_mark_booked(*, lead: ContadoresLead) -> list[ContadoresMessage]:
+    """Queue the manual ping template and mark the lead as booked."""
+    if not resolve_funnel(lead.funnel_id).manual_ping_template_name:
+        raise HTTPException(status_code=400, detail="Manual ping template is not configured")
+
+    queued_rows = send_manual_ping_template(lead=lead)
+    ContadoresLead.update_flow_state(
+        lead.id,
+        stage=ContadoresLeadStage.BOOKED,
+        booked_at=now_utc(),
+        automation_paused=True,
+        automation_paused_reason="manual_booked",
+    )
+    return queued_rows
 
 
 def send_video_check(*, lead: ContadoresLead) -> list[ContadoresMessage]:
@@ -915,6 +957,8 @@ def run_quick_action_for_lead(
         if not resolve_funnel(lead.funnel_id).manual_ping_template_name:
             raise HTTPException(status_code=400, detail="Manual ping template is not configured")
         queued_rows = send_manual_ping_template(lead=lead)
+    elif normalized_action == "send-manual-booked":
+        queued_rows = send_manual_ping_and_mark_booked(lead=lead)
     elif normalized_action == "send-loom":
         queued_rows = send_loom_sequence(lead=lead, config=config, assigned_by="operator")
     elif normalized_action == "send-video-check":
@@ -1014,10 +1058,17 @@ def list_contadores_matches_by_replied_message(in_reply_to: str | None) -> tuple
     return matches, len(matches) > 1
 
 
-def list_contadores_matches_by_phone(phone: str) -> tuple[list[ContadoresLead], bool]:
+def list_contadores_matches_by_phone(
+    phone: str,
+    *,
+    funnel_id: str | None = None,
+) -> tuple[list[ContadoresLead], bool]:
     """Resolve Contadores leads from normalized phone."""
     normalized_phone = normalize_phone(phone)
     matches = ContadoresLead.list_by_normalized_phone(normalized_phone, include_archived=False)
+    if funnel_id is not None:
+        clean_funnel_id = (funnel_id or "").strip() or "contadores"
+        matches = [lead for lead in matches if lead.funnel_id == clean_funnel_id]
     return matches, len(matches) > 1
 
 
@@ -1327,6 +1378,16 @@ class UpdateContadoresMessageCommand(BaseModel):
     text: str = Field(min_length=1)
 
 
+class WhatsAppReferralContext(BaseModel):
+    """Click-to-WhatsApp referral metadata forwarded by the bot."""
+
+    source_type: str | None = None
+    source_id: str | None = None
+    headline: str | None = None
+    body: str | None = None
+    ctwa_clid: str | None = None
+
+
 class ContadoresWhatsAppInboundCommand(BaseModel):
     """Raw inbound WhatsApp event delivered by the bot."""
 
@@ -1334,6 +1395,7 @@ class ContadoresWhatsAppInboundCommand(BaseModel):
     text: str = Field(min_length=1)
     external_id: str | None = None
     in_reply_to: str | None = None
+    referral: WhatsAppReferralContext | None = None
     media_type: str | None = None
     media_path: str | None = None
     media_caption: str | None = None
@@ -1353,6 +1415,95 @@ class ContadoresWhatsAppInboundResponse(BaseModel):
     contact_id: str | None = None
     task_id: str | None = None
     reason: str | None = None
+
+
+def serialize_whatsapp_referral(referral: WhatsAppReferralContext | None) -> dict[str, str]:
+    """Return a compact event payload for Meta CTWA referral metadata."""
+    if referral is None:
+        return {}
+    return {
+        key: str(value).strip()
+        for key, value in referral.model_dump().items()
+        if str(value or "").strip()
+    }
+
+
+def get_referral_source_id(referral: WhatsAppReferralContext | None) -> str:
+    """Return the configured source id from a CTWA referral."""
+    return str(getattr(referral, "source_id", "") or "").strip()
+
+
+def build_ctwa_external_lead_id(*, funnel_id: str, phone: str) -> str | None:
+    """Build the stable external id used for Click-to-WhatsApp leads."""
+    normalized_phone = normalize_phone(phone)
+    if not normalized_phone:
+        return None
+    return f"ctwa:{(funnel_id or '').strip() or 'contadores'}:{normalized_phone}"
+
+
+def upsert_ctwa_lead_from_inbound(
+    *,
+    funnel_id: str,
+    command: ContadoresWhatsAppInboundCommand,
+) -> tuple[ContadoresLead, bool]:
+    """Create or refresh one lead that entered through a Click-to-WhatsApp ad."""
+    external_lead_id = build_ctwa_external_lead_id(funnel_id=funnel_id, phone=command.phone)
+    if external_lead_id is None:
+        raise ValueError("phone is invalid")
+
+    existing = ContadoresLead.get_by_external_lead_id(external_lead_id, funnel_id=funnel_id)
+    reset_flow = existing is not None and existing.stage in {
+        ContadoresLeadStage.ARCHIVED,
+        ContadoresLeadStage.BOOKED,
+        ContadoresLeadStage.CLOSED,
+    }
+    lead = ContadoresLead.upsert(
+        funnel_id=funnel_id,
+        external_lead_id=external_lead_id,
+        phone=command.phone,
+        platform="whatsapp_ctwa",
+        lead_status="new",
+        sheet_created_time=now_utc(),
+        reset_flow=reset_flow,
+    )
+    return lead, existing is None
+
+
+def record_whatsapp_inbound_for_lead(
+    *,
+    lead: ContadoresLead,
+    command: ContadoresWhatsAppInboundCommand,
+    event_type: str = "whatsapp_inbound_received",
+    event_summary: str = "Inbound WhatsApp received for Contadores lead.",
+    event_payload: dict[str, Any] | None = None,
+) -> tuple[ContadoresLead, ContadoresMessage]:
+    """Persist one inbound WhatsApp message and its audit event."""
+    row = ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=False,
+        text=command.text,
+        external_id=command.external_id,
+        media_type=command.media_type,
+        media_path=command.media_path,
+        media_caption=command.media_caption,
+        media_mime_type=command.media_mime_type,
+        media_filename=command.media_filename,
+        media_sha256=command.media_sha256,
+        media_id=command.media_id,
+    )
+    payload = {
+        "message_id": row.id,
+        "in_reply_to": command.in_reply_to,
+        **(event_payload or {}),
+    }
+    ContadoresEvent.add(
+        lead_id=lead.id,
+        event_type=event_type,
+        actor="bot",
+        summary=event_summary,
+        payload=payload,
+    )
+    return ContadoresLead.get_by_id(lead.id) or lead, row
 
 
 class ContadoresAutomationTickResponse(BaseModel):
@@ -1895,6 +2046,7 @@ async def register_contadores_whatsapp_inbound(
     command: ContadoresWhatsAppInboundCommand,
 ) -> ContadoresWhatsAppInboundResponse:
     """Route one raw WhatsApp inbound event to a Contadores lead safely."""
+    referral_payload = serialize_whatsapp_referral(command.referral)
     contadores_reply_matches, contadores_reply_ambiguous = list_contadores_matches_by_replied_message(command.in_reply_to)
     if contadores_reply_ambiguous:
         return ContadoresWhatsAppInboundResponse(
@@ -1904,6 +2056,50 @@ async def register_contadores_whatsapp_inbound(
         )
 
     contadores_matches = contadores_reply_matches
+    referral_route_funnel_id: str | None = None
+
+    if not contadores_matches:
+        source_id = get_referral_source_id(command.referral)
+        referral_funnels = list_funnels_by_whatsapp_referral_source_id(source_id)
+        if len(referral_funnels) > 1:
+            return ContadoresWhatsAppInboundResponse(
+                status="ignored",
+                route="ambiguous",
+                reason="ambiguous_referral_source_id",
+            )
+        if referral_funnels:
+            funnel = referral_funnels[0]
+            funnel_matches, funnel_ambiguous = list_contadores_matches_by_phone(command.phone, funnel_id=funnel.id)
+            if funnel_ambiguous:
+                return ContadoresWhatsAppInboundResponse(
+                    status="ignored",
+                    route="ambiguous",
+                    reason="ambiguous_funnel_phone_match",
+                )
+            if funnel_matches:
+                contadores_matches = funnel_matches
+                referral_route_funnel_id = funnel.id
+            else:
+                try:
+                    lead, created = upsert_ctwa_lead_from_inbound(funnel_id=funnel.id, command=command)
+                except ValueError:
+                    return ContadoresWhatsAppInboundResponse(
+                        status="ignored",
+                        route="none",
+                        reason="invalid_phone",
+                    )
+                refreshed_lead, _ = record_whatsapp_inbound_for_lead(
+                    lead=lead,
+                    command=command,
+                    event_type="ctwa_inbound_created" if created else "ctwa_inbound_refreshed",
+                    event_summary="Inbound WhatsApp received from configured Click-to-WhatsApp ad.",
+                    event_payload={"referral": referral_payload, "funnel_id": funnel.id},
+                )
+                return ContadoresWhatsAppInboundResponse(
+                    status="processed",
+                    route=funnel.id,
+                    lead_id=refreshed_lead.id,
+                )
 
     if not contadores_matches:
         contadores_phone_matches, contadores_phone_ambiguous = list_contadores_matches_by_phone(command.phone)
@@ -1917,34 +2113,21 @@ async def register_contadores_whatsapp_inbound(
 
     if contadores_matches:
         lead = contadores_matches[0]
-        row = ContadoresMessage.add(
-            lead_id=lead.id,
-            from_me=False,
-            text=command.text,
-            external_id=command.external_id,
-            media_type=command.media_type,
-            media_path=command.media_path,
-            media_caption=command.media_caption,
-            media_mime_type=command.media_mime_type,
-            media_filename=command.media_filename,
-            media_sha256=command.media_sha256,
-            media_id=command.media_id,
+        inbound_event_payload = {"referral": referral_payload} if referral_payload else None
+        if referral_route_funnel_id is not None:
+            inbound_event_payload = {
+                **(inbound_event_payload or {}),
+                "funnel_id": referral_route_funnel_id,
+            }
+        refreshed_lead, row = record_whatsapp_inbound_for_lead(
+            lead=lead,
+            command=command,
+            event_payload=inbound_event_payload,
         )
-        ContadoresEvent.add(
-            lead_id=lead.id,
-            event_type="whatsapp_inbound_received",
-            actor="bot",
-            summary="Inbound WhatsApp received for Contadores lead.",
-            payload={
-                "message_id": row.id,
-                "in_reply_to": command.in_reply_to,
-            },
-        )
-        refreshed_lead = ContadoresLead.get_by_id(lead.id) or lead
         if derive_effective_lead_stage(refreshed_lead) == ContadoresLeadStage.CLOSED:
             return ContadoresWhatsAppInboundResponse(
                 status="processed",
-                route="contadores",
+                route=refreshed_lead.funnel_id,
                 lead_id=refreshed_lead.id,
             )
         if lead_has_new_inbound_after_calendly(refreshed_lead):
@@ -1967,7 +2150,7 @@ async def register_contadores_whatsapp_inbound(
             )
         return ContadoresWhatsAppInboundResponse(
             status="processed",
-            route="contadores",
+            route=refreshed_lead.funnel_id,
             lead_id=refreshed_lead.id,
         )
 
@@ -2003,7 +2186,11 @@ async def run_contadores_automation_tick(
         if lead.automation_paused:
             continue
 
-        if lead.stage == ContadoresLeadStage.AWAITING_INITIAL_REPLY and lead.opener_sent_at is None:
+        if (
+            lead.stage == ContadoresLeadStage.AWAITING_INITIAL_REPLY
+            and lead.opener_sent_at is None
+            and lead.first_reply_received_at is None
+        ):
             send_opener_sequence(lead=lead)
             opener_sent += 1
             continue

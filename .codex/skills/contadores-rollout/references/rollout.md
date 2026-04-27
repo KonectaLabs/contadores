@@ -12,6 +12,10 @@ Funnel definitions live in `FUNNELS_CONFIG_PATH` or `data/funnels.json`.
 That file is the shared UI/Codex config surface for niche funnels. It is not the
 runtime mode switch.
 
+Click-to-WhatsApp routing uses each funnel's `whatsapp_referral_source_ids`.
+These values are Meta webhook `referral.source_id` values. Do not route by the
+prefilled WhatsApp message text because the user can edit it.
+
 WhatsApp strategy videos should live under the shared `data` volume and be
 referenced by funnel `media_path`. The bot sends the configured file and the
 frontend serves that same file by stable path. Media sent by leads is downloaded

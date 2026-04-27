@@ -9,6 +9,13 @@ Template opener:
 
 `Hola! Buen día, te escribimos desde Konecta Labs por el formulario para contadores sobre cómo conseguir clientes empresariales con pagos mensuales. ¿Es correcto?`
 
+Click-to-WhatsApp exception:
+
+If the first inbound WhatsApp webhook includes `referral.source_id` and that id
+is configured in `whatsapp_referral_source_ids`, do not send the opener. Create
+or reuse the lead with platform `whatsapp_ctwa`, store the inbound message, and
+continue as if the lead already replied to message 1.
+
 ## Message 2
 
 Sent 30 seconds after any reply:
@@ -39,6 +46,9 @@ Template name: `contadores_manual_ping_es_v1`
 
 This ping is for reopening the WhatsApp 24-hour window from the CRM. It must not
 be sent by automation ticks and must not replace the 24-hour opener follow-up.
+
+The CRM also has an operator-only `send-manual-booked` action. It sends this
+same template and marks the lead as `booked`.
 
 ## Calendly handoff
 

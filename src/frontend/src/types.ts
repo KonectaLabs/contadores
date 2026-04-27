@@ -64,6 +64,7 @@ export interface FunnelDefinition {
   calendly_intro_text: string;
   calendly_base_url: string;
   alert_emails: string[];
+  whatsapp_referral_source_ids: string[];
   initial_reply_quiet_seconds: number;
   post_loom_min_seconds: number;
   post_loom_quiet_seconds: number;

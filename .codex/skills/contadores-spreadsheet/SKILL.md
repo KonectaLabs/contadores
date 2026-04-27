@@ -7,7 +7,9 @@ description: Use when working with the Contadores Google Sheet that stores leads
 
 Use this skill when the task touches the Google Sheet used by the `contadores` project.
 
-This sheet is the operational source of truth for lead intake.
+This sheet is the operational source of truth for Meta lead-form intake.
+Click-to-WhatsApp intake can bypass the sheet: the webhook `referral.source_id`
+is matched against the funnel config and creates/reuses a `whatsapp_ctwa` lead.
 
 Contadores is now one funnel in a multi-funnel platform. The built-in
 Contadores sheet settings can still come from `CONTADORES_SHEET_URL` and
@@ -25,6 +27,7 @@ The runtime rule is now explicit:
 - It is the simplest shared state for the workflow.
 - It can drive a poller that checks for new leads every 30 seconds.
 - In this repo, the immediate need is read access for lead ingestion and testing the WhatsApp flow safely.
+- It is not required for Click-to-WhatsApp ads configured through `whatsapp_referral_source_ids`.
 
 Read [references/spreadsheet.md](references/spreadsheet.md) when you need the exact columns, meanings, or the proposed operational fields.
 

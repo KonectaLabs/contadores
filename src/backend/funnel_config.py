@@ -67,6 +67,11 @@ def _read_list(name: str) -> list[str]:
     return [item.strip() for item in raw_value.split(",") if item.strip()]
 
 
+def normalize_whatsapp_referral_source_id(value: str | None) -> str:
+    """Normalize one Meta Click-to-WhatsApp source id."""
+    return (value or "").strip()
+
+
 def get_funnels_config_path() -> Path:
     """Return the file used by the UI and Codex to edit funnels."""
     raw_path = (os.getenv("FUNNELS_CONFIG_PATH", "") or "").strip()
@@ -131,6 +136,7 @@ class FunnelDefinition(BaseModel):
     calendly_intro_text: str
     calendly_base_url: str
     alert_emails: list[str] = Field(default_factory=list)
+    whatsapp_referral_source_ids: list[str] = Field(default_factory=list)
     initial_reply_quiet_seconds: int = Field(default=30, ge=1)
     post_loom_min_seconds: int = Field(default=600, ge=60)
     post_loom_quiet_seconds: int = Field(default=30, ge=1)
@@ -189,6 +195,20 @@ class FunnelDefinition(BaseModel):
             normalized.append(email)
         return normalized
 
+    @field_validator("whatsapp_referral_source_ids")
+    @classmethod
+    def normalize_whatsapp_referral_source_ids(cls, values: list[str]) -> list[str]:
+        """Keep one clean list of CTWA ad/post source ids."""
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            source_id = normalize_whatsapp_referral_source_id(str(value))
+            if not source_id or source_id in seen:
+                continue
+            seen.add(source_id)
+            normalized.append(source_id)
+        return normalized
+
 
 class FunnelListResponse(BaseModel):
     """Response payload for funnel definitions."""
@@ -237,6 +257,7 @@ def build_default_contadores_funnel() -> FunnelDefinition:
             or DEFAULT_CONTADORES_CALENDLY_URL
         ).strip(),
         alert_emails=_read_list("CONTADORES_ALERT_EMAILS"),
+        whatsapp_referral_source_ids=_read_list("CONTADORES_WHATSAPP_REFERRAL_SOURCE_IDS"),
         initial_reply_quiet_seconds=_read_int("CONTADORES_INITIAL_REPLY_QUIET_SECONDS", default=30),
         post_loom_min_seconds=_read_int("CONTADORES_POST_LOOM_MIN_SECONDS", default=600, minimum=60),
         post_loom_quiet_seconds=_read_int("CONTADORES_POST_LOOM_QUIET_SECONDS", default=30),
@@ -312,6 +333,18 @@ def get_funnel(funnel_id: str = CONTADORES_FUNNEL_ID) -> FunnelDefinition | None
         if funnel.id == clean_id:
             return funnel
     return None
+
+
+def list_funnels_by_whatsapp_referral_source_id(source_id: str | None) -> list[FunnelDefinition]:
+    """Return funnels configured for one Click-to-WhatsApp ad/post source id."""
+    clean_source_id = normalize_whatsapp_referral_source_id(source_id)
+    if not clean_source_id:
+        return []
+    return [
+        funnel
+        for funnel in list_funnels()
+        if clean_source_id in funnel.whatsapp_referral_source_ids
+    ]
 
 
 def get_file_backed_funnel(funnel_id: str = CONTADORES_FUNNEL_ID) -> FunnelDefinition | None:

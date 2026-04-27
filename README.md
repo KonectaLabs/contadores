@@ -41,6 +41,7 @@ Cada funnel contiene:
 - opener/template inicial;
 - follow-up template;
 - ping template manual para reabrir la ventana de WhatsApp;
+- IDs de anuncios Click-to-WhatsApp (`whatsapp_referral_source_ids`);
 - texto del video;
 - estrategia `loom_link` o `loom_mp4`;
 - Calendly;
@@ -151,6 +152,14 @@ Template manual de ping:
 - Nombre default: `contadores_manual_ping_es_v1`.
 - Texto default: `Hola, queria saber en que situacion quedamos y si queres que retomemos la conversacion`.
 - Se envia solo desde la accion manual del backoffice; no participa del tick automatico ni del follow-up de 24 horas.
+- La accion `Manual ping + booked` envia ese mismo template y marca el lead como `booked`.
+
+Entrada Click-to-WhatsApp:
+
+- Cada funnel puede declarar `whatsapp_referral_source_ids` en `data/funnels.json` o, para el default Contadores, `CONTADORES_WHATSAPP_REFERRAL_SOURCE_IDS`.
+- Cuando Meta envia un webhook con `referral.source_id` configurado, el backend crea o reutiliza un lead `whatsapp_ctwa`.
+- Ese lead queda como si ya hubiese respondido al opener: no se encola el template inicial y el tick automatico pasa al Loom despues de `initial_reply_quiet_seconds`.
+- No se usa el texto prellenado del anuncio para rutear porque el usuario puede editarlo antes de enviarlo.
 
 Acciones manuales de Calendly:
 

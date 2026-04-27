@@ -14,7 +14,8 @@ override the built-in Contadores definition.
 
 ## Current sequence
 
-1. Send opener as a WhatsApp template.
+1. Send opener as a WhatsApp template for sheet/testing leads.
+   - Click-to-WhatsApp leads whose `referral.source_id` matches the funnel config skip this step because their first inbound message is already the reply.
 2. Wait for any reply.
 3. Wait 30 seconds of silence.
 4. Send the Loom intro text.
@@ -40,6 +41,10 @@ This is not part of the automatic sequence and is not the 24-hour opener
 follow-up. It is only queued by a manual operator action and pauses automation
 for that lead.
 
+The `send-manual-booked` backoffice action sends the same manual ping template
+and immediately marks the lead as `booked`. It is still operator-only and must
+not be added to automation ticks.
+
 ## Manual Calendly actions
 
 Operators have two backoffice actions:
@@ -58,5 +63,7 @@ Automation must keep using the full Calendly text + URL sequence.
 - Strategy rollout weights live in Contadores config as `strategy_weights` and can be seeded with `CONTADORES_STRATEGY_WEIGHTS_JSON`.
 - Funnel definitions live in `FUNNELS_CONFIG_PATH` or `data/funnels.json`.
   The UI and Codex edit the same file.
+- Click-to-WhatsApp ad IDs live in each funnel as `whatsapp_referral_source_ids`.
+  The default Contadores funnel can also be seeded with `CONTADORES_WHATSAPP_REFERRAL_SOURCE_IDS`.
 
 Read [references/sequence.md](references/sequence.md) for the exact messages and timing.

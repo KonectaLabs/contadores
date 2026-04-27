@@ -31,6 +31,7 @@ Each funnel needs:
 - `calendly_intro_text`;
 - `calendly_base_url`;
 - `alert_emails`;
+- `whatsapp_referral_source_ids`: Meta Click-to-WhatsApp `referral.source_id` values that should create/reuse leads in this funnel;
 - wait windows:
   - `initial_reply_quiet_seconds`;
   - `post_loom_min_seconds`;
@@ -54,6 +55,8 @@ Keep backwards compatibility with Contadores env names:
 - `CONTADORES_SHEET_GID`
 
 For new funnels, prefer explicit funnel config. Env can seed defaults, but the app should read configured funnel definitions at runtime.
+
+Click-to-WhatsApp ads must route by webhook referral metadata, not by the editable prefilled user message. Put each ad/post `referral.source_id` into the target funnel's `whatsapp_referral_source_ids`. The default Contadores funnel can also read `CONTADORES_WHATSAPP_REFERRAL_SOURCE_IDS`.
 
 ## Testing/Live Rule
 

@@ -151,6 +151,35 @@ def test_build_inbound_event_from_message_replied_context() -> None:
     assert event.in_reply_to == "wamid.outbound.9"
 
 
+def test_build_inbound_event_from_message_referral_context() -> None:
+    provider = build_provider()
+    msg = SimpleNamespace(
+        from_me=False,
+        text="Hola",
+        caption=None,
+        reaction=None,
+        from_user=SimpleNamespace(wa_id="5491122233344"),
+        id="wamid.ctwa.1",
+        reply_to_message=None,
+        referral=SimpleNamespace(
+            source_type="ad",
+            source_id="120244283740930010",
+            headline="Clientes potenciales",
+            body="Quiero saber mas",
+            ctwa_clid="clid-123",
+        ),
+        type=SimpleNamespace(value="text"),
+    )
+
+    event = provider._build_inbound_event_from_message(msg)
+
+    assert event is not None
+    assert event.referral is not None
+    assert event.referral.source_type == "ad"
+    assert event.referral.source_id == "120244283740930010"
+    assert event.referral.ctwa_clid == "clid-123"
+
+
 def test_build_inbound_event_from_callback_replied_context() -> None:
     provider = build_provider()
     btn = SimpleNamespace(

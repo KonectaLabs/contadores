@@ -21,14 +21,15 @@ dejar claro que falta configuración.
 
 ## Reglas del flujo
 
-1. Enviar el mensaje 1.
+1. Enviar el mensaje 1 para leads de sheet/testing.
 2. Cualquier respuesta entrante al mensaje 1 dispara la secuencia.
-3. Esperar `30` segundos.
-4. Enviar el mensaje 2.
-5. Enviar enseguida el mensaje 3.
-6. Esperar `3` minutos.
-7. Enviar el mensaje 4.
-8. Enviar enseguida el mensaje 5.
+3. Si el primer inbound viene de un anuncio Click-to-WhatsApp con `referral.source_id` configurado, crear/reusar el lead y saltear el mensaje 1.
+4. Esperar `30` segundos.
+5. Enviar el mensaje 2.
+6. Enviar enseguida el mensaje 3.
+7. Esperar `3` minutos.
+8. Enviar el mensaje 4.
+9. Enviar enseguida el mensaje 5.
 
 ## Reglas de contenido
 
@@ -88,6 +89,10 @@ Enviar inmediatamente después del mensaje 4.
 
 - Leer los links desde la capa de configuración.
 - Guardar la secuencia como cinco mensajes separados.
+- Para Click-to-WhatsApp, rutear por `referral.source_id` contra `whatsapp_referral_source_ids`, no por el texto editable que envia el usuario.
+- El ping manual `contadores_manual_ping_es_v1` es solo una accion del CRM.
+- La accion CRM `send-manual-booked` envia ese ping manual y marca el lead como
+  `booked`; no debe ejecutarse desde ticks automaticos.
 - Modelar los delays como `30 s` y `3 min`, no aproximarlos en texto libre.
 - Si más adelante cambia el copy, mantener esta skill como fuente canónica del orden
   y de la separación entre texto y URL.

@@ -199,6 +199,16 @@ class EmailInboxState(BaseModel):
     inbox_address: str
 
 
+class WhatsAppReferralContext(BaseModel):
+    """Click-to-WhatsApp referral metadata attached by Meta."""
+
+    source_type: str | None = None
+    source_id: str | None = None
+    headline: str | None = None
+    body: str | None = None
+    ctwa_clid: str | None = None
+
+
 class WhatsAppInboundEvent(BaseModel):
     """One inbound WhatsApp event from webhook."""
 
@@ -206,6 +216,7 @@ class WhatsAppInboundEvent(BaseModel):
     text: str
     external_id: str | None = None
     in_reply_to: str | None = None
+    referral: WhatsAppReferralContext | None = None
     media_type: str | None = None
     media_path: str | None = None
     media_caption: str | None = None
@@ -1315,6 +1326,7 @@ class WhatsAppProvider:
         text: str,
         external_id: str | None,
         in_reply_to: str | None = None,
+        referral: WhatsAppReferralContext | None = None,
         media_type: str | None = None,
         media_path: str | None = None,
         media_caption: str | None = None,
@@ -1335,6 +1347,7 @@ class WhatsAppProvider:
             text=clean_text,
             external_id=clean_external_id,
             in_reply_to=clean_in_reply_to,
+            referral=referral,
             media_type=(media_type or "").strip() or None,
             media_path=(media_path or "").strip() or None,
             media_caption=(media_caption or "").strip() or None,
@@ -1402,6 +1415,23 @@ class WhatsAppProvider:
             return reaction_id
         return None
 
+    def _extract_message_referral(self, msg: types.Message) -> WhatsAppReferralContext | None:
+        """Extract Click-to-WhatsApp ad referral context when Meta provides it."""
+        referral = getattr(msg, "referral", None)
+        if referral is None:
+            return None
+
+        context = WhatsAppReferralContext(
+            source_type=str(getattr(referral, "source_type", "") or "").strip() or None,
+            source_id=str(getattr(referral, "source_id", "") or "").strip() or None,
+            headline=str(getattr(referral, "headline", "") or "").strip() or None,
+            body=str(getattr(referral, "body", "") or "").strip() or None,
+            ctwa_clid=str(getattr(referral, "ctwa_clid", "") or "").strip() or None,
+        )
+        if not any(context.model_dump().values()):
+            return None
+        return context
+
     def _extract_callback_in_reply_to_message_id(
         self,
         callback_update: types.CallbackButton | types.CallbackSelection,
@@ -1430,6 +1460,7 @@ class WhatsAppProvider:
             text=self._extract_message_text(msg),
             external_id=str(getattr(msg, "id", "") or "").strip() or None,
             in_reply_to=self._extract_in_reply_to_message_id(msg),
+            referral=self._extract_message_referral(msg),
             media_type=media_type,
             media_caption=str(getattr(msg, "caption", "") or "").strip() or None,
             media_mime_type=str(getattr(media, "mime_type", "") or "").strip() if media is not None else None,

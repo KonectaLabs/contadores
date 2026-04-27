@@ -21,6 +21,7 @@ def test_funnels_endpoint_exposes_default_contadores(monkeypatch, tmp_path) -> N
     assert payload["funnels"][0]["sheet_poll_seconds"] == 30
     assert payload["funnels"][0]["opener_template_name"] == "contadores_intro_es_v2"
     assert payload["funnels"][0]["manual_ping_template_name"] == "contadores_manual_ping_es_v1"
+    assert payload["funnels"][0]["whatsapp_referral_source_ids"] == []
     assert payload["funnels"][0]["manual_ping_text"] == (
         "Hola, queria saber en que situacion quedamos y si queres que retomemos la conversacion"
     )
@@ -53,6 +54,7 @@ def test_funnels_endpoint_persists_new_niche(monkeypatch, tmp_path) -> None:
         "calendly_intro_text": "Para avanzar, elegi un horario:",
         "calendly_base_url": "https://calendly.com/konecta/abogados",
         "alert_emails": ["facu@example.com"],
+        "whatsapp_referral_source_ids": ["120244283740930010"],
         "initial_reply_quiet_seconds": 30,
         "post_loom_min_seconds": 600,
         "post_loom_quiet_seconds": 30,
@@ -82,3 +84,5 @@ def test_funnels_endpoint_persists_new_niche(monkeypatch, tmp_path) -> None:
     assert list_response.status_code == 200
     ids = [item["id"] for item in list_response.json()["funnels"]]
     assert ids == ["contadores", "abogados"]
+    abogados = list_response.json()["funnels"][1]
+    assert abogados["whatsapp_referral_source_ids"] == ["120244283740930010"]

@@ -543,6 +543,7 @@ async def process_contadores_whatsapp_inbound_event(
             "text": event.text,
             "external_id": event.external_id,
             "in_reply_to": event.in_reply_to,
+            "referral": event.referral.model_dump(exclude_none=True) if event.referral else None,
             "media_type": event.media_type,
             "media_path": event.media_path,
             "media_caption": event.media_caption,

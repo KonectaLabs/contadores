@@ -5,7 +5,6 @@ import type {
   BulkActionResponse,
   ContadoresConfig,
   ContadoresMetrics,
-  EventItem,
   FunnelDefinition,
   FunnelListResponse,
   LeadDetailResponse,
@@ -39,6 +38,7 @@ const stageFilters: Array<{
 const sendOptions = [
   { value: "custom", title: "Custom message", help: "Write your own WhatsApp reply." },
   { value: "send-manual-ping", title: "Manual ping", help: "Send the approved ping template to reopen WhatsApp." },
+  { value: "send-manual-booked", title: "Manual ping + booked", help: "Send the manual ping template and move the lead to Booked." },
   { value: "send-opener", title: "Opener", help: "Queue the default opener template." },
   { value: "send-loom", title: "Loom sequence", help: "Queue the Loom video introduction messages." },
   { value: "send-video-check", title: "Video check", help: "Ask if they watched the Loom." },
@@ -47,7 +47,7 @@ const sendOptions = [
 ] as const;
 
 type ManualReplyFilter = "" | "needs_reply" | "answered";
-type DetailTab = "messages" | "events" | "strategies";
+type DetailTab = "messages" | "strategies";
 type SendKind = (typeof sendOptions)[number]["value"];
 type BulkSendKind = SendKind;
 type StrategyWeights = Record<string, Record<string, number>>;
@@ -62,6 +62,7 @@ type TemplateChoice = {
 type QuickActionName =
   | "send-opener"
   | "send-manual-ping"
+  | "send-manual-booked"
   | "send-loom"
   | "send-video-check"
   | "send-calendly"
@@ -637,6 +638,7 @@ export function App() {
                 setSendKind("custom");
                 setShowSendModal(true);
               }}
+              onManualBooked={() => runAction("send-manual-booked")}
               onMarkAnswered={() => runAction("mark-answered")}
               onToggleClosed={() => runAction(selectedLead?.stage === "closed" ? "reopen" : "close")}
               onDelete={deleteLead}
@@ -645,7 +647,7 @@ export function App() {
             <PausedBanner lead={selectedLead} actionBusy={actionBusy} onResume={resumeAutomation} />
 
             <div className="ct-tabs" role="tablist" aria-label="Lead detail sections">
-              {(["messages", "events", "strategies"] as DetailTab[]).map((tab) => (
+              {(["messages", "strategies"] as DetailTab[]).map((tab) => (
                 <button
                   key={tab}
                   type="button"
@@ -662,10 +664,6 @@ export function App() {
             <div className="ct-panes">
               <section className={`ct-pane ${activeTab === "messages" ? "active" : ""}`}>
                 <MessageTimeline messages={detail?.messages ?? []} loading={detailLoading} hasLead={Boolean(selectedLead)} />
-              </section>
-
-              <section className={`ct-pane ${activeTab === "events" ? "active" : ""}`}>
-                <EventTimeline events={detail?.events ?? []} loading={detailLoading} hasLead={Boolean(selectedLead)} />
               </section>
 
               <section className={`ct-pane ${activeTab === "strategies" ? "active" : ""}`}>
@@ -796,12 +794,12 @@ function FunnelSetupView({
         <h3>Sequence copy</h3>
         <div className="ct-copy-row">
           <span>Opener template</span>
-          <p>{funnel.opener_template_name || "No template"}</p>
+          {funnel.opener_template_name ? <code>{funnel.opener_template_name}</code> : null}
           <blockquote>{funnel.opener_text}</blockquote>
         </div>
         <div className="ct-copy-row">
           <span>Manual ping template</span>
-          <p>{funnel.manual_ping_template_name || "No template"}</p>
+          {funnel.manual_ping_template_name ? <code>{funnel.manual_ping_template_name}</code> : null}
           <blockquote>{funnel.manual_ping_text}</blockquote>
         </div>
         <div className="ct-copy-row">
@@ -834,6 +832,7 @@ function FunnelEditorDrawer({
 }) {
   const [draft, setDraft] = useState<FunnelDefinition>(() => funnel ?? buildBlankFunnel());
   const videoStrategy = draft.strategies.find((strategy) => strategy.delivery === "video") ?? draft.strategies[1];
+  const templateChoices = buildTemplateChoices(draft);
 
   function update<K extends keyof FunnelDefinition>(key: K, value: FunnelDefinition[K]) {
     setDraft((current) => ({ ...current, [key]: value }));
@@ -858,6 +857,15 @@ function FunnelEditorDrawer({
     }));
   }
 
+  function updateTemplateChoice(nameKey: TemplateNameField, textKey: TemplateTextField, templateId: string) {
+    const selected = templateChoices.find((choice) => choice.templateId === templateId);
+    setDraft((current) => ({
+      ...current,
+      [nameKey]: templateId || null,
+      [textKey]: selected?.text ?? current[textKey],
+    }));
+  }
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await onSave({
@@ -871,6 +879,7 @@ function FunnelEditorDrawer({
       opener_followup_template_name: draft.opener_followup_template_name?.trim() || null,
       manual_ping_template_name: draft.manual_ping_template_name?.trim() || null,
       manual_ping_text: draft.manual_ping_text.trim(),
+      whatsapp_referral_source_ids: draft.whatsapp_referral_source_ids.map((item) => item.trim()).filter(Boolean),
     });
   }
 
@@ -948,28 +957,37 @@ function FunnelEditorDrawer({
             </label>
           </div>
 
-          <label className="ct-field">
-            <span>Opener Template</span>
-            <input value={draft.opener_template_name ?? ""} onChange={(event) => update("opener_template_name", event.target.value || null)} />
-          </label>
+          <TemplateSelectField
+            label="Opener Template"
+            value={draft.opener_template_name ?? ""}
+            text={draft.opener_text}
+            choices={templateChoices}
+            onChange={(value) => updateTemplateChoice("opener_template_name", "opener_text", value)}
+          />
           <label className="ct-field">
             <span>Opener Text</span>
             <textarea value={draft.opener_text} onChange={(event) => update("opener_text", event.target.value)} rows={3} />
           </label>
 
-          <label className="ct-field">
-            <span>Follow-up Template</span>
-            <input value={draft.opener_followup_template_name ?? ""} onChange={(event) => update("opener_followup_template_name", event.target.value || null)} />
-          </label>
+          <TemplateSelectField
+            label="Follow-up Template"
+            value={draft.opener_followup_template_name ?? ""}
+            text={draft.opener_followup_text}
+            choices={templateChoices}
+            onChange={(value) => updateTemplateChoice("opener_followup_template_name", "opener_followup_text", value)}
+          />
           <label className="ct-field">
             <span>Follow-up Text</span>
             <textarea value={draft.opener_followup_text} onChange={(event) => update("opener_followup_text", event.target.value)} rows={3} />
           </label>
 
-          <label className="ct-field">
-            <span>Manual Ping Template</span>
-            <input value={draft.manual_ping_template_name ?? ""} onChange={(event) => update("manual_ping_template_name", event.target.value || null)} />
-          </label>
+          <TemplateSelectField
+            label="Manual Ping Template"
+            value={draft.manual_ping_template_name ?? ""}
+            text={draft.manual_ping_text}
+            choices={templateChoices}
+            onChange={(value) => updateTemplateChoice("manual_ping_template_name", "manual_ping_text", value)}
+          />
           <label className="ct-field">
             <span>Manual Ping Text</span>
             <textarea value={draft.manual_ping_text} onChange={(event) => update("manual_ping_text", event.target.value)} rows={3} />
@@ -1017,6 +1035,10 @@ function FunnelEditorDrawer({
             <span>Alert Emails</span>
             <input value={draft.alert_emails.join(", ")} onChange={(event) => update("alert_emails", event.target.value.split(",").map((item) => item.trim()))} />
           </label>
+          <label className="ct-field">
+            <span>WhatsApp Ad Source IDs</span>
+            <input value={draft.whatsapp_referral_source_ids.join(", ")} onChange={(event) => update("whatsapp_referral_source_ids", event.target.value.split(",").map((item) => item.trim()))} />
+          </label>
         </div>
 
         <footer className="ct-drawer-foot">
@@ -1025,6 +1047,42 @@ function FunnelEditorDrawer({
         </footer>
       </form>
     </aside>
+  );
+}
+
+function TemplateSelectField({
+  label,
+  value,
+  text,
+  choices,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  text: string;
+  choices: TemplateChoice[];
+  onChange: (value: string) => void;
+}) {
+  const selected = choices.find((choice) => choice.templateId === value);
+  const selectedText = selected?.text || text;
+
+  return (
+    <label className="ct-field ct-template-field">
+      <span>{label}</span>
+      <select value={value} onChange={(event) => onChange(event.target.value)}>
+        <option value="">No template</option>
+        {choices.map((choice) => (
+          <option value={choice.templateId} key={choice.templateId}>
+            {choice.label}: {truncateForOption(choice.text)}
+          </option>
+        ))}
+      </select>
+      <div className="ct-template-preview">
+        <span>Contenido seleccionado</span>
+        <blockquote>{selectedText || "Sin contenido para este template."}</blockquote>
+        {value ? <code>{value}</code> : null}
+      </div>
+    </label>
   );
 }
 
@@ -1103,6 +1161,7 @@ function LeadDetailHeader({
   lead,
   actionBusy,
   onOpenSend,
+  onManualBooked,
   onMarkAnswered,
   onToggleClosed,
   onDelete,
@@ -1110,11 +1169,13 @@ function LeadDetailHeader({
   lead: LeadSummary | null;
   actionBusy: string | null;
   onOpenSend: () => void;
+  onManualBooked: () => void;
   onMarkAnswered: () => void;
   onToggleClosed: () => void;
   onDelete: () => void;
 }) {
   const closed = lead?.stage === "closed";
+  const booked = lead?.stage === "booked";
   const canMarkAnswered = lead?.manual_reply_status === "needs_reply" && !closed;
 
   return (
@@ -1125,12 +1186,13 @@ function LeadDetailHeader({
           <p className="ct-detail-kicker">{lead ? formatStageLabel(lead.stage) : "Select a lead"}</p>
           <h3>{lead?.full_name || lead?.phone || "No lead selected"}</h3>
           <p className="ct-detail-meta">
-            {lead ? [lead.phone || "-", lead.email || "-", lead.platform || "-", lead.external_lead_id || "-"].join(" · ") : "Open a lead to inspect messages, automation events, and manual controls."}
+            {lead ? [lead.phone || "-", lead.email || "-", lead.platform || "-", lead.external_lead_id || "-"].join(" · ") : "Open a lead to inspect messages, strategy history, and manual controls."}
           </p>
         </div>
       </div>
       <div className="ct-detail-head-actions">
         <button type="button" className="ct-btn ct-btn-primary" disabled={!lead || closed || Boolean(actionBusy)} onClick={onOpenSend}>Send message...</button>
+        <button type="button" className="ct-btn ct-btn-ghost" disabled={!lead || closed || booked || Boolean(actionBusy)} onClick={onManualBooked}>Manual + Booked</button>
         {canMarkAnswered ? (
           <button type="button" className="ct-btn ct-btn-ghost" disabled={Boolean(actionBusy)} onClick={onMarkAnswered}>Mark answered</button>
         ) : null}
@@ -1260,32 +1322,6 @@ function MessageMedia({ message }: { message: MessageItem }) {
       <span>{humanize(mediaType || "file")}</span>
       <strong>{filename}</strong>
     </a>
-  );
-}
-
-function EventTimeline({ events, loading, hasLead }: { events: EventItem[]; loading: boolean; hasLead: boolean }) {
-  if (!hasLead) {
-    return <p className="empty-note">Events will appear when you select a lead.</p>;
-  }
-  if (loading && !events.length) {
-    return <p className="empty-note">Loading events...</p>;
-  }
-  if (!events.length) {
-    return <p className="empty-note">No automation events yet.</p>;
-  }
-
-  return (
-    <div className="ct-event-timeline">
-      {events.map((event) => (
-        <article className="ct-event-card" key={event.id}>
-          <div className="ct-event-head">
-            <strong>{humanize(event.event_type || "event")}</strong>
-            <time>{shortDate(event.created_at)}</time>
-          </div>
-          <p>{event.summary || ""}</p>
-        </article>
-      ))}
-    </div>
   );
 }
 
@@ -1601,7 +1637,7 @@ function SendModal({
                 />
                 <div>
                   <strong>{option.title}</strong>
-                  <span>{option.help}</span>
+                  <span>{sendOptionPreview(option.value, funnel) || option.help}</span>
                 </div>
               </label>
             ))}
@@ -1734,6 +1770,7 @@ function buildBlankFunnel(): FunnelDefinition {
     calendly_intro_text: "Para avanzar, el siguiente paso es elegir un horario en el calendario:",
     calendly_base_url: "https://calendly.com",
     alert_emails: [],
+    whatsapp_referral_source_ids: [],
     initial_reply_quiet_seconds: 30,
     post_loom_min_seconds: 600,
     post_loom_quiet_seconds: 30,
@@ -1810,6 +1847,7 @@ function sendOptionPreview(kind: SendKind, funnel: FunnelDefinition | null): str
   }
   const previews: Partial<Record<SendKind, string>> = {
     "send-manual-ping": funnel.manual_ping_text,
+    "send-manual-booked": funnel.manual_ping_text,
     "send-opener": funnel.opener_text,
     "send-loom": funnel.loom_intro_text,
     "send-video-check": funnel.video_check_text,

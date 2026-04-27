@@ -15,6 +15,8 @@ For new niche funnels, spreadsheet config belongs in the funnel definition file:
 - per-funnel fields: `sheet_url`, `sheet_gid`, `sheet_source_filter`
 
 The current Contadores env vars remain backwards-compatible defaults.
+Click-to-WhatsApp ads do not need a sheet row. They use the WhatsApp webhook
+`referral.source_id` and the funnel field `whatsapp_referral_source_ids`.
 
 ## What The Spreadsheet Represents
 

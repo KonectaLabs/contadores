@@ -28,6 +28,7 @@ def now_utc() -> datetime:
 
 def configure_contadores_db(monkeypatch, tmp_path) -> None:
     """Point database and Contadores router state at a temporary SQLite file."""
+    monkeypatch.setenv("FUNNELS_CONFIG_PATH", str(tmp_path / "funnels.json"))
     db_path = tmp_path / "contadores.sqlite"
     engine = create_engine(
         f"sqlite:///{db_path}",
@@ -299,6 +300,36 @@ def test_manual_ping_action_queues_template_and_pauses_automation(monkeypatch, t
     lead_payload = detail_response.json()["lead"]
     assert lead_payload["stage"] == "needs_human"
     assert lead_payload["automation_paused"] is True
+
+
+def test_manual_booked_action_queues_template_and_marks_booked(monkeypatch, tmp_path) -> None:
+    """Operators can send the manual ping and move a lead straight to Booked."""
+    monkeypatch.setenv("FUNNELS_CONFIG_PATH", str(tmp_path / "funnels.json"))
+    configure_contadores_db(monkeypatch, tmp_path)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-manual-booked",
+        phone="+5491888888877",
+        full_name="Booked Manual",
+    )
+
+    with TestClient(app) as client:
+        action_response = client.post(f"/api/contadores/leads/{lead.id}/actions/send-manual-booked")
+        pending_response = client.get("/api/contadores/messages/pending-delivery")
+        detail_response = client.get(f"/api/contadores/leads/{lead.id}")
+
+    assert action_response.status_code == 200
+    assert pending_response.status_code == 200
+    messages = pending_response.json()["messages"]
+    assert len(messages) == 1
+    assert messages[0]["sequence_step"] == "manual_ping_template"
+    assert messages[0]["whatsapp_template_name"] == "contadores_manual_ping_es_v1"
+
+    assert detail_response.status_code == 200
+    lead_payload = detail_response.json()["lead"]
+    assert lead_payload["stage"] == "booked"
+    assert lead_payload["booked_at"] is not None
+    assert lead_payload["automation_paused"] is True
+    assert lead_payload["automation_paused_reason"] == "manual_booked"
 
 
 def test_bulk_manual_ping_queues_selected_leads(monkeypatch, tmp_path) -> None:
@@ -616,6 +647,70 @@ def test_contadores_inbound_routing_marks_ambiguous_phone_as_needs_human(monkeyp
     assert detail.status_code == 200
     assert detail.json()["lead"]["stage"] == "awaiting_initial_reply"
     assert other_lead.id != lead.id
+
+
+def test_contadores_ctwa_referral_creates_lead_and_reaches_loom(monkeypatch, tmp_path) -> None:
+    """A configured Click-to-WhatsApp ad should start the funnel after the opener step."""
+    monkeypatch.setenv("FUNNELS_CONFIG_PATH", str(tmp_path / "funnels.json"))
+    monkeypatch.setenv("CONTADORES_WHATSAPP_REFERRAL_SOURCE_IDS", "120244283740930010")
+    configure_contadores_db(monkeypatch, tmp_path)
+    ContadoresConfig.update(
+        enabled=True,
+        initial_reply_quiet_seconds=1,
+        strategy_weights={"loom": {"loom_link": 100, "loom_mp4": 0}},
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/contadores/whatsapp/inbound",
+            json={
+                "phone": "+5491155555555",
+                "text": "Hola, quiero mas info",
+                "external_id": "wamid.ctwa.1",
+                "referral": {
+                    "source_type": "ad",
+                    "source_id": "120244283740930010",
+                    "headline": "Clientes potenciales",
+                    "body": "Anuncio de contadores",
+                    "ctwa_clid": "clid-123",
+                },
+            },
+        )
+        lead_id = response.json()["lead_id"]
+        lead = ContadoresLead.get_by_id(lead_id)
+        assert lead is not None
+        quiet_at = now_utc() - timedelta(seconds=2)
+        ContadoresLead.update_flow_state(
+            lead.id,
+            first_reply_received_at=quiet_at,
+            last_inbound_at=quiet_at,
+        )
+        tick = client.post("/api/contadores/automation/tick")
+        detail = client.get(f"/api/contadores/leads/{lead.id}")
+        pending = client.get("/api/contadores/messages/pending-delivery")
+
+    assert response.status_code == 200
+    assert response.json()["route"] == "contadores"
+    assert lead.external_lead_id == "ctwa:contadores:5491155555555"
+    assert lead.platform == "whatsapp_ctwa"
+    assert lead.opener_sent_at is None
+    assert lead.first_reply_received_at is not None
+
+    assert tick.status_code == 200
+    assert tick.json()["opener_sent"] == 0
+    assert tick.json()["loom_sent"] == 1
+
+    assert detail.status_code == 200
+    assert detail.json()["lead"]["stage"] == "awaiting_video_reply"
+    ctwa_events = [
+        event for event in detail.json()["events"]
+        if event["event_type"] == "ctwa_inbound_created"
+    ]
+    assert len(ctwa_events) == 1
+    assert ctwa_events[0]["payload"]["referral"]["source_id"] == "120244283740930010"
+
+    assert pending.status_code == 200
+    assert [item["sequence_step"] for item in pending.json()["messages"]] == ["loom_intro", "loom_url"]
 
 
 def test_contadores_detail_keeps_manual_stage_with_calendly_milestone(monkeypatch, tmp_path) -> None:
