@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+from io import BytesIO
 from types import SimpleNamespace
 
 import httpx
+import openpyxl
 import utils
 from providers import DeliveryReceipt, WhatsAppMessageStatusEvent
 from utils import (
@@ -14,6 +16,7 @@ from utils import (
     dispatch_one_contadores_message,
     dispatch_pending_contadores_messages,
     process_whatsapp_message_status_event,
+    read_xlsx_sheet_rows,
     send_contadores_pending_alerts,
 )
 
@@ -84,6 +87,28 @@ def test_run_contadores_sheet_sync_iteration_imports_only_uncontacted_rows(monke
             "is_contactado": "FALSE",
         }
     ]]
+
+
+def test_read_xlsx_sheet_rows_uses_first_importable_worksheet() -> None:
+    """Google Sheets exports can include an empty first tab before the lead rows."""
+    workbook = openpyxl.Workbook()
+    empty_sheet = workbook.active
+    empty_sheet.title = "Sheet1"
+
+    leads_sheet = workbook.create_sheet("Formulario sin titulo")
+    leads_sheet.append(["id", "created_time", "platform", "email", "full_name", "phone_number", "lead_status"])
+    leads_sheet.append(["lead-1", "2026-04-27T10:00:00Z", "ig", "one@example.com", "Lead One", "p:+5491111111111", "CREATED"])
+    leads_sheet.append(["lead-2", "2026-04-27T10:05:00Z", "fb", "two@example.com", "Lead Two", "p:+5491222222222", "CREATED"])
+
+    output = BytesIO()
+    workbook.save(output)
+    workbook.close()
+
+    rows = read_xlsx_sheet_rows(output.getvalue())
+
+    assert [row["id"] for row in rows] == ["lead-1", "lead-2"]
+    assert rows[0]["full_name"] == "Lead One"
+    assert rows[1]["phone_number"] == "p:+5491222222222"
 
 
 def test_run_contadores_sheet_sync_iteration_uses_testing_phone(monkeypatch) -> None:

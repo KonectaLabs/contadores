@@ -7,7 +7,7 @@ import csv
 import logging
 import os
 from datetime import datetime, timezone
-from io import StringIO
+from io import BytesIO, StringIO
 from time import monotonic
 from typing import Any, Literal
 from urllib.parse import urlencode
@@ -35,6 +35,7 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 SourceMode = Literal["testing", "live"]
+SHEET_IMPORT_HEADERS = {"id", "phone_number"}
 
 BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "http://backend:8000").strip().rstrip("/")
 CONTADORES_REVIEW_BASE_URL = (
@@ -262,6 +263,61 @@ def build_contadores_sheet_csv_url(config: ContadoresConfigPayload) -> str | Non
     return f"{base_url}?output=csv"
 
 
+def build_contadores_sheet_xlsx_url(config: ContadoresConfigPayload) -> str | None:
+    """Resolve a public Google Sheets XLSX URL from backend config."""
+    base_url = (config.sheet_url or "").strip()
+    if not base_url or "docs.google.com/spreadsheets/d/" not in base_url:
+        return None
+
+    marker = "/spreadsheets/d/"
+    spreadsheet_id = base_url.split(marker, 1)[1].split("/", 1)[0].split("?", 1)[0]
+    if not spreadsheet_id:
+        return None
+    return f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/export?format=xlsx"
+
+
+def has_sheet_import_headers(rows: list[dict[str, str]]) -> bool:
+    """Return True when parsed rows include the minimum import columns."""
+    if not rows:
+        return False
+    headers = {key.strip() for key in rows[0].keys()}
+    return SHEET_IMPORT_HEADERS.issubset(headers)
+
+
+def read_xlsx_sheet_rows(content: bytes) -> list[dict[str, str]]:
+    """Read the first XLSX worksheet that looks like a Meta leads export."""
+    try:
+        import openpyxl
+    except ImportError as exc:
+        raise RuntimeError("openpyxl is required to read Google Sheets XLSX exports.") from exc
+
+    workbook = openpyxl.load_workbook(BytesIO(content), read_only=True, data_only=True)
+    try:
+        for worksheet in workbook.worksheets:
+            raw_rows = list(worksheet.iter_rows(values_only=True))
+            if not raw_rows:
+                continue
+
+            headers = [str(value or "").strip() for value in raw_rows[0]]
+            if not SHEET_IMPORT_HEADERS.issubset(set(headers)):
+                continue
+
+            records: list[dict[str, str]] = []
+            for raw_row in raw_rows[1:]:
+                record = {
+                    header: "" if value is None else str(value).strip()
+                    for header, value in zip(headers, raw_row, strict=False)
+                    if header
+                }
+                if any(record.values()):
+                    records.append(record)
+            return records
+    finally:
+        workbook.close()
+
+    return []
+
+
 async def fetch_contadores_sheet_rows(
     *,
     config: ContadoresConfigPayload,
@@ -276,7 +332,18 @@ async def fetch_contadores_sheet_rows(
         response.raise_for_status()
 
     reader = csv.DictReader(StringIO(response.text))
-    return [dict(row) for row in reader]
+    csv_rows = [dict(row) for row in reader]
+    if has_sheet_import_headers(csv_rows):
+        return csv_rows
+
+    xlsx_url = build_contadores_sheet_xlsx_url(config)
+    if not xlsx_url:
+        return csv_rows
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0), follow_redirects=True) as client:
+        response = await client.get(xlsx_url)
+        response.raise_for_status()
+    return read_xlsx_sheet_rows(response.content)
 
 
 async def import_contadores_sheet_rows(
