@@ -19,6 +19,8 @@ import type {
 } from "./types";
 
 const REFRESH_MS = 12000;
+const DASHBOARD_FUNNEL_STORAGE_KEY = "contadores.dashboard.selectedFunnelId";
+const DASHBOARD_STAGE_STORAGE_KEY = "contadores.dashboard.stageFilter";
 
 type StageFilterValue = LeadStage | "all" | "manual_attention";
 
@@ -37,6 +39,33 @@ const stageFilters: Array<{
   { value: "manual_attention", label: "Needs answer", tone: "warn" },
   { value: "closed", label: "Closed", metric: "closed", tone: "muted" },
 ];
+
+const validStageFilterValues = new Set<StageFilterValue>(stageFilters.map((filter) => filter.value));
+
+function readStoredValue(storageKey: string): string | null {
+  try {
+    return window.localStorage.getItem(storageKey);
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredValue(storageKey: string, value: string) {
+  try {
+    window.localStorage.setItem(storageKey, value);
+  } catch {
+    // Storage can be disabled in private or restricted browser contexts.
+  }
+}
+
+function readStoredFunnelId(): string {
+  return readStoredValue(DASHBOARD_FUNNEL_STORAGE_KEY) || "contadores";
+}
+
+function readStoredStageFilter(): StageFilterValue {
+  const value = readStoredValue(DASHBOARD_STAGE_STORAGE_KEY);
+  return validStageFilterValues.has(value as StageFilterValue) ? value as StageFilterValue : "all";
+}
 
 const moveStageOptions: Array<{ value: LeadStage; label: string }> = [
   { value: "needs_human", label: "Manual" },
@@ -98,13 +127,13 @@ export function App() {
   const [runtime, setRuntime] = useState<RuntimeSettings | null>(null);
   const [funnels, setFunnels] = useState<FunnelDefinition[]>([]);
   const [funnelConfigPath, setFunnelConfigPath] = useState("");
-  const [selectedFunnelId, setSelectedFunnelId] = useState("contadores");
+  const [selectedFunnelId, setSelectedFunnelId] = useState(readStoredFunnelId);
   const [leadList, setLeadList] = useState<LeadListResponse | null>(null);
   const [manualAttentionList, setManualAttentionList] = useState<LeadSummary[]>([]);
   const [strategyStats, setStrategyStats] = useState<StrategyStatsItem[]>([]);
   const [detail, setDetail] = useState<LeadDetailResponse | null>(null);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
-  const [stageFilter, setStageFilter] = useState<StageFilterValue>("all");
+  const [stageFilter, setStageFilter] = useState<StageFilterValue>(readStoredStageFilter);
   const [tagFilter, setTagFilter] = useState("");
   const [strategyFilter, setStrategyFilter] = useState<{ step: string; strategyId: string }>({ step: "", strategyId: "" });
   const [activeTab, setActiveTab] = useState<DetailTab>("messages");
@@ -225,6 +254,14 @@ export function App() {
       setDetailLoading(false);
     }
   }, []);
+
+  useEffect(() => {
+    writeStoredValue(DASHBOARD_FUNNEL_STORAGE_KEY, selectedFunnelId);
+  }, [selectedFunnelId]);
+
+  useEffect(() => {
+    writeStoredValue(DASHBOARD_STAGE_STORAGE_KEY, stageFilter);
+  }, [stageFilter]);
 
   useEffect(() => {
     setSelectedLeadIds((current) => current.filter((leadId) => visibleLeadIds.includes(leadId)));
