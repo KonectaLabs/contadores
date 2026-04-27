@@ -69,3 +69,7 @@ having reached Calendly, keeps the lead in Manual, and is not used by automation
 ## Human handoff
 
 Anything ambiguous, hesitant, negative, objection-based, or question-heavy goes to `needs_human`.
+
+The backoffice Manual stage is the full manual queue. Leads with
+`manual_reply_status=needs_reply` are mirrored in the `Needs answer` side column
+until an operator replies or marks the lead answered.

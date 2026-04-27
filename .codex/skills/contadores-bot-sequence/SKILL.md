@@ -55,6 +55,13 @@ Operators have two backoffice actions:
 Both actions record `calendly_sent_at` and keep the lead in Manual.
 Automation must keep using the full Calendly text + URL sequence.
 
+## Manual reply ownership
+
+The backoffice Manual stage shows every manual lead. Leads whose current
+`manual_reply_status` is `needs_reply` also appear in the Manual side column
+`Needs answer`. Once an operator sends a reply or marks the lead answered, the
+lead leaves `Needs answer` but remains visible in Manual.
+
 ## Runtime rule
 
 - This flow can be deployed while the app is still in `testing`.

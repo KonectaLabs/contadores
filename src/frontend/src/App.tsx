@@ -46,7 +46,6 @@ const sendOptions = [
   { value: "send-calendly-link", title: "Calendly link only", help: "Send only the Calendly link and mark Calendly sent." },
 ] as const;
 
-type ManualReplyFilter = "" | "needs_reply" | "answered";
 type DetailTab = "messages" | "strategies";
 type SendKind = (typeof sendOptions)[number]["value"];
 type BulkSendKind = SendKind;
@@ -91,11 +90,11 @@ export function App() {
   const [funnelConfigPath, setFunnelConfigPath] = useState("");
   const [selectedFunnelId, setSelectedFunnelId] = useState("contadores");
   const [leadList, setLeadList] = useState<LeadListResponse | null>(null);
+  const [manualAttentionList, setManualAttentionList] = useState<LeadSummary[]>([]);
   const [strategyStats, setStrategyStats] = useState<StrategyStatsItem[]>([]);
   const [detail, setDetail] = useState<LeadDetailResponse | null>(null);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [stageFilter, setStageFilter] = useState<LeadStage | "all">("all");
-  const [manualReplyFilter, setManualReplyFilter] = useState<ManualReplyFilter>("");
   const [strategyFilter, setStrategyFilter] = useState<{ step: string; strategyId: string }>({ step: "", strategyId: "" });
   const [activeTab, setActiveTab] = useState<DetailTab>("messages");
   const [query, setQuery] = useState("");
@@ -154,10 +153,6 @@ export function App() {
     if (stageFilter !== "all") {
       params.set("stage", stageFilter);
     }
-    if (stageFilter === "needs_human" && manualReplyFilter) {
-      params.set("manual_reply_status", manualReplyFilter);
-      params.set("needs_human", "true");
-    }
     if (strategyFilter.step) {
       params.set("strategy_step", strategyFilter.step);
     }
@@ -168,12 +163,26 @@ export function App() {
       params.set("query", debouncedQuery.trim());
     }
 
-    const [leadsPayload, strategyPayload] = await Promise.all([
+    const manualAttentionParams = new URLSearchParams({
+      limit: "200",
+      archived: "false",
+      funnel_id: activeFunnelId,
+      stage: "needs_human",
+      manual_reply_status: "needs_reply",
+      needs_human: "true",
+    });
+    if (debouncedQuery.trim()) {
+      manualAttentionParams.set("query", debouncedQuery.trim());
+    }
+
+    const [leadsPayload, manualAttentionPayload, strategyPayload] = await Promise.all([
       apiFetch<LeadListResponse>(`/api/contadores/leads?${params.toString()}`),
+      apiFetch<LeadListResponse>(`/api/contadores/leads?${manualAttentionParams.toString()}`),
       apiFetch<StrategyStatsResponse>(`/api/contadores/strategy-stats?funnel_id=${encodeURIComponent(activeFunnelId)}`),
     ]);
 
     setLeadList(leadsPayload);
+    setManualAttentionList(manualAttentionPayload.leads ?? []);
     setStrategyStats(strategyPayload.items ?? []);
 
     setSelectedLeadId((current) => {
@@ -182,7 +191,7 @@ export function App() {
       }
       return leadsPayload.leads[0]?.id ?? null;
     });
-  }, [debouncedQuery, manualReplyFilter, selectedFunnelId, stageFilter, strategyFilter.step, strategyFilter.strategyId]);
+  }, [debouncedQuery, selectedFunnelId, stageFilter, strategyFilter.step, strategyFilter.strategyId]);
 
   const loadDetail = useCallback(async (leadId: string) => {
     setDetailLoading(true);
@@ -197,12 +206,6 @@ export function App() {
   useEffect(() => {
     setSelectedLeadIds((current) => current.filter((leadId) => visibleLeadIds.includes(leadId)));
   }, [visibleLeadIds]);
-
-  useEffect(() => {
-    if (stageFilter !== "needs_human" && manualReplyFilter) {
-      setManualReplyFilter("");
-    }
-  }, [manualReplyFilter, stageFilter]);
 
   useEffect(() => {
     let cancelled = false;
@@ -554,12 +557,6 @@ export function App() {
         </section>
 
         <div className="ct-secondary">
-          <div className="ct-manual-segment" role="tablist" aria-label="Manual reply status" hidden={stageFilter !== "needs_human"}>
-            <button type="button" className={`ct-manual-btn ${manualReplyFilter === "" ? "active" : ""}`} onClick={() => setManualReplyFilter("")}>All manual</button>
-            <button type="button" className={`ct-manual-btn ${manualReplyFilter === "needs_reply" ? "active" : ""}`} onClick={() => setManualReplyFilter("needs_reply")}>Needs answer</button>
-            <button type="button" className={`ct-manual-btn ${manualReplyFilter === "answered" ? "active" : ""}`} onClick={() => setManualReplyFilter("answered")}>Answered</button>
-          </div>
-
           <div className="ct-strategy-filter" role="group" aria-label="Strategy filter">
             {strategyStats.length ? (
               <>
@@ -592,7 +589,7 @@ export function App() {
           </p>
         </div>
 
-        <div className="ct-workspace">
+        <div className={`ct-workspace ${stageFilter === "needs_human" ? "has-manual-attention" : ""}`}>
           <aside className="ct-leads">
             <div className="ct-leads-head">
               <h3>Leads</h3>
@@ -629,6 +626,15 @@ export function App() {
               onToggleSelected={toggleLeadSelection}
             />
           </aside>
+
+          {stageFilter === "needs_human" ? (
+            <ManualAttentionPanel
+              leads={manualAttentionList}
+              selectedLeadId={selectedLeadId}
+              loading={loading}
+              onSelect={setSelectedLeadId}
+            />
+          ) : null}
 
           <section className="ct-detail">
             <LeadDetailHeader
@@ -1154,6 +1160,53 @@ function LeadList({
         );
       })}
     </div>
+  );
+}
+
+function ManualAttentionPanel({
+  leads,
+  selectedLeadId,
+  loading,
+  onSelect,
+}: {
+  leads: LeadSummary[];
+  selectedLeadId: string | null;
+  loading: boolean;
+  onSelect: (leadId: string) => void;
+}) {
+  return (
+    <aside className="ct-attention" aria-label="Manual leads needing answers">
+      <div className="ct-attention-head">
+        <div>
+          <h3>Needs answer</h3>
+          <p>Manual chats still waiting on you.</p>
+        </div>
+        <span>{leads.length}</span>
+      </div>
+
+      <div className="ct-attention-list">
+        {loading && !leads.length ? (
+          <p className="ct-empty">Loading...</p>
+        ) : null}
+
+        {!loading && !leads.length ? (
+          <p className="ct-empty">Nothing waiting for an answer.</p>
+        ) : null}
+
+        {leads.map((lead) => (
+          <button
+            type="button"
+            className={`ct-attention-row ${lead.id === selectedLeadId ? "active" : ""}`}
+            key={lead.id}
+            onClick={() => onSelect(lead.id)}
+          >
+            <span className="ct-attention-name">{lead.full_name || lead.phone || "Lead"}</span>
+            <span className="ct-attention-time">{relativeTime(lastInteractionAt(lead))}</span>
+            <span className="ct-attention-preview">{leadPreview(lead)}</span>
+          </button>
+        ))}
+      </div>
+    </aside>
   );
 }
 

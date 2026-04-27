@@ -167,6 +167,12 @@ Acciones manuales de Calendly:
 - `Calendly link only` encola solo el link de Calendly.
 - Ambas acciones registran `calendly_sent_at` y mantienen el lead en Manual. La automatizacion sigue usando siempre texto previo + link y puede dejar el lead fuera de Manual.
 
+Vista Manual del backoffice:
+
+- `Manual` muestra todos los leads manuales.
+- Cuando hay chats con `Needs answer`, aparecen tambien en una columna lateral dentro de Manual.
+- Al marcarlos como respondidos, salen de `Needs answer` y quedan solo en `Manual`.
+
 Media en WhatsApp:
 
 - La media que envian los leads no se descarga ni se muestra en el backoffice.
