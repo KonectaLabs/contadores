@@ -476,6 +476,13 @@ async def process_contadores_whatsapp_inbound_event(
             "text": event.text,
             "external_id": event.external_id,
             "in_reply_to": event.in_reply_to,
+            "media_type": event.media_type,
+            "media_path": event.media_path,
+            "media_caption": event.media_caption,
+            "media_mime_type": event.media_mime_type,
+            "media_filename": event.media_filename,
+            "media_sha256": event.media_sha256,
+            "media_id": event.media_id,
         },
     )
     response.raise_for_status()

@@ -14,8 +14,9 @@ runtime mode switch.
 
 WhatsApp strategy videos should live under the shared `data` volume and be
 referenced by funnel `media_path`. The bot sends the configured file and the
-frontend serves that same file by stable path. Media sent by leads should not be
-downloaded or persisted.
+frontend serves that same file by stable path. Media sent by leads is downloaded
+into `data/contadores/inbound_media` when available and served through the same
+protected media endpoint for CRM review.
 
 ## Minimum testing config
 

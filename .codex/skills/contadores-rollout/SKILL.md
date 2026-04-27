@@ -26,8 +26,9 @@ the server data volume when it must persist across deploys.
 
 WhatsApp strategy videos should be referenced by `media_path` under the shared
 `data` volume. The bot sends that configured file, and the frontend serves the
-same path through one stable media URL. Do not download or persist media sent by
-leads.
+same path through one stable media URL. WhatsApp media sent by leads should also
+be downloaded into `data/contadores/inbound_media` when available so operators
+can inspect images, videos, audio, documents, and stickers from the CRM.
 
 ## Branch And Deploy Rule
 

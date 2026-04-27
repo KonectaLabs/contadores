@@ -583,9 +583,9 @@ def build_message_response(message: ContadoresMessage) -> "ContadoresMessageResp
 
 
 def build_message_media_url(message: ContadoresMessage) -> str | None:
-    """Return the protected API URL for shared outbound media."""
+    """Return the protected API URL for stored message media."""
     media_path = (message.media_path or "").strip()
-    if not message.from_me or not media_path:
+    if not media_path:
         return None
     return f"/api/contadores/media/{encode_media_path_token(media_path)}"
 
@@ -1300,6 +1300,13 @@ class ContadoresWhatsAppInboundCommand(BaseModel):
     text: str = Field(min_length=1)
     external_id: str | None = None
     in_reply_to: str | None = None
+    media_type: str | None = None
+    media_path: str | None = None
+    media_caption: str | None = None
+    media_mime_type: str | None = None
+    media_filename: str | None = None
+    media_sha256: str | None = None
+    media_id: str | None = None
 
 
 class ContadoresWhatsAppInboundResponse(BaseModel):
@@ -1580,7 +1587,7 @@ async def get_contadores_lead_detail(lead_id: str) -> ContadoresLeadDetailRespon
 
 @contadores_router.get("/media/{media_path_token}")
 async def get_contadores_media_by_path(media_path_token: str) -> FileResponse:
-    """Serve one shared outbound media file through authenticated backend access."""
+    """Serve one stored message media file through authenticated backend access."""
     media_path = decode_media_path_token(media_path_token)
     media_file = resolve_message_media_file(media_path)
     if media_file is None or not media_file.is_file():
@@ -1881,6 +1888,13 @@ async def register_contadores_whatsapp_inbound(
             from_me=False,
             text=command.text,
             external_id=command.external_id,
+            media_type=command.media_type,
+            media_path=command.media_path,
+            media_caption=command.media_caption,
+            media_mime_type=command.media_mime_type,
+            media_filename=command.media_filename,
+            media_sha256=command.media_sha256,
+            media_id=command.media_id,
         )
         ContadoresEvent.add(
             lead_id=lead.id,

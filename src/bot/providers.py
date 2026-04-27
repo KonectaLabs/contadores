@@ -6,6 +6,7 @@ import asyncio
 import base64
 import json
 import logging
+import mimetypes
 import os
 import re
 from datetime import datetime, timezone
@@ -205,6 +206,13 @@ class WhatsAppInboundEvent(BaseModel):
     text: str
     external_id: str | None = None
     in_reply_to: str | None = None
+    media_type: str | None = None
+    media_path: str | None = None
+    media_caption: str | None = None
+    media_mime_type: str | None = None
+    media_filename: str | None = None
+    media_sha256: str | None = None
+    media_id: str | None = None
 
 
 class WhatsAppMessageStatusEvent(BaseModel):
@@ -1164,7 +1172,7 @@ class WhatsAppProvider:
         @self._wa.on_message()
         async def _handle_message(_wa, msg: types.Message):
             await self._dispatch_inbound_event(
-                self._build_inbound_event_from_message(msg),
+                await self._build_inbound_event_from_message_with_media(msg),
                 source=f"message:{getattr(getattr(msg, 'type', None), 'value', 'unknown')}",
             )
 
@@ -1277,6 +1285,18 @@ class WhatsAppProvider:
             return None
         return type(media).__name__.strip().lower() or None
 
+    def _extract_message_media(self, msg: types.Message) -> tuple[str | None, Any | None]:
+        """Return the stable media type and object for one WhatsApp message."""
+        for media_type in WHATSAPP_MEDIA_TYPES:
+            media = getattr(msg, media_type, None)
+            if media is not None:
+                return media_type, media
+        media = getattr(msg, "media", None)
+        if media is None:
+            return None, None
+        media_type = type(media).__name__.strip().lower() or None
+        return media_type, media
+
     def _extract_callback_text(
         self,
         callback_update: types.CallbackButton | types.CallbackSelection,
@@ -1295,6 +1315,13 @@ class WhatsAppProvider:
         text: str,
         external_id: str | None,
         in_reply_to: str | None = None,
+        media_type: str | None = None,
+        media_path: str | None = None,
+        media_caption: str | None = None,
+        media_mime_type: str | None = None,
+        media_filename: str | None = None,
+        media_sha256: str | None = None,
+        media_id: str | None = None,
     ) -> WhatsAppInboundEvent | None:
         """Build typed inbound event from normalized payload fields."""
         clean_phone = phone.strip()
@@ -1308,7 +1335,60 @@ class WhatsAppProvider:
             text=clean_text,
             external_id=clean_external_id,
             in_reply_to=clean_in_reply_to,
+            media_type=(media_type or "").strip() or None,
+            media_path=(media_path or "").strip() or None,
+            media_caption=(media_caption or "").strip() or None,
+            media_mime_type=(media_mime_type or "").strip() or None,
+            media_filename=(media_filename or "").strip() or None,
+            media_sha256=(media_sha256 or "").strip() or None,
+            media_id=(media_id or "").strip() or None,
         )
+
+    def _build_media_filename(
+        self,
+        *,
+        media_type: str,
+        media_id: str,
+        mime_type: str | None,
+        filename: str | None,
+    ) -> str:
+        """Build a stable local filename for downloaded inbound media."""
+        clean_name = re.sub(r"[^a-zA-Z0-9._-]+", "-", (filename or "").strip()).strip(".-")
+        clean_id = re.sub(r"[^a-zA-Z0-9._-]+", "-", (media_id or "").strip()).strip(".-")
+        base_name = clean_name or clean_id or "media"
+        if "." in base_name:
+            return base_name
+        extension = mimetypes.guess_extension((mime_type or "").strip()) or ""
+        if not extension and media_type == "audio":
+            extension = ".ogg"
+        return f"{base_name}{extension}"
+
+    def _relative_data_path(self, path: Path) -> str:
+        """Return a repo-style data/... path for a downloaded media file."""
+        data_dir = Path(os.getenv("DATA_DIR", Path.cwd() / "data")).expanduser().resolve()
+        resolved = path.expanduser().resolve()
+        try:
+            return str(Path("data") / resolved.relative_to(data_dir))
+        except ValueError:
+            return str(resolved)
+
+    async def _download_inbound_media(self, *, media_type: str, media: Any) -> str | None:
+        """Download inbound WhatsApp media into the shared data volume."""
+        media_id = str(getattr(media, "id", "") or "").strip()
+        if not media_id or not hasattr(media, "download"):
+            return None
+
+        data_dir = Path(os.getenv("DATA_DIR", Path.cwd() / "data")).expanduser().resolve()
+        target_dir = data_dir / "contadores" / "inbound_media"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        filename = self._build_media_filename(
+            media_type=media_type,
+            media_id=media_id,
+            mime_type=str(getattr(media, "mime_type", "") or "").strip() or None,
+            filename=str(getattr(media, "filename", "") or "").strip() or None,
+        )
+        downloaded = await media.download(path=target_dir, filename=filename)
+        return self._relative_data_path(Path(downloaded))
 
     def _extract_in_reply_to_message_id(self, msg: types.Message) -> str | None:
         """Extract replied outbound message id from inbound message context when present."""
@@ -1344,12 +1424,42 @@ class WhatsAppProvider:
             return None
         if self._is_stale_update(msg):
             return None
+        media_type, media = self._extract_message_media(msg)
         return self._build_inbound_event(
             phone=self._extract_wa_id(msg),
             text=self._extract_message_text(msg),
             external_id=str(getattr(msg, "id", "") or "").strip() or None,
             in_reply_to=self._extract_in_reply_to_message_id(msg),
+            media_type=media_type,
+            media_caption=str(getattr(msg, "caption", "") or "").strip() or None,
+            media_mime_type=str(getattr(media, "mime_type", "") or "").strip() if media is not None else None,
+            media_filename=str(getattr(media, "filename", "") or "").strip() if media is not None else None,
+            media_sha256=str(getattr(media, "sha256", "") or "").strip() if media is not None else None,
+            media_id=str(getattr(media, "id", "") or "").strip() if media is not None else None,
         )
+
+    async def _build_inbound_event_from_message_with_media(
+        self,
+        msg: types.Message,
+    ) -> WhatsAppInboundEvent | None:
+        """Map a raw message update and save inbound media when present."""
+        event = self._build_inbound_event_from_message(msg)
+        if event is None or not event.media_type:
+            return event
+
+        _, media = self._extract_message_media(msg)
+        if media is None:
+            return event
+
+        try:
+            media_path = await self._download_inbound_media(media_type=event.media_type, media=media)
+        except Exception:
+            logger.exception("Could not download inbound WhatsApp media %s.", event.media_id or event.media_type)
+            return event
+
+        if media_path:
+            event.media_path = media_path
+        return event
 
     def _build_inbound_event_from_callback(
         self,

@@ -1220,7 +1220,7 @@ function MessageTimeline({ messages, loading, hasLead }: { messages: MessageItem
 }
 
 function MessageMedia({ message }: { message: MessageItem }) {
-  if (!message.from_me || !message.media_url) {
+  if (!message.media_url) {
     return null;
   }
 

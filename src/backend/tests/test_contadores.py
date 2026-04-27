@@ -723,9 +723,15 @@ def test_contadores_post_calendly_inbound_returns_to_needs_human(monkeypatch, tm
     assert [item["lead_id"] for item in alerts.json()["items"]] == [lead.id]
 
 
-def test_contadores_inbound_media_payload_is_not_persisted(monkeypatch, tmp_path) -> None:
-    """Media sent by leads should not be stored or exposed as files."""
+def test_contadores_inbound_audio_payload_is_persisted_and_playable(monkeypatch, tmp_path) -> None:
+    """Audio sent by leads should be stored on the message and exposed through the media endpoint."""
     configure_contadores_db(monkeypatch, tmp_path)
+    data_dir = tmp_path / "data"
+    media_file = data_dir / "contadores" / "inbound_media" / "lead-audio.ogg"
+    media_file.parent.mkdir(parents=True)
+    media_file.write_bytes(b"audio-bytes")
+    monkeypatch.setattr(database_module, "DATA_DIR", data_dir)
+    monkeypatch.setattr(contadores_endpoints, "DATA_DIR", data_dir)
     lead = ContadoresLead.upsert(
         external_lead_id="sheet-row-media",
         phone="+5491444444499",
@@ -737,28 +743,34 @@ def test_contadores_inbound_media_payload_is_not_persisted(monkeypatch, tmp_path
             "/api/contadores/whatsapp/inbound",
             json={
                 "phone": lead.phone,
-                "text": "[image]",
-                "external_id": "wamid.image.1",
-                "media_id": "media-image-1",
-                "media_type": "image",
-                "media_path": "data/contadores/inbound_media/lead-photo.jpg",
-                "media_mime_type": "image/jpeg",
-                "media_filename": "lead-photo.jpg",
-                "media_sha256": "sha-image",
-                "media_caption": "Foto del comprobante",
+                "text": "[audio]",
+                "external_id": "wamid.audio.1",
+                "media_id": "media-audio-1",
+                "media_type": "audio",
+                "media_path": "data/contadores/inbound_media/lead-audio.ogg",
+                "media_mime_type": "audio/ogg",
+                "media_filename": "lead-audio.ogg",
+                "media_sha256": "sha-audio",
             },
         )
         detail = client.get(f"/api/contadores/leads/{lead.id}")
+        message = detail.json()["messages"][0]
+        media = client.get(message["media_url"])
 
     assert response.status_code == 200
     assert response.json()["route"] == "contadores"
 
     assert detail.status_code == 200
-    message = detail.json()["messages"][0]
-    assert message["text"] == "[image]"
-    assert message["media_type"] is None
-    assert message["media_path"] is None
-    assert message["media_url"] is None
+    assert message["text"] == "[audio]"
+    assert message["media_type"] == "audio"
+    assert message["media_path"] == "data/contadores/inbound_media/lead-audio.ogg"
+    assert message["media_mime_type"] == "audio/ogg"
+    assert message["media_filename"] == "lead-audio.ogg"
+    assert message["media_id"] == "media-audio-1"
+    assert message["media_url"].startswith("/api/contadores/media/")
+    assert media.status_code == 200
+    assert media.content == b"audio-bytes"
+    assert media.headers["content-type"] == "audio/ogg"
 
 
 def test_contadores_outbound_video_uses_stable_media_path_url(monkeypatch, tmp_path) -> None:

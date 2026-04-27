@@ -78,6 +78,38 @@ def test_build_inbound_event_from_media_only_message() -> None:
 
     assert event is not None
     assert event.text == "[image]"
+    assert event.media_type == "image"
+    assert event.media_id == "media-image-1"
+    assert event.media_mime_type == "image/jpeg"
+    assert event.media_filename == "lead-photo.jpg"
+    assert event.media_sha256 == "sha-image"
+
+
+def test_build_inbound_event_from_audio_message() -> None:
+    provider = build_provider()
+    msg = SimpleNamespace(
+        from_me=False,
+        text=None,
+        caption=None,
+        reaction=None,
+        audio=SimpleNamespace(
+            id="media-audio-1",
+            filename=None,
+            mime_type="audio/ogg",
+            sha256="sha-audio",
+        ),
+        from_user=SimpleNamespace(wa_id="5491122233344"),
+        id="wamid.audio.1",
+        type=SimpleNamespace(value="audio"),
+    )
+
+    event = provider._build_inbound_event_from_message(msg)
+
+    assert event is not None
+    assert event.text == "[audio]"
+    assert event.media_type == "audio"
+    assert event.media_id == "media-audio-1"
+    assert event.media_mime_type == "audio/ogg"
 
 
 def test_build_inbound_event_from_callback_button() -> None:
