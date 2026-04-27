@@ -70,6 +70,7 @@ having reached Calendly, keeps the lead in Manual, and is not used by automation
 
 Anything ambiguous, hesitant, negative, objection-based, or question-heavy goes to `needs_human`.
 
-The backoffice Manual stage is the full manual queue. Leads with
-`manual_reply_status=needs_reply` are mirrored in the `Needs answer` side column
-until an operator replies or marks the lead answered.
+The backoffice Manual stage is the full manual queue. The pipeline also has a
+`Needs answer` bucket between Manual and Closed for leads with
+`manual_reply_status=needs_reply`, until an operator replies or marks the lead
+answered.

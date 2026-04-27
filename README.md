@@ -170,8 +170,8 @@ Acciones manuales de Calendly:
 Vista Manual del backoffice:
 
 - `Manual` muestra todos los leads manuales.
-- Cuando hay chats con `Needs answer`, aparecen tambien en una columna lateral dentro de Manual.
-- Al marcarlos como respondidos, salen de `Needs answer` y quedan solo en `Manual`.
+- `Needs answer` aparece como un bloque del pipeline entre `Manual` y `Closed`.
+- Al marcarlos como respondidos, salen de `Needs answer` y siguen quedando en `Manual`.
 
 Media en WhatsApp:
 

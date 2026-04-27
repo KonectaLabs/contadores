@@ -20,10 +20,12 @@ import type {
 
 const REFRESH_MS = 12000;
 
+type StageFilterValue = LeadStage | "all" | "manual_attention";
+
 const stageFilters: Array<{
-  value: LeadStage | "all";
+  value: StageFilterValue;
   label: string;
-  metric: keyof ContadoresMetrics;
+  metric?: keyof ContadoresMetrics;
   tone: "all" | "neutral" | "accent" | "success" | "warn" | "muted";
 }> = [
   { value: "all", label: "All", metric: "total", tone: "all" },
@@ -32,6 +34,7 @@ const stageFilters: Array<{
   { value: "calendly_sent", label: "Calendly sent", metric: "calendly_sent", tone: "accent" },
   { value: "booked", label: "Booked", metric: "booked", tone: "success" },
   { value: "needs_human", label: "Manual", metric: "needs_human", tone: "warn" },
+  { value: "manual_attention", label: "Needs answer", tone: "warn" },
   { value: "closed", label: "Closed", metric: "closed", tone: "muted" },
 ];
 
@@ -94,7 +97,7 @@ export function App() {
   const [strategyStats, setStrategyStats] = useState<StrategyStatsItem[]>([]);
   const [detail, setDetail] = useState<LeadDetailResponse | null>(null);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
-  const [stageFilter, setStageFilter] = useState<LeadStage | "all">("all");
+  const [stageFilter, setStageFilter] = useState<StageFilterValue>("all");
   const [strategyFilter, setStrategyFilter] = useState<{ step: string; strategyId: string }>({ step: "", strategyId: "" });
   const [activeTab, setActiveTab] = useState<DetailTab>("messages");
   const [query, setQuery] = useState("");
@@ -150,7 +153,11 @@ export function App() {
       ? selectedFunnelId
       : funnelPayload.funnels[0]?.id ?? "contadores";
     const params = new URLSearchParams({ limit: "500", archived: "false", funnel_id: activeFunnelId });
-    if (stageFilter !== "all") {
+    if (stageFilter === "manual_attention") {
+      params.set("stage", "needs_human");
+      params.set("manual_reply_status", "needs_reply");
+      params.set("needs_human", "true");
+    } else if (stageFilter !== "all") {
       params.set("stage", stageFilter);
     }
     if (strategyFilter.step) {
@@ -541,19 +548,25 @@ export function App() {
       ) : (
       <div className="ct-surface">
         <section className="ct-pipeline" aria-label="Lead stages">
-          {stageFilters.map((filter) => (
-            <button
-              key={filter.value}
-              type="button"
-              className={`ct-stage ${stageFilter === filter.value ? "active" : ""}`}
-              data-tone={filter.tone}
-              aria-pressed={stageFilter === filter.value}
-              onClick={() => setStageFilter(filter.value)}
-            >
-              <span className="ct-stage-count">{compactNumber(Number(metrics?.[filter.metric] ?? 0))}</span>
-              <span className="ct-stage-label">{filter.label}</span>
-            </button>
-          ))}
+          {stageFilters.map((filter) => {
+            const count = filter.value === "manual_attention"
+              ? manualAttentionList.length
+              : Number(metrics?.[filter.metric ?? "total"] ?? 0);
+
+            return (
+              <button
+                key={filter.value}
+                type="button"
+                className={`ct-stage ${stageFilter === filter.value ? "active" : ""}`}
+                data-tone={filter.tone}
+                aria-pressed={stageFilter === filter.value}
+                onClick={() => setStageFilter(filter.value)}
+              >
+                <span className="ct-stage-count">{compactNumber(count)}</span>
+                <span className="ct-stage-label">{filter.label}</span>
+              </button>
+            );
+          })}
         </section>
 
         <div className="ct-secondary">
@@ -589,7 +602,7 @@ export function App() {
           </p>
         </div>
 
-        <div className={`ct-workspace ${stageFilter === "needs_human" ? "has-manual-attention" : ""}`}>
+        <div className="ct-workspace">
           <aside className="ct-leads">
             <div className="ct-leads-head">
               <h3>Leads</h3>
@@ -626,15 +639,6 @@ export function App() {
               onToggleSelected={toggleLeadSelection}
             />
           </aside>
-
-          {stageFilter === "needs_human" ? (
-            <ManualAttentionPanel
-              leads={manualAttentionList}
-              selectedLeadId={selectedLeadId}
-              loading={loading}
-              onSelect={setSelectedLeadId}
-            />
-          ) : null}
 
           <section className="ct-detail">
             <LeadDetailHeader
@@ -1160,53 +1164,6 @@ function LeadList({
         );
       })}
     </div>
-  );
-}
-
-function ManualAttentionPanel({
-  leads,
-  selectedLeadId,
-  loading,
-  onSelect,
-}: {
-  leads: LeadSummary[];
-  selectedLeadId: string | null;
-  loading: boolean;
-  onSelect: (leadId: string) => void;
-}) {
-  return (
-    <aside className="ct-attention" aria-label="Manual leads needing answers">
-      <div className="ct-attention-head">
-        <div>
-          <h3>Needs answer</h3>
-          <p>Manual chats still waiting on you.</p>
-        </div>
-        <span>{leads.length}</span>
-      </div>
-
-      <div className="ct-attention-list">
-        {loading && !leads.length ? (
-          <p className="ct-empty">Loading...</p>
-        ) : null}
-
-        {!loading && !leads.length ? (
-          <p className="ct-empty">Nothing waiting for an answer.</p>
-        ) : null}
-
-        {leads.map((lead) => (
-          <button
-            type="button"
-            className={`ct-attention-row ${lead.id === selectedLeadId ? "active" : ""}`}
-            key={lead.id}
-            onClick={() => onSelect(lead.id)}
-          >
-            <span className="ct-attention-name">{lead.full_name || lead.phone || "Lead"}</span>
-            <span className="ct-attention-time">{relativeTime(lastInteractionAt(lead))}</span>
-            <span className="ct-attention-preview">{leadPreview(lead)}</span>
-          </button>
-        ))}
-      </div>
-    </aside>
   );
 }
 

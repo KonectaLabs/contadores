@@ -57,10 +57,10 @@ Automation must keep using the full Calendly text + URL sequence.
 
 ## Manual reply ownership
 
-The backoffice Manual stage shows every manual lead. Leads whose current
-`manual_reply_status` is `needs_reply` also appear in the Manual side column
-`Needs answer`. Once an operator sends a reply or marks the lead answered, the
-lead leaves `Needs answer` but remains visible in Manual.
+The backoffice Manual stage shows every manual lead. The pipeline also has a
+`Needs answer` bucket between Manual and Closed for leads whose current
+`manual_reply_status` is `needs_reply`. Once an operator sends a reply or marks
+the lead answered, the lead leaves `Needs answer` but remains visible in Manual.
 
 ## Runtime rule
 

@@ -93,9 +93,9 @@ Enviar inmediatamente después del mensaje 4.
 - El ping manual `contadores_manual_ping_es_v1` es solo una accion del CRM.
 - La accion CRM `send-manual-booked` envia ese ping manual y marca el lead como
   `booked`; no debe ejecutarse desde ticks automaticos.
-- La vista CRM `Manual` muestra todos los manuales; `Needs answer` es una
-  columna lateral con los manuales cuyo `manual_reply_status` sigue en
-  `needs_reply`.
+- La vista CRM `Manual` muestra todos los manuales; el pipeline tiene un bloque
+  `Needs answer` entre Manual y Closed para los manuales cuyo
+  `manual_reply_status` sigue en `needs_reply`.
 - Modelar los delays como `30 s` y `3 min`, no aproximarlos en texto libre.
 - Si más adelante cambia el copy, mantener esta skill como fuente canónica del orden
   y de la separación entre texto y URL.
