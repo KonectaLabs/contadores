@@ -485,6 +485,15 @@ class AgentMailProvider:
             return
         await self._http_client.aclose()
 
+    async def disable(self) -> None:
+        """Disable AgentMail after a startup failure while keeping the bot alive."""
+        await self.close()
+        self._http_client = None
+        self._client = None
+        self._alert_inbox = None
+        self._shared_inboxes = []
+        self._shared_inbox_assignments = {}
+
     async def ensure_alert_inbox(self) -> EmailInboxState:
         """Return the shared inbox used for Contadores human-review alerts."""
         if self._alert_inbox is not None:

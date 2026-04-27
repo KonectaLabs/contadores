@@ -295,7 +295,11 @@ async def lifespan(app: FastAPI):
         )
 
     email_provider = AgentMailProvider()
-    await email_provider.initialize()
+    try:
+        await email_provider.initialize()
+    except Exception:
+        logger.exception("AgentMail startup failed. Email alerts are disabled; WhatsApp workers will keep running.")
+        await email_provider.disable()
 
     async def on_whatsapp_inbound(event: WhatsAppInboundEvent) -> None:
         try:
