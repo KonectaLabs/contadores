@@ -88,7 +88,7 @@ const sendOptions = [
 
 type DetailTab = "messages" | "strategies";
 type SendKind = (typeof sendOptions)[number]["value"];
-type BulkSendKind = SendKind;
+type BulkSendKind = SendKind | "set-tags";
 type StrategyWeights = Record<string, Record<string, number>>;
 type FunnelEditorMode = "create" | "edit";
 type TemplateTextField = "opener_text" | "opener_followup_text" | "manual_ping_text";
@@ -150,6 +150,7 @@ export function App() {
   const [sendKind, setSendKind] = useState<SendKind>("custom");
   const [bulkSendKind, setBulkSendKind] = useState<BulkSendKind>("send-manual-ping");
   const [manualText, setManualText] = useState("");
+  const [bulkTagsDraft, setBulkTagsDraft] = useState("");
   const [selectedLeadIds, setSelectedLeadIds] = useState<string[]>([]);
   const debouncedQuery = useDebouncedValue(query, 250);
 
@@ -350,25 +351,6 @@ export function App() {
     }
   }
 
-  async function resumeAutomation() {
-    const leadId = selectedLead?.id ?? selectedLeadId;
-    if (!leadId) {
-      return;
-    }
-    setActionBusy("resume");
-    try {
-      await apiFetch<QuickActionResponse>(`/api/contadores/leads/${leadId}/resume-automation`, {
-        method: "POST",
-      });
-      await loadDashboard();
-      await loadDetail(leadId);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not resume automation.");
-    } finally {
-      setActionBusy(null);
-    }
-  }
-
   async function submitSendModal(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const leadId = selectedLead?.id ?? selectedLeadId;
@@ -414,15 +396,21 @@ export function App() {
           lead_ids: leadIds,
           action: bulkSendKind,
           text: bulkSendKind === "custom" ? manualText.trim() : null,
+          tags: bulkSendKind === "set-tags"
+            ? bulkTagsDraft.split(",").map((tag) => tag.trim()).filter(Boolean)
+            : [],
         }),
       });
       if (payload.failed) {
-        setError(`${payload.succeeded} sent, ${payload.failed} failed. Check selection and funnel templates.`);
+        setError(`${payload.succeeded} updated, ${payload.failed} failed. Check selection and action settings.`);
       }
       setShowBulkSendModal(false);
       setSelectedLeadIds([]);
       if (bulkSendKind === "custom") {
         setManualText("");
+      }
+      if (bulkSendKind === "set-tags") {
+        setBulkTagsDraft("");
       }
       await loadDashboard();
       if (selectedLeadId && isContadoresFunnel) {
@@ -461,26 +449,6 @@ export function App() {
       body: JSON.stringify({ text }),
     });
     setManualText("");
-  }
-
-  async function updateLeadTags(tags: string[]) {
-    const leadId = selectedLead?.id ?? selectedLeadId;
-    if (!leadId) {
-      return;
-    }
-    setActionBusy("lead-tags");
-    try {
-      await apiFetch<LeadSummary>(`/api/contadores/leads/${leadId}/tags`, {
-        method: "PUT",
-        body: JSON.stringify({ tags }),
-      });
-      await loadDashboard();
-      await loadDetail(leadId);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not update tags.");
-    } finally {
-      setActionBusy(null);
-    }
   }
 
   async function moveLeadToFunnel(targetFunnelId: string, targetStage: LeadStage) {
@@ -785,13 +753,8 @@ export function App() {
             />
 
             {!isInboxFunnel ? (
-              <PausedBanner lead={selectedLead} actionBusy={actionBusy} onResume={resumeAutomation} />
+              <PausedBanner lead={selectedLead} />
             ) : null}
-            <LeadTagsEditor
-              lead={selectedLead}
-              busy={actionBusy === "lead-tags"}
-              onSave={updateLeadTags}
-            />
             {isInboxFunnel ? (
               <MoveLeadPanel
                 lead={selectedLead}
@@ -879,11 +842,13 @@ export function App() {
         <BulkSendModal
           kind={bulkSendKind}
           text={manualText}
+          tagsText={bulkTagsDraft}
           funnel={selectedFunnel}
           selectedCount={selectedLeadIds.length}
           busy={actionBusy === "bulk-send-modal"}
           onKindChange={setBulkSendKind}
           onTextChange={setManualText}
+          onTagsTextChange={setBulkTagsDraft}
           onClose={() => setShowBulkSendModal(false)}
           onSubmit={submitBulkSendModal}
         />
@@ -1397,14 +1362,8 @@ function LeadDetailHeader({
   );
 }
 
-function PausedBanner({
-  lead,
-  actionBusy,
-  onResume,
-}: {
+function PausedBanner({ lead }: {
   lead: LeadSummary | null;
-  actionBusy: string | null;
-  onResume: () => void;
 }) {
   const closed = lead?.stage === "closed";
   const paused = Boolean(lead?.automation_paused);
@@ -1420,55 +1379,11 @@ function PausedBanner({
           {closed
             ? `Closed ${lead.closed_at ? relativeTime(lead.closed_at) : "just now"}. Reopen to continue with this lead.`
             : lead.automation_paused_reason
-              ? `Paused by operator (${humanize(lead.automation_paused_reason)}). Resume to let the bot continue.`
-              : "The bot won't send anything until you resume."}
+              ? `Paused by operator (${humanize(lead.automation_paused_reason)}).`
+              : "The bot won't send anything while automation is paused."}
         </span>
       </div>
-      {!closed ? (
-        <button type="button" className="ct-btn ct-btn-ghost" disabled={!paused || Boolean(actionBusy)} onClick={onResume}>Resume automation</button>
-      ) : null}
     </div>
-  );
-}
-
-function LeadTagsEditor({
-  lead,
-  busy,
-  onSave,
-}: {
-  lead: LeadSummary | null;
-  busy: boolean;
-  onSave: (tags: string[]) => Promise<void>;
-}) {
-  const [draft, setDraft] = useState("");
-
-  useEffect(() => {
-    setDraft((lead?.tags ?? []).join(", "));
-  }, [lead?.id, lead?.tags]);
-
-  if (!lead) {
-    return null;
-  }
-
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    await onSave(draft.split(",").map((tag) => tag.trim()).filter(Boolean));
-  }
-
-  return (
-    <form className="ct-tags-editor" onSubmit={submit}>
-      <label className="ct-field">
-        <span>Tags</span>
-        <input
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          placeholder="form, whatsapp, prioridad"
-        />
-      </label>
-      <button type="submit" className="ct-btn ct-btn-ghost" disabled={busy}>
-        {busy ? "Saving..." : "Save tags"}
-      </button>
-    </form>
   );
 }
 
@@ -1959,29 +1874,38 @@ function SendModal({
 function BulkSendModal({
   kind,
   text,
+  tagsText,
   funnel,
   selectedCount,
   busy,
   onKindChange,
   onTextChange,
+  onTagsTextChange,
   onClose,
   onSubmit,
 }: {
   kind: BulkSendKind;
   text: string;
+  tagsText: string;
   funnel: FunnelDefinition | null;
   selectedCount: number;
   busy: boolean;
   onKindChange: (kind: BulkSendKind) => void;
   onTextChange: (value: string) => void;
+  onTagsTextChange: (value: string) => void;
   onClose: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   const marksCalendlySent = kind === "send-calendly" || kind === "send-calendly-link";
-  const pausesAutomation = !marksCalendlySent;
-  const availableOptions = funnel?.kind === "inbox"
+  const pausesAutomation = kind !== "set-tags" && !marksCalendlySent;
+  const sendActionOptions = funnel?.kind === "inbox"
     ? sendOptions.filter((option) => ["custom", "send-opener", "send-manual-ping"].includes(option.value))
     : sendOptions;
+  const availableOptions = [
+    ...sendActionOptions,
+    { value: "set-tags" as const, title: "Set tags", help: "Replace tags for the selected leads." },
+  ];
+  const tagValues = tagsText.split(",").map((tag) => tag.trim()).filter(Boolean);
 
   return (
     <div className="ct-modal open" aria-hidden="false">
@@ -1997,11 +1921,15 @@ function BulkSendModal({
         <div className="ct-modal-body">
           <p className="ct-modal-warning">
             <strong>Heads up:</strong> this will apply to every selected chat in the current list.
-            {pausesAutomation ? " Sending this pauses automation for those leads." : " Calendly will mark them as Calendly sent and keep them in Manual."}
+            {kind === "set-tags"
+              ? " Tags will be replaced for those leads."
+              : pausesAutomation
+                ? " Sending this pauses automation for those leads."
+                : " Calendly will mark them as Calendly sent and keep them in Manual."}
           </p>
 
           <fieldset className="ct-send-options">
-            <legend className="ct-sr-only">Bulk message type</legend>
+            <legend className="ct-sr-only">Bulk action type</legend>
             {availableOptions.map((option) => (
               <label className="ct-send-option" key={option.value}>
                 <input
@@ -2013,7 +1941,7 @@ function BulkSendModal({
                 />
                 <div>
                   <strong>{option.title}</strong>
-                  <span>{sendOptionPreview(option.value, funnel) || option.help}</span>
+                  <span>{option.value === "set-tags" ? option.help : sendOptionPreview(option.value, funnel) || option.help}</span>
                 </div>
               </label>
             ))}
@@ -2028,11 +1956,20 @@ function BulkSendModal({
               placeholder="Write the WhatsApp message to send..."
             />
           </label>
+
+          <label className="ct-modal-field" hidden={kind !== "set-tags"}>
+            <span>Tags</span>
+            <input
+              value={tagsText}
+              onChange={(event) => onTagsTextChange(event.target.value)}
+              placeholder="prioridad, whatsapp_funnel"
+            />
+          </label>
         </div>
         <footer className="ct-modal-foot">
           <button type="button" className="ct-btn ct-btn-ghost" onClick={onClose}>Cancel</button>
-          <button type="submit" className="ct-btn ct-btn-primary" disabled={busy || !selectedCount || (kind === "custom" && !text.trim())}>
-            {busy ? "Sending..." : `Apply to ${selectedCount}`}
+          <button type="submit" className="ct-btn ct-btn-primary" disabled={busy || !selectedCount || (kind === "custom" && !text.trim()) || (kind === "set-tags" && !tagValues.length)}>
+            {busy ? "Applying..." : `Apply to ${selectedCount}`}
           </button>
         </footer>
       </form>

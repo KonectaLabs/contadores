@@ -174,7 +174,9 @@ Tags:
 
 - Los leads tienen tags libres de operador y filtro por tag.
 - Los importados desde formulario reciben el tag `form`.
-- Los creados desde WhatsApp reciben el tag `whatsapp`.
+- Los creados desde un funnel Click-to-WhatsApp reciben el tag `whatsapp_funnel`.
+- Los creados desde WhatsApp sin funnel matcheado reciben el tag `whatsapp`.
+- La UI muestra tags en el detalle como solo lectura; para cambiarlos hay que seleccionar leads y usar la accion batch `Set tags`.
 - El filtro por tag se combina con las fases, busqueda y estrategia.
 
 Acciones manuales de Calendly:

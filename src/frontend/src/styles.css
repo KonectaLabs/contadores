@@ -2828,7 +2828,6 @@ body {
   font: 500 12px/1.35 var(--font-sans);
 }
 
-#contadoresView .ct-tags-editor,
 #contadoresView .ct-move-panel {
   flex: 0 0 auto;
   display: grid;
@@ -2838,11 +2837,6 @@ body {
   border: 1px solid var(--ct-line-soft);
   border-radius: var(--ct-radius);
   background: var(--ct-surface-2);
-}
-
-#contadoresView .ct-tags-editor {
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
 }
 
 #contadoresView .ct-move-panel {
@@ -3713,7 +3707,6 @@ body {
     padding-inline: 10px;
   }
 
-  #contadoresView .ct-tags-editor,
   #contadoresView .ct-move-panel {
     grid-template-columns: 1fr;
   }

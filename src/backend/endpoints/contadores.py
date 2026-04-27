@@ -47,6 +47,10 @@ OPENER_FOLLOWUP_SEQUENCE_STEP = "opener_followup_24h"
 OPENER_FOLLOWUP_RETRY_SEQUENCE_STEP = "opener_followup_24h_template_retry_20260424"
 MANUAL_PING_SEQUENCE_STEP = "manual_ping_template"
 OPENER_FOLLOWUP_DELAY = timedelta(hours=24)
+FORM_LEAD_TAG = "form"
+WHATSAPP_GENERAL_TAG = "whatsapp"
+WHATSAPP_FUNNEL_TAG = "whatsapp_funnel"
+BULK_SET_TAGS_ACTION = "set-tags"
 
 
 def format_timestamp_seconds(value: datetime | None) -> str | None:
@@ -1326,6 +1330,7 @@ class BulkContadoresActionCommand(BaseModel):
     lead_ids: list[str] = Field(default_factory=list, min_length=1, max_length=500)
     action: str = Field(min_length=1)
     text: str | None = None
+    tags: list[str] = Field(default_factory=list)
 
 
 class ContadoresQuickActionResponse(BaseModel):
@@ -1508,7 +1513,7 @@ def upsert_ctwa_lead_from_inbound(
         phone=command.phone,
         platform="whatsapp_ctwa",
         lead_status="new",
-        tags=["whatsapp"],
+        tags=[WHATSAPP_FUNNEL_TAG],
         sheet_created_time=now_utc(),
         reset_flow=reset_flow,
     )
@@ -1534,7 +1539,7 @@ def upsert_general_inbox_lead_from_inbound(
         phone=command.phone,
         platform="whatsapp_general",
         lead_status="new",
-        tags=["whatsapp"],
+        tags=[WHATSAPP_GENERAL_TAG],
         sheet_created_time=now_utc(),
         reset_flow=existing is not None and existing.stage == ContadoresLeadStage.ARCHIVED,
     )
@@ -1695,7 +1700,7 @@ async def import_contadores_leads(
             email=row.email,
             platform=row.platform,
             lead_status=row.lead_status,
-            tags=["form"],
+            tags=[FORM_LEAD_TAG],
             sheet_created_time=row.created_time,
         )
         lead_ids.append(lead.id)
@@ -1973,6 +1978,11 @@ async def run_contadores_bulk_action(
         message_text = (command.text or "").strip()
         if not message_text:
             raise HTTPException(status_code=400, detail="Custom message text is required")
+    if normalized_action == BULK_SET_TAGS_ACTION:
+        command_tags = command.tags or (command.text or "").split(",")
+        clean_tags = normalize_contadores_tags(command_tags)
+        if not clean_tags:
+            raise HTTPException(status_code=400, detail="At least one tag is required")
 
     results: list[ContadoresBulkActionItem] = []
     queued_message_ids: list[int] = []
@@ -1991,7 +2001,19 @@ async def run_contadores_bulk_action(
 
         config = get_effective_funnel_config(lead.funnel_id)
         try:
-            if normalized_action == "custom":
+            if normalized_action == BULK_SET_TAGS_ACTION:
+                updated = ContadoresLead.set_tags(lead.id, tags=clean_tags)
+                if updated is None:
+                    raise HTTPException(status_code=404, detail="Lead not found")
+                queued_rows = []
+                ContadoresEvent.add(
+                    lead_id=updated.id,
+                    event_type="lead_tags_updated",
+                    actor="operator",
+                    summary="Operator updated lead tags in bulk.",
+                    payload={"tags": updated.tags},
+                )
+            elif normalized_action == "custom":
                 queued_rows = queue_manual_message_for_lead(lead=lead, text=command.text or "")
                 updated = ContadoresLead.get_by_id(lead.id) or lead
             else:

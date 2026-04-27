@@ -783,6 +783,7 @@ def test_abogados_ctwa_referral_creates_lead_and_reaches_loom(monkeypatch, tmp_p
     assert lead.external_lead_id == "ctwa:abogados:5491155555555"
     assert lead.platform == "whatsapp_ctwa"
     assert lead.funnel_id == "abogados"
+    assert lead.tags == ["whatsapp_funnel"]
     assert lead.opener_sent_at is None
     assert lead.first_reply_received_at is not None
 
@@ -895,6 +896,52 @@ def test_contadores_lead_tags_update_and_filter_with_stage(monkeypatch, tmp_path
     assert [item["id"] for item in payload["leads"]] == [first.id]
     assert payload["metrics"]["total"] == 1
     assert second.id != first.id
+
+
+def test_bulk_action_replaces_selected_lead_tags(monkeypatch, tmp_path) -> None:
+    """Operators should change tags only through selected batch leads."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    first = ContadoresLead.upsert(
+        external_lead_id="bulk-tags-1",
+        phone="+5491888888831",
+        full_name="Tagged Bulk One",
+        tags=["form"],
+    )
+    second = ContadoresLead.upsert(
+        external_lead_id="bulk-tags-2",
+        phone="+5491888888832",
+        full_name="Tagged Bulk Two",
+        tags=["whatsapp"],
+    )
+    untouched = ContadoresLead.upsert(
+        external_lead_id="bulk-tags-3",
+        phone="+5491888888833",
+        full_name="Tagged Bulk Three",
+        tags=["form"],
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/contadores/leads/bulk-action",
+            json={
+                "lead_ids": [first.id, second.id],
+                "action": "set-tags",
+                "tags": ["prioridad", "whatsapp_funnel", "prioridad"],
+            },
+        )
+        filtered_response = client.get("/api/contadores/leads?tag=whatsapp_funnel")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["succeeded"] == 2
+    assert payload["failed"] == 0
+    assert payload["queued_message_ids"] == []
+    assert [item["lead"]["tags"] for item in payload["results"]] == [
+        ["prioridad", "whatsapp_funnel"],
+        ["prioridad", "whatsapp_funnel"],
+    ]
+    assert ContadoresLead.get_by_id(untouched.id).tags == ["form"]
+    assert [item["id"] for item in filtered_response.json()["leads"]] == [second.id, first.id]
 
 
 def test_contadores_detail_keeps_manual_stage_with_calendly_milestone(monkeypatch, tmp_path) -> None:
