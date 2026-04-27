@@ -24,8 +24,10 @@ The multi-funnel config file is separate from the runtime switch:
 This file stores funnel definitions added from the UI or by Codex. Keep it in
 the server data volume when it must persist across deploys.
 Click-to-WhatsApp routing also belongs there through
-`whatsapp_referral_source_ids`; the default Contadores funnel can be seeded from
-`CONTADORES_WHATSAPP_REFERRAL_SOURCE_IDS`.
+`whatsapp_referral_source_ids`; keep Contadores empty when it has no real
+campaign source.
+When a WhatsApp inbound has no matching reply/referral, the backend saves it in
+the built-in `general` inbox. Inbox funnels do not run automation or sheet sync.
 
 WhatsApp strategy videos should be referenced by `media_path` under the shared
 `data` volume. The bot sends that configured file, and the frontend serves the

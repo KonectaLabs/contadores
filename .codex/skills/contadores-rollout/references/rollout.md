@@ -15,6 +15,8 @@ runtime mode switch.
 Click-to-WhatsApp routing uses each funnel's `whatsapp_referral_source_ids`.
 These values are Meta webhook `referral.source_id` values. Do not route by the
 prefilled WhatsApp message text because the user can edit it.
+When no referral matches, the backend stores the inbound WhatsApp message in the
+built-in `general` inbox. Inbox funnels do not run automation or sheet sync.
 
 WhatsApp strategy videos should live under the shared `data` volume and be
 referenced by funnel `media_path`. The bot sends the configured file and the
@@ -27,7 +29,6 @@ protected media endpoint for CRM review.
 - `CONTADORES_ENABLED=true`
 - `CONTADORES_SOURCE_MODE=testing`
 - `CONTADORES_TEST_PHONE=...`
-- `CONTADORES_LOOM_URL=...`
 - `CONTADORES_CALENDLY_BASE_URL=...`
 - `FUNNELS_CONFIG_PATH=data/funnels.json`
 
@@ -37,7 +38,6 @@ protected media endpoint for CRM review.
 - `CONTADORES_SOURCE_MODE=live`
 - `CONTADORES_SHEET_URL=...`
 - `CONTADORES_SHEET_GID=...`
-- `CONTADORES_LOOM_URL=...`
 - `CONTADORES_CALENDLY_BASE_URL=...`
 
 ## Safe release sequence

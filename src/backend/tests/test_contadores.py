@@ -41,7 +41,7 @@ def configure_contadores_db(monkeypatch, tmp_path) -> None:
     SQLModel.metadata.create_all(engine)
 
 
-def force_loom_strategy(monkeypatch, strategy_id: str = "loom_link") -> None:
+def force_loom_strategy(monkeypatch, strategy_id: str = "loom_mp4") -> None:
     """Force one Loom strategy in automation tests."""
     strategy = get_contadores_strategy("loom", strategy_id)
     assert strategy is not None
@@ -99,8 +99,8 @@ def test_contadores_import_skips_invalid_phone_rows(monkeypatch, tmp_path) -> No
     assert ContadoresLead.get_by_external_lead_id("sheet-valid-phone") is not None
 
 
-def test_contadores_pending_delivery_keeps_full_sequence(monkeypatch, tmp_path) -> None:
-    """Loom intro and Loom URL must both remain visible to the bot outbox."""
+def test_contadores_pending_delivery_keeps_full_mp4_sequence(monkeypatch, tmp_path) -> None:
+    """Loom intro and WhatsApp MP4 must both remain visible to the bot outbox."""
     configure_contadores_db(monkeypatch, tmp_path)
     config = ContadoresConfig.update(enabled=True)
     lead = ContadoresLead.upsert(
@@ -109,15 +109,15 @@ def test_contadores_pending_delivery_keeps_full_sequence(monkeypatch, tmp_path) 
         full_name="Ana Perez",
     )
 
-    contadores_endpoints.send_loom_sequence(lead=lead, config=config, strategy_id="loom_link")
+    contadores_endpoints.send_loom_sequence(lead=lead, config=config, strategy_id="loom_mp4")
 
     with TestClient(app) as client:
         response = client.get("/api/contadores/messages/pending-delivery")
 
     assert response.status_code == 200
     payload = response.json()
-    assert [item["sequence_step"] for item in payload["messages"]] == ["loom_intro", "loom_url"]
-    assert [item["strategy_id"] for item in payload["messages"]] == ["loom_link", "loom_link"]
+    assert [item["sequence_step"] for item in payload["messages"]] == ["loom_intro", "loom_video"]
+    assert [item["strategy_id"] for item in payload["messages"]] == ["loom_mp4", "loom_mp4"]
 
 
 def test_contadores_pending_delivery_exposes_loom_mp4_media(monkeypatch, tmp_path) -> None:
@@ -158,7 +158,7 @@ def test_contadores_strategy_weights_are_configurable(monkeypatch, tmp_path) -> 
     configure_contadores_db(monkeypatch, tmp_path)
     config = ContadoresConfig.update(
         enabled=True,
-        strategy_weights={"loom": {"loom_link": 100, "loom_mp4": 0}},
+        strategy_weights={"loom": {"loom_mp4": 100}},
     )
     lead = ContadoresLead.upsert(
         external_lead_id="sheet-row-config-weight",
@@ -175,18 +175,17 @@ def test_contadores_strategy_weights_are_configurable(monkeypatch, tmp_path) -> 
 
     assert config_response.status_code == 200
     assert config_response.json()["strategy_weights"] == {
-        "loom": {"loom_link": 100, "loom_mp4": 0}
+        "loom": {"loom_mp4": 100}
     }
 
     assert stats_response.status_code == 200
     items = {item["strategy_id"]: item for item in stats_response.json()["items"]}
-    assert items["loom_link"]["weight"] == 100
-    assert items["loom_mp4"]["weight"] == 0
+    assert items["loom_mp4"]["weight"] == 100
 
     assert pending_response.status_code == 200
     assert [item["strategy_id"] for item in pending_response.json()["messages"]] == [
-        "loom_link",
-        "loom_link",
+        "loom_mp4",
+        "loom_mp4",
     ]
 
 
@@ -200,7 +199,7 @@ def test_contadores_strategy_stats_count_calendly_and_booked(monkeypatch, tmp_pa
         full_name="Stats Lead",
     )
 
-    contadores_endpoints.send_loom_sequence(lead=lead, config=config, strategy_id="loom_link")
+    contadores_endpoints.send_loom_sequence(lead=lead, config=config, strategy_id="loom_mp4")
     for message in ContadoresMessage.list_by_lead(lead.id):
         ContadoresMessage.update_delivery_status(
             message_id=message.id or 0,
@@ -218,13 +217,12 @@ def test_contadores_strategy_stats_count_calendly_and_booked(monkeypatch, tmp_pa
 
     assert response.status_code == 200
     items = {item["strategy_id"]: item for item in response.json()["items"]}
-    assert items["loom_link"]["assigned"] == 1
-    assert items["loom_link"]["sent"] == 1
-    assert items["loom_link"]["delivered"] == 1
-    assert items["loom_link"]["reached_calendly"] == 1
-    assert items["loom_link"]["booked"] == 1
-    assert items["loom_link"]["calendly_rate"] == 1
-    assert items["loom_mp4"]["assigned"] == 0
+    assert items["loom_mp4"]["assigned"] == 1
+    assert items["loom_mp4"]["sent"] == 1
+    assert items["loom_mp4"]["delivered"] == 1
+    assert items["loom_mp4"]["reached_calendly"] == 1
+    assert items["loom_mp4"]["booked"] == 1
+    assert items["loom_mp4"]["calendly_rate"] == 1
 
 
 def test_contadores_pending_delivery_exposes_new_opener_template_without_params(monkeypatch, tmp_path) -> None:
@@ -589,7 +587,7 @@ def test_contadores_automation_tick_classifies_affirmative_reply_and_sends_calen
 def test_contadores_reply_after_24h_followup_still_advances_to_loom(monkeypatch, tmp_path) -> None:
     """A reply after the 24-hour reminder should use the usual next stage and Loom copy."""
     configure_contadores_db(monkeypatch, tmp_path)
-    force_loom_strategy(monkeypatch, "loom_link")
+    force_loom_strategy(monkeypatch, "loom_mp4")
     config = ContadoresConfig.update(
         enabled=True,
         initial_reply_quiet_seconds=1,
@@ -631,9 +629,9 @@ def test_contadores_reply_after_24h_followup_still_advances_to_loom(monkeypatch,
     assert detail.json()["lead"]["stage"] == "awaiting_video_reply"
     assert detail.json()["lead"]["raw_stage"] == "awaiting_video_reply"
     assert pending.status_code == 200
-    assert [item["sequence_step"] for item in pending.json()["messages"]] == ["loom_intro", "loom_url"]
+    assert [item["sequence_step"] for item in pending.json()["messages"]] == ["loom_intro", "loom_video"]
     assert pending.json()["messages"][0]["text"] == contadores_endpoints.build_loom_intro_text()
-    assert pending.json()["messages"][1]["text"] == config.loom_url
+    assert pending.json()["messages"][1]["media_type"] == "video"
 
 
 def test_contadores_inbound_routing_marks_ambiguous_phone_as_needs_human(monkeypatch, tmp_path) -> None:
@@ -696,18 +694,61 @@ def test_contadores_inbound_matches_mexico_52_and_521_variants(monkeypatch, tmp_
     assert detail.json()["messages"][0]["external_id"] == "wamid.mx.1"
 
 
-def test_contadores_ctwa_referral_creates_lead_and_reaches_loom(monkeypatch, tmp_path) -> None:
-    """A configured Click-to-WhatsApp ad should start the funnel after the opener step."""
-    monkeypatch.setenv("FUNNELS_CONFIG_PATH", str(tmp_path / "funnels.json"))
-    monkeypatch.setenv("CONTADORES_WHATSAPP_REFERRAL_SOURCE_IDS", "120244283740930010")
+def test_abogados_ctwa_referral_creates_lead_and_reaches_loom(monkeypatch, tmp_path) -> None:
+    """A configured Abogados Click-to-WhatsApp ad should start after the opener step."""
     configure_contadores_db(monkeypatch, tmp_path)
     ContadoresConfig.update(
         enabled=True,
         initial_reply_quiet_seconds=1,
-        strategy_weights={"loom": {"loom_link": 100, "loom_mp4": 0}},
+        strategy_weights={"loom": {"loom_mp4": 100}},
     )
+    abogados_funnel = {
+        "id": "abogados",
+        "label": "Abogados",
+        "kind": "campaign",
+        "enabled": True,
+        "source_mode": "testing",
+        "test_phone": "+5491111111111",
+        "test_name": "Lead Abogado",
+        "sheet_url": None,
+        "sheet_gid": None,
+        "sheet_source_filter": None,
+        "sheet_poll_seconds": 30,
+        "template_language": "es",
+        "opener_text": "Hola, completaste el formulario para abogados. Es correcto?",
+        "opener_template_name": "abogados_intro_es_v1",
+        "opener_followup_text": "Queria compartirte informacion sobre la propuesta para tu estudio juridico.",
+        "opener_followup_template_name": "abogados_followup_es_v1",
+        "manual_ping_text": "Hola, queria saber si queres que retomemos la conversacion",
+        "manual_ping_template_name": None,
+        "loom_intro_text": "Perfecto. Te cuento rapido como traemos consultas a tu estudio:",
+        "loom_url": "",
+        "video_check_text": "conseguiste ver el video?",
+        "calendly_intro_text": "Para avanzar, elegi un horario:",
+        "calendly_base_url": "https://calendly.com/konecta/abogados",
+        "alert_emails": [],
+        "whatsapp_referral_source_ids": ["120244283740930010"],
+        "initial_reply_quiet_seconds": 1,
+        "post_loom_min_seconds": 600,
+        "post_loom_quiet_seconds": 30,
+        "strategies": [
+            {
+                "step": "loom",
+                "id": "loom_mp4",
+                "label": "WhatsApp MP4",
+                "weight": 100,
+                "delivery": "video",
+                "sequence_step": "loom_video",
+                "message_text": "Video enviado por WhatsApp.",
+                "media_type": "video",
+                "media_path": "data/abogados/videos/loom_60_seconds_captions.mp4",
+                "media_caption": None,
+            }
+        ],
+    }
 
     with TestClient(app) as client:
+        create_funnel = client.post("/api/funnels", json=abogados_funnel)
         response = client.post(
             "/api/contadores/whatsapp/inbound",
             json={
@@ -732,14 +773,16 @@ def test_contadores_ctwa_referral_creates_lead_and_reaches_loom(monkeypatch, tmp
             first_reply_received_at=quiet_at,
             last_inbound_at=quiet_at,
         )
-        tick = client.post("/api/contadores/automation/tick")
+        tick = client.post("/api/contadores/automation/tick?funnel_id=abogados")
         detail = client.get(f"/api/contadores/leads/{lead.id}")
         pending = client.get("/api/contadores/messages/pending-delivery")
 
+    assert create_funnel.status_code == 200
     assert response.status_code == 200
-    assert response.json()["route"] == "contadores"
-    assert lead.external_lead_id == "ctwa:contadores:5491155555555"
+    assert response.json()["route"] == "abogados"
+    assert lead.external_lead_id == "ctwa:abogados:5491155555555"
     assert lead.platform == "whatsapp_ctwa"
+    assert lead.funnel_id == "abogados"
     assert lead.opener_sent_at is None
     assert lead.first_reply_received_at is not None
 
@@ -757,7 +800,101 @@ def test_contadores_ctwa_referral_creates_lead_and_reaches_loom(monkeypatch, tmp
     assert ctwa_events[0]["payload"]["referral"]["source_id"] == "120244283740930010"
 
     assert pending.status_code == 200
-    assert [item["sequence_step"] for item in pending.json()["messages"]] == ["loom_intro", "loom_url"]
+    assert [item["sequence_step"] for item in pending.json()["messages"]] == ["loom_intro", "loom_video"]
+
+
+def test_unmatched_whatsapp_inbound_creates_general_inbox_lead(monkeypatch, tmp_path) -> None:
+    """Inbound WhatsApp without a matching reply/referral should land in the General inbox."""
+    configure_contadores_db(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/contadores/whatsapp/inbound",
+            json={
+                "phone": "+5491155555599",
+                "text": "Hola, quiero consultar algo",
+                "external_id": "wamid.general.1",
+            },
+        )
+        lead_id = response.json()["lead_id"]
+        detail = client.get(f"/api/contadores/leads/{lead_id}")
+        general_list = client.get("/api/contadores/leads?funnel_id=general")
+        tick = client.post("/api/contadores/automation/tick?funnel_id=general")
+
+    assert response.status_code == 200
+    assert response.json()["route"] == "general"
+    assert detail.status_code == 200
+    assert detail.json()["lead"]["funnel_id"] == "general"
+    assert detail.json()["lead"]["stage"] == "needs_human"
+    assert detail.json()["lead"]["automation_paused"] is True
+    assert detail.json()["lead"]["tags"] == ["whatsapp"]
+    assert detail.json()["messages"][0]["external_id"] == "wamid.general.1"
+    assert general_list.status_code == 200
+    assert [item["id"] for item in general_list.json()["leads"]] == [lead_id]
+    assert tick.status_code == 200
+    assert tick.json()["status"] == "inbox"
+
+
+def test_general_inbox_lead_can_move_to_campaign_stage(monkeypatch, tmp_path) -> None:
+    """Operators can route a General inbox chat into an existing campaign and phase."""
+    configure_contadores_db(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        inbound = client.post(
+            "/api/contadores/whatsapp/inbound",
+            json={
+                "phone": "+5491155555501",
+                "text": "Soy contador y quiero informacion",
+            },
+        )
+        lead_id = inbound.json()["lead_id"]
+        move_response = client.post(
+            f"/api/contadores/leads/{lead_id}/move",
+            json={"funnel_id": "contadores", "stage": "awaiting_initial_reply"},
+        )
+        contadores_list = client.get("/api/contadores/leads?funnel_id=contadores")
+
+    assert inbound.status_code == 200
+    assert move_response.status_code == 200
+    assert move_response.json()["funnel_id"] == "contadores"
+    assert move_response.json()["stage"] == "awaiting_initial_reply"
+    assert move_response.json()["automation_paused"] is False
+    assert [item["id"] for item in contadores_list.json()["leads"]] == [lead_id]
+
+
+def test_contadores_lead_tags_update_and_filter_with_stage(monkeypatch, tmp_path) -> None:
+    """Operator tags should combine with the normal stage filters."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    first = ContadoresLead.upsert(
+        external_lead_id="tagged-form-1",
+        phone="+5491155555511",
+        full_name="Tagged One",
+        tags=["form"],
+    )
+    second = ContadoresLead.upsert(
+        external_lead_id="tagged-form-2",
+        phone="+5491155555512",
+        full_name="Tagged Two",
+        tags=["form"],
+    )
+
+    with TestClient(app) as client:
+        update_response = client.put(
+            f"/api/contadores/leads/{first.id}/tags",
+            json={"tags": ["form", "prioridad"]},
+        )
+        filtered_response = client.get(
+            "/api/contadores/leads?stage=awaiting_initial_reply&tag=prioridad"
+        )
+
+    assert update_response.status_code == 200
+    assert update_response.json()["tags"] == ["form", "prioridad"]
+    assert filtered_response.status_code == 200
+    payload = filtered_response.json()
+    assert payload["tag_options"] == ["form", "prioridad"]
+    assert [item["id"] for item in payload["leads"]] == [first.id]
+    assert payload["metrics"]["total"] == 1
+    assert second.id != first.id
 
 
 def test_contadores_detail_keeps_manual_stage_with_calendly_milestone(monkeypatch, tmp_path) -> None:
@@ -1357,20 +1494,19 @@ def test_contadores_leads_filter_by_prior_loom_strategy_inside_calendly(monkeypa
     """Operators should filter Calendly leads by the Loom strategy assigned earlier."""
     configure_contadores_db(monkeypatch, tmp_path)
     config = ContadoresConfig.update(enabled=True)
-    link_lead = ContadoresLead.upsert(
+    unassigned_lead = ContadoresLead.upsert(
         external_lead_id="sheet-row-loom-link-filter",
         phone="+5491555555563",
-        full_name="Loom Link Lead",
+        full_name="Unassigned Lead",
     )
     mp4_lead = ContadoresLead.upsert(
         external_lead_id="sheet-row-loom-mp4-filter",
         phone="+5491555555564",
         full_name="MP4 Lead",
     )
-    contadores_endpoints.send_loom_sequence(lead=link_lead, config=config, strategy_id="loom_link")
     contadores_endpoints.send_loom_sequence(lead=mp4_lead, config=config, strategy_id="loom_mp4")
     ContadoresLead.update_flow_state(
-        link_lead.id,
+        unassigned_lead.id,
         stage=ContadoresLeadStage.CALENDLY_SENT,
         calendly_sent_at=now_utc(),
     )

@@ -25,6 +25,7 @@ export interface RuntimeSettings {
 }
 
 export type FunnelSourceMode = "testing" | "live";
+export type FunnelKind = "campaign" | "inbox";
 export type FunnelStrategyDelivery = "link" | "video";
 
 export interface FunnelStrategyDefinition {
@@ -43,6 +44,7 @@ export interface FunnelStrategyDefinition {
 export interface FunnelDefinition {
   id: string;
   label: string;
+  kind: FunnelKind;
   enabled: boolean;
   source_mode: FunnelSourceMode;
   test_phone: string;
@@ -123,6 +125,7 @@ export interface LeadSummary {
   email: string | null;
   platform: string | null;
   lead_status: string | null;
+  tags: string[];
   sheet_created_time: string | null;
   stage: LeadStage;
   raw_stage: LeadStage;
@@ -187,6 +190,7 @@ export interface LeadListResponse {
   metrics: ContadoresMetrics;
   config: ContadoresConfig;
   leads: LeadSummary[];
+  tag_options: string[];
 }
 
 export interface LeadDetailResponse {

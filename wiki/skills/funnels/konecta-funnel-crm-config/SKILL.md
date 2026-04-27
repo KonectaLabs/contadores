@@ -15,6 +15,7 @@ Each funnel needs:
 
 - `id`: stable slug such as `contadores` or `abogados`;
 - `label`: operator-facing name;
+- `kind`: `campaign` for normal funnels or `inbox` for the built-in general inbox;
 - `enabled`;
 - `source_mode`: `testing` or `live`;
 - `test_phone` and `test_name`;
@@ -37,7 +38,6 @@ Each funnel needs:
   - `post_loom_min_seconds`;
   - `post_loom_quiet_seconds`;
 - strategies:
-  - link strategy;
   - WhatsApp MP4 strategy;
   - rollout weights.
 
@@ -56,7 +56,7 @@ Keep backwards compatibility with Contadores env names:
 
 For new funnels, prefer explicit funnel config. Env can seed defaults, but the app should read configured funnel definitions at runtime.
 
-Click-to-WhatsApp ads must route by webhook referral metadata, not by the editable prefilled user message. Put each ad/post `referral.source_id` into the target funnel's `whatsapp_referral_source_ids`. The default Contadores funnel can also read `CONTADORES_WHATSAPP_REFERRAL_SOURCE_IDS`.
+Click-to-WhatsApp ads must route by webhook referral metadata, not by the editable prefilled user message. Put each ad/post `referral.source_id` into the target funnel's `whatsapp_referral_source_ids`. Keep Contadores empty when it has no real campaign; unmatched WhatsApp messages go to the built-in `general` inbox.
 
 ## Testing/Live Rule
 

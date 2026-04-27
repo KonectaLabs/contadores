@@ -39,7 +39,7 @@ description: Canonical persistent memory log for Konecta Auditor. Use as the sin
 - Decision/rule:
   - Contadores pipeline counts must not be recalculated from the currently selected stage bucket.
   - `/api/contadores/leads` now applies search/source/platform/strategy filters first, computes pipeline metrics from that set, then applies the selected stage only to the visible lead list.
-  - strategy filters use persisted `contadores_strategy_assignments`, so operators can select `Calendly sent` and then filter by the prior Loom strategy such as `loom_link` or `loom_mp4`.
+  - strategy filters use persisted `contadores_strategy_assignments`, so operators can select `Calendly sent` and then filter by the prior WhatsApp MP4 strategy.
   - lead summaries expose `strategy_assignments` for lightweight list tags and future operator UI filters without re-reading message timelines.
 - Reason:
   - stage counts are navigation totals, not nested counts within the active bucket.
@@ -104,10 +104,8 @@ description: Canonical persistent memory log for Konecta Auditor. Use as the sin
 ### Contadores Sequence Strategies Are Code-Weighted And Persist Assignments (2026-04-23)
 - Decision/rule:
   - Contadores sequence steps now support code-defined strategies under `backend/contadores_strategies/`.
-  - v1 enables the `loom` step with two code-defined strategies:
-    - `loom_link`: existing text Loom URL.
-    - `loom_mp4`: local WhatsApp MP4 from `data/contadores/videos/loom_60_seconds_captions.mp4`.
-  - current rollout is `loom_mp4` at 100% and `loom_link` at 0%; the link strategy stays configured for future rollback/testing.
+  - v1 now keeps the `loom` step on `loom_mp4`: local WhatsApp MP4 from `data/contadores/videos/loom_60_seconds_captions.mp4`.
+  - current rollout is `loom_mp4` at 100%; the Loom-link strategy was removed from active config.
   - weights are code-only for now; operators can see stats but cannot edit rollout percentages in the UI.
   - every strategy choice is persisted in `contadores_strategy_assignments` and copied onto outbound messages for auditability.
   - strategy conversion stats count assignment, sent/delivered, reached Calendly, and booked milestones without rewriting old assignments when weights change.

@@ -4,20 +4,16 @@ description: >-
   Defines the canonical WhatsApp follow-up sequence for contadores leads from
   Konecta Labs. Use when implementing, reviewing, or updating the bot flow that
   sends message 1, waits for any inbound reply, waits 30 seconds, sends message
-  2 and message 3 (Loom URL only), waits 3 minutes, then sends message 4 and
-  message 5 (Calendly URL only). Use env vars CONTADORES_LOOM_URL and
-  CONTADORES_CALENDLY_URL instead of hardcoding links.
+  2 and message 3 (WhatsApp MP4), waits, then sends the video check and
+  Calendly handoff when classification says the lead wants to proceed.
 ---
 
 # Secuencia WhatsApp de contadores
 
 ## Variables obligatorias
 
-- `CONTADORES_LOOM_URL`
-- `CONTADORES_CALENDLY_URL`
-
-Si faltan, no hardcodear links. La implementación debe fallar explícitamente o
-dejar claro que falta configuración.
+- `CONTADORES_CALENDLY_URL` or `CONTADORES_CALENDLY_BASE_URL`
+- Funnel `loom_mp4.media_path`
 
 ## Reglas del flujo
 
@@ -26,18 +22,18 @@ dejar claro que falta configuración.
 3. Si el primer inbound viene de un anuncio Click-to-WhatsApp con `referral.source_id` configurado, crear/reusar el lead y saltear el mensaje 1.
 4. Esperar `30` segundos.
 5. Enviar el mensaje 2.
-6. Enviar enseguida el mensaje 3.
-7. Esperar `3` minutos.
-8. Enviar el mensaje 4.
-9. Enviar enseguida el mensaje 5.
+6. Enviar enseguida el mensaje 3 como WhatsApp MP4.
+7. Esperar la ventana configurada.
+8. Enviar el video check si no hubo respuesta.
+9. Si la clasificacion dice `wants_to_proceed`, enviar Calendly.
 
 ## Reglas de contenido
 
 - El mensaje 2 no lleva link.
-- El mensaje 3 debe ser solo la URL de `CONTADORES_LOOM_URL`.
+- El mensaje 3 debe ser el MP4 configurado, no un link de Loom.
 - El mensaje 4 no lleva link.
 - El mensaje 5 debe ser solo la URL de `CONTADORES_CALENDLY_URL`.
-- No mezclar el texto del mensaje 2 con el link del Loom.
+- No mezclar el texto del mensaje 2 con el MP4.
 - No mezclar el texto del mensaje 4 con el link del Calendly.
 - El trigger es mecánico: cualquier respuesta sirve; no hace falta clasificar intención.
 
@@ -64,7 +60,7 @@ Te invito a que veas este video donde te explicamos la propuesta a detalle:
 Enviar inmediatamente después del mensaje 2.
 
 ```text
-{CONTADORES_LOOM_URL}
+WhatsApp MP4 desde loom_mp4.media_path
 ```
 
 ### Mensaje 4
@@ -90,6 +86,7 @@ Enviar inmediatamente después del mensaje 4.
 - Leer los links desde la capa de configuración.
 - Guardar la secuencia como cinco mensajes separados.
 - Para Click-to-WhatsApp, rutear por `referral.source_id` contra `whatsapp_referral_source_ids`, no por el texto editable que envia el usuario.
+- Si el inbound no matchea reply/referral, guardarlo en el buzon `general`.
 - El ping manual `contadores_manual_ping_es_v1` es solo una accion del CRM.
 - Marcar un lead como `booked` no envia WhatsApp. El alias legacy
   `send-manual-booked` solo marca `booked`.

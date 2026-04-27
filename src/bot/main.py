@@ -128,6 +128,8 @@ async def run_worker_iteration(
     for funnel in funnels:
         if not funnel.enabled:
             continue
+        if funnel.kind == "inbox":
+            continue
         automation_summary = await run_contadores_automation_iteration(
             backend_client,
             funnel_id=funnel.id,
@@ -185,6 +187,8 @@ async def run_worker_loop(
                 now = asyncio.get_running_loop().time()
                 for funnel in await fetch_funnels(backend_client):
                     if not funnel.enabled:
+                        continue
+                    if funnel.kind == "inbox":
                         continue
                     sheet_poll_seconds = max(30, int(funnel.sheet_poll_seconds or 30))
                     last_sync_at = last_sheet_sync_at_by_funnel.get(funnel.id, 0.0)

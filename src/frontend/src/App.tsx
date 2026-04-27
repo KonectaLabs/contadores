@@ -38,6 +38,15 @@ const stageFilters: Array<{
   { value: "closed", label: "Closed", metric: "closed", tone: "muted" },
 ];
 
+const moveStageOptions: Array<{ value: LeadStage; label: string }> = [
+  { value: "needs_human", label: "Manual" },
+  { value: "awaiting_initial_reply", label: "Opener sent" },
+  { value: "awaiting_video_reply", label: "Loom sent" },
+  { value: "calendly_sent", label: "Calendly sent" },
+  { value: "booked", label: "Booked" },
+  { value: "closed", label: "Closed" },
+];
+
 const sendOptions = [
   { value: "custom", title: "Custom message", help: "Write your own WhatsApp reply." },
   { value: "send-manual-ping", title: "Manual ping", help: "Send the approved ping template to reopen WhatsApp." },
@@ -96,6 +105,7 @@ export function App() {
   const [detail, setDetail] = useState<LeadDetailResponse | null>(null);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [stageFilter, setStageFilter] = useState<StageFilterValue>("all");
+  const [tagFilter, setTagFilter] = useState("");
   const [strategyFilter, setStrategyFilter] = useState<{ step: string; strategyId: string }>({ step: "", strategyId: "" });
   const [activeTab, setActiveTab] = useState<DetailTab>("messages");
   const [query, setQuery] = useState("");
@@ -115,9 +125,11 @@ export function App() {
   const debouncedQuery = useDebouncedValue(query, 250);
 
   const metrics = leadList?.metrics;
+  const tagOptions = leadList?.tag_options ?? [];
   const config = leadList?.config ?? detail?.config ?? null;
   const selectedFunnel = funnels.find((funnel) => funnel.id === selectedFunnelId) ?? funnels[0] ?? null;
   const isContadoresFunnel = true;
+  const isInboxFunnel = selectedFunnel?.kind === "inbox";
 
   const selectedLead = useMemo(() => {
     if (detail?.lead.id === selectedLeadId) {
@@ -147,22 +159,25 @@ export function App() {
       setSelectedFunnelId(funnelPayload.funnels[0]?.id ?? "contadores");
     }
 
-    const activeFunnelId = funnelPayload.funnels.some((funnel) => funnel.id === selectedFunnelId)
-      ? selectedFunnelId
-      : funnelPayload.funnels[0]?.id ?? "contadores";
+    const activeFunnel = funnelPayload.funnels.find((funnel) => funnel.id === selectedFunnelId) ?? funnelPayload.funnels[0];
+    const activeFunnelId = activeFunnel?.id ?? "contadores";
+    const activeIsInbox = activeFunnel?.kind === "inbox";
     const params = new URLSearchParams({ limit: "500", archived: "false", funnel_id: activeFunnelId });
-    if (stageFilter === "manual_attention") {
+    if (!activeIsInbox && stageFilter === "manual_attention") {
       params.set("stage", "needs_human");
       params.set("manual_reply_status", "needs_reply");
       params.set("needs_human", "true");
-    } else if (stageFilter !== "all") {
+    } else if (!activeIsInbox && stageFilter !== "all") {
       params.set("stage", stageFilter);
     }
-    if (strategyFilter.step) {
+    if (!activeIsInbox && strategyFilter.step) {
       params.set("strategy_step", strategyFilter.step);
     }
-    if (strategyFilter.strategyId) {
+    if (!activeIsInbox && strategyFilter.strategyId) {
       params.set("strategy_id", strategyFilter.strategyId);
+    }
+    if (tagFilter) {
+      params.set("tag", tagFilter);
     }
     if (debouncedQuery.trim()) {
       params.set("query", debouncedQuery.trim());
@@ -178,6 +193,9 @@ export function App() {
     });
     if (debouncedQuery.trim()) {
       manualAttentionParams.set("query", debouncedQuery.trim());
+    }
+    if (tagFilter) {
+      manualAttentionParams.set("tag", tagFilter);
     }
 
     const [leadsPayload, manualAttentionPayload, strategyPayload] = await Promise.all([
@@ -196,7 +214,7 @@ export function App() {
       }
       return leadsPayload.leads[0]?.id ?? null;
     });
-  }, [debouncedQuery, selectedFunnelId, stageFilter, strategyFilter.step, strategyFilter.strategyId]);
+  }, [debouncedQuery, selectedFunnelId, stageFilter, strategyFilter.step, strategyFilter.strategyId, tagFilter]);
 
   const loadDetail = useCallback(async (leadId: string) => {
     setDetailLoading(true);
@@ -211,6 +229,15 @@ export function App() {
   useEffect(() => {
     setSelectedLeadIds((current) => current.filter((leadId) => visibleLeadIds.includes(leadId)));
   }, [visibleLeadIds]);
+
+  useEffect(() => {
+    if (!isInboxFunnel) {
+      return;
+    }
+    setStageFilter("all");
+    setStrategyFilter({ step: "", strategyId: "" });
+    setActiveTab("messages");
+  }, [isInboxFunnel]);
 
   useEffect(() => {
     let cancelled = false;
@@ -399,6 +426,48 @@ export function App() {
     setManualText("");
   }
 
+  async function updateLeadTags(tags: string[]) {
+    const leadId = selectedLead?.id ?? selectedLeadId;
+    if (!leadId) {
+      return;
+    }
+    setActionBusy("lead-tags");
+    try {
+      await apiFetch<LeadSummary>(`/api/contadores/leads/${leadId}/tags`, {
+        method: "PUT",
+        body: JSON.stringify({ tags }),
+      });
+      await loadDashboard();
+      await loadDetail(leadId);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not update tags.");
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
+  async function moveLeadToFunnel(targetFunnelId: string, targetStage: LeadStage) {
+    const leadId = selectedLead?.id ?? selectedLeadId;
+    if (!leadId) {
+      return;
+    }
+    setActionBusy("move-lead");
+    try {
+      const moved = await apiFetch<LeadSummary>(`/api/contadores/leads/${leadId}/move`, {
+        method: "POST",
+        body: JSON.stringify({ funnel_id: targetFunnelId, stage: targetStage }),
+      });
+      setSelectedFunnelId(moved.funnel_id);
+      setSelectedLeadId(moved.id);
+      await loadDashboard();
+      await loadDetail(moved.id);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not move the lead.");
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
   async function deleteLead() {
     const leadId = selectedLead?.id ?? selectedLeadId;
     if (!leadId || !window.confirm("Delete this chat and its local history?")) {
@@ -545,31 +614,33 @@ export function App() {
         />
       ) : (
       <div className="ct-surface">
-        <section className="ct-pipeline" aria-label="Lead stages">
-          {stageFilters.map((filter) => {
-            const count = filter.value === "manual_attention"
-              ? manualAttentionList.length
-              : Number(metrics?.[filter.metric ?? "total"] ?? 0);
+        {!isInboxFunnel ? (
+          <section className="ct-pipeline" aria-label="Lead stages">
+            {stageFilters.map((filter) => {
+              const count = filter.value === "manual_attention"
+                ? manualAttentionList.length
+                : Number(metrics?.[filter.metric ?? "total"] ?? 0);
 
-            return (
-              <button
-                key={filter.value}
-                type="button"
-                className={`ct-stage ${stageFilter === filter.value ? "active" : ""}`}
-                data-tone={filter.tone}
-                aria-pressed={stageFilter === filter.value}
-                onClick={() => setStageFilter(filter.value)}
-              >
-                <span className="ct-stage-count">{compactNumber(count)}</span>
-                <span className="ct-stage-label">{filter.label}</span>
-              </button>
-            );
-          })}
-        </section>
+              return (
+                <button
+                  key={filter.value}
+                  type="button"
+                  className={`ct-stage ${stageFilter === filter.value ? "active" : ""}`}
+                  data-tone={filter.tone}
+                  aria-pressed={stageFilter === filter.value}
+                  onClick={() => setStageFilter(filter.value)}
+                >
+                  <span className="ct-stage-count">{compactNumber(count)}</span>
+                  <span className="ct-stage-label">{filter.label}</span>
+                </button>
+              );
+            })}
+          </section>
+        ) : null}
 
         <div className="ct-secondary">
-          <div className="ct-strategy-filter" role="group" aria-label="Strategy filter">
-            {strategyStats.length ? (
+          <div className="ct-filter-strip" role="group" aria-label="Lead filters">
+            {!isInboxFunnel && strategyStats.length ? (
               <>
                 <button
                   type="button"
@@ -591,6 +662,28 @@ export function App() {
                     </button>
                   );
                 })}
+              </>
+            ) : null}
+
+            {tagOptions.length ? (
+              <>
+                <button
+                  type="button"
+                  className={`ct-strategy-filter-btn ${!tagFilter ? "active" : ""}`}
+                  onClick={() => setTagFilter("")}
+                >
+                  All tags
+                </button>
+                {tagOptions.map((tag) => (
+                  <button
+                    type="button"
+                    className={`ct-strategy-filter-btn ${tagFilter === tag ? "active" : ""}`}
+                    key={tag}
+                    onClick={() => setTagFilter(tag)}
+                  >
+                    #{tag}
+                  </button>
+                ))}
               </>
             ) : null}
           </div>
@@ -632,6 +725,7 @@ export function App() {
               leads={leadList?.leads ?? []}
               selectedLeadId={selectedLeadId}
               selectedLeadIds={selectedLeadIds}
+              inboxMode={isInboxFunnel}
               loading={loading}
               onSelect={setSelectedLeadId}
               onToggleSelected={toggleLeadSelection}
@@ -650,33 +744,53 @@ export function App() {
               onMarkAnswered={() => runAction("mark-answered")}
               onToggleClosed={() => runAction(selectedLead?.stage === "closed" ? "reopen" : "close")}
               onDelete={deleteLead}
+              inboxMode={isInboxFunnel}
             />
 
-            <PausedBanner lead={selectedLead} actionBusy={actionBusy} onResume={resumeAutomation} />
+            {!isInboxFunnel ? (
+              <PausedBanner lead={selectedLead} actionBusy={actionBusy} onResume={resumeAutomation} />
+            ) : null}
+            <LeadTagsEditor
+              lead={selectedLead}
+              busy={actionBusy === "lead-tags"}
+              onSave={updateLeadTags}
+            />
+            {isInboxFunnel ? (
+              <MoveLeadPanel
+                lead={selectedLead}
+                funnels={funnels}
+                busy={actionBusy === "move-lead"}
+                onMove={moveLeadToFunnel}
+              />
+            ) : null}
 
-            <div className="ct-tabs" role="tablist" aria-label="Lead detail sections">
-              {(["messages", "strategies"] as DetailTab[]).map((tab) => (
-                <button
-                  key={tab}
-                  type="button"
-                  className={`ct-tab ${activeTab === tab ? "active" : ""}`}
-                  role="tab"
-                  aria-selected={activeTab === tab}
-                  onClick={() => setActiveTab(tab)}
-                >
-                  {humanize(tab)}
-                </button>
-              ))}
-            </div>
+            {!isInboxFunnel ? (
+              <div className="ct-tabs" role="tablist" aria-label="Lead detail sections">
+                {(["messages", "strategies"] as DetailTab[]).map((tab) => (
+                  <button
+                    key={tab}
+                    type="button"
+                    className={`ct-tab ${activeTab === tab ? "active" : ""}`}
+                    role="tab"
+                    aria-selected={activeTab === tab}
+                    onClick={() => setActiveTab(tab)}
+                  >
+                    {humanize(tab)}
+                  </button>
+                ))}
+              </div>
+            ) : null}
 
             <div className="ct-panes">
-              <section className={`ct-pane ${activeTab === "messages" ? "active" : ""}`}>
+              <section className={`ct-pane ${isInboxFunnel || activeTab === "messages" ? "active" : ""}`}>
                 <MessageTimeline messages={detail?.messages ?? []} loading={detailLoading} hasLead={Boolean(selectedLead)} />
               </section>
 
-              <section className={`ct-pane ${activeTab === "strategies" ? "active" : ""}`}>
-                <LeadStrategies messages={detail?.messages ?? []} loading={detailLoading} hasLead={Boolean(selectedLead)} />
-              </section>
+              {!isInboxFunnel ? (
+                <section className={`ct-pane ${activeTab === "strategies" ? "active" : ""}`}>
+                  <LeadStrategies messages={detail?.messages ?? []} loading={detailLoading} hasLead={Boolean(selectedLead)} />
+                </section>
+              ) : null}
             </div>
 
             <ManualDock
@@ -759,7 +873,6 @@ function FunnelSetupView({
   }
 
   const mp4Strategy = funnel.strategies.find((strategy) => strategy.delivery === "video");
-  const linkStrategy = funnel.strategies.find((strategy) => strategy.delivery === "link");
 
   return (
     <section className="ct-funnel-setup" aria-label="Funnel setup">
@@ -788,8 +901,8 @@ function FunnelSetupView({
         </article>
         <article className="ct-funnel-card">
           <span>Video</span>
-          <strong>{mp4Strategy?.media_path ? "WhatsApp MP4" : linkStrategy ? "Link" : "Not configured"}</strong>
-          <p>{mp4Strategy?.media_path || funnel.loom_url || "-"}</p>
+          <strong>{mp4Strategy?.media_path ? "WhatsApp MP4" : "Not configured"}</strong>
+          <p>{mp4Strategy?.media_path || "-"}</p>
         </article>
         <article className="ct-funnel-card">
           <span>Calendly</span>
@@ -865,6 +978,18 @@ function FunnelEditorDrawer({
     }));
   }
 
+  function deleteStrategy(strategyId: string) {
+    setDraft((current) => {
+      if (current.strategies.length <= 1) {
+        return current;
+      }
+      return {
+        ...current,
+        strategies: current.strategies.filter((strategy) => strategy.id !== strategyId),
+      };
+    });
+  }
+
   function updateTemplateChoice(nameKey: TemplateNameField, textKey: TemplateTextField, templateId: string) {
     const selected = templateChoices.find((choice) => choice.templateId === templateId);
     setDraft((current) => ({
@@ -888,6 +1013,13 @@ function FunnelEditorDrawer({
       manual_ping_template_name: draft.manual_ping_template_name?.trim() || null,
       manual_ping_text: draft.manual_ping_text.trim(),
       whatsapp_referral_source_ids: draft.whatsapp_referral_source_ids.map((item) => item.trim()).filter(Boolean),
+      strategies: draft.strategies.map((strategy) => ({
+        ...strategy,
+        label: strategy.label.trim() || strategy.id,
+        message_text: strategy.message_text.trim(),
+        media_path: strategy.media_path?.trim() || null,
+        media_caption: strategy.media_caption?.trim() || null,
+      })),
     });
   }
 
@@ -1006,23 +1138,31 @@ function FunnelEditorDrawer({
             <textarea value={draft.loom_intro_text} onChange={(event) => update("loom_intro_text", event.target.value)} rows={4} />
           </label>
 
-          <div className="ct-field-grid">
-            <label className="ct-field">
-              <span>Loom URL</span>
-              <input value={draft.loom_url} onChange={(event) => update("loom_url", event.target.value)} />
-            </label>
-            <label className="ct-field">
-              <span>MP4 Path</span>
-              <input value={videoStrategy?.media_path ?? ""} onChange={(event) => updateStrategyMediaPath(event.target.value)} />
-            </label>
-          </div>
+          <label className="ct-field">
+            <span>MP4 Path</span>
+            <input value={videoStrategy?.media_path ?? ""} onChange={(event) => updateStrategyMediaPath(event.target.value)} />
+          </label>
 
-          <div className="ct-field-grid">
+          <div className="ct-strategy-edit-list">
             {draft.strategies.map((strategy) => (
-              <label className="ct-field" key={strategy.id}>
-                <span>{strategy.label} Weight</span>
-                <input type="number" min="0" max="100" value={strategy.weight} onChange={(event) => updateStrategyWeight(strategy.id, event.target.value)} />
-              </label>
+              <article className="ct-strategy-edit-row" key={strategy.id}>
+                <div>
+                  <strong>{strategy.label || formatStrategyLabel(strategy.id)}</strong>
+                  <span>{strategy.id} · {strategy.delivery}</span>
+                </div>
+                <label className="ct-field">
+                  <span>Weight</span>
+                  <input type="number" min="0" max="100" value={strategy.weight} onChange={(event) => updateStrategyWeight(strategy.id, event.target.value)} />
+                </label>
+                <button
+                  type="button"
+                  className="ct-btn ct-btn-ghost btn-destructive"
+                  disabled={draft.strategies.length <= 1}
+                  onClick={() => deleteStrategy(strategy.id)}
+                >
+                  Delete
+                </button>
+              </article>
             ))}
           </div>
 
@@ -1098,6 +1238,7 @@ function LeadList({
   leads,
   selectedLeadId,
   selectedLeadIds,
+  inboxMode,
   loading,
   onSelect,
   onToggleSelected,
@@ -1105,6 +1246,7 @@ function LeadList({
   leads: LeadSummary[];
   selectedLeadId: string | null;
   selectedLeadIds: string[];
+  inboxMode: boolean;
   loading: boolean;
   onSelect: (leadId: string) => void;
   onToggleSelected: (leadId: string) => void;
@@ -1146,8 +1288,9 @@ function LeadList({
                 <div className="ct-lead-top">
                   <h4 className="ct-lead-name">{lead.full_name || lead.phone || "Lead"}</h4>
                   <div className="ct-lead-tags">
-                    <span className="ct-lead-stage" data-tone={tone}>{formatStageLabel(lead.stage)}</span>
+                    <span className="ct-lead-stage" data-tone={tone}>{inboxMode ? "Inbox" : formatStageLabel(lead.stage)}</span>
                     {strategyTag ? <span className="ct-lead-strategy-tag">{strategyTag}</span> : null}
+                    {(lead.tags ?? []).slice(0, 3).map((tag) => <span className="ct-lead-tag" key={tag}>#{tag}</span>)}
                     {turn ? <span className={`ct-lead-turn ${turn}`}>{turn === "needs_reply" ? "Needs reply" : "Answered"}</span> : null}
                   </div>
                 </div>
@@ -1168,6 +1311,7 @@ function LeadList({
 function LeadDetailHeader({
   lead,
   actionBusy,
+  inboxMode,
   onOpenSend,
   onManualBooked,
   onMarkAnswered,
@@ -1176,6 +1320,7 @@ function LeadDetailHeader({
 }: {
   lead: LeadSummary | null;
   actionBusy: string | null;
+  inboxMode: boolean;
   onOpenSend: () => void;
   onManualBooked: () => void;
   onMarkAnswered: () => void;
@@ -1191,7 +1336,7 @@ function LeadDetailHeader({
       <div className="ct-detail-head-main">
         <div className="ct-detail-avatar">{lead ? monogram(lead.full_name || lead.phone || "CT") : "CT"}</div>
         <div className="ct-detail-head-copy">
-          <p className="ct-detail-kicker">{lead ? formatStageLabel(lead.stage) : "Select a lead"}</p>
+          <p className="ct-detail-kicker">{lead ? (inboxMode ? "Inbox" : formatStageLabel(lead.stage)) : "Select a lead"}</p>
           <h3>{lead?.full_name || lead?.phone || "No lead selected"}</h3>
           <p className="ct-detail-meta">
             {lead ? [lead.phone || "-", lead.email || "-", lead.platform || "-", lead.external_lead_id || "-"].join(" · ") : "Open a lead to inspect messages, strategy history, and manual controls."}
@@ -1200,8 +1345,10 @@ function LeadDetailHeader({
       </div>
       <div className="ct-detail-head-actions">
         <button type="button" className="ct-btn ct-btn-primary" disabled={!lead || closed || Boolean(actionBusy)} onClick={onOpenSend}>Send message...</button>
-        <button type="button" className="ct-btn ct-btn-ghost" disabled={!lead || closed || booked || Boolean(actionBusy)} onClick={onManualBooked}>Mark booked</button>
-        {canMarkAnswered ? (
+        {!inboxMode ? (
+          <button type="button" className="ct-btn ct-btn-ghost" disabled={!lead || closed || booked || Boolean(actionBusy)} onClick={onManualBooked}>Mark booked</button>
+        ) : null}
+        {canMarkAnswered && !inboxMode ? (
           <button type="button" className="ct-btn ct-btn-ghost" disabled={Boolean(actionBusy)} onClick={onMarkAnswered}>Mark answered</button>
         ) : null}
         <button type="button" className={`ct-btn ct-btn-ghost ${closed ? "" : "btn-destructive"}`} disabled={!lead || Boolean(actionBusy)} onClick={onToggleClosed}>
@@ -1244,6 +1391,108 @@ function PausedBanner({
         <button type="button" className="ct-btn ct-btn-ghost" disabled={!paused || Boolean(actionBusy)} onClick={onResume}>Resume automation</button>
       ) : null}
     </div>
+  );
+}
+
+function LeadTagsEditor({
+  lead,
+  busy,
+  onSave,
+}: {
+  lead: LeadSummary | null;
+  busy: boolean;
+  onSave: (tags: string[]) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState("");
+
+  useEffect(() => {
+    setDraft((lead?.tags ?? []).join(", "));
+  }, [lead?.id, lead?.tags]);
+
+  if (!lead) {
+    return null;
+  }
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await onSave(draft.split(",").map((tag) => tag.trim()).filter(Boolean));
+  }
+
+  return (
+    <form className="ct-tags-editor" onSubmit={submit}>
+      <label className="ct-field">
+        <span>Tags</span>
+        <input
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          placeholder="form, whatsapp, prioridad"
+        />
+      </label>
+      <button type="submit" className="ct-btn ct-btn-ghost" disabled={busy}>
+        {busy ? "Saving..." : "Save tags"}
+      </button>
+    </form>
+  );
+}
+
+function MoveLeadPanel({
+  lead,
+  funnels,
+  busy,
+  onMove,
+}: {
+  lead: LeadSummary | null;
+  funnels: FunnelDefinition[];
+  busy: boolean;
+  onMove: (funnelId: string, stage: LeadStage) => Promise<void>;
+}) {
+  const campaignFunnels = funnels.filter((funnel) => funnel.kind !== "inbox");
+  const [funnelId, setFunnelId] = useState(campaignFunnels[0]?.id ?? "contadores");
+  const [stage, setStage] = useState<LeadStage>("needs_human");
+
+  useEffect(() => {
+    setFunnelId((current) => (
+      campaignFunnels.some((funnel) => funnel.id === current)
+        ? current
+        : campaignFunnels[0]?.id ?? "contadores"
+    ));
+  }, [campaignFunnels]);
+
+  if (!lead) {
+    return null;
+  }
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await onMove(funnelId, stage);
+  }
+
+  return (
+    <form className="ct-move-panel" onSubmit={submit}>
+      <div>
+        <strong>Move to campaign</strong>
+        <span>Pick the funnel and the phase where this chat should continue.</span>
+      </div>
+      <label className="ct-field">
+        <span>Campaign</span>
+        <select value={funnelId} onChange={(event) => setFunnelId(event.target.value)}>
+          {campaignFunnels.map((funnel) => (
+            <option value={funnel.id} key={funnel.id}>{funnel.label}</option>
+          ))}
+        </select>
+      </label>
+      <label className="ct-field">
+        <span>Phase</span>
+        <select value={stage} onChange={(event) => setStage(event.target.value as LeadStage)}>
+          {moveStageOptions.map((option) => (
+            <option value={option.value} key={option.value}>{option.label}</option>
+          ))}
+        </select>
+      </label>
+      <button type="submit" className="ct-btn ct-btn-primary" disabled={busy || !campaignFunnels.length}>
+        {busy ? "Moving..." : "Move chat"}
+      </button>
+    </form>
   );
 }
 
@@ -1473,7 +1722,6 @@ function ConfigDrawer({
     event.preventDefault();
     await onSave({
       enabled: draft.enabled,
-      loom_url: draft.loom_url,
       calendly_base_url: draft.calendly_base_url,
       alert_emails: draft.alert_emails.split(",").map((item) => item.trim()).filter(Boolean),
       strategy_weights: draft.strategy_weights,
@@ -1515,10 +1763,6 @@ function ConfigDrawer({
               <input type="checkbox" checked={draft.enabled} onChange={(event) => setDraft((current) => ({ ...current, enabled: event.target.checked }))} />
               <p className="ct-field-hint">When disabled, no automatic opener/automation runs.</p>
             </div>
-          </label>
-          <label className="ct-field">
-            <span>Loom URL</span>
-            <input value={draft.loom_url} onChange={(event) => setDraft((current) => ({ ...current, loom_url: event.target.value }))} />
           </label>
           <label className="ct-field">
             <span>Calendly Base URL</span>
@@ -1618,6 +1862,9 @@ function SendModal({
 }) {
   const marksCalendlySent = kind === "send-calendly" || kind === "send-calendly-link";
   const pausesAutomation = !marksCalendlySent;
+  const availableOptions = funnel?.kind === "inbox"
+    ? sendOptions.filter((option) => ["custom", "send-opener", "send-manual-ping"].includes(option.value))
+    : sendOptions;
 
   return (
     <div className="ct-modal open" aria-hidden="false">
@@ -1634,7 +1881,7 @@ function SendModal({
 
           <fieldset className="ct-send-options">
             <legend className="ct-sr-only">Message type</legend>
-            {sendOptions.map((option) => (
+            {availableOptions.map((option) => (
               <label className="ct-send-option" key={option.value}>
                 <input
                   type="radio"
@@ -1695,6 +1942,9 @@ function BulkSendModal({
 }) {
   const marksCalendlySent = kind === "send-calendly" || kind === "send-calendly-link";
   const pausesAutomation = !marksCalendlySent;
+  const availableOptions = funnel?.kind === "inbox"
+    ? sendOptions.filter((option) => ["custom", "send-opener", "send-manual-ping"].includes(option.value))
+    : sendOptions;
 
   return (
     <div className="ct-modal open" aria-hidden="false">
@@ -1715,7 +1965,7 @@ function BulkSendModal({
 
           <fieldset className="ct-send-options">
             <legend className="ct-sr-only">Bulk message type</legend>
-            {sendOptions.map((option) => (
+            {availableOptions.map((option) => (
               <label className="ct-send-option" key={option.value}>
                 <input
                   type="radio"
@@ -1757,6 +2007,7 @@ function buildBlankFunnel(): FunnelDefinition {
   return {
     id: "nuevo-funnel",
     label: "Nuevo Funnel",
+    kind: "campaign",
     enabled: true,
     source_mode: "testing",
     test_phone: "",
@@ -1783,18 +2034,6 @@ function buildBlankFunnel(): FunnelDefinition {
     post_loom_min_seconds: 600,
     post_loom_quiet_seconds: 30,
     strategies: [
-      {
-        step: "loom",
-        id: "loom_link",
-        label: "Video link",
-        weight: 0,
-        delivery: "link",
-        sequence_step: "loom_url",
-        message_text: "",
-        media_type: null,
-        media_path: null,
-        media_caption: null,
-      },
       {
         step: "loom",
         id: "loom_mp4",

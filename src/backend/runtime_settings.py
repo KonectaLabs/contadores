@@ -81,8 +81,6 @@ class RuntimeSettings:
             issues.append("Testing mode requires CONTADORES_TEST_PHONE.")
         if self.source_mode == "live" and not self.sheet_url:
             issues.append("Live mode requires CONTADORES_SHEET_URL.")
-        if not self.loom_url:
-            issues.append("CONTADORES_LOOM_URL is empty.")
         if not self.calendly_base_url:
             issues.append("CONTADORES_CALENDLY_BASE_URL is empty.")
         return issues

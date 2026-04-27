@@ -10,6 +10,8 @@ Use this skill when the task touches the Google Sheet used by the `contadores` p
 This sheet is the operational source of truth for Meta lead-form intake.
 Click-to-WhatsApp intake can bypass the sheet: the webhook `referral.source_id`
 is matched against the funnel config and creates/reuses a `whatsapp_ctwa` lead.
+Unmatched inbound WhatsApp messages are not discarded; they are saved in the
+built-in `general` inbox with a `whatsapp` tag so an operator can route them.
 
 Contadores is now one funnel in a multi-funnel platform. The built-in
 Contadores sheet settings can still come from `CONTADORES_SHEET_URL` and

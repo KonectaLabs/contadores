@@ -15,7 +15,9 @@ un archivo JSON persistente.
 
 ## Funnels por nicho
 
-El backend siempre expone un funnel default `contadores`.
+El backend siempre expone `contadores` y un buzon `general` para WhatsApp sin
+referral reconocido. Los nichos de campaña, como `abogados`, se editan desde la
+UI o desde el mismo JSON persistente.
 
 Los funnels agregados desde la UI se guardan en:
 
@@ -43,7 +45,8 @@ Cada funnel contiene:
 - ping template manual para reabrir la ventana de WhatsApp;
 - IDs de anuncios Click-to-WhatsApp (`whatsapp_referral_source_ids`);
 - texto del video;
-- estrategia `loom_link` o `loom_mp4`;
+- estrategia WhatsApp MP4 (`loom_mp4`);
+- `kind=campaign|inbox`, donde `inbox` no corre fases ni automatizacion;
 - Calendly;
 - acciones manuales de Calendly: con mensaje previo o solo link;
 - emails de alerta;
@@ -71,7 +74,6 @@ Variables mínimas:
 
 - `CONTADORES_SOURCE_MODE=testing`
 - `CONTADORES_TEST_PHONE=...`
-- `CONTADORES_LOOM_URL=...`
 
 En este modo no se debe consumir la sheet real de forma automática.
 El bot crea o actualiza un lead sintético con `CONTADORES_TEST_PHONE`.
@@ -85,7 +87,6 @@ Variables mínimas:
 - `CONTADORES_SOURCE_MODE=live`
 - `CONTADORES_SHEET_URL=...`
 - `CONTADORES_SHEET_GID=...`
-- `CONTADORES_LOOM_URL=...`
 
 ## Desarrollo local
 
@@ -143,7 +144,7 @@ curl http://127.0.0.1:8000/api/funnels
 
 Configurar pesos de estrategias:
 
-- `CONTADORES_STRATEGY_WEIGHTS_JSON='{"loom":{"loom_link":0,"loom_mp4":100}}'`
+- `CONTADORES_STRATEGY_WEIGHTS_JSON='{"loom":{"loom_mp4":100}}'`
 - También se puede cambiar desde `Settings` en el backoffice.
 - Los pesos son porcentajes de rollout por paso. Cambiarlos afecta nuevas asignaciones; las asignaciones ya guardadas no se reescriben.
 
@@ -156,10 +157,25 @@ Template manual de ping:
 
 Entrada Click-to-WhatsApp:
 
-- Cada funnel puede declarar `whatsapp_referral_source_ids` en `data/funnels.json` o, para el default Contadores, `CONTADORES_WHATSAPP_REFERRAL_SOURCE_IDS`.
+- Cada funnel puede declarar `whatsapp_referral_source_ids` en `data/funnels.json`.
+- Contadores no debe tener IDs cargados si no tiene campaña real. Hoy el source_id real queda en `abogados`.
 - Cuando Meta envia un webhook con `referral.source_id` configurado, el backend crea o reutiliza un lead `whatsapp_ctwa`.
 - Ese lead queda como si ya hubiese respondido al opener: no se encola el template inicial y el tick automatico pasa al Loom despues de `initial_reply_quiet_seconds`.
 - No se usa el texto prellenado del anuncio para rutear porque el usuario puede editarlo antes de enviarlo.
+- Si no hay `referral.source_id`, o si no matchea ningun funnel, el mensaje se guarda como lead en el buzon `general`.
+
+Buzon General:
+
+- `general` es un inbox, no una campaña: no tiene pipeline de fases ni sheet sync.
+- Permite chatear, mandar el mensaje inicial o el ping general.
+- Desde la UI se puede mover un chat a una campaña existente y elegir la fase inicial.
+
+Tags:
+
+- Los leads tienen tags libres de operador y filtro por tag.
+- Los importados desde formulario reciben el tag `form`.
+- Los creados desde WhatsApp reciben el tag `whatsapp`.
+- El filtro por tag se combina con las fases, busqueda y estrategia.
 
 Acciones manuales de Calendly:
 

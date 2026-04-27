@@ -13,9 +13,12 @@ from pydantic import BaseModel, Field, field_validator
 from backend.database import DATA_DIR, normalize_email
 
 SourceMode = Literal["testing", "live"]
+FunnelKind = Literal["campaign", "inbox"]
 StrategyDelivery = Literal["link", "video"]
 
 CONTADORES_FUNNEL_ID = "contadores"
+GENERAL_INBOX_FUNNEL_ID = "general"
+MP4_ONLY_FUNNEL_IDS = {CONTADORES_FUNNEL_ID, "abogados"}
 DEFAULT_CONTADORES_LOOM_URL = "https://www.loom.com/share/36b054dea1c94bbaa7470014c2337fca"
 DEFAULT_CONTADORES_CALENDLY_URL = "https://calendly.com/yoelkravchuk/konecta-meet"
 DEFAULT_CONTADORES_VIDEO_PATH = "data/contadores/videos/loom_60_seconds_captions.mp4"
@@ -88,8 +91,8 @@ class FunnelStrategyDefinition(BaseModel):
     id: str
     label: str
     weight: int = Field(default=100, ge=0, le=100)
-    delivery: StrategyDelivery = "link"
-    sequence_step: str = "loom_url"
+    delivery: StrategyDelivery = "video"
+    sequence_step: str = "loom_video"
     message_text: str = ""
     media_type: str | None = None
     media_path: str | None = None
@@ -115,6 +118,7 @@ class FunnelDefinition(BaseModel):
 
     id: str
     label: str
+    kind: FunnelKind = "campaign"
     enabled: bool = True
     source_mode: SourceMode = "testing"
     test_phone: str = ""
@@ -222,6 +226,7 @@ def build_default_contadores_funnel() -> FunnelDefinition:
     return FunnelDefinition(
         id=CONTADORES_FUNNEL_ID,
         label="Contadores",
+        kind="campaign",
         enabled=_read_bool("CONTADORES_ENABLED", default=True),
         source_mode=_read_source_mode("CONTADORES_SOURCE_MODE"),
         test_phone=(os.getenv("CONTADORES_TEST_PHONE", "") or "").strip(),
@@ -257,19 +262,11 @@ def build_default_contadores_funnel() -> FunnelDefinition:
             or DEFAULT_CONTADORES_CALENDLY_URL
         ).strip(),
         alert_emails=_read_list("CONTADORES_ALERT_EMAILS"),
-        whatsapp_referral_source_ids=_read_list("CONTADORES_WHATSAPP_REFERRAL_SOURCE_IDS"),
+        whatsapp_referral_source_ids=[],
         initial_reply_quiet_seconds=_read_int("CONTADORES_INITIAL_REPLY_QUIET_SECONDS", default=30),
         post_loom_min_seconds=_read_int("CONTADORES_POST_LOOM_MIN_SECONDS", default=600, minimum=60),
         post_loom_quiet_seconds=_read_int("CONTADORES_POST_LOOM_QUIET_SECONDS", default=30),
         strategies=[
-            FunnelStrategyDefinition(
-                step="loom",
-                id="loom_link",
-                label="Loom link",
-                weight=0,
-                delivery="link",
-                sequence_step="loom_url",
-            ),
             FunnelStrategyDefinition(
                 step="loom",
                 id="loom_mp4",
@@ -285,12 +282,65 @@ def build_default_contadores_funnel() -> FunnelDefinition:
     )
 
 
+def build_default_general_inbox_funnel() -> FunnelDefinition:
+    """Return the built-in inbox for unmatched WhatsApp conversations."""
+    return FunnelDefinition(
+        id=GENERAL_INBOX_FUNNEL_ID,
+        label="General",
+        kind="inbox",
+        enabled=True,
+        source_mode="live",
+        test_phone="",
+        test_name="",
+        sheet_url=None,
+        sheet_gid=None,
+        sheet_source_filter=None,
+        sheet_poll_seconds=30,
+        template_language="es",
+        opener_text="Hola, gracias por escribirnos. Decime que necesitás y te orientamos por acá.",
+        opener_template_name=None,
+        opener_followup_text="Queria saber si pudiste ver mi mensaje anterior y si queres que retomemos.",
+        opener_followup_template_name=None,
+        manual_ping_text=DEFAULT_MANUAL_PING_TEXT,
+        manual_ping_template_name=None,
+        loom_intro_text="",
+        loom_url="",
+        video_check_text="",
+        calendly_intro_text="",
+        calendly_base_url="",
+        alert_emails=[],
+        whatsapp_referral_source_ids=[],
+        initial_reply_quiet_seconds=30,
+        post_loom_min_seconds=600,
+        post_loom_quiet_seconds=30,
+        strategies=[],
+    )
+
+
 def _merge_default_with_override(default: FunnelDefinition, override: FunnelDefinition) -> FunnelDefinition:
     """Overlay a file-backed definition onto the built-in default."""
     payload = default.model_dump()
     override_payload = override.model_dump(exclude_unset=True)
     payload.update(override_payload)
-    return FunnelDefinition.model_validate(payload)
+    return sanitize_funnel_definition(FunnelDefinition.model_validate(payload))
+
+
+def sanitize_funnel_definition(funnel: FunnelDefinition) -> FunnelDefinition:
+    """Remove retired campaign wiring from persisted funnel configs."""
+    updates: dict[str, object] = {}
+    if funnel.id == CONTADORES_FUNNEL_ID and funnel.whatsapp_referral_source_ids:
+        updates["whatsapp_referral_source_ids"] = []
+    if funnel.id in MP4_ONLY_FUNNEL_IDS:
+        strategies = [
+            strategy
+            for strategy in funnel.strategies
+            if strategy.id != "loom_link" and strategy.delivery != "link"
+        ]
+        if len(strategies) != len(funnel.strategies):
+            updates["strategies"] = strategies
+    if not updates:
+        return funnel
+    return funnel.model_copy(update=updates)
 
 
 def _read_config_file(path: Path) -> list[FunnelDefinition]:
@@ -308,22 +358,37 @@ def _read_config_file(path: Path) -> list[FunnelDefinition]:
     funnels: list[FunnelDefinition] = []
     for raw_item in raw_funnels:
         try:
-            funnels.append(FunnelDefinition.model_validate(raw_item))
+            funnels.append(sanitize_funnel_definition(FunnelDefinition.model_validate(raw_item)))
         except Exception:
             continue
     return funnels
 
 
 def list_funnels() -> list[FunnelDefinition]:
-    """Return every configured funnel, with Contadores always present."""
+    """Return every configured funnel, with Contadores and General always present."""
     default_contadores = build_default_contadores_funnel()
-    by_id: dict[str, FunnelDefinition] = {default_contadores.id: default_contadores}
+    default_general = build_default_general_inbox_funnel()
+    by_id: dict[str, FunnelDefinition] = {
+        default_contadores.id: default_contadores,
+        default_general.id: default_general,
+    }
     for funnel in _read_config_file(get_funnels_config_path()):
         if funnel.id == default_contadores.id:
             by_id[funnel.id] = _merge_default_with_override(default_contadores, funnel)
+        elif funnel.id == default_general.id:
+            by_id[funnel.id] = _merge_default_with_override(default_general, funnel)
         else:
             by_id[funnel.id] = funnel
-    return sorted(by_id.values(), key=lambda item: (item.id != CONTADORES_FUNNEL_ID, item.label.casefold()))
+    return sorted(by_id.values(), key=_funnel_sort_key)
+
+
+def _funnel_sort_key(item: FunnelDefinition) -> tuple[int, str]:
+    """Keep campaign tabs predictable and put the general inbox last."""
+    if item.id == CONTADORES_FUNNEL_ID:
+        return (0, item.label.casefold())
+    if item.kind == "inbox":
+        return (2, item.label.casefold())
+    return (1, item.label.casefold())
 
 
 def get_funnel(funnel_id: str = CONTADORES_FUNNEL_ID) -> FunnelDefinition | None:
@@ -367,8 +432,9 @@ def save_funnels(funnels: list[FunnelDefinition]) -> list[FunnelDefinition]:
     path.parent.mkdir(parents=True, exist_ok=True)
     normalized: dict[str, FunnelDefinition] = {}
     for funnel in funnels:
-        normalized[funnel.id] = funnel
-    items = sorted(normalized.values(), key=lambda item: (item.id != CONTADORES_FUNNEL_ID, item.label.casefold()))
+        clean_funnel = sanitize_funnel_definition(funnel)
+        normalized[clean_funnel.id] = clean_funnel
+    items = sorted(normalized.values(), key=_funnel_sort_key)
     payload = {
         "version": 1,
         "funnels": [item.model_dump(mode="json") for item in items],

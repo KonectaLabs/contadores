@@ -20,7 +20,6 @@ override the built-in Contadores definition.
 3. Wait 30 seconds of silence.
 4. Send the Loom intro text.
 5. Send the configured Loom strategy:
-   - `loom_link`: Loom URL alone.
    - `loom_mp4`: WhatsApp MP4 from `data/contadores/videos/loom_60_seconds_captions.mp4`.
 6. Wait 10 minutes.
 7. If there is still no reply, send `¿conseguiste ver el video?`
@@ -71,6 +70,7 @@ the lead answered, the lead leaves `Needs answer` but remains visible in Manual.
 - Funnel definitions live in `FUNNELS_CONFIG_PATH` or `data/funnels.json`.
   The UI and Codex edit the same file.
 - Click-to-WhatsApp ad IDs live in each funnel as `whatsapp_referral_source_ids`.
-  The default Contadores funnel can also be seeded with `CONTADORES_WHATSAPP_REFERRAL_SOURCE_IDS`.
+  Contadores should stay empty when it has no real campaign; currently the real ad source belongs to Abogados.
+- Inbound WhatsApp messages with no matching reply/referral are saved in the built-in `general` inbox.
 
 Read [references/sequence.md](references/sequence.md) for the exact messages and timing.

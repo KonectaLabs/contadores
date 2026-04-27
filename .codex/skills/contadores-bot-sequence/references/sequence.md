@@ -16,6 +16,11 @@ is configured in `whatsapp_referral_source_ids`, do not send the opener. Create
 or reuse the lead with platform `whatsapp_ctwa`, store the inbound message, and
 continue as if the lead already replied to message 1.
 
+If the webhook has no referral or its `source_id` does not match any configured
+campaign, store the message in the built-in `general` inbox with the `whatsapp`
+tag. The general inbox has chats and presets only; an operator can move a lead
+to a campaign and choose its phase manually.
+
 ## Message 2
 
 Sent 30 seconds after any reply:
@@ -28,7 +33,7 @@ Te invito a que veas este video donde te explicamos la propuesta a detalle:`
 
 Send immediately after message 2:
 
-`CONTADORES_LOOM_URL`
+WhatsApp MP4 from the configured `loom_mp4.media_path`.
 
 ## Message 4
 

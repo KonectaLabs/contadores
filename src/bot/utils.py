@@ -76,6 +76,7 @@ class FunnelConfigPayload(BaseModel):
 
     id: str
     label: str
+    kind: str = "campaign"
     enabled: bool
     source_mode: SourceMode = "testing"
     test_phone: str = ""

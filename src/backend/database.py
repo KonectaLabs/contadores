@@ -706,6 +706,48 @@ def serialize_json_payload(payload: dict[str, Any] | list[Any] | None) -> str:
     return json.dumps(payload, ensure_ascii=False, default=str)
 
 
+def normalize_contadores_tag(value: str | None) -> str:
+    """Normalize one operator tag while preserving readable wording."""
+    return " ".join(str(value or "").split())
+
+
+def normalize_contadores_tags(values: list[str] | tuple[str, ...] | None) -> list[str]:
+    """Normalize a tag list with stable order and case-insensitive dedupe."""
+    if not values:
+        return []
+
+    normalized_tags: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        normalized = normalize_contadores_tag(value)
+        if not normalized:
+            continue
+        key = normalized.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized_tags.append(normalized)
+    return normalized_tags
+
+
+def serialize_contadores_tags(values: list[str] | tuple[str, ...] | None) -> str:
+    """Serialize normalized lead tags into one JSON field."""
+    return json.dumps(normalize_contadores_tags(values), ensure_ascii=True)
+
+
+def deserialize_contadores_tags(raw_value: str | None) -> list[str]:
+    """Deserialize stored lead tags with a safe fallback."""
+    if not raw_value:
+        return []
+    try:
+        parsed = json.loads(raw_value)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return normalize_contadores_tags([str(item) for item in parsed])
+
+
 class ContadoresLeadStage(str, Enum):
     """Lifecycle stage for one Contadores lead."""
 
@@ -975,6 +1017,7 @@ class ContadoresLead(SQLModel, table=True):
     email: str | None = Field(default=None)
     platform: str | None = Field(default=None, index=True)
     lead_status: str | None = Field(default=None)
+    tags_json: str = Field(default="[]")
     sheet_created_time: datetime | None = Field(default=None)
     stage: ContadoresLeadStage = Field(default=ContadoresLeadStage.AWAITING_INITIAL_REPLY, index=True)
     calendly_tracking_token: str = Field(default_factory=lambda: uuid.uuid4().hex, index=True)
@@ -998,6 +1041,11 @@ class ContadoresLead(SQLModel, table=True):
     automation_paused_reason: str | None = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @property
+    def tags(self) -> list[str]:
+        """Return normalized operator tags for this lead."""
+        return deserialize_contadores_tags(self.tags_json)
 
     @classmethod
     def normalize_stage(cls, stage: ContadoresLeadStage | str | None) -> ContadoresLeadStage:
@@ -1136,6 +1184,7 @@ class ContadoresLead(SQLModel, table=True):
         email: str | None = None,
         platform: str | None = None,
         lead_status: str | None = None,
+        tags: list[str] | None = None,
         sheet_created_time: datetime | None = None,
         reset_flow: bool = False,
     ) -> "ContadoresLead":
@@ -1158,6 +1207,7 @@ class ContadoresLead(SQLModel, table=True):
                     email=(normalize_email(email) or None) if email else None,
                     platform=(platform or "").strip() or None,
                     lead_status=(lead_status or "").strip() or None,
+                    tags_json=serialize_contadores_tags(tags),
                     sheet_created_time=sheet_created_time,
                     stage=ContadoresLeadStage.AWAITING_INITIAL_REPLY,
                     created_at=now,
@@ -1176,6 +1226,8 @@ class ContadoresLead(SQLModel, table=True):
             item.email = (normalize_email(email) or None) if email else None
             item.platform = (platform or "").strip() or None
             item.lead_status = (lead_status or "").strip() or None
+            if tags is not None:
+                item.tags_json = serialize_contadores_tags([*item.tags, *tags])
             item.sheet_created_time = sheet_created_time
             if reset_flow:
                 item.stage = ContadoresLeadStage.AWAITING_INITIAL_REPLY
@@ -1197,6 +1249,45 @@ class ContadoresLead(SQLModel, table=True):
                 item.archived_at = None
                 item.calendly_tracking_token = uuid.uuid4().hex
             item.updated_at = now
+            session.add(item)
+            session.commit()
+            session.refresh(item)
+            session.expunge(item)
+            return item
+
+    @classmethod
+    def set_tags(cls, lead_id: str, *, tags: list[str]) -> Optional["ContadoresLead"]:
+        """Replace the operator tags for one lead."""
+        with Session(engine) as session:
+            item = session.get(cls, lead_id)
+            if item is None:
+                return None
+            item.tags_json = serialize_contadores_tags(tags)
+            item.updated_at = datetime.now(timezone.utc)
+            session.add(item)
+            session.commit()
+            session.refresh(item)
+            session.expunge(item)
+            return item
+
+    @classmethod
+    def move_to_funnel(
+        cls,
+        lead_id: str,
+        *,
+        funnel_id: str,
+        stage: ContadoresLeadStage | str,
+    ) -> Optional["ContadoresLead"]:
+        """Move one lead to another funnel and operator-selected stage."""
+        with Session(engine) as session:
+            item = session.get(cls, lead_id)
+            if item is None:
+                return None
+            item.funnel_id = (funnel_id or "").strip() or "contadores"
+            item.stage = cls.normalize_stage(stage)
+            item.automation_paused = item.stage == ContadoresLeadStage.NEEDS_HUMAN
+            item.automation_paused_reason = "manual_funnel_move" if item.automation_paused else None
+            item.updated_at = datetime.now(timezone.utc)
             session.add(item)
             session.commit()
             session.refresh(item)
@@ -3442,6 +3533,7 @@ def init_db() -> None:
     ensure_contadores_closed_state_columns()
     ensure_contadores_manual_reply_columns()
     ensure_contadores_funnel_columns()
+    ensure_contadores_tags_column()
     ensure_contadores_strategy_columns()
     ensure_contadores_config_strategy_weights_column()
     logger.info(f"Database initialized at {DATABASE_URL}")
@@ -3473,6 +3565,21 @@ def ensure_contadores_funnel_columns() -> None:
             connection.exec_driver_sql(
                 "CREATE INDEX IF NOT EXISTS ix_contadores_events_funnel_id ON contadores_events (funnel_id)"
             )
+
+
+def ensure_contadores_tags_column() -> None:
+    """Add operator lead tags to existing Contadores lead tables."""
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        if "contadores_leads" not in inspector.get_table_names():
+            return
+        lead_columns = {column["name"] for column in inspector.get_columns("contadores_leads")}
+        if "tags_json" in lead_columns:
+            return
+        connection.exec_driver_sql(
+            "ALTER TABLE contadores_leads ADD COLUMN tags_json TEXT NOT NULL DEFAULT '[]'"
+        )
+        logger.info("Added missing contadores_leads.tags_json column.")
 
 
 def ensure_contadores_automation_paused_columns() -> None:

@@ -33,10 +33,11 @@ from backend.database import (
     DATA_DIR,
     MessageDeliveryStatus,
     engine,
+    normalize_contadores_tags,
     normalize_email,
     normalize_phone,
 )
-from backend.funnel_config import get_contadores_funnel
+from backend.funnel_config import GENERAL_INBOX_FUNNEL_ID, get_contadores_funnel
 from backend.funnel_config import get_file_backed_funnel, get_funnel, upsert_funnel
 from backend.funnel_config import list_funnels_by_whatsapp_referral_source_id
 
@@ -375,6 +376,24 @@ def lead_matches_strategy_filter(
     return False
 
 
+def lead_matches_tag_filter(lead: ContadoresLead, tag: str | None) -> bool:
+    """Return True when the lead has the requested operator tag."""
+    clean_tag = normalize_contadores_tags([tag or ""])
+    if not clean_tag:
+        return True
+    tag_key = clean_tag[0].casefold()
+    return any(item.casefold() == tag_key for item in lead.tags)
+
+
+def build_tag_options(leads: list[ContadoresLead]) -> list[str]:
+    """Return every tag used by a group of leads."""
+    by_key: dict[str, str] = {}
+    for lead in leads:
+        for tag in lead.tags:
+            by_key.setdefault(tag.casefold(), tag)
+    return sorted(by_key.values(), key=str.casefold)
+
+
 def build_contadores_strategy_stats(funnel_id: str = "contadores") -> "ContadoresStrategyStatsResponse":
     """Aggregate strategy assignment and conversion counts."""
     funnel = resolve_funnel(funnel_id)
@@ -541,6 +560,7 @@ def build_lead_summary(
         email=lead.email,
         platform=lead.platform,
         lead_status=lead.lead_status,
+        tags=lead.tags,
         sheet_created_time=format_timestamp_seconds(lead.sheet_created_time),
         stage=effective_stage.value,
         raw_stage=lead.stage.value,
@@ -1167,6 +1187,7 @@ class ContadoresLeadSummary(BaseModel):
     email: str | None = None
     platform: str | None = None
     lead_status: str | None = None
+    tags: list[str] = Field(default_factory=list)
     sheet_created_time: str | None = None
     stage: str
     raw_stage: str
@@ -1239,6 +1260,7 @@ class ContadoresLeadListResponse(BaseModel):
     metrics: ContadoresMetrics
     config: ContadoresConfigResponse
     leads: list[ContadoresLeadSummary] = Field(default_factory=list)
+    tag_options: list[str] = Field(default_factory=list)
 
 
 class ContadoresLeadDetailResponse(BaseModel):
@@ -1283,6 +1305,19 @@ class CreateContadoresMessageCommand(BaseModel):
     """Manual outbound composer payload."""
 
     text: str = Field(min_length=1)
+
+
+class UpdateContadoresLeadTagsCommand(BaseModel):
+    """Operator tags for one lead."""
+
+    tags: list[str] = Field(default_factory=list)
+
+
+class MoveContadoresLeadCommand(BaseModel):
+    """Move one lead into another funnel and stage."""
+
+    funnel_id: str = Field(min_length=1)
+    stage: str = Field(default=ContadoresLeadStage.NEEDS_HUMAN.value)
 
 
 class BulkContadoresActionCommand(BaseModel):
@@ -1443,6 +1478,14 @@ def build_ctwa_external_lead_id(*, funnel_id: str, phone: str) -> str | None:
     return f"ctwa:{(funnel_id or '').strip() or 'contadores'}:{normalized_phone}"
 
 
+def build_general_inbox_external_lead_id(*, phone: str) -> str | None:
+    """Build the stable external id used for unmatched WhatsApp inbox leads."""
+    normalized_phone = normalize_phone(phone)
+    if not normalized_phone:
+        return None
+    return f"whatsapp:{GENERAL_INBOX_FUNNEL_ID}:{normalized_phone}"
+
+
 def upsert_ctwa_lead_from_inbound(
     *,
     funnel_id: str,
@@ -1465,10 +1508,43 @@ def upsert_ctwa_lead_from_inbound(
         phone=command.phone,
         platform="whatsapp_ctwa",
         lead_status="new",
+        tags=["whatsapp"],
         sheet_created_time=now_utc(),
         reset_flow=reset_flow,
     )
     return lead, existing is None
+
+
+def upsert_general_inbox_lead_from_inbound(
+    *,
+    command: ContadoresWhatsAppInboundCommand,
+) -> tuple[ContadoresLead, bool]:
+    """Create or refresh one lead for the general WhatsApp inbox."""
+    external_lead_id = build_general_inbox_external_lead_id(phone=command.phone)
+    if external_lead_id is None:
+        raise ValueError("phone is invalid")
+
+    existing = ContadoresLead.get_by_external_lead_id(
+        external_lead_id,
+        funnel_id=GENERAL_INBOX_FUNNEL_ID,
+    )
+    lead = ContadoresLead.upsert(
+        funnel_id=GENERAL_INBOX_FUNNEL_ID,
+        external_lead_id=external_lead_id,
+        phone=command.phone,
+        platform="whatsapp_general",
+        lead_status="new",
+        tags=["whatsapp"],
+        sheet_created_time=now_utc(),
+        reset_flow=existing is not None and existing.stage == ContadoresLeadStage.ARCHIVED,
+    )
+    ContadoresLead.update_flow_state(
+        lead.id,
+        stage=ContadoresLeadStage.NEEDS_HUMAN,
+        automation_paused=True,
+        automation_paused_reason="general_inbox",
+    )
+    return ContadoresLead.get_by_id(lead.id) or lead, existing is None
 
 
 def record_whatsapp_inbound_for_lead(
@@ -1619,6 +1695,7 @@ async def import_contadores_leads(
             email=row.email,
             platform=row.platform,
             lead_status=row.lead_status,
+            tags=["form"],
             sheet_created_time=row.created_time,
         )
         lead_ids.append(lead.id)
@@ -1673,6 +1750,7 @@ async def list_contadores_leads(
     booked: bool | None = None,
     needs_human: bool | None = None,
     archived: bool | None = None,
+    tag: str | None = None,
     query: str | None = None,
 ) -> ContadoresLeadListResponse:
     """List leads with list-view metrics and lightweight filtering."""
@@ -1684,6 +1762,7 @@ async def list_contadores_leads(
         platform=platform,
         include_archived=True,
     )
+    tag_options = build_tag_options(base_leads)
     assignments_by_lead = group_strategy_assignments_by_lead(funnel_id)
     metric_leads: list[ContadoresLead] = []
     visible_leads: list[ContadoresLead] = []
@@ -1700,10 +1779,13 @@ async def list_contadores_leads(
                     lead.email or "",
                     lead.platform or "",
                     lead.lead_status or "",
+                    " ".join(lead.tags),
                 ]
             ).lower()
             if query_value not in haystack:
                 continue
+        if not lead_matches_tag_filter(lead, tag):
+            continue
         if not lead_matches_strategy_filter(
             lead,
             assignments_by_lead=assignments_by_lead,
@@ -1739,6 +1821,7 @@ async def list_contadores_leads(
     return ContadoresLeadListResponse(
         metrics=build_contadores_metrics(metric_leads),
         config=build_config_response(config),
+        tag_options=tag_options,
         leads=[
             build_lead_summary(
                 item,
@@ -1824,6 +1907,56 @@ async def create_contadores_manual_message(
         lead=build_lead_summary(updated, config=config),
         queued_message_ids=[row.id or 0 for row in queued_rows],
     )
+
+
+@contadores_router.put("/leads/{lead_id}/tags", response_model=ContadoresLeadSummary)
+async def update_contadores_lead_tags(
+    lead_id: str,
+    command: UpdateContadoresLeadTagsCommand,
+) -> ContadoresLeadSummary:
+    """Replace operator tags for one lead."""
+    updated = ContadoresLead.set_tags(lead_id, tags=command.tags)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    config = get_effective_funnel_config(updated.funnel_id)
+    ContadoresEvent.add(
+        lead_id=updated.id,
+        event_type="lead_tags_updated",
+        actor="operator",
+        summary="Operator updated lead tags.",
+        payload={"tags": updated.tags},
+    )
+    return build_lead_summary(updated, config=config)
+
+
+@contadores_router.post("/leads/{lead_id}/move", response_model=ContadoresLeadSummary)
+async def move_contadores_lead(
+    lead_id: str,
+    command: MoveContadoresLeadCommand,
+) -> ContadoresLeadSummary:
+    """Move one lead to an existing campaign funnel and selected stage."""
+    target_funnel = get_funnel(command.funnel_id)
+    if target_funnel is None:
+        raise HTTPException(status_code=404, detail="Target funnel not found")
+    if target_funnel.kind == "inbox":
+        raise HTTPException(status_code=400, detail="Choose a campaign funnel")
+    target_stage = ContadoresLead.normalize_stage(command.stage)
+    updated = ContadoresLead.move_to_funnel(
+        lead_id,
+        funnel_id=target_funnel.id,
+        stage=target_stage,
+    )
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    config = get_effective_funnel_config(updated.funnel_id)
+    ContadoresEvent.add(
+        lead_id=updated.id,
+        event_type="lead_moved_to_funnel",
+        actor="operator",
+        summary=f"Lead moved to {target_funnel.label}.",
+        payload={"funnel_id": target_funnel.id, "stage": target_stage.value},
+    )
+    return build_lead_summary(updated, config=config)
 
 
 @contadores_router.post("/leads/bulk-action", response_model=ContadoresBulkActionResponse)
@@ -2156,10 +2289,25 @@ async def register_contadores_whatsapp_inbound(
             lead_id=refreshed_lead.id,
         )
 
+    try:
+        lead, created = upsert_general_inbox_lead_from_inbound(command=command)
+    except ValueError:
+        return ContadoresWhatsAppInboundResponse(
+            status="ignored",
+            route="none",
+            reason="invalid_phone",
+        )
+    refreshed_lead, _ = record_whatsapp_inbound_for_lead(
+        lead=lead,
+        command=command,
+        event_type="general_inbox_inbound_created" if created else "general_inbox_inbound_received",
+        event_summary="Inbound WhatsApp saved to the general inbox.",
+        event_payload={"referral": referral_payload} if referral_payload else None,
+    )
     return ContadoresWhatsAppInboundResponse(
-        status="ignored",
-        route="none",
-        reason="no_match",
+        status="processed",
+        route=GENERAL_INBOX_FUNNEL_ID,
+        lead_id=refreshed_lead.id,
     )
 
 
@@ -2168,6 +2316,9 @@ async def run_contadores_automation_tick(
     funnel_id: str = Query(default="contadores"),
 ) -> ContadoresAutomationTickResponse:
     """Advance Contadores automation state and queue due outbound messages."""
+    funnel = resolve_funnel(funnel_id)
+    if funnel.kind == "inbox":
+        return ContadoresAutomationTickResponse(status="inbox")
     config = get_effective_funnel_config(funnel_id)
     if not config.enabled:
         return ContadoresAutomationTickResponse(status="disabled")
