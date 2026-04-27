@@ -41,7 +41,6 @@ const stageFilters: Array<{
 const sendOptions = [
   { value: "custom", title: "Custom message", help: "Write your own WhatsApp reply." },
   { value: "send-manual-ping", title: "Manual ping", help: "Send the approved ping template to reopen WhatsApp." },
-  { value: "send-manual-booked", title: "Manual ping + booked", help: "Send the manual ping template and move the lead to Booked." },
   { value: "send-opener", title: "Opener", help: "Queue the default opener template." },
   { value: "send-loom", title: "Loom sequence", help: "Queue the Loom video introduction messages." },
   { value: "send-video-check", title: "Video check", help: "Ask if they watched the Loom." },
@@ -64,7 +63,6 @@ type TemplateChoice = {
 type QuickActionName =
   | "send-opener"
   | "send-manual-ping"
-  | "send-manual-booked"
   | "send-loom"
   | "send-video-check"
   | "send-calendly"
@@ -648,7 +646,7 @@ export function App() {
                 setSendKind("custom");
                 setShowSendModal(true);
               }}
-              onManualBooked={() => runAction("send-manual-booked")}
+              onManualBooked={() => runAction("mark-booked")}
               onMarkAnswered={() => runAction("mark-answered")}
               onToggleClosed={() => runAction(selectedLead?.stage === "closed" ? "reopen" : "close")}
               onDelete={deleteLead}
@@ -1202,7 +1200,7 @@ function LeadDetailHeader({
       </div>
       <div className="ct-detail-head-actions">
         <button type="button" className="ct-btn ct-btn-primary" disabled={!lead || closed || Boolean(actionBusy)} onClick={onOpenSend}>Send message...</button>
-        <button type="button" className="ct-btn ct-btn-ghost" disabled={!lead || closed || booked || Boolean(actionBusy)} onClick={onManualBooked}>Manual + Booked</button>
+        <button type="button" className="ct-btn ct-btn-ghost" disabled={!lead || closed || booked || Boolean(actionBusy)} onClick={onManualBooked}>Mark booked</button>
         {canMarkAnswered ? (
           <button type="button" className="ct-btn ct-btn-ghost" disabled={Boolean(actionBusy)} onClick={onMarkAnswered}>Mark answered</button>
         ) : null}
@@ -1857,7 +1855,6 @@ function sendOptionPreview(kind: SendKind, funnel: FunnelDefinition | null): str
   }
   const previews: Partial<Record<SendKind, string>> = {
     "send-manual-ping": funnel.manual_ping_text,
-    "send-manual-booked": funnel.manual_ping_text,
     "send-opener": funnel.opener_text,
     "send-loom": funnel.loom_intro_text,
     "send-video-check": funnel.video_check_text,

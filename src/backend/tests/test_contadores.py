@@ -302,8 +302,8 @@ def test_manual_ping_action_queues_template_and_pauses_automation(monkeypatch, t
     assert lead_payload["automation_paused"] is True
 
 
-def test_manual_booked_action_queues_template_and_marks_booked(monkeypatch, tmp_path) -> None:
-    """Operators can send the manual ping and move a lead straight to Booked."""
+def test_manual_booked_action_marks_booked_without_queueing_template(monkeypatch, tmp_path) -> None:
+    """Operators can move a lead straight to Booked without sending WhatsApp."""
     monkeypatch.setenv("FUNNELS_CONFIG_PATH", str(tmp_path / "funnels.json"))
     configure_contadores_db(monkeypatch, tmp_path)
     lead = ContadoresLead.upsert(
@@ -320,9 +320,7 @@ def test_manual_booked_action_queues_template_and_marks_booked(monkeypatch, tmp_
     assert action_response.status_code == 200
     assert pending_response.status_code == 200
     messages = pending_response.json()["messages"]
-    assert len(messages) == 1
-    assert messages[0]["sequence_step"] == "manual_ping_template"
-    assert messages[0]["whatsapp_template_name"] == "contadores_manual_ping_es_v1"
+    assert messages == []
 
     assert detail_response.status_code == 200
     lead_payload = detail_response.json()["lead"]
@@ -330,6 +328,27 @@ def test_manual_booked_action_queues_template_and_marks_booked(monkeypatch, tmp_
     assert lead_payload["booked_at"] is not None
     assert lead_payload["automation_paused"] is True
     assert lead_payload["automation_paused_reason"] == "manual_booked"
+
+
+def test_booked_leads_do_not_expose_pending_manual_ping(monkeypatch, tmp_path) -> None:
+    """Booked leads must stay out of WhatsApp dispatch even if a ping was queued earlier."""
+    monkeypatch.setenv("FUNNELS_CONFIG_PATH", str(tmp_path / "funnels.json"))
+    configure_contadores_db(monkeypatch, tmp_path)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-booked-with-ping",
+        phone="+5491888888878",
+        full_name="Booked With Ping",
+    )
+
+    with TestClient(app) as client:
+        ping_response = client.post(f"/api/contadores/leads/{lead.id}/actions/send-manual-ping")
+        booked_response = client.post(f"/api/contadores/leads/{lead.id}/actions/mark-booked")
+        pending_response = client.get("/api/contadores/messages/pending-delivery")
+
+    assert ping_response.status_code == 200
+    assert booked_response.status_code == 200
+    assert pending_response.status_code == 200
+    assert pending_response.json()["messages"] == []
 
 
 def test_bulk_manual_ping_queues_selected_leads(monkeypatch, tmp_path) -> None:

@@ -802,22 +802,6 @@ def send_manual_ping_template(*, lead: ContadoresLead) -> list[ContadoresMessage
     return [row]
 
 
-def send_manual_ping_and_mark_booked(*, lead: ContadoresLead) -> list[ContadoresMessage]:
-    """Queue the manual ping template and mark the lead as booked."""
-    if not resolve_funnel(lead.funnel_id).manual_ping_template_name:
-        raise HTTPException(status_code=400, detail="Manual ping template is not configured")
-
-    queued_rows = send_manual_ping_template(lead=lead)
-    ContadoresLead.update_flow_state(
-        lead.id,
-        stage=ContadoresLeadStage.BOOKED,
-        booked_at=now_utc(),
-        automation_paused=True,
-        automation_paused_reason="manual_booked",
-    )
-    return queued_rows
-
-
 def send_video_check(*, lead: ContadoresLead) -> list[ContadoresMessage]:
     """Queue the post-Loom follow-up question."""
     row = enqueue_lead_outbound(
@@ -957,8 +941,16 @@ def run_quick_action_for_lead(
         if not resolve_funnel(lead.funnel_id).manual_ping_template_name:
             raise HTTPException(status_code=400, detail="Manual ping template is not configured")
         queued_rows = send_manual_ping_template(lead=lead)
-    elif normalized_action == "send-manual-booked":
-        queued_rows = send_manual_ping_and_mark_booked(lead=lead)
+    elif normalized_action in {"mark-booked", "send-manual-booked"}:
+        updated = ContadoresLead.update_flow_state(
+            lead.id,
+            stage=ContadoresLeadStage.BOOKED,
+            booked_at=now_utc(),
+            automation_paused=True,
+            automation_paused_reason="manual_booked",
+        )
+        queue_manual_action_event(lead.id, "mark-booked")
+        return updated or lead, []
     elif normalized_action == "send-loom":
         queued_rows = send_loom_sequence(lead=lead, config=config, assigned_by="operator")
     elif normalized_action == "send-video-check":
@@ -971,14 +963,6 @@ def run_quick_action_for_lead(
         queued_rows = send_calendly_link_only(lead=lead, config=config)
         if queued_rows:
             keep_manual_handoff_after_calendly_send(lead.id, sent_at=queued_rows[0].created_at)
-    elif normalized_action == "mark-booked":
-        updated = ContadoresLead.update_flow_state(
-            lead.id,
-            stage=ContadoresLeadStage.BOOKED,
-            booked_at=now_utc(),
-        )
-        queue_manual_action_event(lead.id, normalized_action)
-        return updated or lead, []
     elif normalized_action == "mark-answered":
         updated = ContadoresLead.update_flow_state(
             lead.id,
@@ -2393,6 +2377,8 @@ async def mark_contadores_booked(
         lead_id,
         stage=ContadoresLeadStage.BOOKED,
         booked_at=command.booked_at or now_utc(),
+        automation_paused=True,
+        automation_paused_reason="manual_booked",
     )
     if updated is None:
         raise HTTPException(status_code=404, detail="Lead not found")

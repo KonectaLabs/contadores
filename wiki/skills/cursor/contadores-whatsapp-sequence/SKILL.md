@@ -91,8 +91,8 @@ Enviar inmediatamente después del mensaje 4.
 - Guardar la secuencia como cinco mensajes separados.
 - Para Click-to-WhatsApp, rutear por `referral.source_id` contra `whatsapp_referral_source_ids`, no por el texto editable que envia el usuario.
 - El ping manual `contadores_manual_ping_es_v1` es solo una accion del CRM.
-- La accion CRM `send-manual-booked` envia ese ping manual y marca el lead como
-  `booked`; no debe ejecutarse desde ticks automaticos.
+- Marcar un lead como `booked` no envia WhatsApp. El alias legacy
+  `send-manual-booked` solo marca `booked`.
 - La vista CRM `Manual` muestra todos los manuales; el pipeline tiene un bloque
   `Needs answer` entre Manual y Closed para los manuales cuyo
   `manual_reply_status` sigue en `needs_reply`.

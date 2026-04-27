@@ -41,9 +41,9 @@ This is not part of the automatic sequence and is not the 24-hour opener
 follow-up. It is only queued by a manual operator action and pauses automation
 for that lead.
 
-The `send-manual-booked` backoffice action sends the same manual ping template
-and immediately marks the lead as `booked`. It is still operator-only and must
-not be added to automation ticks.
+Marking a lead as `booked` must not send any WhatsApp message. The legacy
+`send-manual-booked` action name is kept as a compatibility alias, but it only
+marks the lead as `booked` and pauses automation.
 
 ## Manual Calendly actions
 

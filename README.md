@@ -152,7 +152,7 @@ Template manual de ping:
 - Nombre default: `contadores_manual_ping_es_v1`.
 - Texto default: `Hola, queria saber en que situacion quedamos y si queres que retomemos la conversacion`.
 - Se envia solo desde la accion manual del backoffice; no participa del tick automatico ni del follow-up de 24 horas.
-- La accion `Manual ping + booked` envia ese mismo template y marca el lead como `booked`.
+- Marcar un lead como `booked` no envia WhatsApp. El alias legacy `send-manual-booked` queda soportado, pero solo marca `booked`.
 
 Entrada Click-to-WhatsApp:
 
