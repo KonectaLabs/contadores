@@ -44,6 +44,7 @@ Cada funnel contiene:
 - texto del video;
 - estrategia `loom_link` o `loom_mp4`;
 - Calendly;
+- acciones manuales de Calendly: con mensaje previo o solo link;
 - emails de alerta;
 - ventanas de espera.
 
@@ -150,6 +151,12 @@ Template manual de ping:
 - Nombre default: `contadores_manual_ping_es_v1`.
 - Texto default: `Hola, queria saber en que situacion quedamos y si queres que retomemos la conversacion`.
 - Se envia solo desde la accion manual del backoffice; no participa del tick automatico ni del follow-up de 24 horas.
+
+Acciones manuales de Calendly:
+
+- `Calendly with intro` encola el texto previo y despues el link de Calendly.
+- `Calendly link only` encola solo el link de Calendly.
+- Ambas acciones dejan el lead en `calendly_sent` y limpian el handoff manual. La automatizacion sigue usando siempre texto previo + link.
 
 Media en WhatsApp:
 

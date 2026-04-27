@@ -42,7 +42,8 @@ const sendOptions = [
   { value: "send-opener", title: "Opener", help: "Queue the default opener template." },
   { value: "send-loom", title: "Loom sequence", help: "Queue the Loom video introduction messages." },
   { value: "send-video-check", title: "Video check", help: "Ask if they watched the Loom." },
-  { value: "send-calendly", title: "Calendly sequence", help: "Share Calendly link and booking instructions." },
+  { value: "send-calendly", title: "Calendly with intro", help: "Send the booking instructions and then the Calendly link." },
+  { value: "send-calendly-link", title: "Calendly link only", help: "Send only the Calendly link and mark Calendly sent." },
 ] as const;
 
 type ManualReplyFilter = "" | "needs_reply" | "answered";
@@ -64,6 +65,7 @@ type QuickActionName =
   | "send-loom"
   | "send-video-check"
   | "send-calendly"
+  | "send-calendly-link"
   | "mark-answered"
   | "mark-booked"
   | "close"
@@ -1570,7 +1572,8 @@ function SendModal({
   onClose: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
-  const pausesAutomation = kind !== "send-calendly";
+  const marksCalendlySent = kind === "send-calendly" || kind === "send-calendly-link";
+  const pausesAutomation = !marksCalendlySent;
 
   return (
     <div className="ct-modal open" aria-hidden="false">
@@ -1646,7 +1649,8 @@ function BulkSendModal({
   onClose: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
-  const pausesAutomation = kind !== "send-calendly";
+  const marksCalendlySent = kind === "send-calendly" || kind === "send-calendly-link";
+  const pausesAutomation = !marksCalendlySent;
 
   return (
     <div className="ct-modal open" aria-hidden="false">
@@ -1810,6 +1814,7 @@ function sendOptionPreview(kind: SendKind, funnel: FunnelDefinition | null): str
     "send-loom": funnel.loom_intro_text,
     "send-video-check": funnel.video_check_text,
     "send-calendly": `${funnel.calendly_intro_text}\n${funnel.calendly_base_url}`,
+    "send-calendly-link": funnel.calendly_base_url,
   };
   const preview = previews[kind]?.trim();
   return preview ? truncateForOption(preview) : "";

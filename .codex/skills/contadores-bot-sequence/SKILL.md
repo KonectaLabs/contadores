@@ -40,6 +40,16 @@ This is not part of the automatic sequence and is not the 24-hour opener
 follow-up. It is only queued by a manual operator action and pauses automation
 for that lead.
 
+## Manual Calendly actions
+
+Operators have two backoffice actions:
+
+- `send-calendly`: send the configured Calendly intro text and then the Calendly URL.
+- `send-calendly-link`: send only the Calendly URL.
+
+Both actions move the lead to `calendly_sent` and clear the manual handoff.
+Automation must keep using the full Calendly text + URL sequence.
+
 ## Runtime rule
 
 - This flow can be deployed while the app is still in `testing`.

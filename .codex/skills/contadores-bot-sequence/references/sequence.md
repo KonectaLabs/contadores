@@ -52,6 +52,10 @@ Then send:
 
 `CONTADORES_CALENDLY_BASE_URL`
 
+Manual operators can also choose `send-calendly-link` from the CRM to send only
+`CONTADORES_CALENDLY_BASE_URL`. That manual shortcut still marks the lead as
+`calendly_sent`, but it is not used by automation.
+
 ## Human handoff
 
 Anything ambiguous, hesitant, negative, objection-based, or question-heavy goes to `needs_human`.

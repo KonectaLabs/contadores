@@ -814,6 +814,23 @@ def send_calendly_sequence(*, lead: ContadoresLead, config: ContadoresConfig) ->
     return [intro, calendly_url]
 
 
+def send_calendly_link_only(*, lead: ContadoresLead, config: ContadoresConfig) -> list[ContadoresMessage]:
+    """Queue only the configured Calendly URL and mark the milestone."""
+    calendly_url = enqueue_lead_outbound(
+        lead=lead,
+        text=build_calendly_url(base_url=config.calendly_base_url),
+        sequence_step="calendly_url",
+    )
+    ContadoresLead.update_flow_state(
+        lead.id,
+        stage=ContadoresLeadStage.CALENDLY_SENT,
+        calendly_sent_at=calendly_url.created_at,
+        clear_needs_human_notified_at=True,
+        automation_paused=False,
+    )
+    return [calendly_url]
+
+
 def get_reply_batch_since_loom(lead_id: str, *, loom_sent_at: datetime | None) -> list[ContadoresMessage]:
     """Return inbound messages received after the Loom sequence started."""
     if loom_sent_at is None:
@@ -893,6 +910,8 @@ def run_quick_action_for_lead(
         queued_rows = send_video_check(lead=lead)
     elif normalized_action == "send-calendly":
         queued_rows = send_calendly_sequence(lead=lead, config=config)
+    elif normalized_action == "send-calendly-link":
+        queued_rows = send_calendly_link_only(lead=lead, config=config)
     elif normalized_action == "mark-booked":
         updated = ContadoresLead.update_flow_state(
             lead.id,

@@ -681,6 +681,42 @@ def test_contadores_send_calendly_clears_manual_pause(monkeypatch, tmp_path) -> 
     assert pending.json()["messages"][1]["text"] == "https://calendly.com/yoelkravchuk/konecta-meet"
 
 
+def test_contadores_send_calendly_link_only_marks_calendly_sent(monkeypatch, tmp_path) -> None:
+    """Operators can send only the Calendly URL without the intro text."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    ContadoresConfig.update(enabled=True)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-5b-link",
+        phone="+5491444444402",
+        full_name="Lara Calendly Link",
+    )
+    ContadoresLead.update_flow_state(
+        lead.id,
+        stage=ContadoresLeadStage.NEEDS_HUMAN,
+        automation_paused=True,
+        automation_paused_reason="manual_message",
+        needs_human_notified_at=now_utc() - timedelta(minutes=1),
+    )
+
+    with TestClient(app) as client:
+        response = client.post(f"/api/contadores/leads/{lead.id}/actions/send-calendly-link")
+        detail = client.get(f"/api/contadores/leads/{lead.id}")
+        pending = client.get("/api/contadores/messages/pending-delivery")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["lead"]["stage"] == "calendly_sent"
+    assert payload["lead"]["automation_paused"] is False
+    assert payload["lead"]["needs_human_notified_at"] is None
+    assert payload["queued_message_ids"] == [1]
+
+    assert detail.status_code == 200
+    assert detail.json()["lead"]["stage"] == "calendly_sent"
+    assert detail.json()["lead"]["calendly_url"] == "https://calendly.com/yoelkravchuk/konecta-meet"
+    assert [item["sequence_step"] for item in pending.json()["messages"]] == ["calendly_url"]
+    assert pending.json()["messages"][0]["text"] == "https://calendly.com/yoelkravchuk/konecta-meet"
+
+
 def test_contadores_post_calendly_inbound_returns_to_needs_human(monkeypatch, tmp_path) -> None:
     """Any new inbound after Calendly should hand the lead back to a human."""
     configure_contadores_db(monkeypatch, tmp_path)
