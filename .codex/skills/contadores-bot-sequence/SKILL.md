@@ -47,7 +47,7 @@ Operators have two backoffice actions:
 - `send-calendly`: send the configured Calendly intro text and then the Calendly URL.
 - `send-calendly-link`: send only the Calendly URL.
 
-Both actions move the lead to `calendly_sent` and clear the manual handoff.
+Both actions record `calendly_sent_at` and keep the lead in Manual.
 Automation must keep using the full Calendly text + URL sequence.
 
 ## Runtime rule

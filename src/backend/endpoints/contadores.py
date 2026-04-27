@@ -243,7 +243,7 @@ def derive_effective_lead_stage(lead: ContadoresLead) -> ContadoresLeadStage:
         return ContadoresLeadStage.CLOSED
     if lead.booked_at is not None:
         return ContadoresLeadStage.BOOKED
-    if lead.stage == ContadoresLeadStage.NEEDS_HUMAN and lead_has_new_inbound_after_calendly(lead):
+    if lead.stage == ContadoresLeadStage.NEEDS_HUMAN:
         return ContadoresLeadStage.NEEDS_HUMAN
     if lead.calendly_sent_at is not None:
         return ContadoresLeadStage.CALENDLY_SENT
@@ -831,6 +831,17 @@ def send_calendly_link_only(*, lead: ContadoresLead, config: ContadoresConfig) -
     return [calendly_url]
 
 
+def keep_manual_handoff_after_calendly_send(lead_id: str, *, sent_at: datetime) -> None:
+    """Keep operator-sent Calendly leads in Manual while recording the milestone."""
+    ContadoresLead.update_flow_state(
+        lead_id,
+        stage=ContadoresLeadStage.NEEDS_HUMAN,
+        calendly_sent_at=sent_at,
+        automation_paused=True,
+        automation_paused_reason="manual_calendly_send",
+    )
+
+
 def get_reply_batch_since_loom(lead_id: str, *, loom_sent_at: datetime | None) -> list[ContadoresMessage]:
     """Return inbound messages received after the Loom sequence started."""
     if loom_sent_at is None:
@@ -910,8 +921,12 @@ def run_quick_action_for_lead(
         queued_rows = send_video_check(lead=lead)
     elif normalized_action == "send-calendly":
         queued_rows = send_calendly_sequence(lead=lead, config=config)
+        if queued_rows:
+            keep_manual_handoff_after_calendly_send(lead.id, sent_at=queued_rows[0].created_at)
     elif normalized_action == "send-calendly-link":
         queued_rows = send_calendly_link_only(lead=lead, config=config)
+        if queued_rows:
+            keep_manual_handoff_after_calendly_send(lead.id, sent_at=queued_rows[0].created_at)
     elif normalized_action == "mark-booked":
         updated = ContadoresLead.update_flow_state(
             lead.id,

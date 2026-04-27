@@ -1585,7 +1585,7 @@ function SendModal({
         </header>
         <div className="ct-modal-body">
           <p className="ct-modal-warning">
-            <strong>Heads up:</strong> {pausesAutomation ? "sending this pauses the bot for this lead. You can resume automation after." : "sending Calendly marks the lead as Calendly sent and clears the manual handoff."}
+            <strong>Heads up:</strong> {pausesAutomation ? "sending this pauses the bot for this lead. You can resume automation after." : "sending Calendly marks the lead as Calendly sent and keeps it in Manual."}
           </p>
 
           <fieldset className="ct-send-options">
@@ -1666,7 +1666,7 @@ function BulkSendModal({
         <div className="ct-modal-body">
           <p className="ct-modal-warning">
             <strong>Heads up:</strong> this will apply to every selected chat in the current list.
-            {pausesAutomation ? " Sending this pauses automation for those leads." : " Calendly will mark them as Calendly sent."}
+            {pausesAutomation ? " Sending this pauses automation for those leads." : " Calendly will mark them as Calendly sent and keep them in Manual."}
           </p>
 
           <fieldset className="ct-send-options">

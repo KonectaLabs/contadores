@@ -618,8 +618,8 @@ def test_contadores_inbound_routing_marks_ambiguous_phone_as_needs_human(monkeyp
     assert other_lead.id != lead.id
 
 
-def test_contadores_detail_uses_effective_stage_over_raw_needs_human(monkeypatch, tmp_path) -> None:
-    """Calendly/booked milestones must win over a stale raw needs_human stage."""
+def test_contadores_detail_keeps_manual_stage_with_calendly_milestone(monkeypatch, tmp_path) -> None:
+    """Calendly milestones should not hide a current manual handoff."""
     configure_contadores_db(monkeypatch, tmp_path)
     lead = ContadoresLead.upsert(
         external_lead_id="sheet-row-5",
@@ -637,12 +637,12 @@ def test_contadores_detail_uses_effective_stage_over_raw_needs_human(monkeypatch
         response = client.get(f"/api/contadores/leads/{lead.id}")
 
     assert response.status_code == 200
-    assert response.json()["lead"]["stage"] == "calendly_sent"
+    assert response.json()["lead"]["stage"] == "needs_human"
     assert response.json()["lead"]["raw_stage"] == "needs_human"
 
 
-def test_contadores_send_calendly_clears_manual_pause(monkeypatch, tmp_path) -> None:
-    """Manual Calendly send should restore the lead to the Calendly-sent lane."""
+def test_contadores_send_calendly_keeps_manual_handoff(monkeypatch, tmp_path) -> None:
+    """Manual Calendly send should keep the lead in Manual while marking the milestone."""
     configure_contadores_db(monkeypatch, tmp_path)
     ContadoresConfig.update(enabled=True)
     lead = ContadoresLead.upsert(
@@ -665,18 +665,18 @@ def test_contadores_send_calendly_clears_manual_pause(monkeypatch, tmp_path) -> 
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["lead"]["stage"] == "calendly_sent"
-    assert payload["lead"]["raw_stage"] == "calendly_sent"
-    assert payload["lead"]["automation_paused"] is False
-    assert payload["lead"]["automation_paused_reason"] is None
-    assert payload["lead"]["needs_human_notified_at"] is None
+    assert payload["lead"]["stage"] == "needs_human"
+    assert payload["lead"]["raw_stage"] == "needs_human"
+    assert payload["lead"]["automation_paused"] is True
+    assert payload["lead"]["automation_paused_reason"] == "manual_calendly_send"
+    assert payload["lead"]["calendly_sent_at"] is not None
     assert payload["queued_message_ids"] == [1, 2]
 
     assert detail.status_code == 200
-    assert detail.json()["lead"]["stage"] == "calendly_sent"
+    assert detail.json()["lead"]["stage"] == "needs_human"
     assert detail.json()["lead"]["calendly_url"] == "https://calendly.com/yoelkravchuk/konecta-meet"
     assert "calendly_tracking_token" not in detail.json()["lead"]
-    assert detail.json()["lead"]["automation_paused"] is False
+    assert detail.json()["lead"]["automation_paused"] is True
     assert [item["sequence_step"] for item in pending.json()["messages"]] == ["calendly_intro", "calendly_url"]
     assert pending.json()["messages"][1]["text"] == "https://calendly.com/yoelkravchuk/konecta-meet"
 
@@ -705,13 +705,14 @@ def test_contadores_send_calendly_link_only_marks_calendly_sent(monkeypatch, tmp
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["lead"]["stage"] == "calendly_sent"
-    assert payload["lead"]["automation_paused"] is False
-    assert payload["lead"]["needs_human_notified_at"] is None
+    assert payload["lead"]["stage"] == "needs_human"
+    assert payload["lead"]["automation_paused"] is True
+    assert payload["lead"]["automation_paused_reason"] == "manual_calendly_send"
+    assert payload["lead"]["calendly_sent_at"] is not None
     assert payload["queued_message_ids"] == [1]
 
     assert detail.status_code == 200
-    assert detail.json()["lead"]["stage"] == "calendly_sent"
+    assert detail.json()["lead"]["stage"] == "needs_human"
     assert detail.json()["lead"]["calendly_url"] == "https://calendly.com/yoelkravchuk/konecta-meet"
     assert [item["sequence_step"] for item in pending.json()["messages"]] == ["calendly_url"]
     assert pending.json()["messages"][0]["text"] == "https://calendly.com/yoelkravchuk/konecta-meet"

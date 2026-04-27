@@ -156,7 +156,7 @@ Acciones manuales de Calendly:
 
 - `Calendly with intro` encola el texto previo y despues el link de Calendly.
 - `Calendly link only` encola solo el link de Calendly.
-- Ambas acciones dejan el lead en `calendly_sent` y limpian el handoff manual. La automatizacion sigue usando siempre texto previo + link.
+- Ambas acciones registran `calendly_sent_at` y mantienen el lead en Manual. La automatizacion sigue usando siempre texto previo + link y puede dejar el lead fuera de Manual.
 
 Media en WhatsApp:
 
