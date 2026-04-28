@@ -1,4 +1,4 @@
-"""Workstation endpoints for paid client delivery profiles."""
+"""Workstation endpoints for paid client profiles."""
 
 from __future__ import annotations
 
@@ -72,7 +72,7 @@ def safe_upload_filename(filename: str | None) -> str:
 
 def workstation_status_value(client: WorkstationClient) -> str:
     """Return a JSON-safe status value for one client."""
-    return client.status.value if hasattr(client.status, "value") else str(client.status)
+    return database_module.normalize_workstation_client_status(client.status).value
 
 
 def lead_summary_for_workstation(lead: ContadoresLead) -> ContadoresLeadSummary:
@@ -275,9 +275,9 @@ class UpdateWorkstationNotesCommand(BaseModel):
 
 
 class UpdateWorkstationStatusCommand(BaseModel):
-    """Delivery status update payload."""
+    """Status update payload."""
 
-    status: Literal["paid", "in_progress", "delivered", "archived"]
+    status: Literal["paid", "in_progress", "archived"]
 
 
 class WorkstationCopyAllResponse(BaseModel):
@@ -434,7 +434,7 @@ async def update_workstation_status(
     client_id: str,
     command: UpdateWorkstationStatusCommand,
 ) -> WorkstationClientDetailResponse:
-    """Update delivery status for one Workstation client."""
+    """Update status for one Workstation client."""
     updated = WorkstationClient.update_status(client_id, status=command.status)
     if updated is None:
         raise HTTPException(status_code=404, detail="Workstation client not found")

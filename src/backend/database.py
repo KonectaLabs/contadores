@@ -1846,11 +1846,10 @@ class ContadoresEvent(SQLModel, table=True):
 
 
 class WorkstationClientStatus(str, Enum):
-    """Delivery status for one converted client."""
+    """Status for one converted client."""
 
     PAID = "paid"
     IN_PROGRESS = "in_progress"
-    DELIVERED = "delivered"
     ARCHIVED = "archived"
 
 
@@ -1880,7 +1879,7 @@ def build_workstation_folder_name(*, client_id: str, display_name: str | None) -
 
 
 class WorkstationClient(SQLModel, table=True):
-    """Converted paid client profile used for delivery work."""
+    """Converted paid client profile used for client work."""
 
     __tablename__ = "workstation_clients"
     __table_args__ = (UniqueConstraint("lead_id", name="uq_workstation_clients_lead_id"),)
@@ -1988,7 +1987,7 @@ class WorkstationClient(SQLModel, table=True):
         *,
         status: WorkstationClientStatus | str,
     ) -> Optional["WorkstationClient"]:
-        """Update one converted client's delivery status."""
+        """Update one converted client's status."""
         with Session(engine) as session:
             item = session.get(cls, client_id)
             if item is None:

@@ -237,7 +237,7 @@ export interface ManualAttentionCountsResponse {
   counts: Record<string, number>;
 }
 
-export type WorkstationStatus = "paid" | "in_progress" | "delivered" | "archived";
+export type WorkstationStatus = "paid" | "in_progress" | "archived";
 
 export interface WorkstationMediaAsset {
   id: string;

@@ -63,7 +63,6 @@ const workstationStatusOptions: Array<{ value: WorkstationStatus | "all"; label:
   { value: "all", label: "All" },
   { value: "paid", label: "Paid" },
   { value: "in_progress", label: "In progress" },
-  { value: "delivered", label: "Delivered" },
   { value: "archived", label: "Archived" },
 ];
 
@@ -1264,7 +1263,7 @@ function WorkstationView({
                 </div>
               </button>
             )) : (
-              <p className="ct-empty">Convert a paid lead from CRM to start delivery work.</p>
+              <p className="ct-empty">Convert a paid lead from CRM to open a client workspace.</p>
             )}
           </div>
         </aside>
@@ -1337,7 +1336,7 @@ function WorkstationView({
                   <div className="workstation-panel-head">
                     <div>
                       <span>Status</span>
-                      <strong>Delivery stage</strong>
+                      <strong>Client stage</strong>
                     </div>
                   </div>
                   <div className="workstation-status-grid">
@@ -2682,7 +2681,6 @@ function formatWorkstationStatus(status: WorkstationStatus | string | null | und
   const labels: Record<string, string> = {
     paid: "Paid",
     in_progress: "In progress",
-    delivered: "Delivered",
     archived: "Archived",
   };
   return labels[String(status || "")] ?? humanize(status || "Client");
