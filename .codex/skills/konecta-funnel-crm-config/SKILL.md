@@ -1,6 +1,6 @@
 ---
 name: konecta-funnel-crm-config
-description: Configure the Contadores/Konecta CRM as a multi-funnel platform. Use when adding a niche to the app, editing funnel config files, wiring spreadsheet sources, WhatsApp messages, video strategies, Calendly, or testing/live rollout.
+description: Configure the Contadores/Konecta CRM as a multi-funnel platform. Use when adding a niche to the app, editing funnel config files, wiring spreadsheet sources, WhatsApp messages, video strategies, Calendly, or rollout.
 ---
 
 # Konecta Funnel CRM Config
@@ -17,8 +17,6 @@ Each funnel needs:
 - `label`: operator-facing name;
 - `kind`: `campaign` for normal funnels or `inbox` for the built-in general inbox;
 - `enabled`;
-- `source_mode`: `testing` or `live`;
-- `test_phone` and `test_name`;
 - `sheet_url`, `sheet_gid`, and optional `sheet_source_filter`;
 - `sheet_poll_seconds`;
 - `opener_text`;
@@ -49,8 +47,6 @@ The visual editor and Codex must write to the same config source. Do not create 
 
 Keep backwards compatibility with Contadores env names:
 
-- `CONTADORES_SOURCE_MODE`
-- `CONTADORES_TEST_PHONE`
 - `CONTADORES_SHEET_URL`
 - `CONTADORES_SHEET_GID`
 
@@ -58,14 +54,13 @@ For new funnels, prefer explicit funnel config. Env can seed defaults, but the a
 
 Click-to-WhatsApp ads should route by webhook referral metadata. Put each ad/post `referral.source_id` into the target funnel's `whatsapp_referral_source_ids`. Keep Contadores empty when it has no real campaign. There is one approved text fallback: the normalized message `Hola! Quiero mas informacion de su propuesta para abogados!` routes to `abogados` when no reply/referral route is usable. Other unmatched WhatsApp messages go to the built-in `general` inbox. If Meta sends `contacts.profile.name`, store that WhatsApp profile name on WhatsApp-created leads and use it to fill matched phone-only leads.
 
-## Testing/Live Rule
+## Rollout Rule
 
-Use the current safe rollout discipline:
+Use the current server-first rollout discipline:
 
 1. Deploy code to the real server.
-2. Keep the funnel in `testing`.
-3. Test with the synthetic lead phone.
-4. Only then switch that funnel to `live`.
+2. Verify runtime readiness and configured funnels.
+3. Verify sheet ingestion and WhatsApp routing on the server.
 
 ## WhatsApp Template Rule
 

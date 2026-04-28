@@ -799,11 +799,9 @@ export function App() {
     ? `${workstationClients.length} converted ${workstationClients.length === 1 ? "client" : "clients"}`
     : config?.last_sheet_sync_status
     ? `${config.last_sheet_sync_status} · ${config.last_sheet_sync_at ? relativeTime(config.last_sheet_sync_at) : "never"}`
-    : isContadoresFunnel && runtime
-      ? `${runtime.source_mode} mode`
-      : selectedFunnel
-        ? `${selectedFunnel.source_mode} mode`
-        : "Sync idle";
+    : runtime
+      ? (runtime.ready ? "Ready" : "Review config")
+      : "Sync idle";
 
   return (
     <section id="contadoresView" className="contadores-view" data-app="contadores">
@@ -1459,7 +1457,7 @@ function FunnelSetupView({
           <h2>{funnel.label}</h2>
           <p>
             This funnel is configured but does not have a dedicated lead workspace yet. Edit the funnel copy,
-            sheet source, video strategy, and Calendly step here; Contadores remains the live operational section.
+            sheet source, video strategy, and Calendly step here; Contadores remains the primary operational section.
           </p>
         </div>
         <button type="button" className="ct-btn ct-btn-primary" onClick={onEdit}>Edit funnel</button>
@@ -1468,13 +1466,13 @@ function FunnelSetupView({
       <div className="ct-funnel-grid">
         <article className="ct-funnel-card">
           <span>Source</span>
-          <strong>{funnel.source_mode}</strong>
+          <strong>{funnel.sheet_url ? "Sheet connected" : "Missing sheet"}</strong>
           <p>{funnel.sheet_url ? "Sheet connected" : "No sheet URL yet"}{funnel.sheet_gid ? ` · gid ${funnel.sheet_gid}` : ""}</p>
         </article>
         <article className="ct-funnel-card">
-          <span>Testing</span>
-          <strong>{funnel.test_phone || "No phone"}</strong>
-          <p>{funnel.test_name || "Synthetic lead name not set"}</p>
+          <span>Polling</span>
+          <strong>{funnel.enabled ? "Enabled" : "Paused"}</strong>
+          <p>Every {funnel.sheet_poll_seconds} seconds</p>
         </article>
         <article className="ct-funnel-card">
           <span>Video</span>
@@ -1633,30 +1631,10 @@ function FunnelEditorDrawer({
             </div>
           </label>
 
-          <div className="ct-field-grid">
-            <label className="ct-field">
-              <span>Source Mode</span>
-              <select value={draft.source_mode} onChange={(event) => update("source_mode", event.target.value as FunnelDefinition["source_mode"])}>
-                <option value="testing">testing</option>
-                <option value="live">live</option>
-              </select>
-            </label>
-            <label className="ct-field">
-              <span>Sheet Poll Seconds</span>
-              <input type="number" min="30" value={draft.sheet_poll_seconds} onChange={(event) => update("sheet_poll_seconds", Number(event.target.value) || 30)} />
-            </label>
-          </div>
-
-          <div className="ct-field-grid">
-            <label className="ct-field">
-              <span>Test Phone</span>
-              <input value={draft.test_phone} onChange={(event) => update("test_phone", event.target.value)} />
-            </label>
-            <label className="ct-field">
-              <span>Test Name</span>
-              <input value={draft.test_name} onChange={(event) => update("test_name", event.target.value)} />
-            </label>
-          </div>
+          <label className="ct-field">
+            <span>Sheet Poll Seconds</span>
+            <input type="number" min="30" value={draft.sheet_poll_seconds} onChange={(event) => update("sheet_poll_seconds", Number(event.target.value) || 30)} />
+          </label>
 
           <label className="ct-field">
             <span>Sheet URL</span>
@@ -2310,7 +2288,7 @@ function ConfigDrawer({
             <p className="ct-drawer-kicker">Automation Config</p>
             <h3 id="ctDrawerTitle">Rollout Controls</h3>
             <p className="ct-drawer-note">
-              Sheet: {config?.last_sheet_sync_status || "idle"} · Mode: {runtime?.source_mode ?? "-"} · Ready: {runtime?.ready ? "yes" : "review"}
+              Sheet: {config?.last_sheet_sync_status || "idle"} · Ready: {runtime?.ready ? "yes" : "review"}
             </p>
           </div>
           <button type="button" className="ct-icon-btn" onClick={onClose}>Close</button>
@@ -2590,9 +2568,6 @@ function buildBlankFunnel(): FunnelDefinition {
     label: "Nuevo Funnel",
     kind: "campaign",
     enabled: true,
-    source_mode: "testing",
-    test_phone: "",
-    test_name: "Lead Test",
     sheet_url: null,
     sheet_gid: null,
     sheet_source_filter: null,

@@ -72,10 +72,9 @@ If the user gives only the niche, start with market research and leave the rest 
    - Configure sheet source, messages, video strategy, Calendly, and alert emails.
    - Keep Contadores as one funnel, not special business logic.
 
-8. **Testing rollout**
+8. **Server rollout**
    - Keep server-first rollout discipline.
-   - Use testing mode before live.
-   - Verify the synthetic test lead and WhatsApp sequence before switching live.
+   - Verify runtime readiness, the configured sheet, and the WhatsApp sequence on the server.
 
 ## Output Contract
 

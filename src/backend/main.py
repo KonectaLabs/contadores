@@ -81,8 +81,7 @@ async def lifespan(app: FastAPI):
     logger.info("Auth %s.", "enabled" if auth_manager.enabled else "disabled")
     settings = get_runtime_settings()
     logger.info(
-        "Runtime mode: %s (ready=%s).",
-        settings.source_mode,
+        "Runtime ready=%s.",
         not settings.readiness_issues(),
     )
     if auth_manager.enabled and not (os.getenv("INTERNAL_API_TOKEN") or "").strip():
@@ -175,7 +174,6 @@ async def health() -> dict[str, object]:
     return {
         "status": "ok",
         "enabled": settings.enabled,
-        "source_mode": settings.source_mode,
         "ready": not settings.readiness_issues(),
     }
 

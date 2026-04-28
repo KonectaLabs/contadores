@@ -7,15 +7,10 @@ export type LeadStage =
   | "closed"
   | "archived";
 
-export type SourceMode = "testing" | "live";
-
 export interface RuntimeSettings {
   enabled: boolean;
-  source_mode: SourceMode;
   ready: boolean;
   readiness_issues: string[];
-  testing_phone_configured: boolean;
-  testing_name: string;
   sheet_configured: boolean;
   sheet_gid: string | null;
   sheet_poll_seconds: number;
@@ -24,7 +19,6 @@ export interface RuntimeSettings {
   alert_emails: string[];
 }
 
-export type FunnelSourceMode = "testing" | "live";
 export type FunnelKind = "campaign" | "inbox";
 export type FunnelStrategyDelivery = "link" | "video";
 
@@ -46,9 +40,6 @@ export interface FunnelDefinition {
   label: string;
   kind: FunnelKind;
   enabled: boolean;
-  source_mode: FunnelSourceMode;
-  test_phone: string;
-  test_name: string;
   sheet_url: string | null;
   sheet_gid: string | null;
   sheet_source_filter: string | null;

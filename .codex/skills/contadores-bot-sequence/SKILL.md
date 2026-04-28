@@ -14,7 +14,7 @@ override the built-in Contadores definition.
 
 ## Current sequence
 
-1. Send opener as a WhatsApp template for sheet/testing leads.
+1. Send opener as a WhatsApp template for sheet-imported leads.
    - Click-to-WhatsApp leads whose `referral.source_id` matches the funnel config skip this step because their first inbound message is already the reply.
    - Abogados leads whose first inbound text normalizes to `Hola! Quiero mas informacion de su propuesta para abogados!` also skip this step.
 2. Wait for any reply.
@@ -64,13 +64,11 @@ the lead answered, the lead leaves `Needs answer` but remains visible in Manual.
 
 ## Runtime rule
 
-- This flow can be deployed while the app is still in `testing`.
-- `testing` means the flow is only exercised with the synthetic lead from `CONTADORES_TEST_PHONE`.
-- `live` means the flow can start from sheet-imported leads.
-- Strategy rollout weights live in Contadores config as `strategy_weights` and can be seeded with `CONTADORES_STRATEGY_WEIGHTS_JSON`.
-- Funnel definitions live in `FUNNELS_CONFIG_PATH` or `data/funnels.json`.
+- This flow runs from sheet-imported leads and Click-to-WhatsApp inbounds.
+- Strategy rollout weights are stored in Contadores config as `strategy_weights` and can be seeded with `CONTADORES_STRATEGY_WEIGHTS_JSON`.
+- Funnel definitions are stored in `FUNNELS_CONFIG_PATH` or `data/funnels.json`.
   The UI and Codex edit the same file.
-- Click-to-WhatsApp ad IDs live in each funnel as `whatsapp_referral_source_ids`.
+- Click-to-WhatsApp ad IDs are stored in each funnel as `whatsapp_referral_source_ids`.
   Contadores should stay empty when it has no real campaign; currently the real ad source belongs to Abogados.
 - Inbound WhatsApp messages with no matching reply/referral are saved in the built-in `general` inbox, except the approved Abogados prefilled proposal text route.
 - If Meta includes the sender WhatsApp profile name, the inbound handler stores it as the lead name for WhatsApp-created leads and fills existing phone-only leads without replacing sheet/operator names.

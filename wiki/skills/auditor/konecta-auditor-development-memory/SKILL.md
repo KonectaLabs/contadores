@@ -7,23 +7,23 @@ description: Canonical persistent memory log for Konecta Auditor. Use as the sin
 
 ## 2026-04-23
 
-### Contadores Is Always Live And Manual Filter Is Needs Answer/Answered (2026-04-24)
+### Contadores Uses One Lead Source And Manual Filter Is Needs Answer/Answered (2026-04-24)
 - Decision/rule:
-  - Contadores no longer has testing/live source modes in UI, API payloads, bot sync, or SQLite schema.
-  - remove testing seed/reset controls and the config fields `source_mode`, `test_phone`, and `test_name`.
+  - Contadores no longer has alternate source modes in UI, API payloads, bot sync, or SQLite schema.
+  - remove synthetic lead seed/reset controls and source-mode config fields.
   - manual triage uses only `manual_reply_status`:
     - `needs_reply` for leads where the latest lead inbound still needs an operator answer.
     - `answered` for leads already handled by outbound reply or `Mark answered`.
   - the manual reply filter belongs only to the Manual stage and should stay visually minimal.
 - Reason:
-  - operations are always live now; testing/live added noise and risked hiding real leads.
+  - one operational source avoids noise and reduces the risk of hiding real leads.
   - the only needed manual distinction is whether the operator needs to answer or the lead is already handled.
 - Enforcement:
   - Contadores persistence:
     - `/Users/fgoiriz/private/repos/konecta-auditor/backend/database.py`
   - Contadores API contract and `manual_reply_status` list filter:
     - `/Users/fgoiriz/private/repos/konecta-auditor/backend/endpoints/contadores.py`
-  - bot sheet sync always imports live rows:
+  - bot sheet sync always imports configured sheet rows:
     - `/Users/fgoiriz/private/repos/konecta-auditor/bot/utils.py`
   - operator UI filter strip and cache-bust:
     - `/Users/fgoiriz/private/repos/konecta-auditor/frontend/index.html`

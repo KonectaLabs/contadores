@@ -37,8 +37,6 @@ curl http://127.0.0.1:8000/api/funnels
 Cada funnel contiene:
 
 - nombre e id del nicho;
-- modo `testing|live`;
-- telefono sintetico de prueba;
 - sheet URL/GID y filtro opcional;
 - opener/template inicial;
 - follow-up template;
@@ -52,41 +50,18 @@ Cada funnel contiene:
 - emails de alerta;
 - ventanas de espera.
 
-## Regla operativa importante
+## Fuente de leads
 
-El modo del sistema no se decide en código ni en estado persistido.
-
-Se decide con entorno:
-
-- `CONTADORES_SOURCE_MODE=testing`
-- `CONTADORES_SOURCE_MODE=live`
-
-`docker-compose.yml` toma ese valor desde `.env`. Ese es el switch canónico.
-El endpoint `/api/runtime` muestra el modo activo sin exponer secretos.
-
-## Cómo usar los modos
-
-### `testing`
-
-Usa un solo número de prueba.
+Contadores ya no tiene switch de runtime. No existe un modo alternativo ni lead
+sintético. El bot importa siempre desde la sheet configurada para el funnel.
 
 Variables mínimas:
 
-- `CONTADORES_SOURCE_MODE=testing`
-- `CONTADORES_TEST_PHONE=...`
-
-En este modo no se debe consumir la sheet real de forma automática.
-El bot crea o actualiza un lead sintético con `CONTADORES_TEST_PHONE`.
-
-### `live`
-
-Habilita lectura de la sheet real.
-
-Variables mínimas:
-
-- `CONTADORES_SOURCE_MODE=live`
 - `CONTADORES_SHEET_URL=...`
 - `CONTADORES_SHEET_GID=...`
+
+`docker-compose.yml` lee `.env` y `/api/runtime` muestra readiness sin exponer
+secretos.
 
 ## Desarrollo local
 
@@ -251,7 +226,8 @@ API desde esta V1.
 docker compose up --build
 ```
 
-Compose lee `.env`. Si querés cambiar de `testing` a `live`, cambiás `.env` y reiniciás el servicio.
+Compose lee `.env`. Para cambiar la fuente de leads, editás la sheet configurada
+y reiniciás el servicio.
 
 Servicios:
 
@@ -271,9 +247,8 @@ Este repo se trabaja server-first: `localhost` sirve para desarrollar, verificar
 
 1. Trabajar y mergear directo a `main`.
 2. Pushear `main`.
-3. Deployar el servidor con `.env` en `testing`.
-4. Probar varias veces con tu número usando `CONTADORES_TEST_PHONE`.
-5. Recién después cambiar `CONTADORES_SOURCE_MODE=live`.
+3. Deployar el servidor desde `main`.
+4. Verificar `/api/runtime`, `/api/funnels`, la ingesta de sheet y el flujo de WhatsApp en el server.
 
 Deploy remoto:
 

@@ -12,7 +12,6 @@ from pydantic import BaseModel, Field, field_validator
 
 from backend.database import DATA_DIR, normalize_email
 
-SourceMode = Literal["testing", "live"]
 FunnelKind = Literal["campaign", "inbox"]
 StrategyDelivery = Literal["link", "video"]
 
@@ -45,12 +44,6 @@ def _read_bool(name: str, *, default: bool) -> bool:
     if normalized in {"0", "false", "no", "off"}:
         return False
     return default
-
-
-def _read_source_mode(name: str, *, default: SourceMode = "testing") -> SourceMode:
-    """Read one source mode from env."""
-    value = (os.getenv(name, default) or default).strip().lower()
-    return "live" if value == "live" else "testing"
 
 
 def _read_int(name: str, *, default: int, minimum: int = 1) -> int:
@@ -120,9 +113,6 @@ class FunnelDefinition(BaseModel):
     label: str
     kind: FunnelKind = "campaign"
     enabled: bool = True
-    source_mode: SourceMode = "testing"
-    test_phone: str = ""
-    test_name: str = ""
     sheet_url: str | None = None
     sheet_gid: str | None = None
     sheet_source_filter: str | None = None
@@ -154,8 +144,6 @@ class FunnelDefinition(BaseModel):
 
     @field_validator(
         "label",
-        "test_phone",
-        "test_name",
         "template_language",
         "opener_text",
         "opener_followup_text",
@@ -228,9 +216,6 @@ def build_default_contadores_funnel() -> FunnelDefinition:
         label="Contadores",
         kind="campaign",
         enabled=_read_bool("CONTADORES_ENABLED", default=True),
-        source_mode=_read_source_mode("CONTADORES_SOURCE_MODE"),
-        test_phone=(os.getenv("CONTADORES_TEST_PHONE", "") or "").strip(),
-        test_name=(os.getenv("CONTADORES_TEST_NAME", "Test Contador") or "Test Contador").strip(),
         sheet_url=(os.getenv("CONTADORES_SHEET_URL", "") or "").strip() or None,
         sheet_gid=(os.getenv("CONTADORES_SHEET_GID", "") or "").strip() or None,
         sheet_poll_seconds=_read_int("CONTADORES_SHEET_POLL_SECONDS", default=30, minimum=30),
@@ -289,9 +274,6 @@ def build_default_general_inbox_funnel() -> FunnelDefinition:
         label="General",
         kind="inbox",
         enabled=True,
-        source_mode="live",
-        test_phone="",
-        test_name="",
         sheet_url=None,
         sheet_gid=None,
         sheet_source_filter=None,

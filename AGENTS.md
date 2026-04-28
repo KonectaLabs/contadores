@@ -2,10 +2,10 @@
 
 ## Runtime
 
-- El modo canónico sale del entorno, no del código ni de una base local.
-- Usar siempre `CONTADORES_SOURCE_MODE=testing|live`.
-- `testing` usa `CONTADORES_TEST_PHONE`.
-- `live` usa `CONTADORES_SHEET_URL` y `CONTADORES_SHEET_GID`.
+- No existe switch de modo para Contadores.
+- La fuente de leads se configura directamente con `CONTADORES_SHEET_URL` y `CONTADORES_SHEET_GID`.
+- Los funnels nuevos usan su propia `sheet_url` y `sheet_gid` en `data/funnels.json`.
+- No reintroducir leads sintéticos ni ramas de runtime alternativas.
 
 ## Deploy
 
@@ -15,7 +15,7 @@
 - La rama operativa es `main`.
 - Si algo se va a deployar, debe quedar committeado en `main`.
 - `docker-compose.yml` debe leer `.env`.
-- El rollout seguro siempre es `testing` primero y `live` después.
+- El rollout es único: validar localmente, pushear `main`, deployar y verificar el server real.
 
 ## Documentación
 

@@ -25,17 +25,15 @@ Contadores sheet settings can still come from `CONTADORES_SHEET_URL` and
 `CONTADORES_SHEET_GID`, while new funnels store their sheet URL/GID in the
 shared funnel config file (`FUNNELS_CONFIG_PATH` or `data/funnels.json`).
 
-The runtime rule is now explicit:
-
-- `CONTADORES_SOURCE_MODE=testing` means do not poll the real sheet automatically; the bot imports only the synthetic lead from `CONTADORES_TEST_PHONE`.
-- `CONTADORES_SOURCE_MODE=live` means the sheet is allowed to feed the workflow.
+There is no runtime source switch. Enabled campaign funnels poll their configured
+sheet directly.
 
 ## What It Is For
 
 - It stores inbound leads coming from Meta lead forms.
 - It is the simplest shared state for the workflow.
 - It can drive a poller that checks for new leads every 30 seconds.
-- In this repo, the immediate need is read access for lead ingestion and testing the WhatsApp flow safely.
+- In this repo, the immediate need is read access for lead ingestion and validating the WhatsApp flow safely.
 - It is not required for Click-to-WhatsApp ads configured through `whatsapp_referral_source_ids`.
 
 Read [references/spreadsheet.md](references/spreadsheet.md) when you need the exact columns, meanings, or the proposed operational fields.
@@ -134,8 +132,7 @@ Treat the spreadsheet as the source of truth for:
 Operational rule:
 
 - Product work is server-first by default; `localhost` is only for development, validation, git, push, and deploy.
-- `testing` mode must work with `CONTADORES_TEST_PHONE` only and must not fetch the live sheet.
-- `live` mode is the only mode allowed to poll this sheet on a timer.
+- Enabled campaign funnels poll their configured sheet on a timer.
 - New niche funnels should define their own sheet source in the funnel config.
   A future shared sheet can use `sheet_source_filter` to restrict rows by
   source/niche.
@@ -149,7 +146,7 @@ For the MVP:
 - only after a successful send, update the sheet state.
 
 Do not mark a lead as contacted before the outbound message succeeds.
-Do not switch to `live` just because the code is deployed; the switch belongs in `.env`.
+Do not add a runtime mode switch to avoid configuring the sheet source.
 
 ## Suggested Operational Pattern
 
@@ -184,7 +181,7 @@ These fields let the sheet replace local state in the first version.
 
 Read [references/spreadsheet.md](references/spreadsheet.md) when you need:
 
-- the exact current columns in the live sheet;
+- the exact current columns in the operational sheet;
 - the business meaning of each field;
 - the proposed state columns for WhatsApp automation;
 - implementation notes for polling and idempotency.

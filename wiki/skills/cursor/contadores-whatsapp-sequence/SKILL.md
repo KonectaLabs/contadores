@@ -17,7 +17,7 @@ description: >-
 
 ## Reglas del flujo
 
-1. Enviar el mensaje 1 para leads de sheet/testing.
+1. Enviar el mensaje 1 para leads importados desde sheet.
 2. Cualquier respuesta entrante al mensaje 1 dispara la secuencia.
 3. Si el primer inbound viene de un anuncio Click-to-WhatsApp con `referral.source_id` configurado, crear/reusar el lead y saltear el mensaje 1. La frase aprobada de Abogados `Hola! Quiero mas informacion de su propuesta para abogados!` hace lo mismo cuando no hay reply/referral usable.
 4. Esperar `30` segundos.

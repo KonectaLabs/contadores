@@ -69,8 +69,6 @@ def test_run_contadores_sheet_sync_iteration_imports_only_uncontacted_rows(monke
     monkeypatch.setattr(utils, "fetch_contadores_config", fake_fetch_contadores_config)
     monkeypatch.setattr(utils, "fetch_contadores_sheet_rows", fake_fetch_contadores_sheet_rows)
     monkeypatch.setattr(utils, "import_contadores_sheet_rows", fake_import_contadores_sheet_rows)
-    monkeypatch.setattr(utils, "CONTADORES_SOURCE_MODE", "live")
-
     result = asyncio.run(utils.run_contadores_sheet_sync_iteration(SimpleNamespace()))
 
     assert result["status"] == "ok"
@@ -112,16 +110,24 @@ def test_read_xlsx_sheet_rows_uses_first_importable_worksheet() -> None:
     assert rows[1]["phone_number"] == "p:+5491222222222"
 
 
-def test_run_contadores_sheet_sync_iteration_uses_testing_phone(monkeypatch) -> None:
-    """Testing mode must not read the live sheet and should import the configured test lead."""
+def test_run_contadores_sheet_sync_iteration_uses_configured_sheet(monkeypatch) -> None:
+    """The poller should always import from the configured sheet."""
     imported_batches: list[list[dict[str, str | None]]] = []
 
     async def fake_fetch_contadores_config(client):
         del client
         return SimpleNamespace(enabled=True, sheet_url="https://sheet", sheet_gid="0")
 
-    async def fail_if_sheet_is_fetched(*, config):
-        raise AssertionError(f"testing mode should not fetch sheet rows: {config}")
+    async def fake_fetch_contadores_sheet_rows(*, config):
+        del config
+        return [
+            {
+                "id": "lead-1",
+                "phone_number": "+5491111111111",
+                "full_name": "Lead One",
+                "is_contactado": "FALSE",
+            }
+        ]
 
     async def fake_import_contadores_sheet_rows(client, *, funnel_id="contadores", rows):
         del client
@@ -130,20 +136,16 @@ def test_run_contadores_sheet_sync_iteration_uses_testing_phone(monkeypatch) -> 
         return {"imported": 1, "updated": 0, "skipped": 0}
 
     monkeypatch.setattr(utils, "fetch_contadores_config", fake_fetch_contadores_config)
-    monkeypatch.setattr(utils, "fetch_contadores_sheet_rows", fail_if_sheet_is_fetched)
+    monkeypatch.setattr(utils, "fetch_contadores_sheet_rows", fake_fetch_contadores_sheet_rows)
     monkeypatch.setattr(utils, "import_contadores_sheet_rows", fake_import_contadores_sheet_rows)
-    monkeypatch.setattr(utils, "CONTADORES_SOURCE_MODE", "testing")
-    monkeypatch.setattr(utils, "CONTADORES_TEST_PHONE", "+5491111111111")
-    monkeypatch.setattr(utils, "CONTADORES_TEST_NAME", "Lead Test")
 
     result = asyncio.run(utils.run_contadores_sheet_sync_iteration(SimpleNamespace()))
 
     assert result["status"] == "ok"
-    assert result["source_mode"] == "testing"
     assert result["submitted"] == 1
-    assert imported_batches[0][0]["id"] == "testing-contadores-5491111111111"
+    assert imported_batches[0][0]["id"] == "lead-1"
     assert imported_batches[0][0]["phone_number"] == "+5491111111111"
-    assert imported_batches[0][0]["full_name"] == "Lead Test"
+    assert imported_batches[0][0]["full_name"] == "Lead One"
 
 
 def test_process_whatsapp_inbound_event_forwards_profile_name(monkeypatch) -> None:

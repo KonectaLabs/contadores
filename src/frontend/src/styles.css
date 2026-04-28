@@ -255,7 +255,6 @@ button:disabled {
   text-transform: capitalize;
 }
 
-.status-item.live strong,
 .status-item.ok strong {
   color: var(--accent-dark);
 }

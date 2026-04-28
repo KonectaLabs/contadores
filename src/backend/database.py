@@ -1205,7 +1205,7 @@ class ContadoresLead(SQLModel, table=True):
         sheet_created_time: datetime | None = None,
         reset_flow: bool = False,
     ) -> "ContadoresLead":
-        """Create or update one lead from sheet/testing ingestion."""
+        """Create or update one lead from sheet ingestion."""
         normalized_phone = normalize_phone(phone)
         if not normalized_phone:
             raise ValueError("phone is invalid")

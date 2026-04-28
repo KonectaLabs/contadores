@@ -6,10 +6,10 @@ import asyncio
 import csv
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime
 from io import BytesIO, StringIO
 from time import monotonic
-from typing import Any, Literal
+from typing import Any
 from urllib.parse import urlencode
 
 import httpx
@@ -34,7 +34,6 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-SourceMode = Literal["testing", "live"]
 SHEET_IMPORT_HEADERS = {"id", "phone_number"}
 
 BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "http://backend:8000").strip().rstrip("/")
@@ -46,9 +45,6 @@ INTERNAL_API_TOKEN = os.getenv("INTERNAL_API_TOKEN", "").strip()
 BOT_TICK_SECONDS = max(5, int(os.getenv("BOT_TICK_SECONDS", "5")))
 BACKEND_BOOT_TIMEOUT_SECONDS = max(5, int(os.getenv("BACKEND_BOOT_TIMEOUT_SECONDS", "120")))
 BACKEND_BOOT_POLL_SECONDS = max(1, int(os.getenv("BACKEND_BOOT_POLL_SECONDS", "2")))
-CONTADORES_SOURCE_MODE: SourceMode = "live" if os.getenv("CONTADORES_SOURCE_MODE", "").strip().lower() == "live" else "testing"
-CONTADORES_TEST_PHONE = os.getenv("CONTADORES_TEST_PHONE", "").strip()
-CONTADORES_TEST_NAME = os.getenv("CONTADORES_TEST_NAME", "Test Contador").strip() or "Test Contador"
 
 
 class ContadoresConfigPayload(BaseModel):
@@ -78,9 +74,6 @@ class FunnelConfigPayload(BaseModel):
     label: str
     kind: str = "campaign"
     enabled: bool
-    source_mode: SourceMode = "testing"
-    test_phone: str = ""
-    test_name: str = ""
     sheet_url: str | None = None
     sheet_gid: str | None = None
     sheet_poll_seconds: int = 30
@@ -385,38 +378,13 @@ def build_importable_sheet_row(row: dict[str, str]) -> dict[str, str | None]:
     }
 
 
-def build_testing_lead_row(
-    *,
-    funnel_id: str = "contadores",
-    test_phone: str | None = None,
-    test_name: str | None = None,
-) -> dict[str, str | None] | None:
-    """Build the synthetic lead row used when the runtime source is testing."""
-    resolved_phone = (test_phone if test_phone is not None else CONTADORES_TEST_PHONE).strip()
-    resolved_name = (test_name if test_name is not None else CONTADORES_TEST_NAME).strip()
-    if not resolved_phone:
-        return None
-    phone_digits = "".join(ch for ch in resolved_phone if ch.isdigit())
-    row_id = f"testing-{funnel_id}-{phone_digits or 'lead'}"
-    return {
-        "id": row_id,
-        "created_time": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "platform": "testing",
-        "email": None,
-        "full_name": resolved_name,
-        "phone_number": resolved_phone,
-        "lead_status": "testing",
-        "is_contactado": "FALSE",
-    }
-
-
 async def run_contadores_sheet_sync_iteration(
     client: httpx.AsyncClient,
     *,
     funnel_id: str = "contadores",
     funnel: FunnelConfigPayload | None = None,
 ) -> dict[str, Any]:
-    """Fetch the public Contadores sheet and import new live leads."""
+    """Fetch the configured sheet and import new leads."""
     config = await fetch_contadores_config(client) if funnel is None else ContadoresConfigPayload(
         enabled=funnel.enabled,
         sheet_url=funnel.sheet_url,
@@ -432,36 +400,11 @@ async def run_contadores_sheet_sync_iteration(
     if not config.enabled:
         return {"status": "disabled", "funnel_id": funnel_id}
 
-    source_mode = funnel.source_mode if funnel is not None else CONTADORES_SOURCE_MODE
-    if source_mode == "testing":
-        test_row = build_testing_lead_row(
-            funnel_id=funnel_id,
-            test_phone=funnel.test_phone if funnel else None,
-            test_name=funnel.test_name if funnel else None,
-        )
-        if test_row is None:
-            return {
-                "status": "misconfigured",
-                "funnel_id": funnel_id,
-                "source_mode": source_mode,
-                "reason": "missing_CONTADORES_TEST_PHONE",
-                "fetched": 0,
-                "submitted": 0,
-            }
-        result = await import_contadores_sheet_rows(client, funnel_id=funnel_id, rows=[test_row])
-        result["status"] = "ok"
-        result["funnel_id"] = funnel_id
-        result["source_mode"] = source_mode
-        result["fetched"] = 1
-        result["submitted"] = 1
-        return result
-
     rows = await fetch_contadores_sheet_rows(config=config)
     filtered_rows = [build_importable_sheet_row(row) for row in rows if keep_sheet_row_for_import(row)]
     result = await import_contadores_sheet_rows(client, funnel_id=funnel_id, rows=filtered_rows)
     result["status"] = "ok"
     result["funnel_id"] = funnel_id
-    result["source_mode"] = source_mode
     result["fetched"] = len(rows)
     result["submitted"] = len(filtered_rows)
     return result

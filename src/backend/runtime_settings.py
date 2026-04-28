@@ -4,9 +4,6 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Literal
-
-SourceMode = Literal["testing", "live"]
 
 
 def _read_str(*names: str, default: str = "") -> str:
@@ -45,14 +42,6 @@ def _read_int(*names: str, default: int) -> int:
         return default
 
 
-def _read_source_mode() -> SourceMode:
-    """Read the canonical Contadores source mode."""
-    value = _read_str("CONTADORES_SOURCE_MODE", default="testing").lower()
-    if value == "live":
-        return "live"
-    return "testing"
-
-
 def _read_alert_emails() -> list[str]:
     """Read comma-separated alert emails from the environment."""
     raw_value = _read_str("CONTADORES_ALERT_EMAILS", default="")
@@ -64,9 +53,6 @@ class RuntimeSettings:
     """Environment-driven runtime settings safe to expose to operators."""
 
     enabled: bool
-    source_mode: SourceMode
-    test_phone: str
-    test_name: str
     sheet_url: str
     sheet_gid: str
     sheet_poll_seconds: int
@@ -75,12 +61,10 @@ class RuntimeSettings:
     alert_emails: list[str]
 
     def readiness_issues(self) -> list[str]:
-        """Return missing config needed by the current runtime mode."""
+        """Return missing config needed by the runtime."""
         issues: list[str] = []
-        if self.source_mode == "testing" and not self.test_phone:
-            issues.append("Testing mode requires CONTADORES_TEST_PHONE.")
-        if self.source_mode == "live" and not self.sheet_url:
-            issues.append("Live mode requires CONTADORES_SHEET_URL.")
+        if not self.sheet_url:
+            issues.append("CONTADORES_SHEET_URL is empty.")
         if not self.calendly_base_url:
             issues.append("CONTADORES_CALENDLY_BASE_URL is empty.")
         return issues
@@ -90,11 +74,8 @@ class RuntimeSettings:
         issues = self.readiness_issues()
         return {
             "enabled": self.enabled,
-            "source_mode": self.source_mode,
             "ready": not issues,
             "readiness_issues": issues,
-            "testing_phone_configured": bool(self.test_phone),
-            "testing_name": self.test_name,
             "sheet_configured": bool(self.sheet_url),
             "sheet_gid": self.sheet_gid,
             "sheet_poll_seconds": self.sheet_poll_seconds,
@@ -108,9 +89,6 @@ def get_runtime_settings() -> RuntimeSettings:
     """Read runtime settings from the current environment."""
     return RuntimeSettings(
         enabled=_read_bool("CONTADORES_ENABLED", default=True),
-        source_mode=_read_source_mode(),
-        test_phone=_read_str("CONTADORES_TEST_PHONE", default=""),
-        test_name=_read_str("CONTADORES_TEST_NAME", default="Test Contador"),
         sheet_url=_read_str("CONTADORES_SHEET_URL", "GOOGLE_SHEET_URL", default=""),
         sheet_gid=_read_str("CONTADORES_SHEET_GID", "GOOGLE_SHEET_GID", default=""),
         sheet_poll_seconds=max(30, _read_int("CONTADORES_SHEET_POLL_SECONDS", default=30)),

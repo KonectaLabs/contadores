@@ -24,7 +24,7 @@ Read these files first:
 - `media/`: uploaded client files such as logos, photos, screenshots, or visual references.
 
 The Workstation UI can also export the same folder as a ZIP, but Codex should
-prefer reading the live folder directly when running inside this repo.
+prefer reading the current folder directly when running inside this repo.
 
 ## Operating Rules
 

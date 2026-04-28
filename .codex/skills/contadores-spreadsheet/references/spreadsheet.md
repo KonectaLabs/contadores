@@ -39,21 +39,12 @@ It already captures:
 
 ## Runtime Rule
 
-The mode is controlled only by environment:
+There is no runtime mode switch for Contadores.
 
-- `CONTADORES_SOURCE_MODE=testing`
-- `CONTADORES_SOURCE_MODE=live`
-
-Meaning:
-
-- `testing` means the system should not poll the real sheet automatically and should import only the synthetic lead from `CONTADORES_TEST_PHONE`.
-- `live` means the sheet is allowed to feed the workflow.
+Enabled campaign funnels poll their configured sheet directly.
 
 Important nuance:
 
-- deploy target and runtime mode are different things;
-- the app can be deployed on the real server and still remain in `testing`;
-- moving to `live` should happen with an `.env` change, not with code changes.
 - product changes are expected to end on the real server by default;
 - `localhost` is only the development, validation, git, push, and deploy workbench.
 
@@ -151,8 +142,7 @@ For this project, the sheet is useful because it is:
 
 ## Operational Rules
 
-- In `testing`, work only with `CONTADORES_TEST_PHONE`; do not fetch the live sheet.
-- In `live`, the sheet becomes the intake source.
+- The configured sheet is the intake source for enabled campaign funnels.
 - Use explicit column names. Do not rely on positions.
 - Deduplicate by the sheet row id.
 - Do not mark `is_contactado` before the outbound send actually succeeds.

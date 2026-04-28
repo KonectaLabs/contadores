@@ -62,9 +62,6 @@ def build_abogados_test_funnel(
         "label": "Abogados",
         "kind": "campaign",
         "enabled": True,
-        "source_mode": "testing",
-        "test_phone": "+5491111111111",
-        "test_name": "Lead Abogado",
         "sheet_url": None,
         "sheet_gid": None,
         "sheet_source_filter": None,
@@ -103,11 +100,10 @@ def build_abogados_test_funnel(
     }
 
 
-def test_runtime_endpoint_reports_source_mode(monkeypatch, tmp_path) -> None:
-    """Runtime status must expose the canonical environment source mode."""
+def test_runtime_endpoint_reports_sheet_readiness(monkeypatch, tmp_path) -> None:
+    """Runtime status should expose non-secret sheet readiness."""
     configure_contadores_db(monkeypatch, tmp_path)
-    monkeypatch.setenv("CONTADORES_SOURCE_MODE", "testing")
-    monkeypatch.setenv("CONTADORES_TEST_PHONE", "+5491111111111")
+    monkeypatch.setenv("CONTADORES_SHEET_URL", "https://docs.google.com/spreadsheets/d/example")
     monkeypatch.setenv("CONTADORES_LOOM_URL", "https://www.loom.com/share/example")
     monkeypatch.setenv("CONTADORES_CALENDLY_BASE_URL", "https://calendly.com/example")
 
@@ -116,8 +112,7 @@ def test_runtime_endpoint_reports_source_mode(monkeypatch, tmp_path) -> None:
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["source_mode"] == "testing"
-    assert payload["testing_phone_configured"] is True
+    assert payload["sheet_configured"] is True
     assert payload["ready"] is True
 
 
@@ -815,9 +810,6 @@ def test_abogados_ctwa_referral_creates_lead_and_reaches_loom(monkeypatch, tmp_p
         "label": "Abogados",
         "kind": "campaign",
         "enabled": True,
-        "source_mode": "testing",
-        "test_phone": "+5491111111111",
-        "test_name": "Lead Abogado",
         "sheet_url": None,
         "sheet_gid": None,
         "sheet_source_filter": None,
