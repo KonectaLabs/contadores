@@ -9,9 +9,16 @@ description: Orchestrate a new Konecta niche funnel from first idea to CRM confi
 
 1. `../konecta-funnel-raw-memory/SKILL.md` for the original Facundo context.
 2. `../konecta-niche-market-research/SKILL.md` before creating the research prompt.
-3. `../konecta-niche-ad-images/SKILL.md` after Facundo returns the research.
-4. `../konecta-niche-loom-video/SKILL.md` when building the one-minute video deck and script.
-5. `../konecta-funnel-crm-config/SKILL.md` when configuring the app/backoffice.
+3. `../konecta-frankie-video-offer/SKILL.md` before deciding the offer, ad angle, or Loom pitch.
+4. `../konecta-niche-ad-images/SKILL.md` after Facundo returns the research.
+5. `../konecta-niche-loom-video/SKILL.md` when building the one-minute video deck and script.
+6. `../konecta-funnel-crm-config/SKILL.md` when configuring the app/backoffice.
+
+If the niche is `abogados`, also read the trained niche skills under:
+
+```text
+/Users/fgoiriz/private/repos/contadores/abogados/skills/
+```
 
 ## Operating Shape
 
@@ -85,4 +92,3 @@ At each stage, return:
 - `Waiting for`: the input needed to continue.
 
 Avoid broad strategy essays. The funnel only advances when the next artifact exists.
-

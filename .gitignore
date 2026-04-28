@@ -50,5 +50,7 @@ service-account*.json
 
 *.log
 
+LOCAL_ONLY_NOTE.txt
+
 .idea/
 .cursor/

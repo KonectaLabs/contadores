@@ -7,6 +7,8 @@ description: Build the one-minute niche sales video assets for Konecta funnels: 
 
 ## Canonical References
 
+- Frankie offer/video method:
+  `/Users/fgoiriz/private/repos/contadores/.codex/skills/konecta-frankie-video-offer/SKILL.md`
 - 60s Contadores source:
   `/Users/fgoiriz/private/repos/contadores/media/presentations/loom-video-vender-a-contadores/Loom Script 60s.html`
 - PPTX export skill:
@@ -27,6 +29,7 @@ media/presentations/loom-video-vender-a-[niche-slug]/
 Copy the 60-second deck workflow and adapt:
 
 - niche-specific WhatsApp/example lead;
+- one specific valuable case/opportunity;
 - pain/outcome;
 - what Konecta builds;
 - price/payment terms;
@@ -37,12 +40,13 @@ Copy the 60-second deck workflow and adapt:
 
 1. **Outcome first**
    - Show what the buyer wants to see in WhatsApp or their pipeline.
+   - Use one specific opportunity, not generic "more leads".
 2. **Why this matters**
    - Name the current pain in plain language.
 3. **What Konecta does**
    - Explain the mechanism only after the outcome is clear.
 4. **Investment**
-   - State price with context.
+   - State price with "and for that you get" value context.
 5. **How to start**
    - Calendly, call, first payment/onboarding, and expected next action.
 
@@ -64,4 +68,3 @@ uv run tiktok-captions-cli render /path/to/input.mp4 -o /path/to/output_captions
 ```
 
 Use the output MP4 as the WhatsApp MP4 strategy file for the funnel.
-
