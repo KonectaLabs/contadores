@@ -129,14 +129,19 @@ def log_whatsapp_inbound_activity(logger: logging.Logger, result: dict[str, Any]
     if status == "processed":
         if referral:
             logger.info(
-                "📥 Saved a WhatsApp reply to the conversation (route=%s phone=%s referral_source_id=%s ctwa_clid=%s).",
+                "📥 Saved a WhatsApp reply to the conversation (route=%s phone=%s profile_name=%s referral_source_id=%s ctwa_clid=%s).",
                 result.get("route") or "-",
                 result.get("phone") or "-",
+                result.get("profile_name") or "-",
                 referral.get("source_id") or "-",
                 referral.get("ctwa_clid") or "-",
             )
             return
-        logger.info("📥 Saved a WhatsApp reply to the conversation.")
+        logger.info(
+            "📥 Saved a WhatsApp reply to the conversation (phone=%s profile_name=%s).",
+            result.get("phone") or "-",
+            result.get("profile_name") or "-",
+        )
         return
     if status == "ignored":
         logger.warning(

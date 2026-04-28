@@ -160,6 +160,7 @@ Entrada Click-to-WhatsApp:
 - Cada funnel puede declarar `whatsapp_referral_source_ids` en `data/funnels.json`.
 - Contadores no debe tener IDs cargados si no tiene campaña real. Hoy el source_id real queda en `abogados`.
 - Cuando Meta envia un webhook con `referral.source_id` configurado, el backend crea o reutiliza un lead `whatsapp_ctwa`.
+- Si el webhook trae el nombre de perfil de WhatsApp, se guarda como `full_name` para leads nuevos de WhatsApp y para leads existentes que todavia no tenian nombre.
 - Ese lead queda como si ya hubiese respondido al opener: no se encola el template inicial y el tick automatico pasa al Loom despues de `initial_reply_quiet_seconds`.
 - No se usa el texto prellenado del anuncio para rutear porque el usuario puede editarlo antes de enviarlo.
 - Si no hay `referral.source_id`, o si no matchea ningun funnel, el mensaje se guarda como lead en el buzon `general`.
@@ -167,6 +168,7 @@ Entrada Click-to-WhatsApp:
 Buzon General:
 
 - `general` es un inbox, no una campaña: no tiene pipeline de fases ni sheet sync.
+- Los chats que entran por WhatsApp sin formulario pueden mostrar el nombre de perfil de WhatsApp si Meta lo envia en el webhook.
 - Permite chatear, mandar el mensaje inicial o el ping general.
 - Desde la UI se puede mover un chat a una campaña existente y elegir la fase inicial.
 

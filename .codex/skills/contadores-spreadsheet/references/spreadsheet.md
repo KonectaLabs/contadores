@@ -17,6 +17,10 @@ For new niche funnels, spreadsheet config belongs in the funnel definition file:
 The current Contadores env vars remain backwards-compatible defaults.
 Click-to-WhatsApp ads do not need a sheet row. They use the WhatsApp webhook
 `referral.source_id` and the funnel field `whatsapp_referral_source_ids`.
+If the webhook includes `contacts.profile.name`, that WhatsApp profile name is
+stored as the lead `full_name` for WhatsApp-created leads and fills existing
+phone-only leads. It does not replace names already provided by the sheet or an
+operator.
 
 ## What The Spreadsheet Represents
 

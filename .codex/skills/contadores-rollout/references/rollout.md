@@ -17,6 +17,9 @@ These values are Meta webhook `referral.source_id` values. Do not route by the
 prefilled WhatsApp message text because the user can edit it.
 When no referral matches, the backend stores the inbound WhatsApp message in the
 built-in `general` inbox. Inbox funnels do not run automation or sheet sync.
+If Meta sends `contacts.profile.name`, the inbound handler passes that profile
+name through the bot and stores it on WhatsApp-created leads, or fills it on an
+existing matched lead that still only had a phone number.
 
 WhatsApp strategy videos should live under the shared `data` volume and be
 referenced by funnel `media_path`. The bot sends the configured file and the

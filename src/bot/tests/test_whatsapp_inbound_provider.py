@@ -24,7 +24,7 @@ def test_build_inbound_event_from_message_text() -> None:
         text=" Hola ",
         caption=None,
         reaction=None,
-        from_user=SimpleNamespace(wa_id="5491122233344"),
+        from_user=SimpleNamespace(wa_id="5491122233344", name="Ana WhatsApp"),
         id="wamid.text.1",
         type=SimpleNamespace(value="text"),
     )
@@ -34,6 +34,7 @@ def test_build_inbound_event_from_message_text() -> None:
     assert event is not None
     assert event.phone == "5491122233344"
     assert event.text == "Hola"
+    assert event.profile_name == "Ana WhatsApp"
     assert event.external_id == "wamid.text.1"
     assert event.in_reply_to is None
 
@@ -117,7 +118,7 @@ def test_build_inbound_event_from_callback_button() -> None:
     btn = SimpleNamespace(
         title="Me interesa",
         data="cta_interest",
-        from_user=SimpleNamespace(wa_id="5491199988877"),
+        from_user=SimpleNamespace(wa_id="5491199988877", name="Lead Boton"),
         id="wamid.callback.1",
         reply_to_message=None,
     )
@@ -127,6 +128,7 @@ def test_build_inbound_event_from_callback_button() -> None:
     assert event is not None
     assert event.phone == "5491199988877"
     assert event.text == "Me interesa (cta_interest)"
+    assert event.profile_name == "Lead Boton"
     assert event.external_id == "wamid.callback.1"
     assert event.in_reply_to is None
 

@@ -694,6 +694,59 @@ def test_contadores_inbound_matches_mexico_52_and_521_variants(monkeypatch, tmp_
     assert detail.json()["messages"][0]["external_id"] == "wamid.mx.1"
 
 
+def test_inbound_whatsapp_profile_name_fills_missing_lead_name(monkeypatch, tmp_path) -> None:
+    """An existing phone-only lead should pick up the sender's WhatsApp profile name."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-no-name",
+        phone="+5491112345601",
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/contadores/whatsapp/inbound",
+            json={
+                "phone": "+5491112345601",
+                "text": "Hola, soy Ana.",
+                "profile_name": "Ana WhatsApp",
+            },
+        )
+        detail = client.get(f"/api/contadores/leads/{lead.id}")
+
+    assert response.status_code == 200
+    assert response.json()["lead_id"] == lead.id
+    assert detail.status_code == 200
+    assert detail.json()["lead"]["full_name"] == "Ana WhatsApp"
+    assert detail.json()["events"][0]["payload"]["profile_name"] == "Ana WhatsApp"
+
+
+def test_inbound_whatsapp_profile_name_does_not_replace_existing_lead_name(monkeypatch, tmp_path) -> None:
+    """Sheet or operator names should win over a later WhatsApp profile name."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-named",
+        phone="+5491112345602",
+        full_name="Nombre de Sheet",
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/contadores/whatsapp/inbound",
+            json={
+                "phone": "+5491112345602",
+                "text": "Hola.",
+                "profile_name": "Nombre WhatsApp",
+            },
+        )
+        detail = client.get(f"/api/contadores/leads/{lead.id}")
+
+    assert response.status_code == 200
+    assert response.json()["lead_id"] == lead.id
+    assert detail.status_code == 200
+    assert detail.json()["lead"]["full_name"] == "Nombre de Sheet"
+    assert detail.json()["events"][0]["payload"]["profile_name"] == "Nombre WhatsApp"
+
+
 def test_abogados_ctwa_referral_creates_lead_and_reaches_loom(monkeypatch, tmp_path) -> None:
     """A configured Abogados Click-to-WhatsApp ad should start after the opener step."""
     configure_contadores_db(monkeypatch, tmp_path)
@@ -754,6 +807,7 @@ def test_abogados_ctwa_referral_creates_lead_and_reaches_loom(monkeypatch, tmp_p
             json={
                 "phone": "+5491155555555",
                 "text": "Hola, quiero mas info",
+                "profile_name": "Rocio WhatsApp",
                 "external_id": "wamid.ctwa.1",
                 "referral": {
                     "source_type": "ad",
@@ -783,6 +837,7 @@ def test_abogados_ctwa_referral_creates_lead_and_reaches_loom(monkeypatch, tmp_p
     assert lead.external_lead_id == "ctwa:abogados:5491155555555"
     assert lead.platform == "whatsapp_ctwa"
     assert lead.funnel_id == "abogados"
+    assert lead.full_name == "Rocio WhatsApp"
     assert lead.tags == ["whatsapp_funnel"]
     assert lead.opener_sent_at is None
     assert lead.first_reply_received_at is not None
@@ -798,6 +853,7 @@ def test_abogados_ctwa_referral_creates_lead_and_reaches_loom(monkeypatch, tmp_p
         if event["event_type"] == "ctwa_inbound_created"
     ]
     assert len(ctwa_events) == 1
+    assert ctwa_events[0]["payload"]["profile_name"] == "Rocio WhatsApp"
     assert ctwa_events[0]["payload"]["referral"]["source_id"] == "120244283740930010"
 
     assert pending.status_code == 200
@@ -814,6 +870,7 @@ def test_unmatched_whatsapp_inbound_creates_general_inbox_lead(monkeypatch, tmp_
             json={
                 "phone": "+5491155555599",
                 "text": "Hola, quiero consultar algo",
+                "profile_name": "Camila WhatsApp",
                 "external_id": "wamid.general.1",
             },
         )
@@ -826,10 +883,12 @@ def test_unmatched_whatsapp_inbound_creates_general_inbox_lead(monkeypatch, tmp_
     assert response.json()["route"] == "general"
     assert detail.status_code == 200
     assert detail.json()["lead"]["funnel_id"] == "general"
+    assert detail.json()["lead"]["full_name"] == "Camila WhatsApp"
     assert detail.json()["lead"]["stage"] == "needs_human"
     assert detail.json()["lead"]["automation_paused"] is True
     assert detail.json()["lead"]["tags"] == ["whatsapp"]
     assert detail.json()["messages"][0]["external_id"] == "wamid.general.1"
+    assert detail.json()["events"][0]["payload"]["profile_name"] == "Camila WhatsApp"
     assert general_list.status_code == 200
     assert [item["id"] for item in general_list.json()["leads"]] == [lead_id]
     assert tick.status_code == 200

@@ -542,6 +542,7 @@ async def process_contadores_whatsapp_inbound_event(
         json={
             "phone": event.phone,
             "text": event.text,
+            "profile_name": event.profile_name,
             "external_id": event.external_id,
             "in_reply_to": event.in_reply_to,
             "referral": event.referral.model_dump(exclude_none=True) if event.referral else None,
@@ -567,6 +568,7 @@ async def process_whatsapp_inbound_event(
     """Route one WhatsApp inbound event through the Contadores backend."""
     result = await process_contadores_whatsapp_inbound_event(client, event=event)
     result["phone"] = event.phone
+    result["profile_name"] = event.profile_name
     result["in_reply_to"] = event.in_reply_to
     result["external_id"] = event.external_id
     if event.referral:

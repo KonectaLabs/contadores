@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from io import BytesIO
 from types import SimpleNamespace
 
 import httpx
 import openpyxl
 import utils
-from providers import DeliveryReceipt, WhatsAppMessageStatusEvent
+from providers import DeliveryReceipt, WhatsAppInboundEvent, WhatsAppMessageStatusEvent
 from utils import (
     PendingContadoresAlertItem,
     PendingContadoresDeliveryMessage,
@@ -143,6 +144,52 @@ def test_run_contadores_sheet_sync_iteration_uses_testing_phone(monkeypatch) -> 
     assert imported_batches[0][0]["id"] == "testing-contadores-5491111111111"
     assert imported_batches[0][0]["phone_number"] == "+5491111111111"
     assert imported_batches[0][0]["full_name"] == "Lead Test"
+
+
+def test_process_whatsapp_inbound_event_forwards_profile_name(monkeypatch) -> None:
+    """The bot should preserve the WhatsApp profile name when it calls the backend."""
+    seen_payloads: list[dict[str, object]] = []
+    monkeypatch.setattr(utils, "BACKEND_BASE_URL", "http://backend")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_payloads.append(json.loads(request.content.decode("utf-8")))
+        return httpx.Response(
+            200,
+            json={"status": "processed", "route": "general", "lead_id": "lead-1"},
+        )
+
+    event = WhatsAppInboundEvent(
+        phone="5491111111111",
+        text="Hola",
+        profile_name="Ana WhatsApp",
+        external_id="wamid.profile.1",
+    )
+
+    async def run() -> dict[str, object]:
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as client:
+            return await utils.process_whatsapp_inbound_event(client, event=event)
+
+    result = asyncio.run(run())
+
+    assert seen_payloads == [
+        {
+            "phone": "5491111111111",
+            "text": "Hola",
+            "profile_name": "Ana WhatsApp",
+            "external_id": "wamid.profile.1",
+            "in_reply_to": None,
+            "referral": None,
+            "media_type": None,
+            "media_path": None,
+            "media_caption": None,
+            "media_mime_type": None,
+            "media_filename": None,
+            "media_sha256": None,
+            "media_id": None,
+        }
+    ]
+    assert result["profile_name"] == "Ana WhatsApp"
 
 
 def test_dispatch_pending_contadores_messages_sends_immediately_without_random_delay(monkeypatch) -> None:

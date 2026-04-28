@@ -87,6 +87,7 @@ Enviar inmediatamente después del mensaje 4.
 - Guardar la secuencia como cinco mensajes separados.
 - Para Click-to-WhatsApp, rutear por `referral.source_id` contra `whatsapp_referral_source_ids`, no por el texto editable que envia el usuario.
 - Si el inbound no matchea reply/referral, guardarlo en el buzon `general`.
+- Si Meta envia `contacts.profile.name`, usar ese nombre de perfil de WhatsApp para leads creados por WhatsApp y para completar leads existentes que solo tenian telefono.
 - El ping manual `contadores_manual_ping_es_v1` es solo una accion del CRM.
 - Marcar un lead como `booked` no envia WhatsApp. El alias legacy
   `send-manual-booked` solo marca `booked`.

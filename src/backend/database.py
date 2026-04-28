@@ -1288,6 +1288,28 @@ class ContadoresLead(SQLModel, table=True):
             return item
 
     @classmethod
+    def set_full_name_if_missing(cls, lead_id: str, *, full_name: str | None) -> Optional["ContadoresLead"]:
+        """Set the lead name only when it is currently empty."""
+        clean_full_name = " ".join((full_name or "").split()).strip()
+        if not clean_full_name:
+            return cls.get_by_id(lead_id)
+
+        with Session(engine) as session:
+            item = session.get(cls, lead_id)
+            if item is None:
+                return None
+            if item.full_name:
+                session.expunge(item)
+                return item
+            item.full_name = clean_full_name
+            item.updated_at = datetime.now(timezone.utc)
+            session.add(item)
+            session.commit()
+            session.refresh(item)
+            session.expunge(item)
+            return item
+
+    @classmethod
     def move_to_funnel(
         cls,
         lead_id: str,

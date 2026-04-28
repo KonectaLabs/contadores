@@ -15,6 +15,9 @@ If the first inbound WhatsApp webhook includes `referral.source_id` and that id
 is configured in `whatsapp_referral_source_ids`, do not send the opener. Create
 or reuse the lead with platform `whatsapp_ctwa`, store the inbound message, and
 continue as if the lead already replied to message 1.
+If Meta includes `contacts.profile.name`, use that WhatsApp profile name as the
+lead name for WhatsApp-created leads, and fill existing matched leads only when
+they still have no name.
 
 If the webhook has no referral or its `source_id` does not match any configured
 campaign, store the message in the built-in `general` inbox with the `whatsapp`

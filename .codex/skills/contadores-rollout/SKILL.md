@@ -28,6 +28,9 @@ Click-to-WhatsApp routing also belongs there through
 campaign source.
 When a WhatsApp inbound has no matching reply/referral, the backend saves it in
 the built-in `general` inbox. Inbox funnels do not run automation or sheet sync.
+When Meta includes the sender profile name, the inbound flow stores it on the
+lead when the lead came from WhatsApp or when an existing matched lead had no
+name yet.
 
 WhatsApp strategy videos should be referenced by `media_path` under the shared
 `data` volume. The bot sends that configured file, and the frontend serves the

@@ -214,6 +214,7 @@ class WhatsAppInboundEvent(BaseModel):
 
     phone: str
     text: str
+    profile_name: str | None = None
     external_id: str | None = None
     in_reply_to: str | None = None
     referral: WhatsAppReferralContext | None = None
@@ -1244,6 +1245,12 @@ class WhatsAppProvider:
         from_user = getattr(update, "from_user", None)
         return str(getattr(from_user, "wa_id", "") or "").strip()
 
+    def _extract_profile_name(self, update: Any) -> str | None:
+        """Extract sender WhatsApp profile name from one inbound update."""
+        from_user = getattr(update, "from_user", None)
+        profile_name = str(getattr(from_user, "name", "") or "").strip()
+        return profile_name or None
+
     def _extract_display_phone(self, update: Any) -> str:
         """Extract recipient business display phone from webhook metadata."""
         metadata = getattr(update, "metadata", None)
@@ -1333,6 +1340,7 @@ class WhatsAppProvider:
         *,
         phone: str,
         text: str,
+        profile_name: str | None = None,
         external_id: str | None,
         in_reply_to: str | None = None,
         referral: WhatsAppReferralContext | None = None,
@@ -1354,6 +1362,7 @@ class WhatsAppProvider:
         return WhatsAppInboundEvent(
             phone=clean_phone,
             text=clean_text,
+            profile_name=(profile_name or "").strip() or None,
             external_id=clean_external_id,
             in_reply_to=clean_in_reply_to,
             referral=referral,
@@ -1467,6 +1476,7 @@ class WhatsAppProvider:
         return self._build_inbound_event(
             phone=self._extract_wa_id(msg),
             text=self._extract_message_text(msg),
+            profile_name=self._extract_profile_name(msg),
             external_id=str(getattr(msg, "id", "") or "").strip() or None,
             in_reply_to=self._extract_in_reply_to_message_id(msg),
             referral=self._extract_message_referral(msg),
@@ -1513,6 +1523,7 @@ class WhatsAppProvider:
         return self._build_inbound_event(
             phone=self._extract_wa_id(callback_update),
             text=self._extract_callback_text(callback_update),
+            profile_name=self._extract_profile_name(callback_update),
             external_id=str(getattr(callback_update, "id", "") or "").strip() or None,
             in_reply_to=self._extract_callback_in_reply_to_message_id(callback_update),
         )

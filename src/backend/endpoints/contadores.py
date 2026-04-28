@@ -1454,6 +1454,7 @@ class ContadoresWhatsAppInboundCommand(BaseModel):
 
     phone: str = Field(min_length=1)
     text: str = Field(min_length=1)
+    profile_name: str | None = None
     external_id: str | None = None
     in_reply_to: str | None = None
     referral: WhatsAppReferralContext | None = None
@@ -1510,6 +1511,33 @@ def build_general_inbox_external_lead_id(*, phone: str) -> str | None:
     return f"whatsapp:{GENERAL_INBOX_FUNNEL_ID}:{normalized_phone}"
 
 
+def normalize_whatsapp_profile_name(value: str | None) -> str | None:
+    """Normalize the sender profile name Meta includes in WhatsApp webhooks."""
+    clean_name = " ".join((value or "").split()).strip()
+    return clean_name or None
+
+
+def resolve_inbound_full_name(
+    *,
+    existing: ContadoresLead | None,
+    command: ContadoresWhatsAppInboundCommand,
+) -> str | None:
+    """Prefer the latest WhatsApp profile name, preserving existing names when absent."""
+    return normalize_whatsapp_profile_name(command.profile_name) or (existing.full_name if existing else None)
+
+
+def fill_missing_lead_name_from_whatsapp(
+    *,
+    lead: ContadoresLead,
+    command: ContadoresWhatsAppInboundCommand,
+) -> ContadoresLead:
+    """Use WhatsApp profile name for matched leads that still only have a phone."""
+    profile_name = normalize_whatsapp_profile_name(command.profile_name)
+    if not profile_name or lead.full_name:
+        return lead
+    return ContadoresLead.set_full_name_if_missing(lead.id, full_name=profile_name) or lead
+
+
 def upsert_ctwa_lead_from_inbound(
     *,
     funnel_id: str,
@@ -1530,6 +1558,7 @@ def upsert_ctwa_lead_from_inbound(
         funnel_id=funnel_id,
         external_lead_id=external_lead_id,
         phone=command.phone,
+        full_name=resolve_inbound_full_name(existing=existing, command=command),
         platform="whatsapp_ctwa",
         lead_status="new",
         tags=[WHATSAPP_FUNNEL_TAG],
@@ -1556,6 +1585,7 @@ def upsert_general_inbox_lead_from_inbound(
         funnel_id=GENERAL_INBOX_FUNNEL_ID,
         external_lead_id=external_lead_id,
         phone=command.phone,
+        full_name=resolve_inbound_full_name(existing=existing, command=command),
         platform="whatsapp_general",
         lead_status="new",
         tags=[WHATSAPP_GENERAL_TAG],
@@ -1598,6 +1628,9 @@ def record_whatsapp_inbound_for_lead(
         "in_reply_to": command.in_reply_to,
         **(event_payload or {}),
     }
+    profile_name = normalize_whatsapp_profile_name(command.profile_name)
+    if profile_name:
+        payload["profile_name"] = profile_name
     ContadoresEvent.add(
         lead_id=lead.id,
         event_type=event_type,
@@ -2294,7 +2327,10 @@ async def register_contadores_whatsapp_inbound(
         contadores_matches = contadores_phone_matches
 
     if contadores_matches:
-        lead = contadores_matches[0]
+        lead = fill_missing_lead_name_from_whatsapp(
+            lead=contadores_matches[0],
+            command=command,
+        )
         inbound_event_payload = {"referral": referral_payload} if referral_payload else None
         if referral_route_funnel_id is not None:
             inbound_event_payload = {

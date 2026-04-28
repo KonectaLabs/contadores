@@ -72,5 +72,6 @@ the lead answered, the lead leaves `Needs answer` but remains visible in Manual.
 - Click-to-WhatsApp ad IDs live in each funnel as `whatsapp_referral_source_ids`.
   Contadores should stay empty when it has no real campaign; currently the real ad source belongs to Abogados.
 - Inbound WhatsApp messages with no matching reply/referral are saved in the built-in `general` inbox.
+- If Meta includes the sender WhatsApp profile name, the inbound handler stores it as the lead name for WhatsApp-created leads and fills existing phone-only leads without replacing sheet/operator names.
 
 Read [references/sequence.md](references/sequence.md) for the exact messages and timing.
