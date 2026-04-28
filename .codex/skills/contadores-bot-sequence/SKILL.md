@@ -16,6 +16,7 @@ override the built-in Contadores definition.
 
 1. Send opener as a WhatsApp template for sheet/testing leads.
    - Click-to-WhatsApp leads whose `referral.source_id` matches the funnel config skip this step because their first inbound message is already the reply.
+   - Abogados leads whose first inbound text normalizes to `Hola! Quiero mas informacion de su propuesta para abogados!` also skip this step.
 2. Wait for any reply.
 3. Wait 30 seconds of silence.
 4. Send the Loom intro text.
@@ -71,7 +72,7 @@ the lead answered, the lead leaves `Needs answer` but remains visible in Manual.
   The UI and Codex edit the same file.
 - Click-to-WhatsApp ad IDs live in each funnel as `whatsapp_referral_source_ids`.
   Contadores should stay empty when it has no real campaign; currently the real ad source belongs to Abogados.
-- Inbound WhatsApp messages with no matching reply/referral are saved in the built-in `general` inbox.
+- Inbound WhatsApp messages with no matching reply/referral are saved in the built-in `general` inbox, except the approved Abogados prefilled proposal text route.
 - If Meta includes the sender WhatsApp profile name, the inbound handler stores it as the lead name for WhatsApp-created leads and fills existing phone-only leads without replacing sheet/operator names.
 
 Read [references/sequence.md](references/sequence.md) for the exact messages and timing.

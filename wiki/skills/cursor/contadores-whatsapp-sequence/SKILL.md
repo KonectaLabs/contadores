@@ -19,7 +19,7 @@ description: >-
 
 1. Enviar el mensaje 1 para leads de sheet/testing.
 2. Cualquier respuesta entrante al mensaje 1 dispara la secuencia.
-3. Si el primer inbound viene de un anuncio Click-to-WhatsApp con `referral.source_id` configurado, crear/reusar el lead y saltear el mensaje 1.
+3. Si el primer inbound viene de un anuncio Click-to-WhatsApp con `referral.source_id` configurado, crear/reusar el lead y saltear el mensaje 1. La frase aprobada de Abogados `Hola! Quiero mas informacion de su propuesta para abogados!` hace lo mismo cuando no hay reply/referral usable.
 4. Esperar `30` segundos.
 5. Enviar el mensaje 2.
 6. Enviar enseguida el mensaje 3 como WhatsApp MP4.
@@ -85,8 +85,9 @@ Enviar inmediatamente después del mensaje 4.
 
 - Leer los links desde la capa de configuración.
 - Guardar la secuencia como cinco mensajes separados.
-- Para Click-to-WhatsApp, rutear por `referral.source_id` contra `whatsapp_referral_source_ids`, no por el texto editable que envia el usuario.
-- Si el inbound no matchea reply/referral, guardarlo en el buzon `general`.
+- Para Click-to-WhatsApp, rutear por `referral.source_id` contra `whatsapp_referral_source_ids`. No agregar ruteo amplio por texto editable.
+- Excepcion aprobada: si el texto normalizado es `Hola! Quiero mas informacion de su propuesta para abogados!`, rutear a `abogados`.
+- Si el inbound no matchea reply/referral/frase aprobada, guardarlo en el buzon `general`.
 - Si Meta envia `contacts.profile.name`, usar ese nombre de perfil de WhatsApp para leads creados por WhatsApp y para completar leads existentes que solo tenian telefono.
 - El ping manual `contadores_manual_ping_es_v1` es solo una accion del CRM.
 - Marcar un lead como `booked` no envia WhatsApp. El alias legacy

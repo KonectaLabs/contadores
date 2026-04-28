@@ -5,6 +5,8 @@ from __future__ import annotations
 import base64
 import json
 import mimetypes
+import re
+import unicodedata
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -47,6 +49,11 @@ OPENER_FOLLOWUP_SEQUENCE_STEP = "opener_followup_24h"
 OPENER_FOLLOWUP_RETRY_SEQUENCE_STEP = "opener_followup_24h_template_retry_20260424"
 MANUAL_PING_SEQUENCE_STEP = "manual_ping_template"
 OPENER_FOLLOWUP_DELAY = timedelta(hours=24)
+ABOGADOS_FUNNEL_ID = "abogados"
+ABOGADOS_PREFILLED_MESSAGE_ROUTE = "abogados_prefilled_proposal"
+ABOGADOS_PREFILLED_WHATSAPP_TEXTS = {
+    "hola quiero mas informacion de su propuesta para abogados",
+}
 FORM_LEAD_TAG = "form"
 WHATSAPP_GENERAL_TAG = "whatsapp"
 WHATSAPP_FUNNEL_TAG = "whatsapp_funnel"
@@ -1495,6 +1502,21 @@ def get_referral_source_id(referral: WhatsAppReferralContext | None) -> str:
     return str(getattr(referral, "source_id", "") or "").strip()
 
 
+def normalize_prefilled_whatsapp_text(value: str | None) -> str:
+    """Normalize user-editable WhatsApp text for narrow routing fallbacks."""
+    decomposed = unicodedata.normalize("NFKD", value or "")
+    plain_text = "".join(char for char in decomposed if not unicodedata.combining(char))
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", plain_text.casefold()).split())
+
+
+def resolve_prefilled_whatsapp_route(text: str | None) -> tuple[str, str] | None:
+    """Return the funnel route for explicitly approved prefilled WhatsApp text."""
+    normalized_text = normalize_prefilled_whatsapp_text(text)
+    if normalized_text in ABOGADOS_PREFILLED_WHATSAPP_TEXTS:
+        return ABOGADOS_FUNNEL_ID, ABOGADOS_PREFILLED_MESSAGE_ROUTE
+    return None
+
+
 def build_ctwa_external_lead_id(*, funnel_id: str, phone: str) -> str | None:
     """Build the stable external id used for Click-to-WhatsApp leads."""
     normalized_phone = normalize_phone(phone)
@@ -2262,7 +2284,9 @@ async def register_contadores_whatsapp_inbound(
 ) -> ContadoresWhatsAppInboundResponse:
     """Route one raw WhatsApp inbound event to a Contadores lead safely."""
     referral_payload = serialize_whatsapp_referral(command.referral)
-    contadores_reply_matches, contadores_reply_ambiguous = list_contadores_matches_by_replied_message(command.in_reply_to)
+    contadores_reply_matches, contadores_reply_ambiguous = list_contadores_matches_by_replied_message(
+        command.in_reply_to
+    )
     if contadores_reply_ambiguous:
         return ContadoresWhatsAppInboundResponse(
             status="ignored",
@@ -2271,7 +2295,8 @@ async def register_contadores_whatsapp_inbound(
         )
 
     contadores_matches = contadores_reply_matches
-    referral_route_funnel_id: str | None = None
+    matched_funnel_id: str | None = None
+    matched_prefilled_route: str | None = None
 
     if not contadores_matches:
         source_id = get_referral_source_id(command.referral)
@@ -2284,7 +2309,10 @@ async def register_contadores_whatsapp_inbound(
             )
         if referral_funnels:
             funnel = referral_funnels[0]
-            funnel_matches, funnel_ambiguous = list_contadores_matches_by_phone(command.phone, funnel_id=funnel.id)
+            funnel_matches, funnel_ambiguous = list_contadores_matches_by_phone(
+                command.phone,
+                funnel_id=funnel.id,
+            )
             if funnel_ambiguous:
                 return ContadoresWhatsAppInboundResponse(
                     status="ignored",
@@ -2293,10 +2321,13 @@ async def register_contadores_whatsapp_inbound(
                 )
             if funnel_matches:
                 contadores_matches = funnel_matches
-                referral_route_funnel_id = funnel.id
+                matched_funnel_id = funnel.id
             else:
                 try:
-                    lead, created = upsert_ctwa_lead_from_inbound(funnel_id=funnel.id, command=command)
+                    lead, created = upsert_ctwa_lead_from_inbound(
+                        funnel_id=funnel.id,
+                        command=command,
+                    )
                 except ValueError:
                     return ContadoresWhatsAppInboundResponse(
                         status="ignored",
@@ -2317,6 +2348,62 @@ async def register_contadores_whatsapp_inbound(
                 )
 
     if not contadores_matches:
+        prefilled_route = resolve_prefilled_whatsapp_route(command.text)
+        if prefilled_route is not None:
+            prefilled_funnel_id, route_name = prefilled_route
+            funnel = get_funnel(prefilled_funnel_id)
+            if funnel is not None:
+                funnel_matches, funnel_ambiguous = list_contadores_matches_by_phone(
+                    command.phone,
+                    funnel_id=funnel.id,
+                )
+                if funnel_ambiguous:
+                    return ContadoresWhatsAppInboundResponse(
+                        status="ignored",
+                        route="ambiguous",
+                        reason="ambiguous_prefilled_phone_match",
+                    )
+                if funnel_matches:
+                    contadores_matches = funnel_matches
+                    matched_funnel_id = funnel.id
+                    matched_prefilled_route = route_name
+                else:
+                    try:
+                        lead, created = upsert_ctwa_lead_from_inbound(
+                            funnel_id=funnel.id,
+                            command=command,
+                        )
+                    except ValueError:
+                        return ContadoresWhatsAppInboundResponse(
+                            status="ignored",
+                            route="none",
+                            reason="invalid_phone",
+                        )
+                    event_payload = {
+                        "funnel_id": funnel.id,
+                        "prefilled_message_route": route_name,
+                    }
+                    if referral_payload:
+                        event_payload["referral"] = referral_payload
+                    event_type = (
+                        "prefilled_whatsapp_inbound_created"
+                        if created
+                        else "prefilled_whatsapp_inbound_refreshed"
+                    )
+                    refreshed_lead, _ = record_whatsapp_inbound_for_lead(
+                        lead=lead,
+                        command=command,
+                        event_type=event_type,
+                        event_summary="Inbound WhatsApp matched an approved prefilled message route.",
+                        event_payload=event_payload,
+                    )
+                    return ContadoresWhatsAppInboundResponse(
+                        status="processed",
+                        route=funnel.id,
+                        lead_id=refreshed_lead.id,
+                    )
+
+    if not contadores_matches:
         contadores_phone_matches, contadores_phone_ambiguous = list_contadores_matches_by_phone(command.phone)
         if contadores_phone_ambiguous:
             return ContadoresWhatsAppInboundResponse(
@@ -2332,10 +2419,15 @@ async def register_contadores_whatsapp_inbound(
             command=command,
         )
         inbound_event_payload = {"referral": referral_payload} if referral_payload else None
-        if referral_route_funnel_id is not None:
+        if matched_funnel_id is not None:
             inbound_event_payload = {
                 **(inbound_event_payload or {}),
-                "funnel_id": referral_route_funnel_id,
+                "funnel_id": matched_funnel_id,
+            }
+        if matched_prefilled_route is not None:
+            inbound_event_payload = {
+                **(inbound_event_payload or {}),
+                "prefilled_message_route": matched_prefilled_route,
             }
         refreshed_lead, row = record_whatsapp_inbound_for_lead(
             lead=lead,

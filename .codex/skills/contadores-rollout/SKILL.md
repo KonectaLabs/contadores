@@ -26,7 +26,8 @@ the server data volume when it must persist across deploys.
 Click-to-WhatsApp routing also belongs there through
 `whatsapp_referral_source_ids`; keep Contadores empty when it has no real
 campaign source.
-When a WhatsApp inbound has no matching reply/referral, the backend saves it in
+The approved Abogados prefilled proposal text can route to `abogados` when no
+reply/referral route is usable. Other unmatched WhatsApp inbounds are saved in
 the built-in `general` inbox. Inbox funnels do not run automation or sheet sync.
 When Meta includes the sender profile name, the inbound flow stores it on the
 lead when the lead came from WhatsApp or when an existing matched lead had no

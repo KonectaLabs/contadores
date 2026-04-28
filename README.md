@@ -162,8 +162,9 @@ Entrada Click-to-WhatsApp:
 - Cuando Meta envia un webhook con `referral.source_id` configurado, el backend crea o reutiliza un lead `whatsapp_ctwa`.
 - Si el webhook trae el nombre de perfil de WhatsApp, se guarda como `full_name` para leads nuevos de WhatsApp y para leads existentes que todavia no tenian nombre.
 - Ese lead queda como si ya hubiese respondido al opener: no se encola el template inicial y el tick automatico pasa al Loom despues de `initial_reply_quiet_seconds`.
-- No se usa el texto prellenado del anuncio para rutear porque el usuario puede editarlo antes de enviarlo.
-- Si no hay `referral.source_id`, o si no matchea ningun funnel, el mensaje se guarda como lead en el buzon `general`.
+- Por defecto no se usa el texto prellenado del anuncio para rutear porque el usuario puede editarlo antes de enviarlo.
+- Excepcion aprobada: el texto normalizado `Hola! Quiero mas informacion de su propuesta para abogados!` rutea directo a `abogados` cuando no hay reply/referral usable.
+- Si no hay `referral.source_id`, ni frase aprobada, ni match de funnel, el mensaje se guarda como lead en el buzon `general`.
 
 Buzon General:
 

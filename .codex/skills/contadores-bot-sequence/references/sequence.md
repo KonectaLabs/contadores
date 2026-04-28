@@ -19,10 +19,18 @@ If Meta includes `contacts.profile.name`, use that WhatsApp profile name as the
 lead name for WhatsApp-created leads, and fill existing matched leads only when
 they still have no name.
 
-If the webhook has no referral or its `source_id` does not match any configured
-campaign, store the message in the built-in `general` inbox with the `whatsapp`
-tag. The general inbox has chats and presets only; an operator can move a lead
-to a campaign and choose its phase manually.
+Approved Abogados text fallback:
+
+If the webhook has no usable reply/referral route but the inbound text
+normalizes to `Hola! Quiero mas informacion de su propuesta para abogados!`,
+create or reuse the lead in the `abogados` funnel, store the inbound message,
+and continue as if the lead already replied to message 1.
+
+If the webhook has no referral, its `source_id` does not match any configured
+campaign, and no approved text fallback matches, store the message in the
+built-in `general` inbox with the `whatsapp` tag. The general inbox has chats
+and presets only; an operator can move a lead to a campaign and choose its phase
+manually.
 
 ## Message 2
 

@@ -48,6 +48,58 @@ def force_loom_strategy(monkeypatch, strategy_id: str = "loom_mp4") -> None:
     monkeypatch.setattr(contadores_endpoints, "choose_contadores_strategy", lambda **kwargs: strategy)
 
 
+def build_abogados_test_funnel(
+    *,
+    referral_ids: list[str] | None = None,
+    initial_reply_quiet_seconds: int = 1,
+) -> dict[str, object]:
+    """Build a compact Abogados funnel fixture."""
+    return {
+        "id": "abogados",
+        "label": "Abogados",
+        "kind": "campaign",
+        "enabled": True,
+        "source_mode": "testing",
+        "test_phone": "+5491111111111",
+        "test_name": "Lead Abogado",
+        "sheet_url": None,
+        "sheet_gid": None,
+        "sheet_source_filter": None,
+        "sheet_poll_seconds": 30,
+        "template_language": "es",
+        "opener_text": "Hola, completaste el formulario para abogados. Es correcto?",
+        "opener_template_name": "abogados_intro_es_v1",
+        "opener_followup_text": "Queria compartirte informacion sobre la propuesta para tu estudio juridico.",
+        "opener_followup_template_name": "abogados_followup_es_v1",
+        "manual_ping_text": "Hola, queria saber si queres que retomemos la conversacion",
+        "manual_ping_template_name": None,
+        "loom_intro_text": "Perfecto. Te cuento rapido como traemos consultas a tu estudio:",
+        "loom_url": "",
+        "video_check_text": "conseguiste ver el video?",
+        "calendly_intro_text": "Para avanzar, elegi un horario:",
+        "calendly_base_url": "https://calendly.com/konecta/abogados",
+        "alert_emails": [],
+        "whatsapp_referral_source_ids": referral_ids or [],
+        "initial_reply_quiet_seconds": initial_reply_quiet_seconds,
+        "post_loom_min_seconds": 600,
+        "post_loom_quiet_seconds": 30,
+        "strategies": [
+            {
+                "step": "loom",
+                "id": "loom_mp4",
+                "label": "WhatsApp MP4",
+                "weight": 100,
+                "delivery": "video",
+                "sequence_step": "loom_video",
+                "message_text": "Video enviado por WhatsApp.",
+                "media_type": "video",
+                "media_path": "data/abogados/videos/loom_60_seconds_captions.mp4",
+                "media_caption": None,
+            }
+        ],
+    }
+
+
 def test_runtime_endpoint_reports_source_mode(monkeypatch, tmp_path) -> None:
     """Runtime status must expose the canonical environment source mode."""
     configure_contadores_db(monkeypatch, tmp_path)
@@ -858,6 +910,52 @@ def test_abogados_ctwa_referral_creates_lead_and_reaches_loom(monkeypatch, tmp_p
 
     assert pending.status_code == 200
     assert [item["sequence_step"] for item in pending.json()["messages"]] == ["loom_intro", "loom_video"]
+
+
+def test_abogados_prefilled_whatsapp_message_routes_without_referral(monkeypatch, tmp_path) -> None:
+    """The approved Abogados prefilled WhatsApp text should bypass the General inbox."""
+    configure_contadores_db(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        create_funnel = client.post("/api/funnels", json=build_abogados_test_funnel())
+        response = client.post(
+            "/api/contadores/whatsapp/inbound",
+            json={
+                "phone": "+5491155555588",
+                "text": "¡Hola! Quiero más información de su propuesta para abogados!",
+                "profile_name": "Lucia WhatsApp",
+                "external_id": "wamid.prefilled.abogados.1",
+            },
+        )
+        lead_id = response.json()["lead_id"]
+        detail = client.get(f"/api/contadores/leads/{lead_id}")
+        general_list = client.get("/api/contadores/leads?funnel_id=general")
+
+    lead = ContadoresLead.get_by_id(lead_id)
+
+    assert create_funnel.status_code == 200
+    assert response.status_code == 200
+    assert response.json()["route"] == "abogados"
+    assert lead is not None
+    assert lead.external_lead_id == "ctwa:abogados:5491155555588"
+    assert lead.platform == "whatsapp_ctwa"
+    assert lead.funnel_id == "abogados"
+    assert lead.full_name == "Lucia WhatsApp"
+    assert lead.first_reply_received_at is not None
+
+    assert detail.status_code == 200
+    prefilled_events = [
+        event for event in detail.json()["events"]
+        if event["event_type"] == "prefilled_whatsapp_inbound_created"
+    ]
+    assert len(prefilled_events) == 1
+    assert (
+        prefilled_events[0]["payload"]["prefilled_message_route"]
+        == "abogados_prefilled_proposal"
+    )
+    assert detail.json()["messages"][0]["external_id"] == "wamid.prefilled.abogados.1"
+    assert general_list.status_code == 200
+    assert general_list.json()["leads"] == []
 
 
 def test_unmatched_whatsapp_inbound_creates_general_inbox_lead(monkeypatch, tmp_path) -> None:

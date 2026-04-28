@@ -56,7 +56,7 @@ Keep backwards compatibility with Contadores env names:
 
 For new funnels, prefer explicit funnel config. Env can seed defaults, but the app should read configured funnel definitions at runtime.
 
-Click-to-WhatsApp ads must route by webhook referral metadata, not by the editable prefilled user message. Put each ad/post `referral.source_id` into the target funnel's `whatsapp_referral_source_ids`. Keep Contadores empty when it has no real campaign; unmatched WhatsApp messages go to the built-in `general` inbox. If Meta sends `contacts.profile.name`, store that WhatsApp profile name on WhatsApp-created leads and use it to fill matched phone-only leads.
+Click-to-WhatsApp ads should route by webhook referral metadata. Put each ad/post `referral.source_id` into the target funnel's `whatsapp_referral_source_ids`. Keep Contadores empty when it has no real campaign. There is one approved text fallback: the normalized message `Hola! Quiero mas informacion de su propuesta para abogados!` routes to `abogados` when no reply/referral route is usable. Other unmatched WhatsApp messages go to the built-in `general` inbox. If Meta sends `contacts.profile.name`, store that WhatsApp profile name on WhatsApp-created leads and use it to fill matched phone-only leads.
 
 ## Testing/Live Rule
 

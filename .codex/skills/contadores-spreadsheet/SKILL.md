@@ -11,8 +11,10 @@ This sheet is the operational source of truth for Meta lead-form intake.
 Click-to-WhatsApp intake can bypass the sheet: the webhook `referral.source_id`
 is matched against the funnel config and creates/reuses a `whatsapp_ctwa` lead.
 Those matched funnel leads receive the `whatsapp_funnel` tag.
-Unmatched inbound WhatsApp messages are not discarded; they are saved in the
-built-in `general` inbox with a `whatsapp` tag so an operator can route them.
+The approved Abogados prefilled proposal text also creates/reuses a funnel lead
+when no reply/referral route is usable. Other unmatched inbound WhatsApp
+messages are not discarded; they are saved in the built-in `general` inbox with
+a `whatsapp` tag so an operator can route them.
 When Meta includes the sender WhatsApp profile name in the webhook, the backend
 uses it as the lead `full_name` for new WhatsApp-created leads and for existing
 phone-only leads that do not yet have a name. Existing sheet/operator names are
