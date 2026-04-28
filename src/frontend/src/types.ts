@@ -139,7 +139,6 @@ export interface LeadSummary {
   archived_at: string | null;
   strategy_assignments: StrategyAssignment[];
   workstation_client_id: string | null;
-  workstation_status: string | null;
   automation_paused: boolean;
   automation_paused_reason: string | null;
   created_at: string;
@@ -237,8 +236,6 @@ export interface ManualAttentionCountsResponse {
   counts: Record<string, number>;
 }
 
-export type WorkstationStatus = "paid" | "in_progress" | "archived";
-
 export interface WorkstationMediaAsset {
   id: string;
   client_id: string;
@@ -256,7 +253,6 @@ export interface WorkstationClientSummary {
   id: string;
   lead_id: string;
   funnel_id: string;
-  status: WorkstationStatus;
   display_name: string;
   folder_name: string;
   folder_path: string;

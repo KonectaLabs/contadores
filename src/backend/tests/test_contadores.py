@@ -1860,7 +1860,7 @@ def test_workstation_conversion_is_idempotent_and_keeps_crm_link(monkeypatch, tm
         "Perfecto, avance y pague.",
     ]
     assert crm_detail.json()["lead"]["workstation_client_id"] == first_payload["client"]["id"]
-    assert crm_detail.json()["lead"]["workstation_status"] == "paid"
+    assert "workstation_status" not in crm_detail.json()["lead"]
     assert crm_detail.json()["lead"]["stage"] == "booked"
     assert WorkstationClient.get_by_lead_id(lead.id) is not None
 

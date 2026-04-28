@@ -31,7 +31,6 @@ import type {
   WorkstationClientSummary,
   WorkstationCopyAllResponse,
   WorkstationMediaAsset,
-  WorkstationStatus,
 } from "./types";
 
 const REFRESH_MS = 12000;
@@ -59,12 +58,6 @@ const stageFilters: Array<{
 ];
 
 const validStageFilterValues = new Set<StageFilterValue>(stageFilters.map((filter) => filter.value));
-const workstationStatusOptions: Array<{ value: WorkstationStatus | "all"; label: string }> = [
-  { value: "all", label: "All" },
-  { value: "paid", label: "Paid" },
-  { value: "in_progress", label: "In progress" },
-  { value: "archived", label: "Archived" },
-];
 
 function readStoredValue(storageKey: string): string | null {
   try {
@@ -185,7 +178,6 @@ export function App() {
   const [workstationList, setWorkstationList] = useState<WorkstationClientListResponse | null>(null);
   const [workstationDetail, setWorkstationDetail] = useState<WorkstationClientDetailResponse | null>(null);
   const [selectedWorkstationClientId, setSelectedWorkstationClientId] = useState<string | null>(null);
-  const [workstationStatusFilter, setWorkstationStatusFilter] = useState<WorkstationStatus | "all">("all");
   const [workstationQuery, setWorkstationQuery] = useState("");
   const [workstationNotesDraft, setWorkstationNotesDraft] = useState("");
   const [workstationFileTitle, setWorkstationFileTitle] = useState("");
@@ -294,9 +286,6 @@ export function App() {
     if (selectedFunnelId) {
       params.set("funnel_id", selectedFunnelId);
     }
-    if (workstationStatusFilter !== "all") {
-      params.set("status", workstationStatusFilter);
-    }
     if (debouncedWorkstationQuery.trim()) {
       params.set("query", debouncedWorkstationQuery.trim());
     }
@@ -309,7 +298,7 @@ export function App() {
       }
       return payload.clients[0]?.id ?? null;
     });
-  }, [debouncedWorkstationQuery, selectedFunnelId, workstationStatusFilter]);
+  }, [debouncedWorkstationQuery, selectedFunnelId]);
 
   const loadDetail = useCallback(async (leadId: string) => {
     setDetailLoading(true);
@@ -490,26 +479,6 @@ export function App() {
       await loadWorkstation();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not save notes.");
-    } finally {
-      setActionBusy(null);
-    }
-  }
-
-  async function updateWorkstationStatus(status: WorkstationStatus) {
-    const clientId = workstationDetail?.client.id ?? selectedWorkstationClientId;
-    if (!clientId) {
-      return;
-    }
-    setActionBusy("workstation-status");
-    try {
-      const payload = await apiFetch<WorkstationClientDetailResponse>(`/api/workstation/clients/${clientId}/status`, {
-        method: "PUT",
-        body: JSON.stringify({ status }),
-      });
-      setWorkstationDetail(payload);
-      await loadWorkstation();
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not update status.");
     } finally {
       setActionBusy(null);
     }
@@ -901,20 +870,17 @@ export function App() {
           clients={workstationClients}
           detail={workstationDetail}
           selectedClientId={selectedWorkstationClientId}
-          statusFilter={workstationStatusFilter}
           loading={workstationLoading}
           actionBusy={actionBusy}
           notesDraft={workstationNotesDraft}
           fileTitle={workstationFileTitle}
           file={workstationFile}
           onSelectClient={setSelectedWorkstationClientId}
-          onStatusFilterChange={setWorkstationStatusFilter}
           onNotesChange={setWorkstationNotesDraft}
           onSaveNotes={saveWorkstationNotes}
           onCopyNotes={() => copyWorkstationNotes().catch((reason) => setError(reason instanceof Error ? reason.message : "Could not copy notes."))}
           onCopyAll={() => copyWorkstationAll().catch((reason) => setError(reason instanceof Error ? reason.message : "Could not copy client context."))}
           onOpenCrmLead={openCrmLeadFromWorkstation}
-          onStatusChange={updateWorkstationStatus}
           onFileTitleChange={setWorkstationFileTitle}
           onFileChange={setWorkstationFile}
           onUploadMedia={uploadWorkstationMedia}
@@ -1172,20 +1138,17 @@ function WorkstationView({
   clients,
   detail,
   selectedClientId,
-  statusFilter,
   loading,
   actionBusy,
   notesDraft,
   fileTitle,
   file,
   onSelectClient,
-  onStatusFilterChange,
   onNotesChange,
   onSaveNotes,
   onCopyNotes,
   onCopyAll,
   onOpenCrmLead,
-  onStatusChange,
   onFileTitleChange,
   onFileChange,
   onUploadMedia,
@@ -1194,20 +1157,17 @@ function WorkstationView({
   clients: WorkstationClientSummary[];
   detail: WorkstationClientDetailResponse | null;
   selectedClientId: string | null;
-  statusFilter: WorkstationStatus | "all";
   loading: boolean;
   actionBusy: string | null;
   notesDraft: string;
   fileTitle: string;
   file: File | null;
   onSelectClient: (clientId: string) => void;
-  onStatusFilterChange: (status: WorkstationStatus | "all") => void;
   onNotesChange: (notes: string) => void;
   onSaveNotes: () => void;
   onCopyNotes: () => void;
   onCopyAll: () => void;
   onOpenCrmLead: (lead: LeadSummary | null | undefined) => void;
-  onStatusChange: (status: WorkstationStatus) => void;
   onFileTitleChange: (value: string) => void;
   onFileChange: (file: File | null) => void;
   onUploadMedia: (event: FormEvent<HTMLFormElement>) => void;
@@ -1219,18 +1179,6 @@ function WorkstationView({
   return (
     <div className="ct-surface workstation-surface">
       <div className="ct-secondary">
-        <div className="ct-filter-strip" role="group" aria-label="Workstation status filters">
-          {workstationStatusOptions.map((option) => (
-            <button
-              type="button"
-              className={`ct-strategy-filter-btn ${statusFilter === option.value ? "active" : ""}`}
-              key={option.value}
-              onClick={() => onStatusFilterChange(option.value)}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
         <p className="ct-secondary-note">
           {clients.length ? `${clients.length} ${clients.length === 1 ? "client" : "clients"}` : "No converted clients yet"}
         </p>
@@ -1256,7 +1204,6 @@ function WorkstationView({
                 <div>
                   <div className="workstation-client-row-top">
                     <strong>{client.display_name || client.lead?.full_name || "Client"}</strong>
-                    <span>{formatWorkstationStatus(client.status)}</span>
                   </div>
                   <p>{client.lead?.phone || client.folder_name}</p>
                   <small>{client.media_count} media · {client.folder_path}</small>
@@ -1277,7 +1224,7 @@ function WorkstationView({
                 <div className="ct-detail-head-main">
                   <div className="ct-detail-avatar">{monogram(activeClient.display_name || "CL")}</div>
                   <div className="ct-detail-head-copy">
-                    <p className="ct-detail-kicker">{formatWorkstationStatus(activeClient.status)} · {activeClient.funnel_id}</p>
+                    <p className="ct-detail-kicker">{activeClient.funnel_id}</p>
                     <h3>{activeClient.display_name}</h3>
                     <p className="ct-detail-meta">
                       {selectedLead
@@ -1302,62 +1249,34 @@ function WorkstationView({
                 </div>
               </header>
 
-              <div className="workstation-grid">
-                <section className="workstation-panel notes-panel">
-                  <div className="workstation-panel-head">
-                    <div>
-                      <span>Meeting notes</span>
-                      <strong>Client profile notes</strong>
-                    </div>
-                    <div className="workstation-panel-actions">
-                      <button type="button" className="ct-btn ct-btn-ghost" onClick={onCopyNotes} disabled={!notesDraft.trim()}>
-                        <Copy size={14} weight="bold" />
-                        Copy notes
-                      </button>
-                      <button
-                        type="button"
-                        className="ct-btn ct-btn-primary"
-                        disabled={actionBusy === "workstation-notes" || loading}
-                        onClick={onSaveNotes}
-                      >
-                        {actionBusy === "workstation-notes" ? "Saving..." : "Save notes"}
-                      </button>
-                    </div>
+              <section className="workstation-panel notes-panel">
+                <div className="workstation-panel-head">
+                  <div>
+                    <span>Meeting notes</span>
+                    <strong>Client profile notes</strong>
                   </div>
-                  <textarea
-                    className="workstation-notes"
-                    value={notesDraft}
-                    onChange={(event) => onNotesChange(event.target.value)}
-                    placeholder="Paste call notes, client answers, preferences, questions, offer context..."
-                  />
-                </section>
-
-                <section className="workstation-panel">
-                  <div className="workstation-panel-head">
-                    <div>
-                      <span>Status</span>
-                      <strong>Client stage</strong>
-                    </div>
+                  <div className="workstation-panel-actions">
+                    <button type="button" className="ct-btn ct-btn-ghost" onClick={onCopyNotes} disabled={!notesDraft.trim()}>
+                      <Copy size={14} weight="bold" />
+                      Copy notes
+                    </button>
+                    <button
+                      type="button"
+                      className="ct-btn ct-btn-primary"
+                      disabled={actionBusy === "workstation-notes" || loading}
+                      onClick={onSaveNotes}
+                    >
+                      {actionBusy === "workstation-notes" ? "Saving..." : "Save notes"}
+                    </button>
                   </div>
-                  <div className="workstation-status-grid">
-                    {workstationStatusOptions.filter((option) => option.value !== "all").map((option) => (
-                      <button
-                        type="button"
-                        key={option.value}
-                        className={`ct-strategy-filter-btn ${activeClient.status === option.value ? "active" : ""}`}
-                        onClick={() => onStatusChange(option.value as WorkstationStatus)}
-                        disabled={actionBusy === "workstation-status"}
-                      >
-                        {option.label}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="workstation-folder">
-                    <FolderOpen size={18} weight="bold" />
-                    <span>{activeClient.folder_path}</span>
-                  </div>
-                </section>
-              </div>
+                </div>
+                <textarea
+                  className="workstation-notes"
+                  value={notesDraft}
+                  onChange={(event) => onNotesChange(event.target.value)}
+                  placeholder="Paste call notes, client answers, preferences, questions, offer context..."
+                />
+              </section>
 
               <section className="workstation-panel">
                 <div className="workstation-panel-head">
@@ -2675,15 +2594,6 @@ function formatStageLabel(stage: LeadStage | string | null | undefined): string 
     archived: "Archived",
   };
   return labels[String(stage || "")] ?? humanize(stage || "Lead");
-}
-
-function formatWorkstationStatus(status: WorkstationStatus | string | null | undefined): string {
-  const labels: Record<string, string> = {
-    paid: "Paid",
-    in_progress: "In progress",
-    archived: "Archived",
-  };
-  return labels[String(status || "")] ?? humanize(status || "Client");
 }
 
 function formatStrategyLabel(value: string | null | undefined): string {

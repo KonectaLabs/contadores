@@ -191,11 +191,10 @@ Al convertir:
 - se marca el lead como `booked` si todavia no lo estaba;
 - se pausa la automatizacion del lead;
 - se registra el evento `workstation_client_created`;
-- el summary del CRM expone `workstation_client_id` y `workstation_status`.
+- el summary del CRM expone `workstation_client_id`.
 
-Cada cliente de Workstation tiene status `paid`, `in_progress` o `archived`,
-notas editables, media subida manualmente con titulo, copia de notas, copia de
-todo el contexto, y export ZIP.
+Cada cliente de Workstation tiene notas editables, media subida manualmente con
+titulo, copia de notas, copia de todo el contexto, y export ZIP.
 
 La carpeta canonica por cliente queda en:
 

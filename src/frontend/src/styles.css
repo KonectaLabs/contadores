@@ -3825,30 +3825,6 @@ body {
   font: 400 13px/1.5 var(--font-sans);
 }
 
-#contadoresView .workstation-status-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-#contadoresView .workstation-folder {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  min-width: 0;
-  padding: 10px;
-  border: 1px dashed var(--ct-line);
-  border-radius: var(--ct-radius);
-  background: var(--ct-surface);
-  color: var(--ct-ink-muted);
-  font: 600 11px/1.35 var(--font-mono);
-}
-
-#contadoresView .workstation-folder span {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
 #contadoresView .workstation-upload {
   display: grid;
   grid-template-columns: minmax(180px, 1fr) minmax(220px, 1fr) auto;

@@ -7,7 +7,6 @@ import mimetypes
 import uuid
 import zipfile
 from pathlib import Path
-from typing import Literal
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
@@ -70,11 +69,6 @@ def safe_upload_filename(filename: str | None) -> str:
     return f"{stem}{suffix}" if suffix else stem
 
 
-def workstation_status_value(client: WorkstationClient) -> str:
-    """Return a JSON-safe status value for one client."""
-    return database_module.normalize_workstation_client_status(client.status).value
-
-
 def lead_summary_for_workstation(lead: ContadoresLead) -> ContadoresLeadSummary:
     """Serialize a lead for Workstation views."""
     config = get_effective_funnel_config(lead.funnel_id)
@@ -134,7 +128,6 @@ def build_copy_all_text(
             "# Cliente Workstation",
             f"client_id: {client.id}",
             f"folder: {relative_data_path(client_folder(client))}",
-            f"status: {workstation_status_value(client)}",
             f"funnel: {client.funnel_id}",
             f"lead_id: {lead.id}",
             f"name: {lead.full_name or client.display_name}",
@@ -168,7 +161,6 @@ def write_client_files(client: WorkstationClient) -> None:
             "id": client.id,
             "lead_id": client.lead_id,
             "funnel_id": client.funnel_id,
-            "status": workstation_status_value(client),
             "display_name": client.display_name,
             "folder_name": client.folder_name,
             "folder_path": relative_data_path(folder),
@@ -237,7 +229,6 @@ class WorkstationClientSummary(BaseModel):
     id: str
     lead_id: str
     funnel_id: str
-    status: str
     display_name: str
     folder_name: str
     folder_path: str
@@ -274,12 +265,6 @@ class UpdateWorkstationNotesCommand(BaseModel):
     notes: str = ""
 
 
-class UpdateWorkstationStatusCommand(BaseModel):
-    """Status update payload."""
-
-    status: Literal["paid", "in_progress", "archived"]
-
-
 class WorkstationCopyAllResponse(BaseModel):
     """Clipboard context payload."""
 
@@ -311,7 +296,6 @@ def build_client_summary(client: WorkstationClient) -> WorkstationClientSummary:
         id=client.id,
         lead_id=client.lead_id,
         funnel_id=client.funnel_id,
-        status=workstation_status_value(client),
         display_name=client.display_name,
         folder_name=client.folder_name,
         folder_path=relative_data_path(folder),
@@ -340,14 +324,12 @@ def build_client_detail(client: WorkstationClient) -> WorkstationClientDetailRes
 async def list_workstation_clients(
     limit: int = Query(default=300, ge=1, le=1000),
     funnel_id: str | None = None,
-    status: str | None = None,
     query: str | None = None,
 ) -> WorkstationClientListResponse:
     """List converted clients for the Workstation."""
     clients = WorkstationClient.list_recent(
         limit=limit,
         funnel_id=funnel_id,
-        status=status,
     )
     query_value = (query or "").strip().lower()
     visible: list[WorkstationClient] = []
@@ -357,7 +339,6 @@ async def list_workstation_clients(
             [
                 client.display_name,
                 client.funnel_id,
-                workstation_status_value(client),
                 client.folder_name,
                 lead.full_name if lead else "",
                 lead.phone if lead else "",
@@ -426,18 +407,6 @@ async def update_workstation_notes(
         summary="Operator updated Workstation notes.",
         payload={"client_id": updated.id},
     )
-    return build_client_detail(updated)
-
-
-@workstation_router.put("/clients/{client_id}/status", response_model=WorkstationClientDetailResponse)
-async def update_workstation_status(
-    client_id: str,
-    command: UpdateWorkstationStatusCommand,
-) -> WorkstationClientDetailResponse:
-    """Update status for one Workstation client."""
-    updated = WorkstationClient.update_status(client_id, status=command.status)
-    if updated is None:
-        raise HTTPException(status_code=404, detail="Workstation client not found")
     return build_client_detail(updated)
 
 

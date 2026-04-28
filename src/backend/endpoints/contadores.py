@@ -576,13 +576,6 @@ def build_lead_summary(
     """Serialize one lead row for list/detail views."""
     effective_stage = derive_effective_lead_stage(lead)
     workstation_client = WorkstationClient.get_by_lead_id(lead.id)
-    workstation_status = None
-    if workstation_client is not None:
-        workstation_status = (
-            workstation_client.status.value
-            if hasattr(workstation_client.status, "value")
-            else str(workstation_client.status)
-        )
     return ContadoresLeadSummary(
         id=lead.id,
         funnel_id=lead.funnel_id,
@@ -620,7 +613,6 @@ def build_lead_summary(
             for assignment in (strategy_assignments or [])
         ],
         workstation_client_id=workstation_client.id if workstation_client else None,
-        workstation_status=workstation_status,
         automation_paused=bool(lead.automation_paused),
         automation_paused_reason=lead.automation_paused_reason,
         created_at=format_timestamp_seconds(lead.created_at) or "",
@@ -1252,7 +1244,6 @@ class ContadoresLeadSummary(BaseModel):
     archived_at: str | None = None
     strategy_assignments: list[ContadoresLeadStrategyAssignmentResponse] = Field(default_factory=list)
     workstation_client_id: str | None = None
-    workstation_status: str | None = None
     automation_paused: bool = False
     automation_paused_reason: str | None = None
     created_at: str
