@@ -337,13 +337,13 @@ async def list_workstation_clients(
         lead = ContadoresLead.get_by_id(client.lead_id)
         haystack = " ".join(
             [
-                client.display_name,
-                client.funnel_id,
-                client.folder_name,
-                lead.full_name if lead else "",
-                lead.phone if lead else "",
-                lead.email if lead else "",
-                lead.external_lead_id if lead else "",
+                client.display_name or "",
+                client.funnel_id or "",
+                client.folder_name or "",
+                (lead.full_name or "") if lead else "",
+                (lead.phone or "") if lead else "",
+                (lead.email or "") if lead else "",
+                (lead.external_lead_id or "") if lead else "",
             ]
         ).lower()
         if query_value and query_value not in haystack:

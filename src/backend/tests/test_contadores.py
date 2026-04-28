@@ -1865,6 +1865,35 @@ def test_workstation_conversion_is_idempotent_and_keeps_crm_link(monkeypatch, tm
     assert WorkstationClient.get_by_lead_id(lead.id) is not None
 
 
+def test_workstation_clients_can_be_filtered_by_funnel(monkeypatch, tmp_path) -> None:
+    """Workstation lists should stay separated by funnel."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setattr(database_module, "DATA_DIR", tmp_path / "data")
+    contadores_lead = ContadoresLead.upsert(
+        funnel_id="contadores",
+        external_lead_id="sheet-row-workstation-contadores",
+        phone="+5491777777777",
+        full_name="Cliente Contadores",
+    )
+    abogados_lead = ContadoresLead.upsert(
+        funnel_id="abogados",
+        external_lead_id="sheet-row-workstation-abogados",
+        phone="+5491888888888",
+        full_name="Cliente Abogados",
+    )
+
+    with TestClient(app) as client:
+        client.post(f"/api/workstation/clients/from-lead/{contadores_lead.id}")
+        client.post(f"/api/workstation/clients/from-lead/{abogados_lead.id}")
+        contadores_response = client.get("/api/workstation/clients?funnel_id=contadores")
+        abogados_response = client.get("/api/workstation/clients?funnel_id=abogados")
+
+    assert contadores_response.status_code == 200
+    assert abogados_response.status_code == 200
+    assert [item["funnel_id"] for item in contadores_response.json()["clients"]] == ["contadores"]
+    assert [item["funnel_id"] for item in abogados_response.json()["clients"]] == ["abogados"]
+
+
 def test_workstation_notes_media_and_zip_are_persisted(monkeypatch, tmp_path) -> None:
     """Notes, uploaded media, and zip exports should mirror the client folder."""
     configure_contadores_db(monkeypatch, tmp_path)

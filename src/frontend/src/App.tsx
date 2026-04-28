@@ -449,9 +449,14 @@ export function App() {
   async function openWorkstationClient(clientId: string) {
     setSelectedWorkstationClientId(clientId);
     setActiveSection("workstation");
-    await loadWorkstationDetail(clientId).catch((reason) => {
+    try {
+      const payload = await apiFetch<WorkstationClientDetailResponse>(`/api/workstation/clients/${clientId}`);
+      setSelectedFunnelId(payload.client.funnel_id || "contadores");
+      setWorkstationDetail(payload);
+      setWorkstationNotesDraft(payload.notes ?? "");
+    } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not open Workstation client.");
-    });
+    }
   }
 
   function openCrmLeadFromWorkstation(lead: LeadSummary | null | undefined) {
@@ -763,6 +768,9 @@ export function App() {
 
   const visibleCount = leadList?.leads.length ?? 0;
   const totalCount = metrics?.total ?? 0;
+  const workstationTitle = selectedFunnel
+    ? `Workstation · ${selectedFunnel.label}`
+    : "Workstation";
   const syncStatus = activeSection === "workstation"
     ? `${workstationClients.length} converted ${workstationClients.length === 1 ? "client" : "clients"}`
     : config?.last_sheet_sync_status
@@ -777,7 +785,7 @@ export function App() {
         <div className="ct-topbar-brand">
           <span className="ct-brand-mark" aria-hidden="true">{monogram(selectedFunnel?.label || "Funnels")}</span>
           <div className="ct-brand-copy">
-            <p className="ct-brand-word">{activeSection === "workstation" ? "Workstation" : selectedFunnel?.label || "Funnels"}</p>
+            <p className="ct-brand-word">{activeSection === "workstation" ? workstationTitle : selectedFunnel?.label || "Funnels"}</p>
             <span className={`ct-sync-badge ${config?.last_sheet_sync_status === "ok" ? "has-unread" : ""}`}>{syncStatus}</span>
           </div>
         </div>
@@ -801,8 +809,8 @@ export function App() {
           </button>
         </nav>
 
-        {activeSection === "crm" ? (
-          <nav className="ct-topbar-nav" aria-label="Backoffice sections">
+        {activeSection === "crm" || activeSection === "workstation" ? (
+          <nav className="ct-topbar-nav" aria-label={activeSection === "workstation" ? "Workstation funnels" : "Backoffice sections"}>
             {funnels.map((funnel) => {
               const attentionCount = manualAttentionCounts[funnel.id] ?? 0;
 
@@ -814,7 +822,7 @@ export function App() {
                   onClick={() => setSelectedFunnelId(funnel.id)}
                 >
                   <span>{funnel.label}</span>
-                  {attentionCount > 0 ? (
+                  {activeSection === "crm" && attentionCount > 0 ? (
                     <span className="ct-nav-badge" aria-label={`${attentionCount} needs answer`}>
                       {compactNumber(attentionCount)}
                     </span>
@@ -822,7 +830,9 @@ export function App() {
                 </button>
               );
             })}
-            <button type="button" className="ct-nav-btn ct-nav-add" onClick={openCreateFunnel}>+ Funnel</button>
+            {activeSection === "crm" ? (
+              <button type="button" className="ct-nav-btn ct-nav-add" onClick={openCreateFunnel}>+ Funnel</button>
+            ) : null}
           </nav>
         ) : null}
 
@@ -869,6 +879,7 @@ export function App() {
         <WorkstationView
           clients={workstationClients}
           detail={workstationDetail}
+          funnel={selectedFunnel}
           selectedClientId={selectedWorkstationClientId}
           loading={workstationLoading}
           actionBusy={actionBusy}
@@ -1137,6 +1148,7 @@ export function App() {
 function WorkstationView({
   clients,
   detail,
+  funnel,
   selectedClientId,
   loading,
   actionBusy,
@@ -1156,6 +1168,7 @@ function WorkstationView({
 }: {
   clients: WorkstationClientSummary[];
   detail: WorkstationClientDetailResponse | null;
+  funnel: FunnelDefinition | null;
   selectedClientId: string | null;
   loading: boolean;
   actionBusy: string | null;
@@ -1173,14 +1186,18 @@ function WorkstationView({
   onUploadMedia: (event: FormEvent<HTMLFormElement>) => void;
   onDeleteMedia: (asset: WorkstationMediaAsset) => void;
 }) {
-  const selectedLead = detail?.client.lead ?? null;
-  const activeClient = detail?.client ?? clients.find((client) => client.id === selectedClientId) ?? null;
+  const detailClient = detail?.client.id === selectedClientId ? detail.client : null;
+  const selectedLead = detailClient?.lead ?? null;
+  const activeClient = detailClient ?? clients.find((client) => client.id === selectedClientId) ?? null;
+  const funnelLabel = funnel?.label ?? activeClient?.funnel_id ?? "selected funnel";
 
   return (
     <div className="ct-surface workstation-surface">
       <div className="ct-secondary">
         <p className="ct-secondary-note">
-          {clients.length ? `${clients.length} ${clients.length === 1 ? "client" : "clients"}` : "No converted clients yet"}
+          {clients.length
+            ? `${clients.length} ${clients.length === 1 ? "client" : "clients"} in ${funnelLabel}`
+            : `No converted clients in ${funnelLabel} yet`}
         </p>
       </div>
 
