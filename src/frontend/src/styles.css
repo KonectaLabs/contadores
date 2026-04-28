@@ -2016,7 +2016,7 @@ body {
   top: 0;
   z-index: 20;
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: auto auto 1fr auto;
   align-items: center;
   gap: 18px;
   padding: 12px 24px;
@@ -2091,6 +2091,48 @@ body {
   padding: 4px;
   border: 1px solid var(--ct-line);
   border-radius: var(--ct-radius);
+}
+
+#contadoresView .ct-section-switch {
+  display: inline-flex;
+  justify-self: center;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--ct-line);
+  border-radius: var(--ct-radius);
+  background: var(--ct-surface);
+}
+
+#contadoresView .ct-section-switch button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--ct-radius-sm);
+  background: transparent;
+  color: var(--ct-ink-muted);
+  font: 700 12px/1 var(--font-mono);
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+#contadoresView .ct-section-switch button.active,
+#contadoresView .ct-section-switch button:hover {
+  background: var(--ct-accent-soft);
+  color: var(--ct-accent-strong);
+}
+
+#contadoresView .ct-section-switch button span {
+  min-width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--ct-accent);
+  color: #ffffff;
+  font: 700 10px/16px var(--font-mono);
+  text-align: center;
 }
 
 #contadoresView .ct-nav-btn,
@@ -2667,6 +2709,7 @@ body {
 #contadoresView .ct-lead-stage,
 #contadoresView .ct-lead-strategy-tag,
 #contadoresView .ct-lead-tag,
+#contadoresView .ct-lead-converted,
 #contadoresView .ct-lead-turn,
 #contadoresView .ct-strategy-chip,
 #contadoresView .ct-strategy-metrics span,
@@ -2704,6 +2747,15 @@ body {
   min-height: auto;
   background: #f5f0e6;
   color: #6f5632;
+  font-size: 9px;
+}
+
+#contadoresView .ct-lead-converted {
+  gap: 3px;
+  min-height: auto;
+  border-color: rgba(22, 101, 52, 0.2);
+  background: var(--ct-success-bg);
+  color: var(--ct-success);
   font-size: 9px;
 }
 
@@ -3181,12 +3233,14 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 7px;
   height: 36px;
   padding: 0 16px;
   border: 1px solid transparent;
   border-radius: var(--ct-radius);
   font: 600 12px/1 var(--font-mono);
   letter-spacing: 0.04em;
+  text-decoration: none;
 }
 
 #contadoresView .ct-btn:disabled,
@@ -3631,6 +3685,232 @@ body {
   border: 0;
 }
 
+#contadoresView .workstation-surface {
+  grid-template-rows: auto 1fr;
+}
+
+#contadoresView .workstation-layout {
+  grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
+}
+
+#contadoresView .workstation-client-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 10px;
+  align-items: flex-start;
+  width: 100%;
+  padding: 10px;
+  border: 1px solid transparent;
+  border-radius: var(--ct-radius);
+  background: transparent;
+  color: var(--ct-ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+#contadoresView .workstation-client-row:hover,
+#contadoresView .workstation-client-row.active {
+  border-color: rgba(15, 118, 110, 0.28);
+  background: var(--ct-accent-soft);
+}
+
+#contadoresView .workstation-client-row > div:last-child {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+#contadoresView .workstation-client-row-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+#contadoresView .workstation-client-row strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ct-ink);
+  font: 700 13px/1.2 var(--font-sans);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#contadoresView .workstation-client-row-top span {
+  flex: 0 0 auto;
+  padding: 3px 7px;
+  border-radius: var(--ct-radius-sm);
+  background: var(--ct-success-bg);
+  color: var(--ct-success);
+  font: 700 9px/1 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+#contadoresView .workstation-client-row p,
+#contadoresView .workstation-client-row small {
+  margin: 0;
+  overflow: hidden;
+  color: var(--ct-ink-muted);
+  font: 500 11px/1.35 var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#contadoresView .workstation-detail {
+  overflow-y: auto;
+}
+
+#contadoresView .workstation-head {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--ct-surface);
+}
+
+#contadoresView .workstation-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(260px, 0.8fr);
+  gap: 12px;
+  padding: 14px 16px 0;
+}
+
+#contadoresView .workstation-panel {
+  display: grid;
+  gap: 12px;
+  margin: 14px 16px 0;
+  padding: 14px;
+  border: 1px solid var(--ct-line);
+  border-radius: var(--ct-radius);
+  background: var(--ct-surface-2);
+}
+
+#contadoresView .workstation-grid .workstation-panel {
+  margin: 0;
+}
+
+#contadoresView .workstation-panel-head,
+#contadoresView .workstation-panel-actions,
+#contadoresView .workstation-media-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+#contadoresView .workstation-panel-head span {
+  display: block;
+  color: var(--ct-ink-muted);
+  font: 700 10px/1 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+#contadoresView .workstation-panel-head strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--ct-ink);
+  font: 700 15px/1.2 var(--font-sans);
+}
+
+#contadoresView .workstation-notes {
+  width: 100%;
+  min-height: 260px;
+  resize: vertical;
+  padding: 12px;
+  border: 1px solid var(--ct-line);
+  border-radius: var(--ct-radius);
+  background: var(--ct-surface);
+  color: var(--ct-ink);
+  font: 400 13px/1.5 var(--font-sans);
+}
+
+#contadoresView .workstation-status-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+#contadoresView .workstation-folder {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px dashed var(--ct-line);
+  border-radius: var(--ct-radius);
+  background: var(--ct-surface);
+  color: var(--ct-ink-muted);
+  font: 600 11px/1.35 var(--font-mono);
+}
+
+#contadoresView .workstation-folder span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+#contadoresView .workstation-upload {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(220px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+#contadoresView .workstation-media-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+#contadoresView .workstation-media-card {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--ct-line);
+  border-radius: var(--ct-radius);
+  background: var(--ct-surface);
+}
+
+#contadoresView .workstation-media-card img,
+#contadoresView .workstation-file-icon {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  border: 1px solid var(--ct-line-soft);
+  border-radius: var(--ct-radius-sm);
+  background: var(--ct-surface-2);
+  object-fit: contain;
+}
+
+#contadoresView .workstation-file-icon {
+  display: grid;
+  place-items: center;
+  color: var(--ct-accent-strong);
+}
+
+#contadoresView .workstation-media-card strong,
+#contadoresView .workstation-media-card span,
+#contadoresView .workstation-media-card code {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+#contadoresView .workstation-media-card strong {
+  color: var(--ct-ink);
+  font: 700 13px/1.25 var(--font-sans);
+}
+
+#contadoresView .workstation-media-card span,
+#contadoresView .workstation-media-card code {
+  margin-top: 4px;
+  color: var(--ct-ink-muted);
+  font: 500 11px/1.35 var(--font-mono);
+}
+
+#contadoresView .workstation-media-actions {
+  justify-content: flex-start;
+}
+
 @media (max-width: 1180px) {
   #contadoresView .ct-pipeline {
     grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -3659,6 +3939,11 @@ body {
     grid-template-columns: 1fr;
   }
 
+  #contadoresView .workstation-grid,
+  #contadoresView .workstation-upload {
+    grid-template-columns: 1fr;
+  }
+
   #contadoresView .ct-leads {
     max-height: 40dvh;
   }
@@ -3674,10 +3959,19 @@ body {
     padding: 12px 16px;
   }
 
+  #contadoresView .ct-section-switch,
   #contadoresView .ct-topbar-nav,
   #contadoresView .ct-topbar-tools {
     grid-column: 1 / -1;
     justify-self: stretch;
+  }
+
+  #contadoresView .ct-section-switch {
+    justify-content: stretch;
+  }
+
+  #contadoresView .ct-section-switch button {
+    flex: 1 1 0;
   }
 
   #contadoresView .ct-topbar-tools {

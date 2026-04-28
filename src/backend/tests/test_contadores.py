@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from io import BytesIO
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+import zipfile
 
 from fastapi.testclient import TestClient
 from sqlmodel import SQLModel, create_engine
@@ -17,6 +19,7 @@ from backend.database import (
     ContadoresLeadStage,
     ContadoresMessage,
     MessageDeliveryStatus,
+    WorkstationClient,
 )
 from backend.main import app
 
@@ -1825,3 +1828,96 @@ def test_contadores_delete_lead_removes_timeline(monkeypatch, tmp_path) -> None:
     assert delete_response.json() == {"status": "deleted", "lead_id": lead.id}
     assert detail_after.status_code == 404
     assert [item["id"] for item in leads_response.json()["leads"]] == []
+
+
+def test_workstation_conversion_is_idempotent_and_keeps_crm_link(monkeypatch, tmp_path) -> None:
+    """Converting a paid lead should create one linked Workstation client."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setattr(database_module, "DATA_DIR", tmp_path / "data")
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-workstation",
+        phone="+5491777777777",
+        full_name="Cliente Pago",
+        email="cliente@example.com",
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=True,
+        text="Hola, te paso la propuesta.",
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=False,
+        text="Perfecto, avance y pague.",
+    )
+
+    with TestClient(app) as client:
+        first = client.post(f"/api/workstation/clients/from-lead/{lead.id}")
+        second = client.post(f"/api/workstation/clients/from-lead/{lead.id}")
+        crm_detail = client.get(f"/api/contadores/leads/{lead.id}")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    first_payload = first.json()
+    second_payload = second.json()
+    assert first_payload["client"]["id"] == second_payload["client"]["id"]
+    assert first_payload["client"]["lead_id"] == lead.id
+    assert first_payload["client"]["folder_name"].endswith("-cliente-pago")
+    assert [message["text"] for message in first_payload["messages"]] == [
+        "Hola, te paso la propuesta.",
+        "Perfecto, avance y pague.",
+    ]
+    assert crm_detail.json()["lead"]["workstation_client_id"] == first_payload["client"]["id"]
+    assert crm_detail.json()["lead"]["workstation_status"] == "paid"
+    assert crm_detail.json()["lead"]["stage"] == "booked"
+    assert WorkstationClient.get_by_lead_id(lead.id) is not None
+
+
+def test_workstation_notes_media_and_zip_are_persisted(monkeypatch, tmp_path) -> None:
+    """Notes, uploaded media, and zip exports should mirror the client folder."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    data_dir = tmp_path / "data"
+    monkeypatch.setattr(database_module, "DATA_DIR", data_dir)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-workstation-files",
+        phone="+5491888888888",
+        full_name="Cliente Files",
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=False,
+        text="Necesito una web seria y tres campañas.",
+    )
+
+    with TestClient(app) as client:
+        created = client.post(f"/api/workstation/clients/from-lead/{lead.id}").json()
+        client_id = created["client"]["id"]
+        notes_response = client.put(
+            f"/api/workstation/clients/{client_id}/notes",
+            json={"notes": "Notas de reunion\nQuiere landing premium."},
+        )
+        upload_response = client.post(
+            f"/api/workstation/clients/{client_id}/media",
+            data={"title": "Logo actual"},
+            files={"file": ("logo.png", b"image-bytes", "image/png")},
+        )
+        copy_response = client.get(f"/api/workstation/clients/{client_id}/copy-all")
+        zip_response = client.get(f"/api/workstation/clients/{client_id}/zip")
+
+    assert notes_response.status_code == 200
+    assert upload_response.status_code == 200
+    assert upload_response.json()["title"] == "Logo actual"
+    assert upload_response.json()["stored_path"].startswith("data/workstation/clients/")
+    assert "Notas de reunion" in copy_response.json()["text"]
+    assert "Necesito una web seria" in copy_response.json()["text"]
+
+    folder = data_dir / "workstation" / "clients" / created["client"]["folder_name"]
+    assert (folder / "notes.txt").read_text(encoding="utf-8") == "Notas de reunion\nQuiere landing premium."
+    assert "Necesito una web seria" in (folder / "conversation.txt").read_text(encoding="utf-8")
+    assert (folder / "media" / upload_response.json()["stored_filename"]).read_bytes() == b"image-bytes"
+
+    assert zip_response.status_code == 200
+    with zipfile.ZipFile(BytesIO(zip_response.content)) as archive:
+        names = set(archive.namelist())
+        assert {"profile.json", "notes.txt", "conversation.txt"}.issubset(names)
+        assert f"media/{upload_response.json()['stored_filename']}" in names

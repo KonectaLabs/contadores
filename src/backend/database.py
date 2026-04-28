@@ -1845,6 +1845,249 @@ class ContadoresEvent(SQLModel, table=True):
             return rows
 
 
+class WorkstationClientStatus(str, Enum):
+    """Delivery status for one converted client."""
+
+    PAID = "paid"
+    IN_PROGRESS = "in_progress"
+    DELIVERED = "delivered"
+    ARCHIVED = "archived"
+
+
+def normalize_workstation_client_status(
+    status: WorkstationClientStatus | str | None,
+) -> WorkstationClientStatus:
+    """Normalize raw Workstation status values."""
+    if isinstance(status, WorkstationClientStatus):
+        return status
+    value = (status or "").strip().lower()
+    for candidate in WorkstationClientStatus:
+        if candidate.value == value:
+            return candidate
+    return WorkstationClientStatus.PAID
+
+
+def normalize_workstation_slug(value: str | None) -> str:
+    """Build a readable ASCII-ish slug for a client folder name."""
+    normalized = re.sub(r"[^a-zA-Z0-9]+", "-", value or "").strip("-").lower()
+    return normalized[:80] or "client"
+
+
+def build_workstation_folder_name(*, client_id: str, display_name: str | None) -> str:
+    """Return the stable folder name used by Codex and the app."""
+    short_id = (client_id or "").strip()[:8] or uuid.uuid4().hex[:8]
+    return f"{short_id}-{normalize_workstation_slug(display_name)}"
+
+
+class WorkstationClient(SQLModel, table=True):
+    """Converted paid client profile used for delivery work."""
+
+    __tablename__ = "workstation_clients"
+    __table_args__ = (UniqueConstraint("lead_id", name="uq_workstation_clients_lead_id"),)
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    lead_id: str = Field(foreign_key="contadores_leads.id", index=True)
+    funnel_id: str = Field(default="contadores", index=True)
+    status: WorkstationClientStatus = Field(default=WorkstationClientStatus.PAID, index=True)
+    display_name: str = Field(default="")
+    folder_name: str = Field(default="", index=True)
+    notes: str = Field(default="")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
+
+    @classmethod
+    def get_by_id(cls, client_id: str) -> Optional["WorkstationClient"]:
+        """Get one Workstation client by ID."""
+        with Session(engine) as session:
+            item = session.get(cls, client_id)
+            if item:
+                session.expunge(item)
+            return item
+
+    @classmethod
+    def get_by_lead_id(cls, lead_id: str) -> Optional["WorkstationClient"]:
+        """Get one Workstation client by source lead."""
+        clean_lead_id = (lead_id or "").strip()
+        if not clean_lead_id:
+            return None
+        with Session(engine) as session:
+            statement = select(cls).where(cls.lead_id == clean_lead_id).limit(1)
+            item = session.exec(statement).first()
+            if item:
+                session.expunge(item)
+            return item
+
+    @classmethod
+    def list_recent(
+        cls,
+        *,
+        limit: int = 300,
+        funnel_id: str | None = None,
+        status: WorkstationClientStatus | str | None = None,
+    ) -> list["WorkstationClient"]:
+        """List recent converted clients."""
+        with Session(engine) as session:
+            statement = select(cls)
+            if funnel_id is not None:
+                statement = statement.where(cls.funnel_id == ((funnel_id or "").strip() or "contadores"))
+            if status is not None:
+                statement = statement.where(cls.status == normalize_workstation_client_status(status))
+            statement = statement.order_by(cls.updated_at.desc(), cls.created_at.desc(), cls.id.desc()).limit(limit)
+            rows = list(session.exec(statement).all())
+            for row in rows:
+                session.expunge(row)
+            return rows
+
+    @classmethod
+    def create_for_lead(cls, lead: ContadoresLead) -> "WorkstationClient":
+        """Create one Workstation client for a paid lead, idempotently."""
+        existing = cls.get_by_lead_id(lead.id)
+        if existing is not None:
+            return existing
+
+        client_id = str(uuid.uuid4())
+        display_name = (lead.full_name or lead.phone or lead.normalized_phone or "Client").strip()
+        folder_name = build_workstation_folder_name(client_id=client_id, display_name=display_name)
+        now = datetime.now(timezone.utc)
+        with Session(engine) as session:
+            item = cls(
+                id=client_id,
+                lead_id=lead.id,
+                funnel_id=lead.funnel_id or "contadores",
+                status=WorkstationClientStatus.PAID,
+                display_name=display_name,
+                folder_name=folder_name,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(item)
+            session.commit()
+            session.refresh(item)
+            session.expunge(item)
+            return item
+
+    @classmethod
+    def update_notes(cls, client_id: str, *, notes: str) -> Optional["WorkstationClient"]:
+        """Update meeting notes for one converted client."""
+        with Session(engine) as session:
+            item = session.get(cls, client_id)
+            if item is None:
+                return None
+            item.notes = notes.strip()
+            item.updated_at = datetime.now(timezone.utc)
+            session.add(item)
+            session.commit()
+            session.refresh(item)
+            session.expunge(item)
+            return item
+
+    @classmethod
+    def update_status(
+        cls,
+        client_id: str,
+        *,
+        status: WorkstationClientStatus | str,
+    ) -> Optional["WorkstationClient"]:
+        """Update one converted client's delivery status."""
+        with Session(engine) as session:
+            item = session.get(cls, client_id)
+            if item is None:
+                return None
+            item.status = normalize_workstation_client_status(status)
+            item.updated_at = datetime.now(timezone.utc)
+            session.add(item)
+            session.commit()
+            session.refresh(item)
+            session.expunge(item)
+            return item
+
+
+class WorkstationMediaAsset(SQLModel, table=True):
+    """One file attached to a converted client profile."""
+
+    __tablename__ = "workstation_media_assets"
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    client_id: str = Field(foreign_key="workstation_clients.id", index=True)
+    title: str = Field(default="")
+    original_filename: str = Field(default="")
+    stored_filename: str = Field(default="")
+    stored_path: str = Field(default="")
+    content_type: str | None = Field(default=None)
+    size_bytes: int = Field(default=0)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
+
+    @classmethod
+    def list_by_client(cls, client_id: str) -> list["WorkstationMediaAsset"]:
+        """List media files for one Workstation client."""
+        with Session(engine) as session:
+            statement = select(cls).where(cls.client_id == client_id).order_by(cls.created_at.desc(), cls.id.desc())
+            rows = list(session.exec(statement).all())
+            for row in rows:
+                session.expunge(row)
+            return rows
+
+    @classmethod
+    def get_by_id(cls, asset_id: str) -> Optional["WorkstationMediaAsset"]:
+        """Get one media asset by ID."""
+        with Session(engine) as session:
+            item = session.get(cls, asset_id)
+            if item:
+                session.expunge(item)
+            return item
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        client_id: str,
+        asset_id: str,
+        title: str,
+        original_filename: str,
+        stored_filename: str,
+        stored_path: str,
+        content_type: str | None,
+        size_bytes: int,
+    ) -> "WorkstationMediaAsset":
+        """Persist one media asset row."""
+        with Session(engine) as session:
+            row = cls(
+                id=asset_id,
+                client_id=client_id,
+                title=(title or "").strip(),
+                original_filename=(original_filename or "").strip(),
+                stored_filename=(stored_filename or "").strip(),
+                stored_path=(stored_path or "").strip(),
+                content_type=(content_type or "").strip() or None,
+                size_bytes=max(0, int(size_bytes)),
+            )
+            session.add(row)
+            client = session.get(WorkstationClient, client_id)
+            if client:
+                client.updated_at = datetime.now(timezone.utc)
+                session.add(client)
+            session.commit()
+            session.refresh(row)
+            session.expunge(row)
+            return row
+
+    @classmethod
+    def delete(cls, asset_id: str) -> Optional["WorkstationMediaAsset"]:
+        """Delete one media asset row and return its detached data."""
+        with Session(engine) as session:
+            row = session.get(cls, asset_id)
+            if row is None:
+                return None
+            copy = cls.model_validate(row)
+            client = session.get(WorkstationClient, row.client_id)
+            if client:
+                client.updated_at = datetime.now(timezone.utc)
+                session.add(client)
+            session.delete(row)
+            session.commit()
+            return copy
+
+
 class Company(SQLModel, table=True):
     """Top-level company record."""
 

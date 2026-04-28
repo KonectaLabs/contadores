@@ -1,4 +1,13 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  ArrowSquareOut,
+  Copy,
+  CurrencyDollar,
+  DownloadSimple,
+  FolderOpen,
+  Trash,
+  UploadSimple,
+} from "@phosphor-icons/react";
 import { apiFetch } from "./api";
 import { compactNumber, humanize, lastInteractionAt, relativeTime, shortDate } from "./format";
 import type {
@@ -17,13 +26,21 @@ import type {
   RuntimeSettings,
   StrategyStatsItem,
   StrategyStatsResponse,
+  WorkstationClientDetailResponse,
+  WorkstationClientListResponse,
+  WorkstationClientSummary,
+  WorkstationCopyAllResponse,
+  WorkstationMediaAsset,
+  WorkstationStatus,
 } from "./types";
 
 const REFRESH_MS = 12000;
 const DASHBOARD_FUNNEL_STORAGE_KEY = "contadores.dashboard.selectedFunnelId";
 const DASHBOARD_STAGE_STORAGE_KEY = "contadores.dashboard.stageFilter";
+const DASHBOARD_SECTION_STORAGE_KEY = "contadores.dashboard.activeSection";
 
 type StageFilterValue = LeadStage | "all" | "manual_attention";
+type ActiveSection = "crm" | "workstation";
 
 const stageFilters: Array<{
   value: StageFilterValue;
@@ -42,6 +59,13 @@ const stageFilters: Array<{
 ];
 
 const validStageFilterValues = new Set<StageFilterValue>(stageFilters.map((filter) => filter.value));
+const workstationStatusOptions: Array<{ value: WorkstationStatus | "all"; label: string }> = [
+  { value: "all", label: "All" },
+  { value: "paid", label: "Paid" },
+  { value: "in_progress", label: "In progress" },
+  { value: "delivered", label: "Delivered" },
+  { value: "archived", label: "Archived" },
+];
 
 function readStoredValue(storageKey: string): string | null {
   try {
@@ -66,6 +90,10 @@ function readStoredFunnelId(): string {
 function readStoredStageFilter(): StageFilterValue {
   const value = readStoredValue(DASHBOARD_STAGE_STORAGE_KEY);
   return validStageFilterValues.has(value as StageFilterValue) ? value as StageFilterValue : "all";
+}
+
+function readStoredActiveSection(): ActiveSection {
+  return readStoredValue(DASHBOARD_SECTION_STORAGE_KEY) === "workstation" ? "workstation" : "crm";
 }
 
 const moveStageOptions: Array<{ value: LeadStage; label: string }> = [
@@ -125,6 +153,7 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
 }
 
 export function App() {
+  const [activeSection, setActiveSection] = useState<ActiveSection>(readStoredActiveSection);
   const [runtime, setRuntime] = useState<RuntimeSettings | null>(null);
   const [funnels, setFunnels] = useState<FunnelDefinition[]>([]);
   const [funnelConfigPath, setFunnelConfigPath] = useState("");
@@ -154,7 +183,17 @@ export function App() {
   const [manualText, setManualText] = useState("");
   const [bulkTagsDraft, setBulkTagsDraft] = useState("");
   const [selectedLeadIds, setSelectedLeadIds] = useState<string[]>([]);
+  const [workstationList, setWorkstationList] = useState<WorkstationClientListResponse | null>(null);
+  const [workstationDetail, setWorkstationDetail] = useState<WorkstationClientDetailResponse | null>(null);
+  const [selectedWorkstationClientId, setSelectedWorkstationClientId] = useState<string | null>(null);
+  const [workstationStatusFilter, setWorkstationStatusFilter] = useState<WorkstationStatus | "all">("all");
+  const [workstationQuery, setWorkstationQuery] = useState("");
+  const [workstationNotesDraft, setWorkstationNotesDraft] = useState("");
+  const [workstationFileTitle, setWorkstationFileTitle] = useState("");
+  const [workstationFile, setWorkstationFile] = useState<File | null>(null);
+  const [workstationLoading, setWorkstationLoading] = useState(false);
   const debouncedQuery = useDebouncedValue(query, 250);
+  const debouncedWorkstationQuery = useDebouncedValue(workstationQuery, 250);
 
   const metrics = leadList?.metrics;
   const tagOptions = leadList?.tag_options ?? [];
@@ -173,6 +212,7 @@ export function App() {
     return leadList.leads.find((lead) => lead.id === selectedLeadId) ?? null;
   }, [detail, leadList, selectedLeadId]);
   const visibleLeadIds = useMemo(() => (leadList?.leads ?? []).map((lead) => lead.id), [leadList]);
+  const workstationClients = workstationList?.clients ?? [];
   const selectedVisibleCount = selectedLeadIds.filter((leadId) => visibleLeadIds.includes(leadId)).length;
   const allVisibleSelected = visibleLeadIds.length > 0 && selectedVisibleCount === visibleLeadIds.length;
 
@@ -250,6 +290,28 @@ export function App() {
     });
   }, [debouncedQuery, selectedFunnelId, stageFilter, strategyFilter.step, strategyFilter.strategyId, tagFilter]);
 
+  const loadWorkstation = useCallback(async () => {
+    const params = new URLSearchParams({ limit: "500" });
+    if (selectedFunnelId) {
+      params.set("funnel_id", selectedFunnelId);
+    }
+    if (workstationStatusFilter !== "all") {
+      params.set("status", workstationStatusFilter);
+    }
+    if (debouncedWorkstationQuery.trim()) {
+      params.set("query", debouncedWorkstationQuery.trim());
+    }
+
+    const payload = await apiFetch<WorkstationClientListResponse>(`/api/workstation/clients?${params.toString()}`);
+    setWorkstationList(payload);
+    setSelectedWorkstationClientId((current) => {
+      if (current && payload.clients.some((client) => client.id === current)) {
+        return current;
+      }
+      return payload.clients[0]?.id ?? null;
+    });
+  }, [debouncedWorkstationQuery, selectedFunnelId, workstationStatusFilter]);
+
   const loadDetail = useCallback(async (leadId: string) => {
     setDetailLoading(true);
     try {
@@ -260,9 +322,24 @@ export function App() {
     }
   }, []);
 
+  const loadWorkstationDetail = useCallback(async (clientId: string) => {
+    setWorkstationLoading(true);
+    try {
+      const payload = await apiFetch<WorkstationClientDetailResponse>(`/api/workstation/clients/${clientId}`);
+      setWorkstationDetail(payload);
+      setWorkstationNotesDraft(payload.notes ?? "");
+    } finally {
+      setWorkstationLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     writeStoredValue(DASHBOARD_FUNNEL_STORAGE_KEY, selectedFunnelId);
   }, [selectedFunnelId]);
+
+  useEffect(() => {
+    writeStoredValue(DASHBOARD_SECTION_STORAGE_KEY, activeSection);
+  }, [activeSection]);
 
   useEffect(() => {
     writeStoredValue(DASHBOARD_STAGE_STORAGE_KEY, stageFilter);
@@ -322,18 +399,180 @@ export function App() {
     });
   }, [isContadoresFunnel, loadDetail, selectedLeadId]);
 
+  useEffect(() => {
+    loadWorkstation().catch((reason) => {
+      setError(reason instanceof Error ? reason.message : "Could not load Workstation.");
+    });
+  }, [loadWorkstation]);
+
+  useEffect(() => {
+    if (!selectedWorkstationClientId) {
+      setWorkstationDetail(null);
+      setWorkstationNotesDraft("");
+      return;
+    }
+    loadWorkstationDetail(selectedWorkstationClientId).catch((reason) => {
+      setError(reason instanceof Error ? reason.message : "Could not load the Workstation client.");
+    });
+  }, [loadWorkstationDetail, selectedWorkstationClientId]);
+
   async function refreshAll() {
     setLoading(true);
     try {
       await loadDashboard();
+      await loadWorkstation();
       if (selectedLeadId && isContadoresFunnel) {
         await loadDetail(selectedLeadId);
+      }
+      if (selectedWorkstationClientId) {
+        await loadWorkstationDetail(selectedWorkstationClientId);
       }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not refresh funnels.");
     } finally {
       setLoading(false);
     }
+  }
+
+  async function convertLeadToWorkstation() {
+    const leadId = selectedLead?.id ?? selectedLeadId;
+    if (!leadId) {
+      return;
+    }
+    setActionBusy("convert-workstation");
+    try {
+      const payload = await apiFetch<WorkstationClientDetailResponse>(`/api/workstation/clients/from-lead/${leadId}`, {
+        method: "POST",
+      });
+      setWorkstationDetail(payload);
+      setWorkstationNotesDraft(payload.notes ?? "");
+      setSelectedWorkstationClientId(payload.client.id);
+      setActiveSection("workstation");
+      await loadDashboard();
+      await loadWorkstation();
+      await loadDetail(leadId);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not convert this lead.");
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
+  async function openWorkstationClient(clientId: string) {
+    setSelectedWorkstationClientId(clientId);
+    setActiveSection("workstation");
+    await loadWorkstationDetail(clientId).catch((reason) => {
+      setError(reason instanceof Error ? reason.message : "Could not open Workstation client.");
+    });
+  }
+
+  function openCrmLeadFromWorkstation(lead: LeadSummary | null | undefined) {
+    if (!lead) {
+      return;
+    }
+    setSelectedFunnelId(lead.funnel_id || "contadores");
+    setSelectedLeadId(lead.id);
+    setActiveSection("crm");
+  }
+
+  async function saveWorkstationNotes() {
+    const clientId = workstationDetail?.client.id ?? selectedWorkstationClientId;
+    if (!clientId) {
+      return;
+    }
+    setActionBusy("workstation-notes");
+    try {
+      const payload = await apiFetch<WorkstationClientDetailResponse>(`/api/workstation/clients/${clientId}/notes`, {
+        method: "PUT",
+        body: JSON.stringify({ notes: workstationNotesDraft }),
+      });
+      setWorkstationDetail(payload);
+      setWorkstationNotesDraft(payload.notes ?? "");
+      await loadWorkstation();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not save notes.");
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
+  async function updateWorkstationStatus(status: WorkstationStatus) {
+    const clientId = workstationDetail?.client.id ?? selectedWorkstationClientId;
+    if (!clientId) {
+      return;
+    }
+    setActionBusy("workstation-status");
+    try {
+      const payload = await apiFetch<WorkstationClientDetailResponse>(`/api/workstation/clients/${clientId}/status`, {
+        method: "PUT",
+        body: JSON.stringify({ status }),
+      });
+      setWorkstationDetail(payload);
+      await loadWorkstation();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not update status.");
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
+  async function uploadWorkstationMedia(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const clientId = workstationDetail?.client.id ?? selectedWorkstationClientId;
+    if (!clientId || !workstationFile) {
+      return;
+    }
+    const form = new FormData();
+    form.append("title", workstationFileTitle);
+    form.append("file", workstationFile);
+    setActionBusy("workstation-upload");
+    try {
+      await apiFetch(`/api/workstation/clients/${clientId}/media`, {
+        method: "POST",
+        body: form,
+      });
+      setWorkstationFile(null);
+      setWorkstationFileTitle("");
+      await loadWorkstation();
+      await loadWorkstationDetail(clientId);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not upload media.");
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
+  async function deleteWorkstationMedia(asset: WorkstationMediaAsset) {
+    const clientId = workstationDetail?.client.id ?? selectedWorkstationClientId;
+    if (!clientId || !window.confirm(`Delete ${asset.title || asset.original_filename}?`)) {
+      return;
+    }
+    setActionBusy(`delete-media-${asset.id}`);
+    try {
+      const payload = await apiFetch<WorkstationClientDetailResponse>(
+        `/api/workstation/clients/${clientId}/media/${asset.id}`,
+        { method: "DELETE" },
+      );
+      setWorkstationDetail(payload);
+      await loadWorkstation();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not delete media.");
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
+  async function copyWorkstationNotes() {
+    await navigator.clipboard.writeText(workstationNotesDraft || "");
+  }
+
+  async function copyWorkstationAll() {
+    const clientId = workstationDetail?.client.id ?? selectedWorkstationClientId;
+    if (!clientId) {
+      return;
+    }
+    const payload = await apiFetch<WorkstationCopyAllResponse>(`/api/workstation/clients/${clientId}/copy-all`);
+    await navigator.clipboard.writeText(payload.text);
   }
 
   async function runAction(action: QuickActionName) {
@@ -556,7 +795,9 @@ export function App() {
 
   const visibleCount = leadList?.leads.length ?? 0;
   const totalCount = metrics?.total ?? 0;
-  const syncStatus = config?.last_sheet_sync_status
+  const syncStatus = activeSection === "workstation"
+    ? `${workstationClients.length} converted ${workstationClients.length === 1 ? "client" : "clients"}`
+    : config?.last_sheet_sync_status
     ? `${config.last_sheet_sync_status} · ${config.last_sheet_sync_at ? relativeTime(config.last_sheet_sync_at) : "never"}`
     : isContadoresFunnel && runtime
       ? `${runtime.source_mode} mode`
@@ -570,35 +811,57 @@ export function App() {
         <div className="ct-topbar-brand">
           <span className="ct-brand-mark" aria-hidden="true">{monogram(selectedFunnel?.label || "Funnels")}</span>
           <div className="ct-brand-copy">
-            <p className="ct-brand-word">{selectedFunnel?.label || "Funnels"}</p>
+            <p className="ct-brand-word">{activeSection === "workstation" ? "Workstation" : selectedFunnel?.label || "Funnels"}</p>
             <span className={`ct-sync-badge ${config?.last_sheet_sync_status === "ok" ? "has-unread" : ""}`}>{syncStatus}</span>
           </div>
         </div>
 
-        <nav className="ct-topbar-nav" aria-label="Backoffice sections">
-          {funnels.map((funnel) => {
-            const attentionCount = manualAttentionCounts[funnel.id] ?? 0;
-
-            return (
-              <button
-                key={funnel.id}
-                type="button"
-                className={`ct-nav-btn ${selectedFunnelId === funnel.id ? "active" : ""}`}
-                onClick={() => setSelectedFunnelId(funnel.id)}
-              >
-                <span>{funnel.label}</span>
-                {attentionCount > 0 ? (
-                  <span className="ct-nav-badge" aria-label={`${attentionCount} needs answer`}>
-                    {compactNumber(attentionCount)}
-                  </span>
-                ) : null}
-              </button>
-            );
-          })}
-          <button type="button" className="ct-nav-btn ct-nav-add" onClick={openCreateFunnel}>+ Funnel</button>
+        <nav className="ct-section-switch" aria-label="Primary workspace">
+          <button
+            type="button"
+            className={activeSection === "crm" ? "active" : ""}
+            onClick={() => setActiveSection("crm")}
+          >
+            CRM
+          </button>
+          <button
+            type="button"
+            className={activeSection === "workstation" ? "active" : ""}
+            onClick={() => setActiveSection("workstation")}
+          >
+            <CurrencyDollar size={15} weight="bold" />
+            Workstation
+            {workstationClients.length ? <span>{compactNumber(workstationClients.length)}</span> : null}
+          </button>
         </nav>
 
+        {activeSection === "crm" ? (
+          <nav className="ct-topbar-nav" aria-label="Backoffice sections">
+            {funnels.map((funnel) => {
+              const attentionCount = manualAttentionCounts[funnel.id] ?? 0;
+
+              return (
+                <button
+                  key={funnel.id}
+                  type="button"
+                  className={`ct-nav-btn ${selectedFunnelId === funnel.id ? "active" : ""}`}
+                  onClick={() => setSelectedFunnelId(funnel.id)}
+                >
+                  <span>{funnel.label}</span>
+                  {attentionCount > 0 ? (
+                    <span className="ct-nav-badge" aria-label={`${attentionCount} needs answer`}>
+                      {compactNumber(attentionCount)}
+                    </span>
+                  ) : null}
+                </button>
+              );
+            })}
+            <button type="button" className="ct-nav-btn ct-nav-add" onClick={openCreateFunnel}>+ Funnel</button>
+          </nav>
+        ) : null}
+
         <div className="ct-topbar-tools">
+          {activeSection === "crm" ? (
           <label className="ct-search" hidden={!isContadoresFunnel}>
             <span className="ct-search-icon" aria-hidden="true" />
             <input
@@ -609,8 +872,20 @@ export function App() {
               autoComplete="off"
             />
           </label>
+          ) : (
+          <label className="ct-search">
+            <span className="ct-search-icon" aria-hidden="true" />
+            <input
+              value={workstationQuery}
+              onChange={(event) => setWorkstationQuery(event.target.value)}
+              type="text"
+              placeholder="Search clients, phone, email, folder"
+              autoComplete="off"
+            />
+          </label>
+          )}
           <button type="button" className="ct-icon-btn" onClick={openEditFunnel} disabled={!selectedFunnel}>Funnel</button>
-          {isContadoresFunnel ? (
+          {activeSection === "crm" && isContadoresFunnel ? (
             <button type="button" className="ct-icon-btn" onClick={() => setShowConfig(true)}>Runtime</button>
           ) : null}
           <button type="button" className="ct-icon-btn" onClick={refreshAll} disabled={loading}>Refresh</button>
@@ -624,7 +899,31 @@ export function App() {
         </div>
       ) : null}
 
-      {!isContadoresFunnel ? (
+      {activeSection === "workstation" ? (
+        <WorkstationView
+          clients={workstationClients}
+          detail={workstationDetail}
+          selectedClientId={selectedWorkstationClientId}
+          statusFilter={workstationStatusFilter}
+          loading={workstationLoading}
+          actionBusy={actionBusy}
+          notesDraft={workstationNotesDraft}
+          fileTitle={workstationFileTitle}
+          file={workstationFile}
+          onSelectClient={setSelectedWorkstationClientId}
+          onStatusFilterChange={setWorkstationStatusFilter}
+          onNotesChange={setWorkstationNotesDraft}
+          onSaveNotes={saveWorkstationNotes}
+          onCopyNotes={() => copyWorkstationNotes().catch((reason) => setError(reason instanceof Error ? reason.message : "Could not copy notes."))}
+          onCopyAll={() => copyWorkstationAll().catch((reason) => setError(reason instanceof Error ? reason.message : "Could not copy client context."))}
+          onOpenCrmLead={openCrmLeadFromWorkstation}
+          onStatusChange={updateWorkstationStatus}
+          onFileTitleChange={setWorkstationFileTitle}
+          onFileChange={setWorkstationFile}
+          onUploadMedia={uploadWorkstationMedia}
+          onDeleteMedia={deleteWorkstationMedia}
+        />
+      ) : !isContadoresFunnel ? (
         <FunnelSetupView
           funnel={selectedFunnel}
           configPath={funnelConfigPath}
@@ -762,6 +1061,8 @@ export function App() {
               onMarkAnswered={() => runAction("mark-answered")}
               onToggleClosed={() => runAction(selectedLead?.stage === "closed" ? "reopen" : "close")}
               onDelete={deleteLead}
+              onConvert={convertLeadToWorkstation}
+              onOpenWorkstation={openWorkstationClient}
               inboxMode={isInboxFunnel}
             />
 
@@ -867,6 +1168,267 @@ export function App() {
         />
       ) : null}
     </section>
+  );
+}
+
+function WorkstationView({
+  clients,
+  detail,
+  selectedClientId,
+  statusFilter,
+  loading,
+  actionBusy,
+  notesDraft,
+  fileTitle,
+  file,
+  onSelectClient,
+  onStatusFilterChange,
+  onNotesChange,
+  onSaveNotes,
+  onCopyNotes,
+  onCopyAll,
+  onOpenCrmLead,
+  onStatusChange,
+  onFileTitleChange,
+  onFileChange,
+  onUploadMedia,
+  onDeleteMedia,
+}: {
+  clients: WorkstationClientSummary[];
+  detail: WorkstationClientDetailResponse | null;
+  selectedClientId: string | null;
+  statusFilter: WorkstationStatus | "all";
+  loading: boolean;
+  actionBusy: string | null;
+  notesDraft: string;
+  fileTitle: string;
+  file: File | null;
+  onSelectClient: (clientId: string) => void;
+  onStatusFilterChange: (status: WorkstationStatus | "all") => void;
+  onNotesChange: (notes: string) => void;
+  onSaveNotes: () => void;
+  onCopyNotes: () => void;
+  onCopyAll: () => void;
+  onOpenCrmLead: (lead: LeadSummary | null | undefined) => void;
+  onStatusChange: (status: WorkstationStatus) => void;
+  onFileTitleChange: (value: string) => void;
+  onFileChange: (file: File | null) => void;
+  onUploadMedia: (event: FormEvent<HTMLFormElement>) => void;
+  onDeleteMedia: (asset: WorkstationMediaAsset) => void;
+}) {
+  const selectedLead = detail?.client.lead ?? null;
+  const activeClient = detail?.client ?? clients.find((client) => client.id === selectedClientId) ?? null;
+
+  return (
+    <div className="ct-surface workstation-surface">
+      <div className="ct-secondary">
+        <div className="ct-filter-strip" role="group" aria-label="Workstation status filters">
+          {workstationStatusOptions.map((option) => (
+            <button
+              type="button"
+              className={`ct-strategy-filter-btn ${statusFilter === option.value ? "active" : ""}`}
+              key={option.value}
+              onClick={() => onStatusFilterChange(option.value)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+        <p className="ct-secondary-note">
+          {clients.length ? `${clients.length} ${clients.length === 1 ? "client" : "clients"}` : "No converted clients yet"}
+        </p>
+      </div>
+
+      <div className="ct-workspace workstation-layout">
+        <aside className="ct-leads">
+          <div className="ct-leads-head">
+            <h3>Clients</h3>
+            <p className="ct-leads-summary">{clients.length ? `${clients.length} active` : "Empty"}</p>
+          </div>
+          <div className="ct-leads-list">
+            {clients.length ? clients.map((client) => (
+              <button
+                type="button"
+                className={`workstation-client-row ${client.id === selectedClientId ? "active" : ""}`}
+                key={client.id}
+                onClick={() => onSelectClient(client.id)}
+              >
+                <div className="ct-lead-avatar" data-tone="success">
+                  {monogram(client.display_name || client.lead?.full_name || "CL")}
+                </div>
+                <div>
+                  <div className="workstation-client-row-top">
+                    <strong>{client.display_name || client.lead?.full_name || "Client"}</strong>
+                    <span>{formatWorkstationStatus(client.status)}</span>
+                  </div>
+                  <p>{client.lead?.phone || client.folder_name}</p>
+                  <small>{client.media_count} media · {client.folder_path}</small>
+                </div>
+              </button>
+            )) : (
+              <p className="ct-empty">Convert a paid lead from CRM to start delivery work.</p>
+            )}
+          </div>
+        </aside>
+
+        <section className="ct-detail workstation-detail">
+          {!activeClient ? (
+            <p className="empty-note">Select a converted client.</p>
+          ) : (
+            <>
+              <header className="ct-detail-head workstation-head">
+                <div className="ct-detail-head-main">
+                  <div className="ct-detail-avatar">{monogram(activeClient.display_name || "CL")}</div>
+                  <div className="ct-detail-head-copy">
+                    <p className="ct-detail-kicker">{formatWorkstationStatus(activeClient.status)} · {activeClient.funnel_id}</p>
+                    <h3>{activeClient.display_name}</h3>
+                    <p className="ct-detail-meta">
+                      {selectedLead
+                        ? [selectedLead.phone || "-", selectedLead.email || "-", selectedLead.external_lead_id].join(" · ")
+                        : activeClient.folder_path}
+                    </p>
+                  </div>
+                </div>
+                <div className="ct-detail-head-actions">
+                  <button type="button" className="ct-btn ct-btn-ghost" onClick={() => onOpenCrmLead(selectedLead)}>
+                    <ArrowSquareOut size={15} weight="bold" />
+                    Open CRM chat
+                  </button>
+                  <button type="button" className="ct-btn ct-btn-ghost" onClick={onCopyAll}>
+                    <Copy size={15} weight="bold" />
+                    Copy all
+                  </button>
+                  <a className="ct-btn ct-btn-primary" href={`/api/workstation/clients/${activeClient.id}/zip`}>
+                    <DownloadSimple size={15} weight="bold" />
+                    Download ZIP
+                  </a>
+                </div>
+              </header>
+
+              <div className="workstation-grid">
+                <section className="workstation-panel notes-panel">
+                  <div className="workstation-panel-head">
+                    <div>
+                      <span>Meeting notes</span>
+                      <strong>Client profile notes</strong>
+                    </div>
+                    <div className="workstation-panel-actions">
+                      <button type="button" className="ct-btn ct-btn-ghost" onClick={onCopyNotes} disabled={!notesDraft.trim()}>
+                        <Copy size={14} weight="bold" />
+                        Copy notes
+                      </button>
+                      <button
+                        type="button"
+                        className="ct-btn ct-btn-primary"
+                        disabled={actionBusy === "workstation-notes" || loading}
+                        onClick={onSaveNotes}
+                      >
+                        {actionBusy === "workstation-notes" ? "Saving..." : "Save notes"}
+                      </button>
+                    </div>
+                  </div>
+                  <textarea
+                    className="workstation-notes"
+                    value={notesDraft}
+                    onChange={(event) => onNotesChange(event.target.value)}
+                    placeholder="Paste call notes, client answers, preferences, questions, offer context..."
+                  />
+                </section>
+
+                <section className="workstation-panel">
+                  <div className="workstation-panel-head">
+                    <div>
+                      <span>Status</span>
+                      <strong>Delivery stage</strong>
+                    </div>
+                  </div>
+                  <div className="workstation-status-grid">
+                    {workstationStatusOptions.filter((option) => option.value !== "all").map((option) => (
+                      <button
+                        type="button"
+                        key={option.value}
+                        className={`ct-strategy-filter-btn ${activeClient.status === option.value ? "active" : ""}`}
+                        onClick={() => onStatusChange(option.value as WorkstationStatus)}
+                        disabled={actionBusy === "workstation-status"}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="workstation-folder">
+                    <FolderOpen size={18} weight="bold" />
+                    <span>{activeClient.folder_path}</span>
+                  </div>
+                </section>
+              </div>
+
+              <section className="workstation-panel">
+                <div className="workstation-panel-head">
+                  <div>
+                    <span>Media</span>
+                    <strong>Client files</strong>
+                  </div>
+                </div>
+                <form className="workstation-upload" onSubmit={onUploadMedia}>
+                  <label className="ct-field">
+                    <span>Title</span>
+                    <input value={fileTitle} onChange={(event) => onFileTitleChange(event.target.value)} placeholder="Logo, fachada, referencia visual..." />
+                  </label>
+                  <label className="ct-field">
+                    <span>File</span>
+                    <input type="file" onChange={(event) => onFileChange(event.target.files?.[0] ?? null)} />
+                  </label>
+                  <button type="submit" className="ct-btn ct-btn-primary" disabled={!file || actionBusy === "workstation-upload"}>
+                    <UploadSimple size={15} weight="bold" />
+                    {actionBusy === "workstation-upload" ? "Uploading..." : "Upload"}
+                  </button>
+                </form>
+                <div className="workstation-media-grid">
+                  {(detail?.media ?? []).length ? (detail?.media ?? []).map((asset) => (
+                    <article className="workstation-media-card" key={asset.id}>
+                      {asset.content_type?.startsWith("image/") ? (
+                        <img src={asset.media_url} alt={asset.title || asset.original_filename} loading="lazy" />
+                      ) : (
+                        <div className="workstation-file-icon"><FolderOpen size={28} weight="bold" /></div>
+                      )}
+                      <div>
+                        <strong>{asset.title || asset.original_filename}</strong>
+                        <span>{asset.original_filename} · {formatBytes(asset.size_bytes)}</span>
+                        <code>{asset.stored_path}</code>
+                      </div>
+                      <div className="workstation-media-actions">
+                        <a className="ct-btn ct-btn-ghost" href={asset.media_url} target="_blank" rel="noreferrer">Open</a>
+                        <button
+                          type="button"
+                          className="ct-btn ct-btn-ghost btn-destructive"
+                          onClick={() => onDeleteMedia(asset)}
+                          disabled={actionBusy === `delete-media-${asset.id}`}
+                          aria-label={`Delete ${asset.title || asset.original_filename}`}
+                        >
+                          <Trash size={15} weight="bold" />
+                        </button>
+                      </div>
+                    </article>
+                  )) : (
+                    <p className="empty-note">No media uploaded for this client yet.</p>
+                  )}
+                </div>
+              </section>
+
+              <section className="workstation-panel">
+                <div className="workstation-panel-head">
+                  <div>
+                    <span>Conversation</span>
+                    <strong>CRM chat snapshot</strong>
+                  </div>
+                </div>
+                <MessageTimeline messages={detail?.messages ?? []} loading={loading} hasLead={Boolean(activeClient)} />
+              </section>
+            </>
+          )}
+        </section>
+      </div>
+    </div>
   );
 }
 
@@ -1304,6 +1866,12 @@ function LeadList({
                   <h4 className="ct-lead-name">{lead.full_name || lead.phone || "Lead"}</h4>
                   <div className="ct-lead-tags">
                     <span className="ct-lead-stage" data-tone={tone}>{inboxMode ? "Inbox" : formatStageLabel(lead.stage)}</span>
+                    {lead.workstation_client_id ? (
+                      <span className="ct-lead-converted">
+                        <CurrencyDollar size={12} weight="bold" />
+                        Converted
+                      </span>
+                    ) : null}
                     {strategyTag ? <span className="ct-lead-strategy-tag">{strategyTag}</span> : null}
                     {(lead.tags ?? []).slice(0, 3).map((tag) => <span className="ct-lead-tag" key={tag}>#{tag}</span>)}
                     {turn ? <span className={`ct-lead-turn ${turn}`}>{turn === "needs_reply" ? "Needs reply" : "Answered"}</span> : null}
@@ -1332,6 +1900,8 @@ function LeadDetailHeader({
   onMarkAnswered,
   onToggleClosed,
   onDelete,
+  onConvert,
+  onOpenWorkstation,
 }: {
   lead: LeadSummary | null;
   actionBusy: string | null;
@@ -1341,10 +1911,13 @@ function LeadDetailHeader({
   onMarkAnswered: () => void;
   onToggleClosed: () => void;
   onDelete: () => void;
+  onConvert: () => void;
+  onOpenWorkstation: (clientId: string) => void | Promise<void>;
 }) {
   const closed = lead?.stage === "closed";
   const booked = lead?.stage === "booked";
   const canMarkAnswered = lead?.manual_reply_status === "needs_reply" && !closed;
+  const converted = Boolean(lead?.workstation_client_id);
 
   return (
     <header className="ct-detail-head">
@@ -1360,6 +1933,27 @@ function LeadDetailHeader({
       </div>
       <div className="ct-detail-head-actions">
         <button type="button" className="ct-btn ct-btn-primary" disabled={!lead || closed || Boolean(actionBusy)} onClick={onOpenSend}>Send message...</button>
+        {converted && lead?.workstation_client_id ? (
+          <button
+            type="button"
+            className="ct-btn ct-btn-ghost"
+            disabled={Boolean(actionBusy)}
+            onClick={() => onOpenWorkstation(lead.workstation_client_id || "")}
+          >
+            <FolderOpen size={15} weight="bold" />
+            Open Workstation
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="ct-btn ct-btn-ghost"
+            disabled={!lead || Boolean(actionBusy)}
+            onClick={onConvert}
+          >
+            <CurrencyDollar size={15} weight="bold" />
+            Convert
+          </button>
+        )}
         {!inboxMode ? (
           <button type="button" className="ct-btn ct-btn-ghost" disabled={!lead || closed || booked || Boolean(actionBusy)} onClick={onManualBooked}>Mark booked</button>
         ) : null}
@@ -2109,8 +2703,31 @@ function formatStageLabel(stage: LeadStage | string | null | undefined): string 
   return labels[String(stage || "")] ?? humanize(stage || "Lead");
 }
 
+function formatWorkstationStatus(status: WorkstationStatus | string | null | undefined): string {
+  const labels: Record<string, string> = {
+    paid: "Paid",
+    in_progress: "In progress",
+    delivered: "Delivered",
+    archived: "Archived",
+  };
+  return labels[String(status || "")] ?? humanize(status || "Client");
+}
+
 function formatStrategyLabel(value: string | null | undefined): string {
   return humanize(value || "Strategy");
+}
+
+function formatBytes(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) {
+    return "0 B";
+  }
+  if (value < 1024) {
+    return `${value} B`;
+  }
+  if (value < 1024 * 1024) {
+    return `${Math.round(value / 1024)} KB`;
+  }
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function formatRate(value: number): string {

@@ -201,6 +201,50 @@ Media en WhatsApp:
 - Los videos salientes de estrategia usan el `media_path` configurado, por ejemplo `data/contadores/videos/loom_60_seconds_captions.mp4`.
 - El frontend sirve esos videos desde una URL estable basada en `media_path`, asi el mismo archivo se reutiliza para todos los leads que recibieron ese video.
 
+## Workstation de clientes convertidos
+
+La UI tiene dos superficies: `CRM` para captar y conversar con leads, y
+`Workstation` para trabajar con clientes que ya pagaron.
+
+Desde el detalle de un lead se puede usar `$ Convert` para crear un cliente de
+Workstation. La conversion es idempotente: si el lead ya fue convertido, la UI
+muestra `Open Workstation` y conserva el link al chat original del CRM.
+
+Al convertir:
+
+- se crea un registro en `workstation_clients`;
+- se marca el lead como `booked` si todavia no lo estaba;
+- se pausa la automatizacion del lead;
+- se registra el evento `workstation_client_created`;
+- el summary del CRM expone `workstation_client_id` y `workstation_status`.
+
+Cada cliente de Workstation tiene status `paid`, `in_progress`, `delivered` o
+`archived`, notas editables, media subida manualmente con titulo, copia de notas,
+copia de todo el contexto, y export ZIP.
+
+La carpeta canonica por cliente queda en:
+
+```text
+data/workstation/clients/{client_id_corto}-{nombre-slug}/
+```
+
+Dentro de esa carpeta se refrescan estos archivos:
+
+- `profile.json`: datos del cliente, lead y media.
+- `notes.txt`: notas de reunion.
+- `conversation.txt`: transcript del chat CRM.
+- `media/`: archivos subidos desde Workstation.
+
+El ZIP se descarga desde:
+
+```bash
+curl -L http://127.0.0.1:8000/api/workstation/clients/{client_id}/zip -o client.zip
+```
+
+Codex debe usar esa carpeta como fuente de verdad para trabajos manuales futuros
+como landing pages, imagenes o materiales de entrega. No se llama a GPT Image por
+API desde esta V1.
+
 ## Docker Compose
 
 ```bash
