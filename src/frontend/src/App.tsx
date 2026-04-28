@@ -11,6 +11,7 @@ import type {
   LeadListResponse,
   LeadStage,
   LeadSummary,
+  ManualAttentionCountsResponse,
   MessageItem,
   QuickActionResponse,
   RuntimeSettings,
@@ -130,6 +131,7 @@ export function App() {
   const [selectedFunnelId, setSelectedFunnelId] = useState(readStoredFunnelId);
   const [leadList, setLeadList] = useState<LeadListResponse | null>(null);
   const [manualAttentionList, setManualAttentionList] = useState<LeadSummary[]>([]);
+  const [manualAttentionCounts, setManualAttentionCounts] = useState<Record<string, number>>({});
   const [strategyStats, setStrategyStats] = useState<StrategyStatsItem[]>([]);
   const [detail, setDetail] = useState<LeadDetailResponse | null>(null);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
@@ -176,14 +178,16 @@ export function App() {
 
   const loadDashboard = useCallback(async () => {
     setError(null);
-    const [runtimePayload, funnelPayload] = await Promise.all([
+    const [runtimePayload, funnelPayload, attentionCountsPayload] = await Promise.all([
       apiFetch<RuntimeSettings>("/api/runtime"),
       apiFetch<FunnelListResponse>("/api/funnels"),
+      apiFetch<ManualAttentionCountsResponse>("/api/contadores/manual-attention-counts"),
     ]);
 
     setRuntime(runtimePayload);
     setFunnels(funnelPayload.funnels ?? []);
     setFunnelConfigPath(funnelPayload.config_path || "");
+    setManualAttentionCounts(attentionCountsPayload.counts ?? {});
 
     if (!selectedFunnelId || !funnelPayload.funnels.some((funnel) => funnel.id === selectedFunnelId)) {
       setSelectedFunnelId(funnelPayload.funnels[0]?.id ?? "contadores");
@@ -572,16 +576,25 @@ export function App() {
         </div>
 
         <nav className="ct-topbar-nav" aria-label="Backoffice sections">
-          {funnels.map((funnel) => (
-            <button
-              key={funnel.id}
-              type="button"
-              className={`ct-nav-btn ${selectedFunnelId === funnel.id ? "active" : ""}`}
-              onClick={() => setSelectedFunnelId(funnel.id)}
-            >
-              {funnel.label}
-            </button>
-          ))}
+          {funnels.map((funnel) => {
+            const attentionCount = manualAttentionCounts[funnel.id] ?? 0;
+
+            return (
+              <button
+                key={funnel.id}
+                type="button"
+                className={`ct-nav-btn ${selectedFunnelId === funnel.id ? "active" : ""}`}
+                onClick={() => setSelectedFunnelId(funnel.id)}
+              >
+                <span>{funnel.label}</span>
+                {attentionCount > 0 ? (
+                  <span className="ct-nav-badge" aria-label={`${attentionCount} needs answer`}>
+                    {compactNumber(attentionCount)}
+                  </span>
+                ) : null}
+              </button>
+            );
+          })}
           <button type="button" className="ct-nav-btn ct-nav-add" onClick={openCreateFunnel}>+ Funnel</button>
         </nav>
 

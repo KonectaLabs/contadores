@@ -39,7 +39,7 @@ from backend.database import (
 )
 from backend.funnel_config import GENERAL_INBOX_FUNNEL_ID, get_contadores_funnel
 from backend.funnel_config import get_file_backed_funnel, get_funnel, upsert_funnel
-from backend.funnel_config import list_funnels_by_whatsapp_referral_source_id
+from backend.funnel_config import list_funnels, list_funnels_by_whatsapp_referral_source_id
 
 contadores_router = APIRouter(prefix="/api/contadores", tags=["contadores"])
 
@@ -347,6 +347,19 @@ def build_contadores_metrics(leads: list[ContadoresLead]) -> "ContadoresMetrics"
         closed=sum(1 for item in leads if derive_effective_lead_stage(item) == ContadoresLeadStage.CLOSED),
         archived=sum(1 for item in leads if derive_effective_lead_stage(item) == ContadoresLeadStage.ARCHIVED),
     )
+
+
+def build_manual_attention_counts() -> dict[str, int]:
+    """Return operator-reply counts keyed by funnel id."""
+    funnels = list_funnels()
+    counts = {funnel.id: 0 for funnel in funnels}
+    candidates = ContadoresLead.list_manual_attention_candidates(
+        funnel_ids=[funnel.id for funnel in funnels],
+    )
+    for lead in candidates:
+        if derive_manual_reply_status(lead) == "needs_reply":
+            counts[lead.funnel_id] = counts.get(lead.funnel_id, 0) + 1
+    return counts
 
 
 def group_strategy_assignments_by_lead(funnel_id: str = "contadores") -> dict[str, list[ContadoresStrategyAssignment]]:
@@ -1133,6 +1146,12 @@ class ContadoresStrategyStatsResponse(BaseModel):
     items: list[ContadoresStrategyStatsItem] = Field(default_factory=list)
 
 
+class ManualAttentionCountsResponse(BaseModel):
+    """Needs-answer counts grouped by funnel."""
+
+    counts: dict[str, int] = Field(default_factory=dict)
+
+
 class ContadoresLeadStrategyAssignmentResponse(BaseModel):
     """One strategy assignment attached to a lead."""
 
@@ -1741,6 +1760,12 @@ async def get_contadores_strategy_stats(
 ) -> ContadoresStrategyStatsResponse:
     """Return strategy assignment and conversion stats."""
     return build_contadores_strategy_stats(funnel_id=funnel_id)
+
+
+@contadores_router.get("/manual-attention-counts", response_model=ManualAttentionCountsResponse)
+async def get_manual_attention_counts() -> ManualAttentionCountsResponse:
+    """Return the number of chats that need an operator answer per funnel."""
+    return ManualAttentionCountsResponse(counts=build_manual_attention_counts())
 
 
 @contadores_router.get("/leads", response_model=ContadoresLeadListResponse)

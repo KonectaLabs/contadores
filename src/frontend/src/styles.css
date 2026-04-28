@@ -2104,6 +2104,10 @@ body {
 }
 
 #contadoresView .ct-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   border: 0;
   border-radius: var(--ct-radius-sm);
   background: transparent;
@@ -2111,6 +2115,18 @@ body {
   padding: 7px 16px;
   font: 600 12px/1 var(--font-mono);
   letter-spacing: 0.04em;
+}
+
+#contadoresView .ct-nav-badge {
+  min-width: 14px;
+  height: 14px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--ct-danger);
+  color: #ffffff;
+  font: 700 9px/14px var(--font-mono);
+  letter-spacing: 0;
+  text-align: center;
 }
 
 #contadoresView .ct-nav-btn.active,

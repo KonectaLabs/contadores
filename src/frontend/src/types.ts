@@ -239,3 +239,7 @@ export interface StrategyStatsItem {
 export interface StrategyStatsResponse {
   items: StrategyStatsItem[];
 }
+
+export interface ManualAttentionCountsResponse {
+  counts: Record<string, number>;
+}

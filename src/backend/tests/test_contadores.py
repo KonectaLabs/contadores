@@ -1265,6 +1265,77 @@ def test_contadores_manual_reply_can_be_marked_answered(monkeypatch, tmp_path) -
     assert [item["lead_id"] for item in alerts_after_new_reply.json()["items"]] == [lead.id]
 
 
+def test_manual_attention_counts_endpoint_groups_by_funnel(monkeypatch, tmp_path) -> None:
+    """The nav badge count should include only manual handoffs awaiting an operator answer."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    first_message_at = now_utc()
+
+    contadores_lead = ContadoresLead.upsert(
+        external_lead_id="needs-reply-contadores",
+        phone="+5491111111111",
+        full_name="Needs Contadores",
+    )
+    ContadoresLead.update_flow_state(
+        contadores_lead.id,
+        stage=ContadoresLeadStage.NEEDS_HUMAN,
+        automation_paused=True,
+        automation_paused_reason="test",
+    )
+    ContadoresMessage.add(
+        lead_id=contadores_lead.id,
+        from_me=False,
+        text="Necesito una respuesta",
+        created_at=first_message_at,
+    )
+
+    answered_lead = ContadoresLead.upsert(
+        external_lead_id="answered-contadores",
+        phone="+5491111111112",
+        full_name="Answered Contadores",
+    )
+    ContadoresLead.update_flow_state(
+        answered_lead.id,
+        stage=ContadoresLeadStage.NEEDS_HUMAN,
+        automation_paused=True,
+        automation_paused_reason="test",
+    )
+    ContadoresMessage.add(
+        lead_id=answered_lead.id,
+        from_me=False,
+        text="Ya respondieron",
+        created_at=first_message_at,
+    )
+    ContadoresLead.update_flow_state(
+        answered_lead.id,
+        manual_reply_handled_at=first_message_at + timedelta(minutes=1),
+    )
+
+    general_lead = ContadoresLead.upsert(
+        funnel_id="general",
+        external_lead_id="needs-reply-general",
+        phone="+5491111111113",
+        full_name="Needs General",
+    )
+    ContadoresLead.update_flow_state(
+        general_lead.id,
+        stage=ContadoresLeadStage.NEEDS_HUMAN,
+        automation_paused=True,
+        automation_paused_reason="test",
+    )
+    ContadoresMessage.add(
+        lead_id=general_lead.id,
+        from_me=False,
+        text="Necesito respuesta en general",
+        created_at=first_message_at,
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/api/contadores/manual-attention-counts")
+
+    assert response.status_code == 200
+    assert response.json()["counts"] == {"contadores": 1, "general": 1}
+
+
 def test_contadores_resume_after_post_calendly_handoff_restores_calendly_sent(monkeypatch, tmp_path) -> None:
     """Resume automation should return post-Calendly handoffs to the Calendly stage."""
     configure_contadores_db(monkeypatch, tmp_path)

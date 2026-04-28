@@ -1174,6 +1174,23 @@ class ContadoresLead(SQLModel, table=True):
             return items
 
     @classmethod
+    def list_manual_attention_candidates(cls, *, funnel_ids: list[str]) -> list["ContadoresLead"]:
+        """List manual-stage leads that can still require an operator reply."""
+        clean_funnel_ids = [((item or "").strip() or "contadores") for item in funnel_ids]
+        if not clean_funnel_ids:
+            return []
+
+        with Session(engine) as session:
+            statement = select(cls).where(
+                cls.stage == ContadoresLeadStage.NEEDS_HUMAN,
+                cls.funnel_id.in_(clean_funnel_ids),
+            )
+            items = list(session.exec(statement).all())
+            for item in items:
+                session.expunge(item)
+            return items
+
+    @classmethod
     def upsert(
         cls,
         *,
