@@ -3343,6 +3343,12 @@ body {
   color: var(--ct-accent-strong);
 }
 
+#contadoresView .ct-btn-ghost.notes-toggle.active {
+  border-color: var(--ct-accent);
+  background: color-mix(in srgb, var(--ct-accent) 8%, transparent);
+  color: var(--ct-accent-strong);
+}
+
 #contadoresView .ct-btn-ghost.btn-destructive:hover:not(:disabled) {
   border-color: rgba(178, 61, 61, 0.52);
   color: #7a2020;

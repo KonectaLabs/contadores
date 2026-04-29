@@ -6,6 +6,7 @@ import {
   CurrencyDollar,
   DownloadSimple,
   FolderOpen,
+  NotePencil,
   Trash,
   UploadSimple,
 } from "@phosphor-icons/react";
@@ -1335,7 +1336,12 @@ function WorkstationView({
   const imageAssets = (detail?.media ?? []).filter((asset) => asset.content_type?.startsWith("image/"));
   const professionalPhotos = detail?.professional_photos ?? [];
   const [mediaDropActive, setMediaDropActive] = useState(false);
+  const [notesOpen, setNotesOpen] = useState(false);
   const canUploadMedia = Boolean(activeClient) && actionBusy !== "workstation-upload";
+
+  useEffect(() => {
+    setNotesOpen(false);
+  }, [selectedClientId]);
 
   function clipboardFile(event: ClipboardEvent<HTMLElement>): File | null {
     for (const fileItem of Array.from(event.clipboardData.files)) {
@@ -1459,6 +1465,16 @@ function WorkstationView({
                   </div>
                 </div>
                 <div className="ct-detail-head-actions">
+                  <button
+                    type="button"
+                    className={`ct-btn ct-btn-ghost notes-toggle ${notesOpen ? "active" : ""}`}
+                    onClick={() => setNotesOpen((current) => !current)}
+                    aria-expanded={notesOpen}
+                    aria-controls="workstation-notes-panel"
+                  >
+                    <NotePencil size={15} weight="bold" />
+                    Notes
+                  </button>
                   <button type="button" className="ct-btn ct-btn-ghost" onClick={() => onOpenCrmLead(selectedLead)}>
                     <ArrowSquareOut size={15} weight="bold" />
                     Open CRM chat
@@ -1474,34 +1490,36 @@ function WorkstationView({
                 </div>
               </header>
 
-              <section className="workstation-panel notes-panel">
-                <div className="workstation-panel-head">
-                  <div>
-                    <span>Meeting notes</span>
-                    <strong>Client profile notes</strong>
+              {notesOpen ? (
+                <section className="workstation-panel notes-panel" id="workstation-notes-panel">
+                  <div className="workstation-panel-head">
+                    <div>
+                      <span>Meeting notes</span>
+                      <strong>Client profile notes</strong>
+                    </div>
+                    <div className="workstation-panel-actions">
+                      <button type="button" className="ct-btn ct-btn-ghost" onClick={onCopyNotes} disabled={!notesDraft.trim()}>
+                        <Copy size={14} weight="bold" />
+                        Copy notes
+                      </button>
+                      <button
+                        type="button"
+                        className="ct-btn ct-btn-primary"
+                        disabled={actionBusy === "workstation-notes" || loading}
+                        onClick={onSaveNotes}
+                      >
+                        {actionBusy === "workstation-notes" ? "Saving..." : "Save notes"}
+                      </button>
+                    </div>
                   </div>
-                  <div className="workstation-panel-actions">
-                    <button type="button" className="ct-btn ct-btn-ghost" onClick={onCopyNotes} disabled={!notesDraft.trim()}>
-                      <Copy size={14} weight="bold" />
-                      Copy notes
-                    </button>
-                    <button
-                      type="button"
-                      className="ct-btn ct-btn-primary"
-                      disabled={actionBusy === "workstation-notes" || loading}
-                      onClick={onSaveNotes}
-                    >
-                      {actionBusy === "workstation-notes" ? "Saving..." : "Save notes"}
-                    </button>
-                  </div>
-                </div>
-                <textarea
-                  className="workstation-notes"
-                  value={notesDraft}
-                  onChange={(event) => onNotesChange(event.target.value)}
-                  placeholder="Paste call notes, client answers, preferences, questions, offer context..."
-                />
-              </section>
+                  <textarea
+                    className="workstation-notes"
+                    value={notesDraft}
+                    onChange={(event) => onNotesChange(event.target.value)}
+                    placeholder="Paste call notes, client answers, preferences, questions, offer context..."
+                  />
+                </section>
+              ) : null}
 
               <section
                 className={`workstation-panel workstation-media-panel ${mediaDropActive ? "drag-active" : ""}`}
