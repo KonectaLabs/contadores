@@ -20,6 +20,7 @@ ENV CODEX_HOME=/app/data/codex-home
 ENV CODEX_BIN=/usr/local/bin/codex
 RUN uv sync --frozen --no-dev
 COPY src/backend/ ./src/backend/
+COPY .codex/skills/ ./.codex/skills/
 COPY --from=frontend-builder /app/src/frontend/dist ./src/frontend/dist
 
 EXPOSE 8000
