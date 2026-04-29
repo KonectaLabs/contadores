@@ -2,13 +2,18 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ClipboardEvent, DragEvent, FormEvent } from "react";
 import {
   ArrowSquareOut,
+  Camera,
+  CaretDown,
+  Check,
   Copy,
   CurrencyDollar,
   DownloadSimple,
   FolderOpen,
   NotePencil,
+  SpinnerGap,
   Trash,
   UploadSimple,
+  X,
 } from "@phosphor-icons/react";
 import { apiFetch } from "./api";
 import { compactNumber, humanize, lastInteractionAt, relativeTime, shortDate } from "./format";
@@ -33,6 +38,7 @@ import type {
   WorkstationClientSummary,
   WorkstationCopyAllResponse,
   WorkstationMediaAsset,
+  WorkstationProfessionalPhotoJobResponse,
   WorkstationProfessionalPhotoVersion,
 } from "./types";
 
@@ -189,6 +195,7 @@ export function App() {
   const [professionalPhotoMediaIds, setProfessionalPhotoMediaIds] = useState<string[]>([]);
   const [professionalPhotoContext, setProfessionalPhotoContext] = useState("");
   const [professionalPhotoEditPrompts, setProfessionalPhotoEditPrompts] = useState<Record<string, string>>({});
+  const [professionalPhotoJob, setProfessionalPhotoJob] = useState<WorkstationProfessionalPhotoJobResponse | null>(null);
   const [workstationLoading, setWorkstationLoading] = useState(false);
   const debouncedQuery = useDebouncedValue(query, 250);
   const debouncedWorkstationQuery = useDebouncedValue(workstationQuery, 250);
@@ -411,6 +418,44 @@ export function App() {
     });
   }, [loadWorkstationDetail, selectedWorkstationClientId]);
 
+  useEffect(() => {
+    if (!professionalPhotoJob || !["queued", "running"].includes(professionalPhotoJob.status)) {
+      return;
+    }
+
+    let cancelled = false;
+    const pollJob = async () => {
+      try {
+        const payload = await apiFetch<WorkstationProfessionalPhotoJobResponse>(
+          `/api/workstation/clients/${professionalPhotoJob.client_id}/professional-photo/jobs/${professionalPhotoJob.job_id}`,
+        );
+        if (cancelled) {
+          return;
+        }
+        setProfessionalPhotoJob(payload);
+        if (payload.status === "completed") {
+          await loadWorkstation();
+          await loadWorkstationDetail(payload.client_id);
+        } else if (payload.status === "failed") {
+          setError(payload.error || "Could not create professional photo.");
+        }
+      } catch (reason) {
+        if (!cancelled) {
+          setError(reason instanceof Error ? reason.message : "Could not check professional photo status.");
+        }
+      }
+    };
+
+    pollJob();
+    const timer = window.setInterval(() => {
+      pollJob();
+    }, 2500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [loadWorkstation, loadWorkstationDetail, professionalPhotoJob?.client_id, professionalPhotoJob?.job_id, professionalPhotoJob?.status]);
+
   async function refreshAll() {
     setLoading(true);
     try {
@@ -557,6 +602,29 @@ export function App() {
     }
   }
 
+  async function updateWorkstationMedia(asset: WorkstationMediaAsset, title: string, originalFilename: string) {
+    const clientId = workstationDetail?.client.id ?? selectedWorkstationClientId;
+    if (!clientId) {
+      return;
+    }
+    setActionBusy(`edit-media-${asset.id}`);
+    try {
+      await apiFetch<WorkstationMediaAsset>(`/api/workstation/clients/${clientId}/media/${asset.id}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          title,
+          original_filename: originalFilename,
+        }),
+      });
+      await loadWorkstation();
+      await loadWorkstationDetail(clientId);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not update media.");
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
   function toggleProfessionalPhotoMedia(assetId: string) {
     setProfessionalPhotoMediaIds((current) => (
       current.includes(assetId)
@@ -565,26 +633,27 @@ export function App() {
     ));
   }
 
-  async function createProfessionalPhoto() {
+  async function createProfessionalPhoto(mediaAssetIds = professionalPhotoMediaIds, context = professionalPhotoContext) {
     const clientId = workstationDetail?.client.id ?? selectedWorkstationClientId;
-    if (!clientId || professionalPhotoMediaIds.length === 0) {
+    if (!clientId || mediaAssetIds.length === 0) {
       setError("Select at least one image from client media.");
       return;
     }
-    setActionBusy("professional-photo-create");
+    setActionBusy("professional-photo-start");
     try {
-      await apiFetch<WorkstationProfessionalPhotoVersion>(
-        `/api/workstation/clients/${clientId}/professional-photo`,
+      const job = await apiFetch<WorkstationProfessionalPhotoJobResponse>(
+        `/api/workstation/clients/${clientId}/professional-photo/jobs`,
         {
           method: "POST",
           body: JSON.stringify({
-            media_asset_ids: professionalPhotoMediaIds,
-            context: professionalPhotoContext,
+            media_asset_ids: mediaAssetIds,
+            context,
           }),
         },
       );
+      setProfessionalPhotoJob(job);
       setProfessionalPhotoContext("");
-      await loadWorkstationDetail(clientId);
+      setProfessionalPhotoMediaIds([]);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not create professional photo.");
     } finally {
@@ -994,6 +1063,7 @@ export function App() {
           selectedProfessionalPhotoMediaIds={professionalPhotoMediaIds}
           professionalPhotoContext={professionalPhotoContext}
           professionalPhotoEditPrompts={professionalPhotoEditPrompts}
+          professionalPhotoJob={professionalPhotoJob}
           onSelectClient={(clientId) => {
             setSelectedWorkstationClientId(clientId);
             setProfessionalPhotoMediaIds([]);
@@ -1014,9 +1084,11 @@ export function App() {
             });
           }}
           onDeleteMedia={deleteWorkstationMedia}
+          onUpdateMedia={(asset, title, originalFilename) => updateWorkstationMedia(asset, title, originalFilename)}
           onToggleProfessionalPhotoMedia={toggleProfessionalPhotoMedia}
+          onProfessionalPhotoMediaIdsChange={setProfessionalPhotoMediaIds}
           onProfessionalPhotoContextChange={setProfessionalPhotoContext}
-          onCreateProfessionalPhoto={() => createProfessionalPhoto()}
+          onCreateProfessionalPhoto={createProfessionalPhoto}
           onProfessionalPhotoEditPromptChange={updateProfessionalPhotoEditPrompt}
           onEditProfessionalPhoto={(version) => editProfessionalPhoto(version)}
         />
@@ -1291,10 +1363,13 @@ function WorkstationView({
   onUploadMedia,
   onUploadMediaFile,
   onDeleteMedia,
+  onUpdateMedia,
   selectedProfessionalPhotoMediaIds,
   professionalPhotoContext,
   professionalPhotoEditPrompts,
+  professionalPhotoJob,
   onToggleProfessionalPhotoMedia,
+  onProfessionalPhotoMediaIdsChange,
   onProfessionalPhotoContextChange,
   onCreateProfessionalPhoto,
   onProfessionalPhotoEditPromptChange,
@@ -1312,6 +1387,7 @@ function WorkstationView({
   selectedProfessionalPhotoMediaIds: string[];
   professionalPhotoContext: string;
   professionalPhotoEditPrompts: Record<string, string>;
+  professionalPhotoJob: WorkstationProfessionalPhotoJobResponse | null;
   onSelectClient: (clientId: string) => void;
   onNotesChange: (notes: string) => void;
   onSaveNotes: () => void;
@@ -1323,9 +1399,11 @@ function WorkstationView({
   onUploadMedia: (event: FormEvent<HTMLFormElement>) => void;
   onUploadMediaFile: (file: File) => void;
   onDeleteMedia: (asset: WorkstationMediaAsset) => void;
+  onUpdateMedia: (asset: WorkstationMediaAsset, title: string, originalFilename: string) => void | Promise<void>;
   onToggleProfessionalPhotoMedia: (assetId: string) => void;
+  onProfessionalPhotoMediaIdsChange: (assetIds: string[]) => void;
   onProfessionalPhotoContextChange: (value: string) => void;
-  onCreateProfessionalPhoto: () => void;
+  onCreateProfessionalPhoto: (mediaAssetIds?: string[], context?: string) => void | Promise<void>;
   onProfessionalPhotoEditPromptChange: (version: string, prompt: string) => void;
   onEditProfessionalPhoto: (version: string) => void;
 }) {
@@ -1337,11 +1415,39 @@ function WorkstationView({
   const professionalPhotos = detail?.professional_photos ?? [];
   const [mediaDropActive, setMediaDropActive] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
+  const [editingMediaId, setEditingMediaId] = useState<string | null>(null);
+  const [mediaEditTitle, setMediaEditTitle] = useState("");
+  const [mediaEditFilename, setMediaEditFilename] = useState("");
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const [professionalPhotoModalOpen, setProfessionalPhotoModalOpen] = useState(false);
   const canUploadMedia = Boolean(activeClient) && actionBusy !== "workstation-upload";
+  const currentProfessionalPhotoJob = professionalPhotoJob?.client_id === activeClient?.id ? professionalPhotoJob : null;
+  const professionalPhotoJobBusy = currentProfessionalPhotoJob?.status === "queued" || currentProfessionalPhotoJob?.status === "running";
 
   useEffect(() => {
     setNotesOpen(false);
+    setEditingMediaId(null);
+    setActionsOpen(false);
+    setProfessionalPhotoModalOpen(false);
   }, [selectedClientId]);
+
+  function openProfessionalPhotoModal() {
+    onProfessionalPhotoMediaIdsChange([]);
+    onProfessionalPhotoContextChange("");
+    setActionsOpen(false);
+    setProfessionalPhotoModalOpen(true);
+  }
+
+  function startMediaEdit(asset: WorkstationMediaAsset) {
+    setEditingMediaId(asset.id);
+    setMediaEditTitle(asset.title || asset.original_filename);
+    setMediaEditFilename(asset.original_filename || asset.stored_filename);
+  }
+
+  async function saveMediaEdit(asset: WorkstationMediaAsset) {
+    await onUpdateMedia(asset, mediaEditTitle, mediaEditFilename);
+    setEditingMediaId(null);
+  }
 
   function clipboardFile(event: ClipboardEvent<HTMLElement>): File | null {
     for (const fileItem of Array.from(event.clipboardData.files)) {
@@ -1465,6 +1571,31 @@ function WorkstationView({
                   </div>
                 </div>
                 <div className="ct-detail-head-actions">
+                  <div className="workstation-action-menu">
+                    <button
+                      type="button"
+                      className={`ct-btn ct-btn-primary ${actionsOpen ? "active" : ""}`}
+                      onClick={() => setActionsOpen((current) => !current)}
+                      aria-expanded={actionsOpen}
+                      aria-haspopup="menu"
+                    >
+                      Actions
+                      <CaretDown size={14} weight="bold" />
+                    </button>
+                    {actionsOpen ? (
+                      <div className="workstation-action-popover" role="menu">
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={openProfessionalPhotoModal}
+                          disabled={!imageAssets.length || professionalPhotoJobBusy || actionBusy === "professional-photo-start"}
+                        >
+                          <Camera size={16} weight="bold" />
+                          <span>Hacer foto profesional</span>
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
                   <button
                     type="button"
                     className={`ct-btn ct-btn-ghost notes-toggle ${notesOpen ? "active" : ""}`}
@@ -1553,27 +1684,49 @@ function WorkstationView({
                 <div className="workstation-media-grid">
                   {(detail?.media ?? []).length ? (detail?.media ?? []).map((asset) => (
                     <article className="workstation-media-card" key={asset.id}>
-                      {asset.content_type?.startsWith("image/") ? (
-                        <img src={asset.media_url} alt={asset.title || asset.original_filename} loading="lazy" />
-                      ) : (
-                        <div className="workstation-file-icon"><FolderOpen size={28} weight="bold" /></div>
-                      )}
-                      <div>
-                        <strong>{asset.title || asset.original_filename}</strong>
-                        <span>{asset.original_filename} · {formatBytes(asset.size_bytes)}</span>
-                        <code>{asset.stored_path}</code>
-                      </div>
-                      <div className="workstation-media-actions">
+                      <div className="workstation-media-preview">
                         {asset.content_type?.startsWith("image/") ? (
-                          <label className="workstation-media-check">
-                            <input
-                              type="checkbox"
-                              checked={selectedProfessionalPhotoMediaIds.includes(asset.id)}
-                              onChange={() => onToggleProfessionalPhotoMedia(asset.id)}
-                            />
-                            Source
+                          <img src={asset.media_url} alt={asset.title || asset.original_filename} loading="lazy" />
+                        ) : (
+                          <div className="workstation-file-icon"><FolderOpen size={28} weight="bold" /></div>
+                        )}
+                      </div>
+                      {editingMediaId === asset.id ? (
+                        <form
+                          className="workstation-media-edit"
+                          onSubmit={(event) => {
+                            event.preventDefault();
+                            saveMediaEdit(asset).catch((reason) => {
+                              console.error(reason);
+                            });
+                          }}
+                        >
+                          <label className="ct-field">
+                            <span>Name</span>
+                            <input value={mediaEditTitle} onChange={(event) => setMediaEditTitle(event.target.value)} />
                           </label>
-                        ) : null}
+                          <label className="ct-field">
+                            <span>Filename</span>
+                            <input value={mediaEditFilename} onChange={(event) => setMediaEditFilename(event.target.value)} />
+                          </label>
+                          <div className="workstation-media-edit-actions">
+                            <button type="submit" className="ct-btn ct-btn-primary" disabled={actionBusy === `edit-media-${asset.id}`}>
+                              {actionBusy === `edit-media-${asset.id}` ? "Saving..." : "Save"}
+                            </button>
+                            <button type="button" className="ct-btn ct-btn-ghost" onClick={() => setEditingMediaId(null)}>Cancel</button>
+                          </div>
+                        </form>
+                      ) : (
+                        <div className="workstation-media-meta">
+                          <strong>{asset.title || asset.original_filename}</strong>
+                          <span>{asset.original_filename} · {formatBytes(asset.size_bytes)}</span>
+                        </div>
+                      )}
+                      <div className="workstation-media-actions">
+                        <button type="button" className="ct-btn ct-btn-ghost" onClick={() => startMediaEdit(asset)}>
+                          <NotePencil size={15} weight="bold" />
+                          Edit
+                        </button>
                         <a className="ct-btn ct-btn-ghost" href={asset.media_url} target="_blank" rel="noreferrer">Open</a>
                         <button
                           type="button"

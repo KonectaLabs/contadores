@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import mimetypes
 import shutil
 import uuid
 import zipfile
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
@@ -41,6 +44,7 @@ workstation_router = APIRouter(prefix="/api/workstation", tags=["workstation"])
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PROFESSIONAL_PHOTO_SKILL = Path(".codex/skills/client-professional-photo/SKILL.md")
 PROFESSIONAL_PHOTO_EDIT_SKILL = Path(".codex/skills/client-professional-photo-edit/SKILL.md")
+ACTIVE_PROFESSIONAL_PHOTO_JOB_STATUSES = {"queued", "running"}
 
 
 def workstation_root() -> Path:
@@ -281,6 +285,13 @@ class UpdateWorkstationNotesCommand(BaseModel):
     notes: str = ""
 
 
+class UpdateWorkstationMediaCommand(BaseModel):
+    """Operator-editable media labels."""
+
+    title: str = ""
+    original_filename: str = ""
+
+
 class WorkstationCopyAllResponse(BaseModel):
     """Clipboard context payload."""
 
@@ -299,6 +310,39 @@ class WorkstationProfessionalPhotoVersion(BaseModel):
     source_image_paths: list[str] = Field(default_factory=list)
     previous_version_path: str | None = None
     user_edit_prompt: str | None = None
+
+
+ProfessionalPhotoJobStatus = Literal["queued", "running", "completed", "failed"]
+
+
+class WorkstationProfessionalPhotoJobResponse(BaseModel):
+    """Async professional-photo generation job status."""
+
+    job_id: str
+    client_id: str
+    status: ProfessionalPhotoJobStatus
+    created_at: str
+    started_at: str | None = None
+    completed_at: str | None = None
+    error: str | None = None
+    result: WorkstationProfessionalPhotoVersion | None = None
+
+
+@dataclass
+class ProfessionalPhotoJobRecord:
+    """Mutable in-process state for one professional-photo generation job."""
+
+    job_id: str
+    client_id: str
+    status: ProfessionalPhotoJobStatus
+    created_at: str
+    started_at: str | None = None
+    completed_at: str | None = None
+    error: str | None = None
+    result: WorkstationProfessionalPhotoVersion | None = None
+
+
+professional_photo_jobs: dict[str, ProfessionalPhotoJobRecord] = {}
 
 
 class CreateProfessionalPhotoCommand(BaseModel):
@@ -358,6 +402,48 @@ def build_professional_photo_response(client: WorkstationClient, version_dir: Pa
         previous_version_path=str(metadata.get("previous_version_path") or "") or None,
         user_edit_prompt=str(metadata.get("user_edit_prompt") or "") or None,
     )
+
+
+def current_job_timestamp() -> str:
+    """Return a compact UTC timestamp for job polling responses."""
+    return datetime.now(timezone.utc).isoformat()
+
+
+def build_professional_photo_job_response(
+    job: ProfessionalPhotoJobRecord,
+) -> WorkstationProfessionalPhotoJobResponse:
+    """Serialize one async professional-photo job."""
+    return WorkstationProfessionalPhotoJobResponse(
+        job_id=job.job_id,
+        client_id=job.client_id,
+        status=job.status,
+        created_at=job.created_at,
+        started_at=job.started_at,
+        completed_at=job.completed_at,
+        error=job.error,
+        result=job.result,
+    )
+
+
+def get_professional_photo_job(client_id: str, job_id: str) -> ProfessionalPhotoJobRecord:
+    """Return a job owned by one client or raise a 404."""
+    job = professional_photo_jobs.get(job_id)
+    if job is None or job.client_id != client_id:
+        raise HTTPException(status_code=404, detail="Professional photo job not found")
+    return job
+
+
+def get_active_professional_photo_job(client_id: str) -> ProfessionalPhotoJobRecord | None:
+    """Return the newest queued/running photo job for one client."""
+    jobs = sorted(
+        professional_photo_jobs.values(),
+        key=lambda job: job.created_at,
+        reverse=True,
+    )
+    for job in jobs:
+        if job.client_id == client_id and job.status in ACTIVE_PROFESSIONAL_PHOTO_JOB_STATUSES:
+            return job
+    return None
 
 
 def list_professional_photo_versions(client: WorkstationClient) -> list[WorkstationProfessionalPhotoVersion]:
@@ -493,6 +579,51 @@ Requirements:
         context=context,
     )
     return build_professional_photo_response(client, version_dir)
+
+
+async def run_create_professional_photo_job(
+    *,
+    job_id: str,
+    client: WorkstationClient,
+    assets: list[WorkstationMediaAsset],
+    context: str,
+) -> None:
+    """Generate one professional photo in the background and store pollable status."""
+    job = professional_photo_jobs.get(job_id)
+    if job is None:
+        return
+
+    job.status = "running"
+    job.started_at = current_job_timestamp()
+
+    try:
+        version = await run_in_threadpool(
+            generate_professional_photo_sync,
+            client=client,
+            assets=assets,
+            context=context,
+        )
+    except HTTPException as error:
+        job.status = "failed"
+        job.error = str(error.detail)
+        job.completed_at = current_job_timestamp()
+        return
+    except Exception as error:
+        job.status = "failed"
+        job.error = str(error)
+        job.completed_at = current_job_timestamp()
+        return
+
+    ContadoresEvent.add(
+        lead_id=client.lead_id,
+        event_type="workstation_professional_photo_created",
+        actor="operator",
+        summary="Generated a Workstation professional photo.",
+        payload={"client_id": client.id, "version": version.version, "image_path": version.image_path},
+    )
+    job.status = "completed"
+    job.result = version
+    job.completed_at = current_job_timestamp()
 
 
 def edit_professional_photo_sync(
@@ -679,6 +810,53 @@ async def get_workstation_client(client_id: str) -> WorkstationClientDetailRespo
 
 
 @workstation_router.post(
+    "/clients/{client_id}/professional-photo/jobs",
+    response_model=WorkstationProfessionalPhotoJobResponse,
+    status_code=202,
+)
+async def start_workstation_professional_photo_job(
+    client_id: str,
+    command: CreateProfessionalPhotoCommand,
+) -> WorkstationProfessionalPhotoJobResponse:
+    """Start async professional portrait generation from selected client media."""
+    client = get_required_client(client_id)
+    assets = get_client_image_assets(client, command.media_asset_ids)
+
+    active_job = get_active_professional_photo_job(client.id)
+    if active_job is not None:
+        return build_professional_photo_job_response(active_job)
+
+    job = ProfessionalPhotoJobRecord(
+        job_id=uuid.uuid4().hex,
+        client_id=client.id,
+        status="queued",
+        created_at=current_job_timestamp(),
+    )
+    professional_photo_jobs[job.job_id] = job
+    asyncio.create_task(
+        run_create_professional_photo_job(
+            job_id=job.job_id,
+            client=client,
+            assets=assets,
+            context=command.context,
+        )
+    )
+    return build_professional_photo_job_response(job)
+
+
+@workstation_router.get(
+    "/clients/{client_id}/professional-photo/jobs/{job_id}",
+    response_model=WorkstationProfessionalPhotoJobResponse,
+)
+async def get_workstation_professional_photo_job(
+    client_id: str,
+    job_id: str,
+) -> WorkstationProfessionalPhotoJobResponse:
+    """Return one async professional-photo generation job status."""
+    return build_professional_photo_job_response(get_professional_photo_job(client_id, job_id))
+
+
+@workstation_router.post(
     "/clients/{client_id}/professional-photo",
     response_model=WorkstationProfessionalPhotoVersion,
 )
@@ -786,6 +964,32 @@ async def upload_workstation_media(
     )
     write_client_files(WorkstationClient.get_by_id(client.id) or client)
     return build_media_response(asset)
+
+
+@workstation_router.put("/clients/{client_id}/media/{asset_id}", response_model=WorkstationMediaAssetResponse)
+async def update_workstation_media(
+    client_id: str,
+    asset_id: str,
+    command: UpdateWorkstationMediaCommand,
+) -> WorkstationMediaAssetResponse:
+    """Update one media asset's operator-facing name."""
+    client = get_required_client(client_id)
+    asset = WorkstationMediaAsset.get_by_id(asset_id)
+    if asset is None or asset.client_id != client.id:
+        raise HTTPException(status_code=404, detail="Media asset not found")
+
+    filename = safe_upload_filename(
+        command.original_filename
+        or asset.original_filename
+        or asset.stored_filename
+        or "file"
+    )
+    title = (command.title or "").strip() or filename
+    updated = WorkstationMediaAsset.update_metadata(asset.id, title=title, original_filename=filename)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Media asset not found")
+    write_client_files(WorkstationClient.get_by_id(client.id) or client)
+    return build_media_response(updated)
 
 
 @workstation_router.delete("/clients/{client_id}/media/{asset_id}", response_model=WorkstationClientDetailResponse)

@@ -198,6 +198,8 @@ Al convertir:
 - se marca el lead como `booked` si todavia no lo estaba;
 - se pausa la automatizacion del lead;
 - se registra el evento `workstation_client_created`;
+- la media subida en Workstation se puede renombrar desde la UI sin cambiar el
+  archivo fisico guardado en `data/workstation/clients/.../media/`.
 - el summary del CRM expone `workstation_client_id`.
 
 Cada cliente de Workstation tiene notas editables, media subida manualmente con

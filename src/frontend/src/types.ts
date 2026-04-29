@@ -261,6 +261,19 @@ export interface WorkstationProfessionalPhotoVersion {
   user_edit_prompt: string | null;
 }
 
+export type WorkstationProfessionalPhotoJobStatus = "queued" | "running" | "completed" | "failed";
+
+export interface WorkstationProfessionalPhotoJobResponse {
+  job_id: string;
+  client_id: string;
+  status: WorkstationProfessionalPhotoJobStatus;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  error: string | null;
+  result: WorkstationProfessionalPhotoVersion | null;
+}
+
 export interface WorkstationClientSummary {
   id: string;
   lead_id: string;

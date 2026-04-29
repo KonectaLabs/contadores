@@ -2071,6 +2071,25 @@ class WorkstationMediaAsset(SQLModel, table=True):
             return row
 
     @classmethod
+    def update_metadata(cls, asset_id: str, *, title: str, original_filename: str) -> Optional["WorkstationMediaAsset"]:
+        """Update the operator-facing media labels."""
+        with Session(engine) as session:
+            row = session.get(cls, asset_id)
+            if row is None:
+                return None
+            row.title = (title or "").strip()
+            row.original_filename = (original_filename or "").strip()
+            client = session.get(WorkstationClient, row.client_id)
+            if client:
+                client.updated_at = datetime.now(timezone.utc)
+                session.add(client)
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            session.expunge(row)
+            return row
+
+    @classmethod
     def delete(cls, asset_id: str) -> Optional["WorkstationMediaAsset"]:
         """Delete one media asset row and return its detached data."""
         with Session(engine) as session:

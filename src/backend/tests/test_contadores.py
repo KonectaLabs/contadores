@@ -1978,6 +1978,10 @@ def test_workstation_notes_media_and_zip_are_persisted(monkeypatch, tmp_path) ->
             data={"title": "Logo actual"},
             files={"file": ("logo.png", b"image-bytes", "image/png")},
         )
+        update_media_response = client.put(
+            f"/api/workstation/clients/{client_id}/media/{upload_response.json()['id']}",
+            json={"title": "Logo final", "original_filename": "logo-final.png"},
+        )
         copy_response = client.get(f"/api/workstation/clients/{client_id}/copy-all")
         zip_response = client.get(f"/api/workstation/clients/{client_id}/zip")
 
@@ -1985,8 +1989,12 @@ def test_workstation_notes_media_and_zip_are_persisted(monkeypatch, tmp_path) ->
     assert upload_response.status_code == 200
     assert upload_response.json()["title"] == "Logo actual"
     assert upload_response.json()["stored_path"].startswith("data/workstation/clients/")
+    assert update_media_response.status_code == 200
+    assert update_media_response.json()["title"] == "Logo final"
+    assert update_media_response.json()["original_filename"] == "logo-final.png"
     assert "Notas de reunion" in copy_response.json()["text"]
     assert "Necesito una web seria" in copy_response.json()["text"]
+    assert "Logo final" in copy_response.json()["text"]
 
     folder = data_dir / "workstation" / "clients" / created["client"]["folder_name"]
     assert (folder / "notes.txt").read_text(encoding="utf-8") == "Notas de reunion\nQuiere landing premium."

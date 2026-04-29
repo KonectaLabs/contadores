@@ -3947,19 +3947,30 @@ body {
 #contadoresView .workstation-media-card {
   display: grid;
   gap: 10px;
+  min-width: 0;
+  overflow: hidden;
   padding: 10px;
   border: 1px solid var(--ct-line);
   border-radius: var(--ct-radius);
   background: var(--ct-surface);
 }
 
-#contadoresView .workstation-media-card img,
-#contadoresView .workstation-file-icon {
-  width: 100%;
-  aspect-ratio: 16 / 10;
+#contadoresView .workstation-media-preview {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  overflow: hidden;
   border: 1px solid var(--ct-line-soft);
   border-radius: var(--ct-radius-sm);
   background: var(--ct-surface-2);
+}
+
+#contadoresView .workstation-media-card img,
+#contadoresView .workstation-file-icon {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  aspect-ratio: 16 / 10;
   object-fit: contain;
 }
 
@@ -3969,20 +3980,22 @@ body {
   color: var(--ct-accent-strong);
 }
 
-#contadoresView .workstation-media-card strong,
-#contadoresView .workstation-media-card span,
-#contadoresView .workstation-media-card code {
+#contadoresView .workstation-media-meta {
+  min-width: 0;
+}
+
+#contadoresView .workstation-media-meta strong,
+#contadoresView .workstation-media-meta span {
   display: block;
   overflow-wrap: anywhere;
 }
 
-#contadoresView .workstation-media-card strong {
+#contadoresView .workstation-media-meta strong {
   color: var(--ct-ink);
   font: 700 13px/1.25 var(--font-sans);
 }
 
-#contadoresView .workstation-media-card span,
-#contadoresView .workstation-media-card code {
+#contadoresView .workstation-media-meta span {
   margin-top: 4px;
   color: var(--ct-ink-muted);
   font: 500 11px/1.35 var(--font-mono);
@@ -3990,6 +4003,18 @@ body {
 
 #contadoresView .workstation-media-actions {
   justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+#contadoresView .workstation-media-edit {
+  display: grid;
+  gap: 8px;
+}
+
+#contadoresView .workstation-media-edit-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 #contadoresView .workstation-media-check {
