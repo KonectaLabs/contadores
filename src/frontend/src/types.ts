@@ -157,6 +157,7 @@ export interface MessageItem {
   delivery_attempts: number;
   last_delivery_error: string | null;
   last_delivery_error_at: string | null;
+  delivery_error_acknowledged_at: string | null;
   dispatch_after: string;
   sequence_step: string | null;
   strategy_step: string | null;

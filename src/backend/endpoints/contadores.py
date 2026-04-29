@@ -682,6 +682,7 @@ def build_message_response(message: ContadoresMessage) -> "ContadoresMessageResp
         delivery_attempts=message.delivery_attempts,
         last_delivery_error=message.last_delivery_error,
         last_delivery_error_at=format_timestamp_seconds(message.last_delivery_error_at),
+        delivery_error_acknowledged_at=format_timestamp_seconds(message.delivery_error_acknowledged_at),
         dispatch_after=format_timestamp_seconds(message.dispatch_after) or "",
         sequence_step=message.sequence_step,
         strategy_assignment_id=message.strategy_assignment_id,
@@ -1387,6 +1388,7 @@ class ContadoresMessageResponse(BaseModel):
     delivery_attempts: int = 0
     last_delivery_error: str | None = None
     last_delivery_error_at: str | None = None
+    delivery_error_acknowledged_at: str | None = None
     dispatch_after: str
     sequence_step: str | None = None
     strategy_assignment_id: int | None = None
@@ -2490,6 +2492,26 @@ async def record_contadores_message_delivery_failure(
             "max_attempts": command.max_attempts,
             "retry_delay_seconds": command.retry_delay_seconds,
             "error": updated.last_delivery_error,
+        },
+    )
+    return build_message_response(updated)
+
+
+@contadores_router.post("/messages/{message_id}/delivery-error/acknowledge", response_model=ContadoresMessageResponse)
+async def acknowledge_contadores_message_delivery_error(message_id: int) -> ContadoresMessageResponse:
+    """Mark one visible delivery error as acknowledged by the operator."""
+    updated = ContadoresMessage.acknowledge_delivery_error(message_id=message_id)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Contadores message not found")
+    ContadoresEvent.add(
+        lead_id=updated.lead_id,
+        event_type="outbound_delivery_error_acknowledged",
+        actor="operator",
+        summary=f"Operator acknowledged WhatsApp delivery error for message #{updated.id}.",
+        payload={
+            "message_id": updated.id,
+            "delivery_status": updated.delivery_status.value,
+            "delivery_error_acknowledged_at": format_timestamp_seconds(updated.delivery_error_acknowledged_at),
         },
     )
     return build_message_response(updated)

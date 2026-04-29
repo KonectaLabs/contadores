@@ -38,8 +38,10 @@ can inspect images, videos, audio, documents, and stickers from the CRM.
 Outbound WhatsApp send failures are persisted on `contadores_messages`. The bot
 reports send exceptions to the backend, the backend requeues until
 `CONTADORES_DELIVERY_MAX_ATTEMPTS`, and after the retry budget is exhausted the
-CRM must show the failed message with the stored error. Historical failed rows
-can be requeued with:
+CRM must show the failed message with the stored error. Operators can
+acknowledge a failed message from the chat; acknowledged failures keep their
+message-level error but no longer count toward the red lead-row alert.
+Historical failed rows can be requeued with:
 
 ```bash
 uv run python src/scripts/requeue_failed_contadores_messages.py --dry-run

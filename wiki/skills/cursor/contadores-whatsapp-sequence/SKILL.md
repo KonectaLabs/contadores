@@ -38,7 +38,9 @@ description: >-
 - El trigger es mecánico: cualquier respuesta sirve; no hace falta clasificar intención.
 - Todo envio fallido debe persistir error en `contadores_messages`, reintentarse
   hasta `CONTADORES_DELIVERY_MAX_ATTEMPTS`, y quedar visible en el CRM con alerta
-  roja cuando se agotan los intentos.
+  roja cuando se agotan los intentos. Si el operador marca el error como visto,
+  el mensaje conserva el detalle del fallo, pero deja de contar para la alerta
+  roja del chat.
 - Los envios no-template solo se pueden encolar dentro de las 24 horas desde el
   ultimo inbound del lead. Si la ventana esta cerrada, bloquear custom/media y
   pedir usar template aprobado, por ejemplo `Manual ping`.

@@ -200,6 +200,7 @@ export function App() {
   const [professionalPhotoEditPrompts, setProfessionalPhotoEditPrompts] = useState<Record<string, string>>({});
   const [professionalPhotoJob, setProfessionalPhotoJob] = useState<WorkstationProfessionalPhotoJobResponse | null>(null);
   const [workstationLoading, setWorkstationLoading] = useState(false);
+  const [acknowledgingDeliveryErrorIds, setAcknowledgingDeliveryErrorIds] = useState<number[]>([]);
   const debouncedQuery = useDebouncedValue(query, 250);
   const debouncedWorkstationQuery = useDebouncedValue(workstationQuery, 250);
 
@@ -872,6 +873,29 @@ export function App() {
     setManualFiles([]);
   }
 
+  async function acknowledgeDeliveryError(message: MessageItem) {
+    if (!selectedLeadId || acknowledgingDeliveryErrorIds.includes(message.id)) {
+      return;
+    }
+    const deliveryStatus = String(message.delivery_status || "").toLowerCase();
+    if (!message.from_me || deliveryStatus !== "failed" || message.delivery_error_acknowledged_at) {
+      return;
+    }
+
+    setAcknowledgingDeliveryErrorIds((current) => [...current, message.id]);
+    try {
+      await apiFetch<MessageItem>(`/api/contadores/messages/${message.id}/delivery-error/acknowledge`, {
+        method: "POST",
+      });
+      await loadDashboard();
+      await loadDetail(selectedLeadId);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not mark the delivery error as seen.");
+    } finally {
+      setAcknowledgingDeliveryErrorIds((current) => current.filter((id) => id !== message.id));
+    }
+  }
+
   async function moveLeadToFunnel(targetFunnelId: string, targetStage: LeadStage) {
     const leadId = selectedLead?.id ?? selectedLeadId;
     if (!leadId) {
@@ -1302,7 +1326,13 @@ export function App() {
 
             <div className="ct-panes">
               <section className={`ct-pane ${isInboxFunnel || activeTab === "messages" ? "active" : ""}`}>
-                <MessageTimeline messages={detail?.messages ?? []} loading={detailLoading} hasLead={Boolean(selectedLead)} />
+                <MessageTimeline
+                  messages={detail?.messages ?? []}
+                  loading={detailLoading}
+                  hasLead={Boolean(selectedLead)}
+                  acknowledgingIds={acknowledgingDeliveryErrorIds}
+                  onAcknowledgeDeliveryError={acknowledgeDeliveryError}
+                />
               </section>
 
               {!isInboxFunnel ? (
@@ -2599,7 +2629,19 @@ function MoveLeadPanel({
   );
 }
 
-function MessageTimeline({ messages, loading, hasLead }: { messages: MessageItem[]; loading: boolean; hasLead: boolean }) {
+function MessageTimeline({
+  messages,
+  loading,
+  hasLead,
+  acknowledgingIds,
+  onAcknowledgeDeliveryError,
+}: {
+  messages: MessageItem[];
+  loading: boolean;
+  hasLead: boolean;
+  acknowledgingIds: number[];
+  onAcknowledgeDeliveryError: (message: MessageItem) => void | Promise<void>;
+}) {
   if (!hasLead) {
     return <p className="empty-note">Select a lead from the list.</p>;
   }
@@ -2616,6 +2658,9 @@ function MessageTimeline({ messages, loading, hasLead }: { messages: MessageItem
         const direction = message.from_me ? "outbound" : "inbound";
         const deliveryStatus = String(message.delivery_status || "").toLowerCase();
         const hasDeliveryError = message.from_me && deliveryStatus === "failed";
+        const errorAcknowledged = Boolean(message.delivery_error_acknowledged_at);
+        const needsDeliveryErrorAck = hasDeliveryError && !errorAcknowledged;
+        const acknowledging = acknowledgingIds.includes(message.id);
         const meta = [
           shortDate(message.created_at),
           message.sequence_step,
@@ -2626,16 +2671,36 @@ function MessageTimeline({ messages, loading, hasLead }: { messages: MessageItem
         return (
           <div className={`crm-message-shell ${direction}`} key={message.id}>
             <div className="crm-message-rail">
-              <span className={`crm-message-dot ${direction} ${hasDeliveryError ? "failed" : ""}`} />
+              <span className={`crm-message-dot ${direction} ${needsDeliveryErrorAck ? "failed" : ""} ${errorAcknowledged ? "acknowledged" : ""}`} />
             </div>
-            <article className={`crm-message-card ${direction} ${deliveryStatus === "undelivered" ? "pending" : ""} ${hasDeliveryError ? "failed" : ""}`}>
+            <article
+              className={`crm-message-card ${direction} ${deliveryStatus === "undelivered" ? "pending" : ""} ${needsDeliveryErrorAck ? "failed" : ""} ${errorAcknowledged ? "acknowledged" : ""}`}
+              data-clickable={needsDeliveryErrorAck ? "true" : undefined}
+              onClick={needsDeliveryErrorAck ? () => onAcknowledgeDeliveryError(message) : undefined}
+            >
               <div className="crm-message-meta">
                 <div className="crm-message-eyebrow">
                   <span className={`crm-message-author ${direction}`}>{message.from_me ? "Bot / Operator" : "Lead"}</span>
                   <span>{meta.join(" · ")}</span>
                 </div>
-                {hasDeliveryError ? (
-                  <WarningCircle className="crm-message-error-icon" size={18} weight="fill" aria-label="WhatsApp delivery failed" />
+                {needsDeliveryErrorAck ? (
+                  <button
+                    type="button"
+                    className="crm-message-ack"
+                    disabled={acknowledging}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onAcknowledgeDeliveryError(message);
+                    }}
+                  >
+                    <Check size={14} weight="bold" />
+                    {acknowledging ? "Marking..." : "Seen"}
+                  </button>
+                ) : hasDeliveryError ? (
+                  <span className="crm-message-ack-status">
+                    <Check size={14} weight="bold" />
+                    Seen
+                  </span>
                 ) : null}
               </div>
               <MessageMedia message={message} />
@@ -2645,6 +2710,9 @@ function MessageTimeline({ messages, loading, hasLead }: { messages: MessageItem
                   <summary>Why it failed</summary>
                   <p>{message.last_delivery_error || "WhatsApp reported a delivery failure without details."}</p>
                   <span>{message.delivery_attempts ? `${message.delivery_attempts} send attempts` : "No retry metadata"}</span>
+                  {message.delivery_error_acknowledged_at ? (
+                    <span>Seen {relativeTime(message.delivery_error_acknowledged_at)}</span>
+                  ) : null}
                 </details>
               ) : null}
             </article>

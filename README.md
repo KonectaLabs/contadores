@@ -222,7 +222,10 @@ El bot registra cada error de envio en el backend. Un mensaje saliente fallido
 se reintenta hasta `CONTADORES_DELIVERY_MAX_ATTEMPTS` veces, esperando
 `CONTADORES_DELIVERY_RETRY_DELAY_SECONDS` entre intentos. Cuando se agotan los
 intentos, el mensaje queda en `failed`, el lead se marca con una alerta roja en
-el CRM, y el detalle del chat muestra el error expandible junto al mensaje.
+el CRM, y el detalle del chat muestra el error expandible junto al mensaje. El
+operador puede tocar el mensaje fallido o el boton `Seen` para guardar
+`delivery_error_acknowledged_at`; desde ese momento el error sigue visible en el
+chat, pero deja de contar para la alerta roja del lead.
 
 Los mensajes no-template solo se pueden encolar si el ultimo inbound del lead
 esta dentro de la ventana de 24 horas de WhatsApp. Si la ventana esta cerrada,

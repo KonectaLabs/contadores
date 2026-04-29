@@ -256,6 +256,46 @@ def test_contadores_delivery_failure_retries_then_surfaces_error(monkeypatch, tm
     assert detail.json()["messages"][0]["last_delivery_error"] == "invalid recipient phone"
 
 
+def test_contadores_delivery_failure_acknowledgement_clears_lead_alert(monkeypatch, tmp_path) -> None:
+    """Acknowledged delivery failures should stay on the message without tinting the chat row."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    ContadoresConfig.update(enabled=True)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-retry-ack",
+        phone="+5491111111116",
+        full_name="Retry Ack Lead",
+    )
+    message = ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=True,
+        text="Hola",
+        delivery_status=MessageDeliveryStatus.UNDELIVERED,
+        sequence_step="opener",
+    )
+
+    with TestClient(app) as client:
+        failed = client.post(
+            f"/api/contadores/messages/{message.id}/delivery-failure",
+            json={"error": "invalid recipient phone", "max_attempts": 1, "retry_delay_seconds": 0},
+        )
+        acknowledged = client.post(
+            f"/api/contadores/messages/{message.id}/delivery-error/acknowledge",
+        )
+        detail = client.get(f"/api/contadores/leads/{lead.id}")
+
+    assert failed.status_code == 200
+    assert failed.json()["delivery_status"] == "failed"
+    assert failed.json()["delivery_error_acknowledged_at"] is None
+    assert acknowledged.status_code == 200
+    assert acknowledged.json()["delivery_status"] == "failed"
+    assert acknowledged.json()["last_delivery_error"] == "invalid recipient phone"
+    assert acknowledged.json()["delivery_error_acknowledged_at"] is not None
+    assert detail.status_code == 200
+    assert detail.json()["lead"]["outbound_error_count"] == 0
+    assert detail.json()["lead"]["latest_outbound_error"] is None
+    assert detail.json()["messages"][0]["delivery_error_acknowledged_at"] is not None
+
+
 def test_contadores_provider_failed_status_requeues_before_final_failure(monkeypatch, tmp_path) -> None:
     """Meta failed webhooks should use the same retry budget as send exceptions."""
     configure_contadores_db(monkeypatch, tmp_path)

@@ -3019,6 +3019,11 @@ body {
   box-shadow: 0 0 0 4px rgba(190, 18, 60, 0.12);
 }
 
+#contadoresView .crm-message-dot.acknowledged {
+  background: var(--ct-ink-muted);
+  opacity: 0.5;
+}
+
 #contadoresView .crm-message-card,
 #contadoresView .ct-event-card,
 #contadoresView .ct-lead-strategy-card {
@@ -3041,6 +3046,19 @@ body {
 #contadoresView .crm-message-card.failed {
   border-color: rgba(190, 18, 60, 0.42);
   background: #fff1f2;
+}
+
+#contadoresView .crm-message-card.failed[data-clickable="true"] {
+  cursor: pointer;
+}
+
+#contadoresView .crm-message-card.failed[data-clickable="true"]:hover {
+  border-color: rgba(190, 18, 60, 0.64);
+}
+
+#contadoresView .crm-message-card.acknowledged {
+  border-color: var(--ct-line);
+  background: var(--ct-surface-2);
 }
 
 #contadoresView .crm-message-meta,
@@ -3074,6 +3092,41 @@ body {
 #contadoresView .crm-message-error-icon {
   flex: 0 0 auto;
   color: #be123c;
+}
+
+#contadoresView .crm-message-ack,
+#contadoresView .crm-message-ack-status {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  padding: 5px 8px;
+  border-radius: var(--ct-radius-sm);
+  font: 700 11px/1 var(--font-mono);
+}
+
+#contadoresView .crm-message-ack {
+  border: 1px solid rgba(190, 18, 60, 0.22);
+  background: #fff;
+  color: #be123c;
+  cursor: pointer;
+}
+
+#contadoresView .crm-message-ack:hover:not(:disabled) {
+  border-color: rgba(190, 18, 60, 0.44);
+  background: #fff7f8;
+}
+
+#contadoresView .crm-message-ack:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+#contadoresView .crm-message-ack-status {
+  border: 1px solid var(--ct-line-soft);
+  background: var(--ct-surface);
+  color: var(--ct-ink-muted);
 }
 
 #contadoresView .crm-message-error,

@@ -1499,6 +1499,7 @@ class ContadoresMessage(SQLModel, table=True):
     delivery_attempts: int = Field(default=0, index=True)
     last_delivery_error: str | None = Field(default=None)
     last_delivery_error_at: datetime | None = Field(default=None)
+    delivery_error_acknowledged_at: datetime | None = Field(default=None, index=True)
     dispatch_after: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
     sequence_step: str | None = Field(default=None, index=True)
     strategy_assignment_id: int | None = Field(
@@ -1711,6 +1712,7 @@ class ContadoresMessage(SQLModel, table=True):
                     cls.lead_id == lead_id,
                     cls.from_me.is_(True),
                     cls.delivery_status == MessageDeliveryStatus.FAILED,
+                    cls.delivery_error_acknowledged_at.is_(None),
                 )
             )
             return len(list(session.exec(statement).all()))
@@ -1725,6 +1727,7 @@ class ContadoresMessage(SQLModel, table=True):
                     cls.lead_id == lead_id,
                     cls.from_me.is_(True),
                     cls.delivery_status == MessageDeliveryStatus.FAILED,
+                    cls.delivery_error_acknowledged_at.is_(None),
                     cls.last_delivery_error.is_not(None),
                 )
                 .order_by(cls.last_delivery_error_at.desc(), cls.id.desc())
@@ -1810,9 +1813,11 @@ class ContadoresMessage(SQLModel, table=True):
             if clear_delivery_error:
                 row.last_delivery_error = None
                 row.last_delivery_error_at = None
+                row.delivery_error_acknowledged_at = None
             elif last_delivery_error is not None:
                 row.last_delivery_error = " ".join(str(last_delivery_error).split()).strip()[:2000] or None
                 row.last_delivery_error_at = datetime.now(timezone.utc) if row.last_delivery_error else None
+                row.delivery_error_acknowledged_at = None
             session.add(row)
             lead = session.get(ContadoresLead, row.lead_id)
             if lead:
@@ -1842,6 +1847,7 @@ class ContadoresMessage(SQLModel, table=True):
             row.delivery_attempts = attempts
             row.last_delivery_error = " ".join(str(error).split()).strip()[:2000] or "unknown delivery error"
             row.last_delivery_error_at = now
+            row.delivery_error_acknowledged_at = None
             if attempts < max_attempts:
                 row.delivery_status = MessageDeliveryStatus.UNDELIVERED
                 row.dispatch_after = now + timedelta(seconds=max(0, retry_delay_seconds))
@@ -1854,6 +1860,26 @@ class ContadoresMessage(SQLModel, table=True):
                 session.add(lead)
             session.commit()
             session.refresh(row)
+            session.expunge(row)
+            return row
+
+    @classmethod
+    def acknowledge_delivery_error(cls, *, message_id: int) -> Optional["ContadoresMessage"]:
+        """Mark one failed outbound delivery error as seen by the operator."""
+        with Session(engine) as session:
+            row = session.get(cls, message_id)
+            if row is None:
+                return None
+            if row.from_me and row.delivery_status == MessageDeliveryStatus.FAILED:
+                now = datetime.now(timezone.utc)
+                row.delivery_error_acknowledged_at = now
+                session.add(row)
+                lead = session.get(ContadoresLead, row.lead_id)
+                if lead:
+                    lead.updated_at = now
+                    session.add(lead)
+                session.commit()
+                session.refresh(row)
             session.expunge(row)
             return row
 
@@ -4102,6 +4128,7 @@ def ensure_contadores_message_delivery_columns() -> None:
             "delivery_attempts": "INTEGER NOT NULL DEFAULT 0",
             "last_delivery_error": "TEXT",
             "last_delivery_error_at": "TIMESTAMP",
+            "delivery_error_acknowledged_at": "TIMESTAMP",
         }
         for column_name, column_type in column_definitions.items():
             if column_name in message_columns:
@@ -4113,6 +4140,10 @@ def ensure_contadores_message_delivery_columns() -> None:
         connection.exec_driver_sql(
             "CREATE INDEX IF NOT EXISTS ix_contadores_messages_delivery_attempts "
             "ON contadores_messages (delivery_attempts)"
+        )
+        connection.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_contadores_messages_delivery_error_acknowledged_at "
+            "ON contadores_messages (delivery_error_acknowledged_at)"
         )
 
 
