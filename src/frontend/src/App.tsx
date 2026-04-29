@@ -637,7 +637,7 @@ export function App() {
     const clientId = workstationDetail?.client.id ?? selectedWorkstationClientId;
     if (!clientId || mediaAssetIds.length === 0) {
       setError("Select at least one image from client media.");
-      return;
+      return false;
     }
     setActionBusy("professional-photo-start");
     try {
@@ -654,8 +654,10 @@ export function App() {
       setProfessionalPhotoJob(job);
       setProfessionalPhotoContext("");
       setProfessionalPhotoMediaIds([]);
+      return true;
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not create professional photo.");
+      return false;
     } finally {
       setActionBusy(null);
     }
@@ -1403,7 +1405,7 @@ function WorkstationView({
   onToggleProfessionalPhotoMedia: (assetId: string) => void;
   onProfessionalPhotoMediaIdsChange: (assetIds: string[]) => void;
   onProfessionalPhotoContextChange: (value: string) => void;
-  onCreateProfessionalPhoto: (mediaAssetIds?: string[], context?: string) => void | Promise<void>;
+  onCreateProfessionalPhoto: (mediaAssetIds?: string[], context?: string) => boolean | Promise<boolean>;
   onProfessionalPhotoEditPromptChange: (version: string, prompt: string) => void;
   onEditProfessionalPhoto: (version: string) => void;
 }) {
@@ -1509,6 +1511,14 @@ function WorkstationView({
     }
     event.preventDefault();
     onUploadMediaFile(fileToUpload);
+  }
+
+  async function submitProfessionalPhotoModal(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const started = await onCreateProfessionalPhoto(selectedProfessionalPhotoMediaIds, professionalPhotoContext);
+    if (started) {
+      setProfessionalPhotoModalOpen(false);
+    }
   }
 
   return (
@@ -1751,30 +1761,28 @@ function WorkstationView({
                     <span>Professional photo</span>
                     <strong>Generated client portrait</strong>
                   </div>
-                  <button
-                    type="button"
-                    className="ct-btn ct-btn-primary"
-                    disabled={
-                      !imageAssets.length
-                      || selectedProfessionalPhotoMediaIds.length === 0
-                      || actionBusy === "professional-photo-create"
-                    }
-                    onClick={onCreateProfessionalPhoto}
-                  >
-                    {actionBusy === "professional-photo-create" ? "Creating..." : "Create professional photo"}
-                  </button>
                 </div>
-                <label className="ct-field">
-                  <span>Optional direction</span>
-                  <input
-                    value={professionalPhotoContext}
-                    onChange={(event) => onProfessionalPhotoContextChange(event.target.value)}
-                    placeholder="Abogado penalista, contador premium, más formal, ciudad..."
-                  />
-                </label>
-                <p className="workstation-helper">
-                  Select image media as sources, then generate a deterministic version under professional-photo.
-                </p>
+                {currentProfessionalPhotoJob ? (
+                  <div className={`workstation-photo-job ${currentProfessionalPhotoJob.status}`}>
+                    {professionalPhotoJobBusy ? <SpinnerGap className="workstation-spinner" size={18} weight="bold" /> : null}
+                    {currentProfessionalPhotoJob.status === "completed" ? <Check size={18} weight="bold" /> : null}
+                    {currentProfessionalPhotoJob.status === "failed" ? <X size={18} weight="bold" /> : null}
+                    <div>
+                      <strong>
+                        {professionalPhotoJobBusy
+                          ? "Procesando foto profesional"
+                          : currentProfessionalPhotoJob.status === "completed"
+                            ? "Foto profesional lista"
+                            : "No se pudo crear la foto"}
+                      </strong>
+                      <span>
+                        {currentProfessionalPhotoJob.status === "completed" && currentProfessionalPhotoJob.result
+                          ? `${currentProfessionalPhotoJob.result.version} · ${currentProfessionalPhotoJob.result.image_path}`
+                          : currentProfessionalPhotoJob.error || "El resultado va a aparecer aca cuando termine."}
+                      </span>
+                    </div>
+                  </div>
+                ) : null}
                 <div className="workstation-photo-grid">
                   {professionalPhotos.length ? professionalPhotos.map((photo) => (
                     <article className="workstation-photo-card" key={photo.version}>
@@ -1807,9 +1815,7 @@ function WorkstationView({
                     </article>
                   )) : (
                     <p className="empty-note">
-                      {imageAssets.length
-                        ? "Select source images from Media and create the first professional photo."
-                        : "Upload client photos to create a professional portrait."}
+                      {professionalPhotoJobBusy ? "Waiting for the first result." : "No professional photo yet."}
                     </p>
                   )}
                 </div>
@@ -1831,6 +1837,18 @@ function WorkstationView({
           )}
         </section>
       </div>
+      {professionalPhotoModalOpen ? (
+        <ProfessionalPhotoModal
+          imageAssets={imageAssets}
+          selectedMediaIds={selectedProfessionalPhotoMediaIds}
+          context={professionalPhotoContext}
+          busy={actionBusy === "professional-photo-start"}
+          onToggleMedia={onToggleProfessionalPhotoMedia}
+          onContextChange={onProfessionalPhotoContextChange}
+          onClose={() => setProfessionalPhotoModalOpen(false)}
+          onSubmit={submitProfessionalPhotoModal}
+        />
+      ) : null}
     </div>
   );
 }
