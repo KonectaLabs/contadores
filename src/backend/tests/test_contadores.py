@@ -364,6 +364,40 @@ def test_contadores_manual_ping_template_bypasses_closed_whatsapp_window(monkeyp
     assert response.json()["queued_message_ids"] == [1]
 
 
+def test_contadores_closed_lead_blocks_manual_outbound_until_reopened(monkeypatch, tmp_path) -> None:
+    """Closed leads should not receive custom messages or approved templates."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    ContadoresConfig.update(enabled=True)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-closed-send",
+        phone="+5491111111118",
+        full_name="Closed Send Lead",
+    )
+    add_recent_inbound(lead.id)
+
+    with TestClient(app) as client:
+        close_response = client.post(f"/api/contadores/leads/{lead.id}/actions/close")
+        custom_response = client.post(
+            f"/api/contadores/leads/{lead.id}/messages/manual",
+            json={"text": "Esto no deberia salir"},
+        )
+        template_response = client.post(f"/api/contadores/leads/{lead.id}/actions/send-manual-ping")
+        reopen_response = client.post(f"/api/contadores/leads/{lead.id}/actions/reopen")
+        after_reopen_response = client.post(f"/api/contadores/leads/{lead.id}/actions/send-manual-ping")
+
+    assert close_response.status_code == 200
+    assert custom_response.status_code == 400
+    assert template_response.status_code == 400
+    assert "closed" in custom_response.json()["detail"]
+    assert "closed" in template_response.json()["detail"]
+    assert reopen_response.status_code == 200
+    assert after_reopen_response.status_code == 200
+    assert after_reopen_response.json()["queued_message_ids"] == [2]
+    assert [item.sequence_step for item in ContadoresMessage.list_by_lead(lead.id) if item.from_me] == [
+        "manual_ping_template"
+    ]
+
+
 def test_contadores_zero_weight_strategy_is_not_auto_assigned() -> None:
     """A configured zero-weight strategy should stay available without receiving automatic traffic."""
     chosen_ids = {
@@ -1817,6 +1851,34 @@ def test_contadores_closed_lead_stays_out_of_automation_until_reopened(monkeypat
     assert tick_after_reopen.status_code == 200
     assert tick_after_reopen.json()["opener_sent"] == 1
     assert [item["sequence_step"] for item in pending_after_reopen.json()["messages"]] == ["opener"]
+
+
+def test_contadores_closed_lead_hides_already_queued_pending_delivery(monkeypatch, tmp_path) -> None:
+    """Already queued WhatsApp messages must not dispatch while the lead is closed."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    ContadoresConfig.update(enabled=True)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-5f-pending",
+        phone="+5491444444406",
+        full_name="Lara Pending Closed",
+    )
+
+    with TestClient(app) as client:
+        ping_response = client.post(f"/api/contadores/leads/{lead.id}/actions/send-manual-ping")
+        pending_before_close = client.get("/api/contadores/messages/pending-delivery")
+        close_response = client.post(f"/api/contadores/leads/{lead.id}/actions/close")
+        pending_while_closed = client.get("/api/contadores/messages/pending-delivery")
+        reopen_response = client.post(f"/api/contadores/leads/{lead.id}/actions/reopen")
+        pending_after_reopen = client.get("/api/contadores/messages/pending-delivery")
+
+    assert ping_response.status_code == 200
+    assert pending_before_close.status_code == 200
+    assert [item["lead_id"] for item in pending_before_close.json()["messages"]] == [lead.id]
+    assert close_response.status_code == 200
+    assert pending_while_closed.status_code == 200
+    assert pending_while_closed.json()["messages"] == []
+    assert reopen_response.status_code == 200
+    assert [item["lead_id"] for item in pending_after_reopen.json()["messages"]] == [lead.id]
 
 
 def test_contadores_reopen_restores_manual_pause_state(monkeypatch, tmp_path) -> None:

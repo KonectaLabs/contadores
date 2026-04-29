@@ -225,6 +225,7 @@ export function App() {
   );
   const selectedLeadCustomBlockReason = customMessageBlockReason(selectedLead);
   const bulkCustomBlockedCount = selectedVisibleLeads.filter((lead) => customMessageBlockReason(lead)).length;
+  const bulkClosedCount = selectedVisibleLeads.filter((lead) => lead.stage === "closed").length;
   const workstationClients = workstationList?.clients ?? [];
   const selectedVisibleCount = selectedLeadIds.filter((leadId) => visibleLeadIds.includes(leadId)).length;
   const allVisibleSelected = visibleLeadIds.length > 0 && selectedVisibleCount === visibleLeadIds.length;
@@ -745,6 +746,10 @@ export function App() {
 
     setActionBusy("send-modal");
     try {
+      if (selectedLead?.stage === "closed") {
+        setError("This lead is closed. Reopen it before sending WhatsApp messages.");
+        return;
+      }
       if (sendKind === "custom") {
         const text = manualText.trim();
         if (!text) {
@@ -779,6 +784,10 @@ export function App() {
 
     setActionBusy("bulk-send-modal");
     try {
+      if (bulkSendKind !== "set-tags" && bulkClosedCount > 0) {
+        setError(`${bulkClosedCount} selected lead${bulkClosedCount === 1 ? " is" : "s are"} closed. Reopen before sending WhatsApp messages.`);
+        return;
+      }
       if (bulkSendKind === "custom" && bulkCustomBlockedCount > 0) {
         setError(`Custom WhatsApp is blocked for ${bulkCustomBlockedCount} selected chat${bulkCustomBlockedCount === 1 ? "" : "s"} because the 24-hour window is closed. Use Manual ping template instead.`);
         return;
@@ -1355,6 +1364,7 @@ export function App() {
           funnel={selectedFunnel}
           selectedCount={selectedLeadIds.length}
           customBlockedCount={bulkCustomBlockedCount}
+          closedCount={bulkClosedCount}
           busy={actionBusy === "bulk-send-modal"}
           onKindChange={setBulkSendKind}
           onTextChange={setManualText}
@@ -3151,6 +3161,7 @@ function BulkSendModal({
   funnel,
   selectedCount,
   customBlockedCount,
+  closedCount,
   busy,
   onKindChange,
   onTextChange,
@@ -3164,6 +3175,7 @@ function BulkSendModal({
   funnel: FunnelDefinition | null;
   selectedCount: number;
   customBlockedCount: number;
+  closedCount: number;
   busy: boolean;
   onKindChange: (kind: BulkSendKind) => void;
   onTextChange: (value: string) => void;
@@ -3182,6 +3194,7 @@ function BulkSendModal({
   ];
   const tagValues = tagsText.split(",").map((tag) => tag.trim()).filter(Boolean);
   const customBlocked = customBlockedCount > 0;
+  const closedBlocked = closedCount > 0 && kind !== "set-tags";
 
   return (
     <div className="ct-modal open" aria-hidden="false">
@@ -3197,7 +3210,9 @@ function BulkSendModal({
         <div className="ct-modal-body">
           <p className="ct-modal-warning">
             <strong>Heads up:</strong> this will apply to every selected chat in the current list.
-            {kind === "set-tags"
+            {closedBlocked
+              ? ` ${closedCount} selected lead${closedCount === 1 ? " is" : "s are"} closed. Reopen before sending WhatsApp messages.`
+              : kind === "set-tags"
               ? " Tags will be replaced for those leads."
               : pausesAutomation
                 ? " Sending this pauses automation for those leads."
@@ -3212,7 +3227,7 @@ function BulkSendModal({
                   type="radio"
                   name="ctBulkSendKind"
                   value={option.value}
-                  disabled={option.value === "custom" && customBlocked}
+                  disabled={(option.value !== "set-tags" && closedCount > 0) || (option.value === "custom" && customBlocked)}
                   checked={kind === option.value}
                   onChange={() => onKindChange(option.value)}
                 />
@@ -3250,7 +3265,7 @@ function BulkSendModal({
         </div>
         <footer className="ct-modal-foot">
           <button type="button" className="ct-btn ct-btn-ghost" onClick={onClose}>Cancel</button>
-          <button type="submit" className="ct-btn ct-btn-primary" disabled={busy || !selectedCount || (kind === "custom" && (customBlocked || !text.trim())) || (kind === "set-tags" && !tagValues.length)}>
+          <button type="submit" className="ct-btn ct-btn-primary" disabled={busy || !selectedCount || closedBlocked || (kind === "custom" && (customBlocked || !text.trim())) || (kind === "set-tags" && !tagValues.length)}>
             {busy ? "Applying..." : `Apply to ${selectedCount}`}
           </button>
         </footer>
@@ -3444,6 +3459,9 @@ function leadPreview(lead: LeadSummary): string {
 function customMessageBlockReason(lead: LeadSummary | null): string | null {
   if (!lead) {
     return null;
+  }
+  if (lead.stage === "closed") {
+    return "This lead is closed. Reopen it before sending WhatsApp messages.";
   }
   if (!lead.last_inbound_at) {
     return "Custom WhatsApp is blocked until the lead sends a message. Use an approved template such as Manual ping.";

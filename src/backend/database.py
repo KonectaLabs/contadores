@@ -1747,6 +1747,7 @@ class ContadoresMessage(SQLModel, table=True):
                     ContadoresLead.stage != ContadoresLeadStage.ARCHIVED,
                     ContadoresLead.stage != ContadoresLeadStage.CLOSED,
                     ContadoresLead.stage != ContadoresLeadStage.BOOKED,
+                    ContadoresLead.closed_at.is_(None),
                 )
                 .order_by(cls.dispatch_after, cls.id)
                 .limit(limit)

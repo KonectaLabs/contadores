@@ -97,6 +97,7 @@ Enviar inmediatamente después del mensaje 4.
 - Si Meta envia `contacts.profile.name`, usar ese nombre de perfil de WhatsApp para leads creados por WhatsApp y para completar leads existentes que solo tenian telefono.
 - El ping manual `contadores_manual_ping_es_v1` es solo una accion del CRM.
 - Las acciones masivas del CRM nunca deben preseleccionar `Manual ping`; el operador tiene que elegir explicitamente ese template antes de mandarlo.
+- No se puede mandar ningun WhatsApp outbound a un lead `closed`; primero hay que reabrirlo.
 - Marcar un lead como `booked` no envia WhatsApp. El alias legacy
   `send-manual-booked` solo marca `booked`.
 - La vista CRM `Manual` muestra todos los manuales; el pipeline tiene un bloque

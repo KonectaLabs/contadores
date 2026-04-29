@@ -44,6 +44,9 @@ for that lead.
 Bulk CRM actions must never preselect `Manual ping`. The operator must
 explicitly choose that template before it can be queued.
 
+Closed leads cannot receive outbound WhatsApp messages. Reopen the lead first,
+then send the message or template.
+
 Marking a lead as `booked` must not send any WhatsApp message. The legacy
 `send-manual-booked` action name is kept as a compatibility alias, but it only
 marks the lead as `booked` and pauses automation.

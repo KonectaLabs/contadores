@@ -141,8 +141,19 @@ def is_whatsapp_custom_window_open(lead: ContadoresLead, *, now: datetime | None
     return (now or now_utc()) < last_inbound_at + WHATSAPP_CUSTOM_MESSAGE_WINDOW
 
 
+def assert_lead_open_for_outbound(lead: ContadoresLead) -> None:
+    """Reject any outbound WhatsApp send for a closed lead."""
+    if derive_effective_lead_stage(lead) != ContadoresLeadStage.CLOSED:
+        return
+    raise HTTPException(
+        status_code=400,
+        detail="Lead is closed. Reopen the lead before sending WhatsApp messages.",
+    )
+
+
 def assert_whatsapp_custom_window_open(lead: ContadoresLead, *, sequence_step: str | None) -> None:
     """Reject non-template outbound messages outside WhatsApp's 24-hour window."""
+    assert_lead_open_for_outbound(lead)
     if resolve_contadores_template_name(sequence_step, funnel_id=lead.funnel_id):
         return
     if is_whatsapp_custom_window_open(lead):
