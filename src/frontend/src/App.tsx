@@ -1853,6 +1853,94 @@ function WorkstationView({
   );
 }
 
+function ProfessionalPhotoModal({
+  imageAssets,
+  selectedMediaIds,
+  context,
+  busy,
+  onToggleMedia,
+  onContextChange,
+  onClose,
+  onSubmit,
+}: {
+  imageAssets: WorkstationMediaAsset[];
+  selectedMediaIds: string[];
+  context: string;
+  busy: boolean;
+  onToggleMedia: (assetId: string) => void;
+  onContextChange: (value: string) => void;
+  onClose: () => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <div className="ct-modal open" aria-hidden="false">
+      <button className="ct-modal-overlay" type="button" onClick={onClose} aria-label="Cerrar foto profesional" />
+      <form className="ct-modal-panel workstation-photo-modal" role="dialog" aria-modal="true" aria-labelledby="workstationPhotoModalTitle" onSubmit={onSubmit}>
+        <header className="ct-modal-head">
+          <div>
+            <p className="ct-drawer-kicker">Workstation</p>
+            <h3 id="workstationPhotoModalTitle">Hacer foto profesional</h3>
+            <p className="ct-modal-subtitle">{selectedMediaIds.length} media selected</p>
+          </div>
+          <button type="button" className="ct-btn ct-btn-ghost workstation-modal-close" onClick={onClose} aria-label="Cerrar">
+            <X size={15} weight="bold" />
+          </button>
+        </header>
+        <div className="ct-modal-body">
+          <label className="ct-field">
+            <span>Direccion opcional</span>
+            <input
+              value={context}
+              onChange={(event) => onContextChange(event.target.value)}
+              placeholder="Abogado penalista, contador premium, mas formal, ciudad..."
+            />
+          </label>
+
+          <section className="workstation-photo-picker" aria-label="Seleccionar media">
+            <div className="workstation-photo-picker-head">
+              <span>Seleccionar media</span>
+              <strong>{selectedMediaIds.length}/{imageAssets.length}</strong>
+            </div>
+            <div className="workstation-photo-picker-grid">
+              {imageAssets.length ? imageAssets.map((asset) => {
+                const selected = selectedMediaIds.includes(asset.id);
+                return (
+                  <button
+                    type="button"
+                    className={`workstation-photo-picker-card ${selected ? "selected" : ""}`}
+                    key={asset.id}
+                    onClick={() => onToggleMedia(asset.id)}
+                    aria-pressed={selected}
+                  >
+                    <img src={asset.media_url} alt={asset.title || asset.original_filename} loading="lazy" />
+                    <div>
+                      <strong>{asset.title || asset.original_filename}</strong>
+                      <span>{asset.original_filename}</span>
+                    </div>
+                    <span className="workstation-select-pill">
+                      {selected ? <Check size={14} weight="bold" /> : null}
+                      {selected ? "Selected" : "Select"}
+                    </span>
+                  </button>
+                );
+              }) : (
+                <p className="empty-note">No image media available.</p>
+              )}
+            </div>
+          </section>
+        </div>
+        <footer className="ct-modal-foot">
+          <button type="button" className="ct-btn ct-btn-ghost" onClick={onClose}>Cancel</button>
+          <button type="submit" className="ct-btn ct-btn-primary" disabled={!selectedMediaIds.length || busy}>
+            {busy ? <SpinnerGap className="workstation-spinner" size={15} weight="bold" /> : <Camera size={15} weight="bold" />}
+            {busy ? "Haciendo..." : "Hacer"}
+          </button>
+        </footer>
+      </form>
+    </div>
+  );
+}
+
 function FunnelSetupView({
   funnel,
   configPath,
