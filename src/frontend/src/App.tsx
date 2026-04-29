@@ -31,6 +31,7 @@ import type {
   WorkstationClientSummary,
   WorkstationCopyAllResponse,
   WorkstationMediaAsset,
+  WorkstationProfessionalPhotoVersion,
 } from "./types";
 
 const REFRESH_MS = 12000;
@@ -182,6 +183,9 @@ export function App() {
   const [workstationNotesDraft, setWorkstationNotesDraft] = useState("");
   const [workstationFileTitle, setWorkstationFileTitle] = useState("");
   const [workstationFile, setWorkstationFile] = useState<File | null>(null);
+  const [professionalPhotoMediaIds, setProfessionalPhotoMediaIds] = useState<string[]>([]);
+  const [professionalPhotoContext, setProfessionalPhotoContext] = useState("");
+  const [professionalPhotoEditPrompts, setProfessionalPhotoEditPrompts] = useState<Record<string, string>>({});
   const [workstationLoading, setWorkstationLoading] = useState(false);
   const debouncedQuery = useDebouncedValue(query, 250);
   const debouncedWorkstationQuery = useDebouncedValue(workstationQuery, 250);
@@ -449,6 +453,9 @@ export function App() {
   async function openWorkstationClient(clientId: string) {
     setSelectedWorkstationClientId(clientId);
     setActiveSection("workstation");
+    setProfessionalPhotoMediaIds([]);
+    setProfessionalPhotoContext("");
+    setProfessionalPhotoEditPrompts({});
     try {
       const payload = await apiFetch<WorkstationClientDetailResponse>(`/api/workstation/clients/${clientId}`);
       setSelectedFunnelId(payload.client.funnel_id || "contadores");
@@ -530,6 +537,74 @@ export function App() {
       await loadWorkstation();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not delete media.");
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
+  function toggleProfessionalPhotoMedia(assetId: string) {
+    setProfessionalPhotoMediaIds((current) => (
+      current.includes(assetId)
+        ? current.filter((id) => id !== assetId)
+        : [...current, assetId]
+    ));
+  }
+
+  async function createProfessionalPhoto() {
+    const clientId = workstationDetail?.client.id ?? selectedWorkstationClientId;
+    if (!clientId || professionalPhotoMediaIds.length === 0) {
+      setError("Select at least one image from client media.");
+      return;
+    }
+    setActionBusy("professional-photo-create");
+    try {
+      await apiFetch<WorkstationProfessionalPhotoVersion>(
+        `/api/workstation/clients/${clientId}/professional-photo`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            media_asset_ids: professionalPhotoMediaIds,
+            context: professionalPhotoContext,
+          }),
+        },
+      );
+      setProfessionalPhotoContext("");
+      await loadWorkstationDetail(clientId);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not create professional photo.");
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
+  function updateProfessionalPhotoEditPrompt(version: string, prompt: string) {
+    setProfessionalPhotoEditPrompts((current) => ({ ...current, [version]: prompt }));
+  }
+
+  async function editProfessionalPhoto(version: string) {
+    const clientId = workstationDetail?.client.id ?? selectedWorkstationClientId;
+    const prompt = professionalPhotoEditPrompts[version]?.trim() || "";
+    if (!clientId || !prompt) {
+      setError("Write an edit instruction first.");
+      return;
+    }
+    setActionBusy(`professional-photo-edit-${version}`);
+    try {
+      await apiFetch<WorkstationProfessionalPhotoVersion>(
+        `/api/workstation/clients/${clientId}/professional-photo/edit`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            base_version: version,
+            prompt,
+            media_asset_ids: professionalPhotoMediaIds,
+          }),
+        },
+      );
+      updateProfessionalPhotoEditPrompt(version, "");
+      await loadWorkstationDetail(clientId);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not edit professional photo.");
     } finally {
       setActionBusy(null);
     }
@@ -884,7 +959,15 @@ export function App() {
           notesDraft={workstationNotesDraft}
           fileTitle={workstationFileTitle}
           file={workstationFile}
-          onSelectClient={setSelectedWorkstationClientId}
+          selectedProfessionalPhotoMediaIds={professionalPhotoMediaIds}
+          professionalPhotoContext={professionalPhotoContext}
+          professionalPhotoEditPrompts={professionalPhotoEditPrompts}
+          onSelectClient={(clientId) => {
+            setSelectedWorkstationClientId(clientId);
+            setProfessionalPhotoMediaIds([]);
+            setProfessionalPhotoContext("");
+            setProfessionalPhotoEditPrompts({});
+          }}
           onNotesChange={setWorkstationNotesDraft}
           onSaveNotes={saveWorkstationNotes}
           onCopyNotes={() => copyWorkstationNotes().catch((reason) => setError(reason instanceof Error ? reason.message : "Could not copy notes."))}
@@ -894,6 +977,11 @@ export function App() {
           onFileChange={setWorkstationFile}
           onUploadMedia={uploadWorkstationMedia}
           onDeleteMedia={deleteWorkstationMedia}
+          onToggleProfessionalPhotoMedia={toggleProfessionalPhotoMedia}
+          onProfessionalPhotoContextChange={setProfessionalPhotoContext}
+          onCreateProfessionalPhoto={() => createProfessionalPhoto()}
+          onProfessionalPhotoEditPromptChange={updateProfessionalPhotoEditPrompt}
+          onEditProfessionalPhoto={(version) => editProfessionalPhoto(version)}
         />
       ) : !isContadoresFunnel ? (
         <FunnelSetupView
@@ -1163,6 +1251,14 @@ function WorkstationView({
   onFileChange,
   onUploadMedia,
   onDeleteMedia,
+  selectedProfessionalPhotoMediaIds,
+  professionalPhotoContext,
+  professionalPhotoEditPrompts,
+  onToggleProfessionalPhotoMedia,
+  onProfessionalPhotoContextChange,
+  onCreateProfessionalPhoto,
+  onProfessionalPhotoEditPromptChange,
+  onEditProfessionalPhoto,
 }: {
   clients: WorkstationClientSummary[];
   detail: WorkstationClientDetailResponse | null;
@@ -1173,6 +1269,9 @@ function WorkstationView({
   notesDraft: string;
   fileTitle: string;
   file: File | null;
+  selectedProfessionalPhotoMediaIds: string[];
+  professionalPhotoContext: string;
+  professionalPhotoEditPrompts: Record<string, string>;
   onSelectClient: (clientId: string) => void;
   onNotesChange: (notes: string) => void;
   onSaveNotes: () => void;
@@ -1183,11 +1282,18 @@ function WorkstationView({
   onFileChange: (file: File | null) => void;
   onUploadMedia: (event: FormEvent<HTMLFormElement>) => void;
   onDeleteMedia: (asset: WorkstationMediaAsset) => void;
+  onToggleProfessionalPhotoMedia: (assetId: string) => void;
+  onProfessionalPhotoContextChange: (value: string) => void;
+  onCreateProfessionalPhoto: () => void;
+  onProfessionalPhotoEditPromptChange: (version: string, prompt: string) => void;
+  onEditProfessionalPhoto: (version: string) => void;
 }) {
   const detailClient = detail?.client.id === selectedClientId ? detail.client : null;
   const selectedLead = detailClient?.lead ?? null;
   const activeClient = detailClient ?? clients.find((client) => client.id === selectedClientId) ?? null;
   const funnelLabel = funnel?.label ?? activeClient?.funnel_id ?? "selected funnel";
+  const imageAssets = (detail?.media ?? []).filter((asset) => asset.content_type?.startsWith("image/"));
+  const professionalPhotos = detail?.professional_photos ?? [];
 
   return (
     <div className="ct-surface workstation-surface">
@@ -1328,6 +1434,16 @@ function WorkstationView({
                         <code>{asset.stored_path}</code>
                       </div>
                       <div className="workstation-media-actions">
+                        {asset.content_type?.startsWith("image/") ? (
+                          <label className="workstation-media-check">
+                            <input
+                              type="checkbox"
+                              checked={selectedProfessionalPhotoMediaIds.includes(asset.id)}
+                              onChange={() => onToggleProfessionalPhotoMedia(asset.id)}
+                            />
+                            Source
+                          </label>
+                        ) : null}
                         <a className="ct-btn ct-btn-ghost" href={asset.media_url} target="_blank" rel="noreferrer">Open</a>
                         <button
                           type="button"
@@ -1342,6 +1458,76 @@ function WorkstationView({
                     </article>
                   )) : (
                     <p className="empty-note">No media uploaded for this client yet.</p>
+                  )}
+                </div>
+              </section>
+
+              <section className="workstation-panel">
+                <div className="workstation-panel-head">
+                  <div>
+                    <span>Professional photo</span>
+                    <strong>Generated client portrait</strong>
+                  </div>
+                  <button
+                    type="button"
+                    className="ct-btn ct-btn-primary"
+                    disabled={
+                      !imageAssets.length
+                      || selectedProfessionalPhotoMediaIds.length === 0
+                      || actionBusy === "professional-photo-create"
+                    }
+                    onClick={onCreateProfessionalPhoto}
+                  >
+                    {actionBusy === "professional-photo-create" ? "Creating..." : "Create professional photo"}
+                  </button>
+                </div>
+                <label className="ct-field">
+                  <span>Optional direction</span>
+                  <input
+                    value={professionalPhotoContext}
+                    onChange={(event) => onProfessionalPhotoContextChange(event.target.value)}
+                    placeholder="Abogado penalista, contador premium, más formal, ciudad..."
+                  />
+                </label>
+                <p className="workstation-helper">
+                  Select image media as sources, then generate a deterministic version under professional-photo.
+                </p>
+                <div className="workstation-photo-grid">
+                  {professionalPhotos.length ? professionalPhotos.map((photo) => (
+                    <article className="workstation-photo-card" key={photo.version}>
+                      <a href={photo.image_url} target="_blank" rel="noreferrer">
+                        <img src={photo.image_url} alt={`Professional photo ${photo.version}`} loading="lazy" />
+                      </a>
+                      <div className="workstation-photo-meta">
+                        <strong>{photo.version}</strong>
+                        <span>{photo.operation || "generated"} · {photo.created_at || photo.image_path}</span>
+                        <code>{photo.image_path}</code>
+                      </div>
+                      <div className="workstation-photo-edit">
+                        <input
+                          value={professionalPhotoEditPrompts[photo.version] ?? ""}
+                          onChange={(event) => onProfessionalPhotoEditPromptChange(photo.version, event.target.value)}
+                          placeholder="Modify this version..."
+                        />
+                        <button
+                          type="button"
+                          className="ct-btn ct-btn-ghost"
+                          onClick={() => onEditProfessionalPhoto(photo.version)}
+                          disabled={
+                            !(professionalPhotoEditPrompts[photo.version] ?? "").trim()
+                            || actionBusy === `professional-photo-edit-${photo.version}`
+                          }
+                        >
+                          {actionBusy === `professional-photo-edit-${photo.version}` ? "Editing..." : "Modify"}
+                        </button>
+                      </div>
+                    </article>
+                  )) : (
+                    <p className="empty-note">
+                      {imageAssets.length
+                        ? "Select source images from Media and create the first professional photo."
+                        : "Upload client photos to create a professional portrait."}
+                    </p>
                   )}
                 </div>
               </section>

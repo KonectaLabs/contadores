@@ -194,7 +194,8 @@ Al convertir:
 - el summary del CRM expone `workstation_client_id`.
 
 Cada cliente de Workstation tiene notas editables, media subida manualmente con
-titulo, copia de notas, copia de todo el contexto, y export ZIP.
+titulo, copia de notas, copia de todo el contexto, foto profesional generada
+desde fotos fuente, y export ZIP.
 
 La carpeta canonica por cliente queda en:
 
@@ -208,6 +209,26 @@ Dentro de esa carpeta se refrescan estos archivos:
 - `notes.txt`: notas de reunion.
 - `conversation.txt`: transcript del chat CRM.
 - `media/`: archivos subidos desde Workstation.
+- `professional-photo/vNNN/`: versiones generadas por Codex para la foto
+  profesional del cliente.
+
+La foto profesional se crea desde imagenes seleccionadas en `media/` y se guarda
+siempre con versionado determinista:
+
+```text
+professional-photo/v001/professional-photo.jpg
+professional-photo/v001/metadata.json
+```
+
+Las modificaciones desde la UI crean `v002`, `v003`, etc. Nunca se sobrescriben
+las fotos fuente ni las versiones anteriores.
+
+Esta funcion usa el Codex SDK desde el backend. En Docker, la imagen instala
+`@openai/codex` y usa `CODEX_HOME=/app/data/codex-home` por defecto para que la
+autenticacion de Codex pueda persistir en el volumen `data/`. Si
+`CODEX_PREFER_CHATGPT_LOGIN=true`, el backend remueve `OPENAI_API_KEY` antes de
+lanzar Codex para priorizar el login ChatGPT/Codex. Si se configura en `false`,
+el proceso Codex conserva `OPENAI_API_KEY`.
 
 El ZIP se descarga desde:
 

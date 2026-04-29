@@ -10,6 +10,7 @@ dependencies = [
     "firecrawl>=4.17.0",
     "httpx>=0.28.1",
     "mcp>=1.26.0",
+    "openai-codex-app-server-sdk @ git+https://github.com/openai/codex.git#subdirectory=sdk/python",
     "perplexityai>=0.27.0",
     "phonenumbers>=9.0.19",
     "pydantic>=2.12.5",
@@ -31,6 +32,9 @@ messenger = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/backend"]

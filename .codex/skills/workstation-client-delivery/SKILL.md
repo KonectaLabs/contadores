@@ -33,6 +33,8 @@ prefer reading the current folder directly when running inside this repo.
   prompts/assets for manual use.
 - Keep generated deliverables inside the same client folder or a clear child
   folder such as `exports/`, `landing-page/`, or `image-directions/`.
+- Professional portrait outputs belong under `professional-photo/vNNN/` with
+  `professional-photo.jpg` and `metadata.json`.
 - Preserve the original `notes.txt`, `conversation.txt`, and uploaded `media/`
   files; create new files instead of overwriting source material.
 - When a client is ambiguous, list matching folders and ask for the exact one.

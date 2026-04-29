@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from io import BytesIO
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 import zipfile
 
@@ -12,6 +13,7 @@ from sqlmodel import SQLModel, create_engine
 
 import backend.database as database_module
 import backend.endpoints.contadores as contadores_endpoints
+import backend.endpoints.workstation as workstation_endpoints
 from backend.contadores_strategies import get_contadores_strategy
 from backend.database import (
     ContadoresConfig,
@@ -1942,3 +1944,58 @@ def test_workstation_notes_media_and_zip_are_persisted(monkeypatch, tmp_path) ->
         names = set(archive.namelist())
         assert {"profile.json", "notes.txt", "conversation.txt"}.issubset(names)
         assert f"media/{upload_response.json()['stored_filename']}" in names
+
+
+def test_workstation_professional_photo_versions_use_codex_context(monkeypatch, tmp_path) -> None:
+    """Professional photo endpoints should create deterministic generated versions."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    data_dir = tmp_path / "data"
+    monkeypatch.setattr(database_module, "DATA_DIR", data_dir)
+    calls: list[dict[str, object]] = []
+
+    def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
+        output_marker = "Required output path:\n"
+        output_path = prompt.split(output_marker, 1)[1].splitlines()[0].strip()
+        Path(output_path).write_bytes(b"generated-jpg")
+        calls.append({"prompt": prompt, **kwargs})
+        return SimpleNamespace(final_response=f"created {output_path}", items=[])
+
+    monkeypatch.setattr(workstation_endpoints, "run_codex_with_context", fake_run_codex_with_context)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-workstation-photo",
+        phone="+5491888888888",
+        full_name="Cliente Foto",
+    )
+
+    with TestClient(app) as client:
+        created = client.post(f"/api/workstation/clients/from-lead/{lead.id}").json()
+        client_id = created["client"]["id"]
+        media_response = client.post(
+            f"/api/workstation/clients/{client_id}/media",
+            data={"title": "Foto fuente"},
+            files={"file": ("cliente.jpg", b"source-jpg", "image/jpeg")},
+        )
+        media_id = media_response.json()["id"]
+        photo_response = client.post(
+            f"/api/workstation/clients/{client_id}/professional-photo",
+            json={"media_asset_ids": [media_id], "context": "abogado premium"},
+        )
+        edit_response = client.post(
+            f"/api/workstation/clients/{client_id}/professional-photo/edit",
+            json={"base_version": "v001", "prompt": "mas formal", "media_asset_ids": [media_id]},
+        )
+        detail_response = client.get(f"/api/workstation/clients/{client_id}")
+        file_response = client.get(f"/api/workstation/clients/{client_id}/professional-photo/v002/file")
+
+    assert photo_response.status_code == 200
+    assert photo_response.json()["version"] == "v001"
+    assert photo_response.json()["image_path"].endswith("professional-photo/v001/professional-photo.jpg")
+    assert edit_response.status_code == 200
+    assert edit_response.json()["version"] == "v002"
+    assert [photo["version"] for photo in detail_response.json()["professional_photos"]] == ["v001", "v002"]
+    assert file_response.status_code == 200
+    assert file_response.content == b"generated-jpg"
+    assert len(calls) == 2
+    assert calls[0]["local_images"]
+    assert "client-professional-photo" in calls[0]["prompt"]
+    assert "client-professional-photo-edit" in calls[1]["prompt"]

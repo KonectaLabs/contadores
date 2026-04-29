@@ -17,6 +17,8 @@ services:
     env_file: .env
     environment:
       - PYTHONPATH=/app/src
+      - CODEX_HOME=${CODEX_HOME:-/app/data/codex-home}
+      - CODEX_PREFER_CHATGPT_LOGIN=${CODEX_PREFER_CHATGPT_LOGIN:-true}
     healthcheck:
       test:
         [

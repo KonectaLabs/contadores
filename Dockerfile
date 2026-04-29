@@ -11,10 +11,13 @@ RUN npm run build
 FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim
 
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends fontconfig fonts-liberation \
+RUN apt-get update && apt-get install -y --no-install-recommends fontconfig fonts-liberation git nodejs npm \
     && rm -rf /var/lib/apt/lists/*
+RUN npm install -g @openai/codex@0.125.0
 COPY pyproject.toml uv.lock ./
 ENV PYTHONPATH=/app/src
+ENV CODEX_HOME=/app/data/codex-home
+ENV CODEX_BIN=/usr/local/bin/codex
 RUN uv sync --frozen --no-dev
 COPY src/backend/ ./src/backend/
 COPY --from=frontend-builder /app/src/frontend/dist ./src/frontend/dist

@@ -437,6 +437,7 @@ dependencies = [
     { name = "firecrawl" },
     { name = "httpx" },
     { name = "mcp" },
+    { name = "openai-codex-app-server-sdk" },
     { name = "perplexityai" },
     { name = "phonenumbers" },
     { name = "pydantic" },
@@ -471,6 +472,7 @@ requires-dist = [
     { name = "google-auth-oauthlib", marker = "extra == 'messenger'", specifier = ">=1.2.4" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "mcp", specifier = ">=1.26.0" },
+    { name = "openai-codex-app-server-sdk", git = "https://github.com/openai/codex.git?subdirectory=sdk%2Fpython" },
     { name = "perplexityai", specifier = ">=0.27.0" },
     { name = "phonenumbers", specifier = ">=9.0.19" },
     { name = "prefect", marker = "extra == 'messenger'", specifier = ">=3.6.16" },
@@ -1861,6 +1863,14 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/b1/6c/e4c964fcf1d527fdf4739e7cc940c60075a4114d50d03871d5d5b1e13a88/openai-2.16.0.tar.gz", hash = "sha256:42eaa22ca0d8ded4367a77374104d7a2feafee5bd60a107c3c11b5243a11cd12", size = 629649 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/16/83/0315bf2cfd75a2ce8a7e54188e9456c60cec6c0cf66728ed07bd9859ff26/openai-2.16.0-py3-none-any.whl", hash = "sha256:5f46643a8f42899a84e80c38838135d7038e7718333ce61396994f887b09a59b", size = 1068612 },
+]
+
+[[package]]
+name = "openai-codex-app-server-sdk"
+version = "0.116.0a1"
+source = { git = "https://github.com/openai/codex.git?subdirectory=sdk%2Fpython#5e6cbbadf79671b7ff8e592ca4aad05f8d22a499" }
+dependencies = [
+    { name = "pydantic" },
 ]
 
 [[package]]

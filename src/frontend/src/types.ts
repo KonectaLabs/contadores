@@ -249,6 +249,18 @@ export interface WorkstationMediaAsset {
   created_at: string;
 }
 
+export interface WorkstationProfessionalPhotoVersion {
+  version: string;
+  image_path: string;
+  image_url: string;
+  metadata_path: string | null;
+  operation: string | null;
+  created_at: string | null;
+  source_image_paths: string[];
+  previous_version_path: string | null;
+  user_edit_prompt: string | null;
+}
+
 export interface WorkstationClientSummary {
   id: string;
   lead_id: string;
@@ -271,6 +283,7 @@ export interface WorkstationClientDetailResponse {
   notes: string;
   messages: MessageItem[];
   media: WorkstationMediaAsset[];
+  professional_photos: WorkstationProfessionalPhotoVersion[];
 }
 
 export interface WorkstationCopyAllResponse {
