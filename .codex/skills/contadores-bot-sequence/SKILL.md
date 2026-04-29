@@ -42,7 +42,8 @@ follow-up. It is only queued by a manual operator action and pauses automation
 for that lead.
 
 Bulk CRM actions must never preselect `Manual ping`. The operator must
-explicitly choose that template before it can be queued.
+explicitly choose and confirm that template before it can be queued. Bulk
+Manual ping requests must include backend confirmation and batch audit metadata.
 
 Closed leads cannot receive outbound WhatsApp messages. Reopen the lead first,
 then send the message or template.

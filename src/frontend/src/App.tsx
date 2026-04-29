@@ -183,6 +183,7 @@ export function App() {
   const [showBulkSendModal, setShowBulkSendModal] = useState(false);
   const [sendKind, setSendKind] = useState<SendKind>("custom");
   const [bulkSendKind, setBulkSendKind] = useState<BulkSendKind>("custom");
+  const [bulkManualPingConfirmed, setBulkManualPingConfirmed] = useState(false);
   const [manualText, setManualText] = useState("");
   const [manualFiles, setManualFiles] = useState<File[]>([]);
   const [bulkTagsDraft, setBulkTagsDraft] = useState("");
@@ -799,6 +800,7 @@ export function App() {
         body: JSON.stringify({
           lead_ids: leadIds,
           action: bulkSendKind,
+          manual_ping_confirmed: bulkSendKind === "send-manual-ping" ? bulkManualPingConfirmed : false,
           text: bulkSendKind === "custom" ? manualText.trim() : null,
           tags: bulkSendKind === "set-tags"
             ? bulkTagsDraft.split(",").map((tag) => tag.trim()).filter(Boolean)
@@ -1234,6 +1236,7 @@ export function App() {
                 disabled={!selectedLeadIds.length || Boolean(actionBusy)}
                 onClick={() => {
                   setBulkSendKind("custom");
+                  setBulkManualPingConfirmed(false);
                   setShowBulkSendModal(true);
                 }}
               >
@@ -1367,8 +1370,13 @@ export function App() {
           selectedCount={selectedLeadIds.length}
           customBlockedCount={bulkCustomBlockedCount}
           closedCount={bulkClosedCount}
+          manualPingConfirmed={bulkManualPingConfirmed}
           busy={actionBusy === "bulk-send-modal"}
-          onKindChange={setBulkSendKind}
+          onKindChange={(nextKind) => {
+            setBulkSendKind(nextKind);
+            setBulkManualPingConfirmed(false);
+          }}
+          onManualPingConfirmedChange={setBulkManualPingConfirmed}
           onTextChange={setManualText}
           onTagsTextChange={setBulkTagsDraft}
           onClose={() => setShowBulkSendModal(false)}
@@ -3164,8 +3172,10 @@ function BulkSendModal({
   selectedCount,
   customBlockedCount,
   closedCount,
+  manualPingConfirmed,
   busy,
   onKindChange,
+  onManualPingConfirmedChange,
   onTextChange,
   onTagsTextChange,
   onClose,
@@ -3178,8 +3188,10 @@ function BulkSendModal({
   selectedCount: number;
   customBlockedCount: number;
   closedCount: number;
+  manualPingConfirmed: boolean;
   busy: boolean;
   onKindChange: (kind: BulkSendKind) => void;
+  onManualPingConfirmedChange: (confirmed: boolean) => void;
   onTextChange: (value: string) => void;
   onTagsTextChange: (value: string) => void;
   onClose: () => void;
@@ -3197,6 +3209,7 @@ function BulkSendModal({
   const tagValues = tagsText.split(",").map((tag) => tag.trim()).filter(Boolean);
   const customBlocked = customBlockedCount > 0;
   const closedBlocked = closedCount > 0 && kind !== "set-tags";
+  const manualPingNeedsConfirmation = kind === "send-manual-ping" && !manualPingConfirmed;
 
   return (
     <div className="ct-modal open" aria-hidden="false">
@@ -3264,10 +3277,19 @@ function BulkSendModal({
               placeholder="prioridad, whatsapp_funnel"
             />
           </label>
+
+          <label className="ct-modal-field ct-modal-check" hidden={kind !== "send-manual-ping"}>
+            <input
+              type="checkbox"
+              checked={manualPingConfirmed}
+              onChange={(event) => onManualPingConfirmedChange(event.target.checked)}
+            />
+            <span>I explicitly want to send Manual ping to every selected chat.</span>
+          </label>
         </div>
         <footer className="ct-modal-foot">
           <button type="button" className="ct-btn ct-btn-ghost" onClick={onClose}>Cancel</button>
-          <button type="submit" className="ct-btn ct-btn-primary" disabled={busy || !selectedCount || closedBlocked || (kind === "custom" && (customBlocked || !text.trim())) || (kind === "set-tags" && !tagValues.length)}>
+          <button type="submit" className="ct-btn ct-btn-primary" disabled={busy || !selectedCount || closedBlocked || manualPingNeedsConfirmation || (kind === "custom" && (customBlocked || !text.trim())) || (kind === "set-tags" && !tagValues.length)}>
             {busy ? "Applying..." : `Apply to ${selectedCount}`}
           </button>
         </footer>

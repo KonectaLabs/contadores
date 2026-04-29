@@ -683,6 +683,7 @@ def test_bulk_manual_ping_queues_selected_leads(monkeypatch, tmp_path) -> None:
             json={
                 "lead_ids": [first.id, second.id],
                 "action": "send-manual-ping",
+                "manual_ping_confirmed": True,
             },
         )
         pending_response = client.get("/api/contadores/messages/pending-delivery")
@@ -699,6 +700,29 @@ def test_bulk_manual_ping_queues_selected_leads(monkeypatch, tmp_path) -> None:
     assert [item["lead_id"] for item in messages] == [first.id, second.id]
     assert {item["sequence_step"] for item in messages} == {"manual_ping_template"}
     assert {item["whatsapp_template_name"] for item in messages} == {"contadores_manual_ping_es_v1"}
+
+
+def test_bulk_manual_ping_requires_explicit_confirmation(monkeypatch, tmp_path) -> None:
+    """Bulk Manual ping should not run from a default, stale modal, or ambiguous script."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    lead = ContadoresLead.upsert(
+        external_lead_id="bulk-ping-unconfirmed",
+        phone="+5491888888803",
+        full_name="Bulk Unconfirmed",
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/contadores/leads/bulk-action",
+            json={
+                "lead_ids": [lead.id],
+                "action": "send-manual-ping",
+            },
+        )
+
+    assert response.status_code == 400
+    assert "explicit confirmation" in response.json()["detail"]
+    assert ContadoresMessage.list_by_lead(lead.id) == []
 
 
 def test_bulk_custom_message_pauses_selected_leads(monkeypatch, tmp_path) -> None:

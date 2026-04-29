@@ -1489,6 +1489,7 @@ class BulkContadoresActionCommand(BaseModel):
     action: str = Field(min_length=1)
     text: str | None = None
     tags: list[str] = Field(default_factory=list)
+    manual_ping_confirmed: bool = False
 
 
 class ContadoresQuickActionResponse(BaseModel):
@@ -2243,7 +2244,13 @@ async def run_contadores_bulk_action(
         clean_tags = normalize_contadores_tags(command_tags)
         if not clean_tags:
             raise HTTPException(status_code=400, detail="At least one tag is required")
+    if normalized_action == "send-manual-ping" and not command.manual_ping_confirmed:
+        raise HTTPException(
+            status_code=400,
+            detail="Bulk Manual ping requires explicit confirmation.",
+        )
 
+    bulk_action_id = uuid.uuid4().hex[:12]
     results: list[ContadoresBulkActionItem] = []
     queued_message_ids: list[int] = []
 
@@ -2294,6 +2301,19 @@ async def run_contadores_bulk_action(
 
         item_message_ids = [row.id or 0 for row in queued_rows]
         queued_message_ids.extend(item_message_ids)
+        if normalized_action == "send-manual-ping":
+            ContadoresEvent.add(
+                lead_id=updated.id,
+                event_type="bulk_manual_ping_confirmed",
+                actor="operator",
+                summary="Confirmed bulk Manual ping action applied.",
+                payload={
+                    "bulk_action_id": bulk_action_id,
+                    "action": normalized_action,
+                    "selected_count": len(clean_lead_ids),
+                    "queued_message_ids": item_message_ids,
+                },
+            )
         results.append(
             ContadoresBulkActionItem(
                 lead_id=lead_id,

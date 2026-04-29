@@ -3816,6 +3816,16 @@ body {
   gap: 6px;
 }
 
+#contadoresView .ct-modal-check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+#contadoresView .ct-modal-check input {
+  accent-color: var(--ct-accent);
+}
+
 #contadoresView .ct-send-option strong {
   color: var(--ct-ink);
   font: 600 13px/1.2 var(--font-sans);

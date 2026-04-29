@@ -129,6 +129,7 @@ Template manual de ping:
 - Texto default: `Hola, queria saber en que situacion quedamos y si queres que retomemos la conversacion`.
 - Se envia solo desde la accion manual del backoffice; no participa del tick automatico ni del follow-up de 24 horas.
 - Las acciones masivas del CRM no deben preseleccionar `Manual ping`; el operador tiene que elegir ese template explicitamente.
+- `Manual ping` en bulk requiere confirmacion explicita en el payload/UI y queda auditado como batch.
 - No se puede mandar ningun WhatsApp outbound a un lead `closed`; primero hay que reabrirlo.
 - Marcar un lead como `booked` no envia WhatsApp. El alias legacy `send-manual-booked` queda soportado, pero solo marca `booked`.
 
