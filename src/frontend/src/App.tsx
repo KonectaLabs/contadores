@@ -297,12 +297,14 @@ export function App() {
     setStrategyStats(strategyPayload.items ?? []);
 
     setSelectedLeadId((current) => {
-      if (current && leadsPayload.leads.some((lead) => lead.id === current)) {
+      const currentLeadIsVisible = Boolean(current && leadsPayload.leads.some((lead) => lead.id === current));
+      const currentLeadIsOpen = Boolean(current && detail?.lead.id === current);
+      if (currentLeadIsVisible || currentLeadIsOpen) {
         return current;
       }
       return leadsPayload.leads[0]?.id ?? null;
     });
-  }, [debouncedQuery, selectedFunnelId, stageFilter, strategyFilter.step, strategyFilter.strategyId, tagFilter]);
+  }, [debouncedQuery, detail?.lead.id, selectedFunnelId, stageFilter, strategyFilter.step, strategyFilter.strategyId, tagFilter]);
 
   const loadWorkstation = useCallback(async () => {
     const params = new URLSearchParams({ limit: "500" });
