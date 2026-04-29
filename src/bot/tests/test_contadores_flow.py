@@ -400,6 +400,59 @@ def test_dispatch_one_contadores_message_sends_video_media() -> None:
     ]
 
 
+def test_dispatch_one_contadores_message_sends_document_media() -> None:
+    """Manual file rows should use WhatsApp generic media dispatch."""
+    media_calls: list[dict[str, str | None]] = []
+
+    async def fake_send_media(**kwargs) -> DeliveryReceipt:
+        media_calls.append(kwargs)
+        return DeliveryReceipt(external_id="wa-document-1", delivered_text=kwargs.get("delivered_text"))
+
+    async def fake_send_message(to: str, text: str) -> DeliveryReceipt:
+        raise AssertionError(f"send_message should not be used for document media: {to} {text}")
+
+    item = PendingContadoresDeliveryMessage(
+        message_id=23,
+        lead_id="lead-3",
+        external_lead_id="sheet-3",
+        phone="+5491333333333",
+        normalized_phone="5491333333333",
+        full_name="Lead Three",
+        text="Te mando el presupuesto",
+        dispatch_after="2026-04-21T10:00:00Z",
+        created_at="2026-04-21T10:00:00Z",
+        sequence_step="manual",
+        media_type="document",
+        media_path="data/contadores/outbound_media/lead-3/presupuesto.pdf",
+        media_caption="Te mando el presupuesto",
+        media_mime_type="application/pdf",
+        media_filename="presupuesto.pdf",
+    )
+
+    receipt = asyncio.run(
+        dispatch_one_contadores_message(
+            item=item,
+            whatsapp_provider=SimpleNamespace(
+                send_media=fake_send_media,
+                send_message=fake_send_message,
+            ),
+        )
+    )
+
+    assert receipt.external_id == "wa-document-1"
+    assert media_calls == [
+        {
+            "to": "+5491333333333",
+            "media_type": "document",
+            "media_path": "data/contadores/outbound_media/lead-3/presupuesto.pdf",
+            "caption": "Te mando el presupuesto",
+            "filename": "presupuesto.pdf",
+            "mime_type": "application/pdf",
+            "delivered_text": "Te mando el presupuesto",
+        }
+    ]
+
+
 def test_send_contadores_pending_alerts_includes_direct_lead_link(monkeypatch) -> None:
     """Human-review alert emails should link straight to the lead detail view."""
     sent_calls: list[dict[str, str | None]] = []

@@ -175,6 +175,7 @@ export function App() {
   const [sendKind, setSendKind] = useState<SendKind>("custom");
   const [bulkSendKind, setBulkSendKind] = useState<BulkSendKind>("send-manual-ping");
   const [manualText, setManualText] = useState("");
+  const [manualFile, setManualFile] = useState<File | null>(null);
   const [bulkTagsDraft, setBulkTagsDraft] = useState("");
   const [selectedLeadIds, setSelectedLeadIds] = useState<string[]>([]);
   const [workstationList, setWorkstationList] = useState<WorkstationClientListResponse | null>(null);
@@ -731,13 +732,13 @@ export function App() {
     event.preventDefault();
     const leadId = selectedLead?.id ?? selectedLeadId;
     const text = manualText.trim();
-    if (!leadId || !text) {
+    if (!leadId || (!text && !manualFile)) {
       return;
     }
 
     setActionBusy("manual-dock");
     try {
-      await queueCustomManualMessage(leadId, text);
+      await queueCustomManualMessage(leadId, text, manualFile);
       await loadDashboard();
       await loadDetail(leadId);
     } catch (reason) {
@@ -747,12 +748,23 @@ export function App() {
     }
   }
 
-  async function queueCustomManualMessage(leadId: string, text: string) {
-    await apiFetch<QuickActionResponse>(`/api/contadores/leads/${leadId}/messages/manual`, {
-      method: "POST",
-      body: JSON.stringify({ text }),
-    });
+  async function queueCustomManualMessage(leadId: string, text: string, file: File | null = null) {
+    if (file) {
+      const form = new FormData();
+      form.append("text", text);
+      form.append("file", file);
+      await apiFetch<QuickActionResponse>(`/api/contadores/leads/${leadId}/messages/manual-media`, {
+        method: "POST",
+        body: form,
+      });
+    } else {
+      await apiFetch<QuickActionResponse>(`/api/contadores/leads/${leadId}/messages/manual`, {
+        method: "POST",
+        body: JSON.stringify({ text }),
+      });
+    }
     setManualText("");
+    setManualFile(null);
   }
 
   async function moveLeadToFunnel(targetFunnelId: string, targetStage: LeadStage) {
@@ -1194,7 +1206,9 @@ export function App() {
             <ManualDock
               disabled={!selectedLead || Boolean(actionBusy)}
               value={manualText}
+              file={manualFile}
               onChange={setManualText}
+              onFileChange={setManualFile}
               onSubmit={submitManualDock}
             />
           </section>
@@ -2399,16 +2413,90 @@ function LeadStrategies({ messages, loading, hasLead }: { messages: MessageItem[
 function ManualDock({
   disabled,
   value,
+  file,
   onChange,
+  onFileChange,
   onSubmit,
 }: {
   disabled: boolean;
   value: string;
+  file: File | null;
   onChange: (value: string) => void;
+  onFileChange: (file: File | null) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
+  const [dragActive, setDragActive] = useState(false);
+  const hasContent = Boolean(value.trim() || file);
+
+  function firstFile(files: FileList | File[]): File | null {
+    for (const item of Array.from(files)) {
+      if (item.size > 0) {
+        return item;
+      }
+    }
+    return null;
+  }
+
+  function fileFromClipboard(event: ClipboardEvent<HTMLElement>): File | null {
+    const directFile = firstFile(event.clipboardData.files);
+    if (directFile) {
+      return directFile;
+    }
+    for (const item of Array.from(event.clipboardData.items)) {
+      const pastedFile = item.kind === "file" ? item.getAsFile() : null;
+      if (pastedFile && pastedFile.size > 0) {
+        return pastedFile;
+      }
+    }
+    return null;
+  }
+
+  function handleDragOver(event: DragEvent<HTMLFormElement>) {
+    if (!Array.from(event.dataTransfer.types).includes("Files")) {
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = disabled ? "none" : "copy";
+    setDragActive(true);
+  }
+
+  function handleDragLeave(event: DragEvent<HTMLFormElement>) {
+    const nextTarget = event.relatedTarget;
+    if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) {
+      return;
+    }
+    setDragActive(false);
+  }
+
+  function handleDrop(event: DragEvent<HTMLFormElement>) {
+    if (!Array.from(event.dataTransfer.types).includes("Files")) {
+      return;
+    }
+    event.preventDefault();
+    setDragActive(false);
+    if (!disabled) {
+      onFileChange(firstFile(event.dataTransfer.files));
+    }
+  }
+
+  function handlePaste(event: ClipboardEvent<HTMLFormElement>) {
+    const pastedFile = fileFromClipboard(event);
+    if (!pastedFile || disabled) {
+      return;
+    }
+    event.preventDefault();
+    onFileChange(pastedFile);
+  }
+
   return (
-    <form className="ct-manual" onSubmit={onSubmit}>
+    <form
+      className={`ct-manual ${dragActive ? "drag-active" : ""}`}
+      onSubmit={onSubmit}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      onPaste={handlePaste}
+    >
       <div className="ct-manual-head">
         <span className="ct-manual-lock">Manual outbound</span>
         <p className="ct-manual-hint">Sending a custom message pauses automation for this lead.</p>
@@ -2418,10 +2506,32 @@ function ManualDock({
         onChange={(event) => onChange(event.target.value)}
         disabled={disabled}
         rows={3}
-        placeholder="Write the WhatsApp message to send..."
+        placeholder="Write the WhatsApp message to send, or drop/paste a file..."
       />
+      <div className="ct-manual-file-row">
+        <label className="ct-manual-file-picker">
+          <UploadSimple size={14} weight="bold" />
+          <span>{file ? "Replace file" : "Attach file"}</span>
+          <input
+            type="file"
+            disabled={disabled}
+            onChange={(event) => onFileChange(event.target.files?.[0] ?? null)}
+          />
+        </label>
+        {file ? (
+          <div className="ct-manual-file-chip">
+            <span>{file.name}</span>
+            <strong>{formatBytes(file.size)}</strong>
+            <button type="button" onClick={() => onFileChange(null)} disabled={disabled} aria-label={`Remove ${file.name}`}>
+              <Trash size={13} weight="bold" />
+            </button>
+          </div>
+        ) : (
+          <p className="ct-manual-hint">Drop a file here or paste an image/file from clipboard.</p>
+        )}
+      </div>
       <div className="ct-manual-actions">
-        <button type="submit" className="ct-btn ct-btn-primary" disabled={disabled || !value.trim()}>Send and pause automation</button>
+        <button type="submit" className="ct-btn ct-btn-primary" disabled={disabled || !hasContent}>Send and pause automation</button>
       </div>
     </form>
   );

@@ -1633,6 +1633,57 @@ class WhatsAppProvider:
             delivered_text=(delivered_text or "").strip() or None,
         )
 
+    async def send_media(
+        self,
+        *,
+        to: str,
+        media_type: str,
+        media_path: str,
+        caption: str | None = None,
+        filename: str | None = None,
+        mime_type: str | None = None,
+        delivered_text: str | None = None,
+    ) -> DeliveryReceipt:
+        """Send one WhatsApp media file from a local path visible to the bot."""
+        if not self._wa:
+            raise RuntimeError("WhatsApp provider is not configured")
+
+        recipient = self._normalize_outbound_recipient(to)
+        resolved_path = self._resolve_local_media_path(media_path)
+        normalized_type = (media_type or "").strip().lower()
+        clean_caption = (caption or "").strip() or None
+        clean_mime_type = (mime_type or "").strip() or None
+
+        if normalized_type == "image":
+            sent_msg = await self._wa.send_image(
+                to=recipient,
+                image=resolved_path,
+                caption=clean_caption,
+                mime_type=clean_mime_type,
+            )
+        elif normalized_type == "audio":
+            sent_msg = await self._wa.send_audio(
+                to=recipient,
+                audio=resolved_path,
+                mime_type=clean_mime_type,
+            )
+        else:
+            sent_msg = await self._wa.send_document(
+                to=recipient,
+                document=resolved_path,
+                filename=(filename or resolved_path.name).strip() or resolved_path.name,
+                caption=clean_caption,
+                mime_type=clean_mime_type,
+            )
+
+        outbound_id = str(getattr(sent_msg, "id", sent_msg)).strip()
+        if not outbound_id:
+            raise RuntimeError("WhatsApp media send returned empty message id")
+        return DeliveryReceipt(
+            external_id=outbound_id,
+            delivered_text=(delivered_text or "").strip() or None,
+        )
+
     def _resolve_local_media_path(self, media_path: str) -> Path:
         """Resolve a repo/data media path from Docker or local bot cwd."""
         raw_path = (media_path or "").strip()

@@ -105,6 +105,8 @@ class PendingContadoresDeliveryMessage(BaseModel):
     media_type: str | None = None
     media_path: str | None = None
     media_caption: str | None = None
+    media_mime_type: str | None = None
+    media_filename: str | None = None
     contact_has_inbound: bool = False
     whatsapp_template_name: str | None = None
     whatsapp_template_language: str | None = None
@@ -688,11 +690,22 @@ async def dispatch_one_contadores_message(
 ) -> DeliveryReceipt:
     """Dispatch one Contadores WhatsApp outbound message."""
     to_phone = item.phone or item.normalized_phone
-    if (item.media_type or "").strip().lower() == "video":
+    media_type = (item.media_type or "").strip().lower()
+    if media_type == "video":
         return await whatsapp_provider.send_video(
             to=to_phone,
             video_path=item.media_path or "",
             caption=item.media_caption,
+            delivered_text=item.text,
+        )
+    if media_type in {"image", "audio", "document"}:
+        return await whatsapp_provider.send_media(
+            to=to_phone,
+            media_type=media_type,
+            media_path=item.media_path or "",
+            caption=item.media_caption,
+            filename=item.media_filename,
+            mime_type=item.media_mime_type,
             delivered_text=item.text,
         )
 

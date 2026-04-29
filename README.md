@@ -168,10 +168,17 @@ Vista Manual del backoffice:
 - `Manual` muestra todos los leads manuales.
 - `Needs answer` aparece como un bloque del pipeline entre `Manual` y `Closed`.
 - Al marcarlos como respondidos, salen de `Needs answer` y siguen quedando en `Manual`.
+- `Manual outbound` permite enviar texto, media o archivos. Los adjuntos se
+  pueden seleccionar, arrastrar sobre el composer, o pegar desde el
+  portapapeles; enviar algo desde ahi pausa la automatizacion del lead.
 
 Media en WhatsApp:
 
-- La media que envian los leads no se descarga ni se muestra en el backoffice.
+- La media que envian los leads se descarga y se muestra en el backoffice
+  cuando el proveedor la entrega.
+- La media o archivos que envia el operador desde `Manual outbound` se guardan
+  en `data/contadores/outbound_media/{lead_id}/`, se muestran en el chat y el
+  bot los despacha por WhatsApp como imagen, video, audio o documento.
 - Si un lead envia solo media sin texto, se guarda un placeholder textual como `[image]` o `[video]`.
 - Los videos salientes de estrategia usan el `media_path` configurado, por ejemplo `data/contadores/videos/loom_60_seconds_captions.mp4`.
 - El frontend sirve esos videos desde una URL estable basada en `media_path`, asi el mismo archivo se reutiliza para todos los leads que recibieron ese video.

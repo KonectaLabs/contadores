@@ -6,13 +6,14 @@ import base64
 import json
 import mimetypes
 import re
+import uuid
 import unicodedata
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
@@ -701,6 +702,46 @@ def resolve_message_media_file(media_path: str | None) -> Path | None:
     return None
 
 
+def safe_message_media_filename(filename: str | None) -> str:
+    """Return a readable upload filename that cannot escape the media folder."""
+    raw_name = Path(filename or "file").name
+    stem = re.sub(r"[^a-zA-Z0-9._-]+", "-", Path(raw_name).stem).strip(".-").lower()
+    suffix = "".join(ch for ch in Path(raw_name).suffix.lower() if ch.isalnum() or ch == ".")[:12]
+    return f"{stem or 'file'}{suffix}"
+
+
+def classify_message_media_type(content_type: str | None, filename: str) -> str:
+    """Map an uploaded file to the WhatsApp media family used by the bot."""
+    media_type = (content_type or mimetypes.guess_type(filename)[0] or "").lower()
+    if media_type.startswith("image/"):
+        return "image"
+    if media_type.startswith("video/"):
+        return "video"
+    if media_type.startswith("audio/"):
+        return "audio"
+    return "document"
+
+
+async def save_manual_outbound_media_async(*, lead: ContadoresLead, upload: UploadFile) -> tuple[str, str, str, str | None]:
+    """Persist one operator-uploaded outbound media file under the shared data volume."""
+    contents = await upload.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+
+    original_filename = Path(upload.filename or "file").name
+    safe_name = safe_message_media_filename(original_filename)
+    stored_filename = f"{uuid.uuid4().hex[:8]}-{safe_name}"
+    target_dir = DATA_DIR / "contadores" / "outbound_media" / lead.id
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_path = target_dir / stored_filename
+    target_path.write_bytes(contents)
+
+    content_type = upload.content_type or mimetypes.guess_type(safe_name)[0]
+    media_type = classify_message_media_type(content_type, safe_name)
+    relative_path = str(Path("data") / "contadores" / "outbound_media" / lead.id / stored_filename)
+    return relative_path, media_type, original_filename, content_type
+
+
 def build_event_response(event: ContadoresEvent) -> "ContadoresEventResponse":
     """Serialize one automation event."""
     return ContadoresEventResponse(
@@ -724,6 +765,8 @@ def enqueue_lead_outbound(
     media_type: str | None = None,
     media_path: str | None = None,
     media_caption: str | None = None,
+    media_mime_type: str | None = None,
+    media_filename: str | None = None,
 ) -> ContadoresMessage:
     """Create one pending outbound message plus event."""
     row = ContadoresMessage.add(
@@ -740,6 +783,8 @@ def enqueue_lead_outbound(
         media_type=media_type,
         media_path=media_path,
         media_caption=media_caption,
+        media_mime_type=media_mime_type,
+        media_filename=media_filename,
     )
     ContadoresEvent.add(
         lead_id=lead.id,
@@ -948,12 +993,31 @@ def queue_manual_action_event(lead_id: str, action: str, actor: str = "operator"
     )
 
 
-def queue_manual_message_for_lead(*, lead: ContadoresLead, text: str) -> list[ContadoresMessage]:
+def queue_manual_message_for_lead(
+    *,
+    lead: ContadoresLead,
+    text: str,
+    media_path: str | None = None,
+    media_type: str | None = None,
+    media_filename: str | None = None,
+    media_mime_type: str | None = None,
+) -> list[ContadoresMessage]:
     """Queue one custom operator message and pause automation for the lead."""
+    clean_text = text.strip()
+    clean_media_type = (media_type or "").strip() or None
+    display_text = clean_text
+    if clean_media_type and not display_text:
+        display_text = f"[{clean_media_type}] {media_filename or 'attachment'}"
+
     row = enqueue_lead_outbound(
         lead=lead,
-        text=text.strip(),
+        text=display_text,
         sequence_step="manual",
+        media_type=clean_media_type,
+        media_path=media_path,
+        media_caption=clean_text if clean_media_type and clean_text else None,
+        media_mime_type=media_mime_type,
+        media_filename=media_filename,
     )
     ContadoresLead.update_flow_state(
         lead.id,
@@ -966,7 +1030,12 @@ def queue_manual_message_for_lead(*, lead: ContadoresLead, text: str) -> list[Co
         event_type="manual_send_queued",
         actor="operator",
         summary="Manual outbound message queued. Automation paused.",
-        payload={"message_id": row.id},
+        payload={
+            "message_id": row.id,
+            "media_type": clean_media_type,
+            "media_path": media_path,
+            "media_filename": media_filename,
+        },
     )
     return [row]
 
@@ -1418,6 +1487,8 @@ class PendingContadoresDeliveryMessage(BaseModel):
     media_type: str | None = None
     media_path: str | None = None
     media_caption: str | None = None
+    media_mime_type: str | None = None
+    media_filename: str | None = None
     contact_has_inbound: bool = False
     whatsapp_template_name: str | None = None
     whatsapp_template_language: str | None = None
@@ -1998,6 +2069,37 @@ async def create_contadores_manual_message(
     )
 
 
+@contadores_router.post("/leads/{lead_id}/messages/manual-media", response_model=ContadoresQuickActionResponse)
+async def create_contadores_manual_media_message(
+    lead_id: str,
+    text: str = Form(default=""),
+    file: UploadFile = File(...),
+) -> ContadoresQuickActionResponse:
+    """Queue one manual outbound WhatsApp media/file message."""
+    lead = ContadoresLead.get_by_id(lead_id)
+    if lead is None:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    media_path, media_type, media_filename, media_mime_type = await save_manual_outbound_media_async(
+        lead=lead,
+        upload=file,
+    )
+    config = get_effective_funnel_config(lead.funnel_id)
+    queued_rows = queue_manual_message_for_lead(
+        lead=lead,
+        text=text,
+        media_path=media_path,
+        media_type=media_type,
+        media_filename=media_filename,
+        media_mime_type=media_mime_type,
+    )
+    updated = ContadoresLead.get_by_id(lead.id) or lead
+    return ContadoresQuickActionResponse(
+        lead=build_lead_summary(updated, config=config),
+        queued_message_ids=[row.id or 0 for row in queued_rows],
+    )
+
+
 @contadores_router.put("/leads/{lead_id}/tags", response_model=ContadoresLeadSummary)
 async def update_contadores_lead_tags(
     lead_id: str,
@@ -2219,6 +2321,8 @@ async def list_pending_contadores_delivery_messages(
                 media_type=row.media_type,
                 media_path=row.media_path,
                 media_caption=row.media_caption,
+                media_mime_type=row.media_mime_type,
+                media_filename=row.media_filename,
                 contact_has_inbound=ContadoresMessage.has_inbound_for_lead(lead.id),
                 whatsapp_template_name=template_name,
                 whatsapp_template_language=funnel.template_language if template_name else None,

@@ -312,6 +312,8 @@ def test_contadores_pending_delivery_exposes_new_opener_template_without_params(
             "media_type": None,
             "media_path": None,
             "media_caption": None,
+            "media_mime_type": None,
+            "media_filename": None,
             "contact_has_inbound": False,
             "whatsapp_template_name": "contadores_intro_es_v2",
             "whatsapp_template_language": "es",
@@ -350,6 +352,42 @@ def test_manual_ping_action_queues_template_and_pauses_automation(monkeypatch, t
     lead_payload = detail_response.json()["lead"]
     assert lead_payload["stage"] == "needs_human"
     assert lead_payload["automation_paused"] is True
+
+
+def test_manual_outbound_can_queue_uploaded_document(monkeypatch, tmp_path) -> None:
+    """Manual outbound should persist an operator attachment for bot delivery."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    data_dir = tmp_path / "data"
+    monkeypatch.setattr(contadores_endpoints, "DATA_DIR", data_dir)
+    monkeypatch.setattr(database_module, "DATA_DIR", data_dir)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-manual-file",
+        phone="+5491888888877",
+        full_name="File Lead",
+    )
+
+    with TestClient(app) as client:
+        upload_response = client.post(
+            f"/api/contadores/leads/{lead.id}/messages/manual-media",
+            data={"text": "Te mando el presupuesto"},
+            files={"file": ("presupuesto.pdf", b"pdf-bytes", "application/pdf")},
+        )
+        pending_response = client.get("/api/contadores/messages/pending-delivery")
+        detail_response = client.get(f"/api/contadores/leads/{lead.id}")
+
+    assert upload_response.status_code == 200
+    assert pending_response.status_code == 200
+    messages = pending_response.json()["messages"]
+    assert len(messages) == 1
+    assert messages[0]["text"] == "Te mando el presupuesto"
+    assert messages[0]["media_type"] == "document"
+    assert messages[0]["media_filename"] == "presupuesto.pdf"
+    assert messages[0]["media_mime_type"] == "application/pdf"
+    assert messages[0]["media_path"].startswith(f"data/contadores/outbound_media/{lead.id}/")
+
+    media_file = data_dir / Path(messages[0]["media_path"]).relative_to("data")
+    assert media_file.read_bytes() == b"pdf-bytes"
+    assert detail_response.json()["messages"][0]["media_url"].startswith("/api/contadores/media/")
 
 
 def test_manual_booked_action_marks_booked_without_queueing_template(monkeypatch, tmp_path) -> None:

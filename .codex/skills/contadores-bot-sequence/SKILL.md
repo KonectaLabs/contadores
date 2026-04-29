@@ -62,6 +62,13 @@ The backoffice Manual stage shows every manual lead. The pipeline also has a
 `manual_reply_status` is `needs_reply`. Once an operator sends a reply or marks
 the lead answered, the lead leaves `Needs answer` but remains visible in Manual.
 
+Manual outbound can send text alone or text plus one operator-attached media
+file. Operators can select the file, drop it on the composer, or paste a
+clipboard image/file. Uploaded outbound files are stored under
+`data/contadores/outbound_media/{lead_id}/`, recorded on the queued
+`contadores_messages` row, shown in the CRM timeline, and dispatched by the bot
+as WhatsApp image, video, audio, or document media.
+
 ## Runtime rule
 
 - This flow runs from sheet-imported leads and Click-to-WhatsApp inbounds.
