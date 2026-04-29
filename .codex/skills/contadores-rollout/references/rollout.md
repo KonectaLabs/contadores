@@ -36,6 +36,10 @@ protected media endpoint for CRM review.
 
 ## Safe release sequence
 
+`ALWAYS_DEPLOY`: a product change is not finished at local build, local tests,
+or pushed code. It is finished only after the real server is updated and
+verified.
+
 1. Use `localhost` only to develop and validate the change.
 2. Merge or commit the code into `main`.
 3. Push `main`.
@@ -60,6 +64,8 @@ a deliberate SQLite concurrency plan.
 
 ## Important nuance
 
-For this repo, deployed-on-server is the default definition of done for product changes. A local-only run is just a development checkpoint.
+For this repo, deployed-on-server is the default definition of done for product
+changes. A local-only run is just a development checkpoint. If the user asks
+whether a product change is done, check and answer against the real server.
 
 `/api/runtime` should show readiness state after each restart.

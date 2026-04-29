@@ -242,6 +242,10 @@ concurrencia.
 
 ## Rollout recomendado
 
+`ALWAYS_DEPLOY`: un cambio de producto no esta terminado por compilar local,
+pasar tests o estar pusheado. Esta terminado cuando `main` fue deployado en el
+server real y se verifico ahi.
+
 Este repo se trabaja server-first: `localhost` sirve para desarrollar, verificar, mover git, pushear y deployar. Un cambio de producto se considera terminado cuando está en el server real, salvo que explícitamente se pida local-only.
 
 1. Trabajar y mergear directo a `main`.

@@ -37,9 +37,13 @@ can inspect images, videos, audio, documents, and stickers from the CRM.
 
 ## Branch And Deploy Rule
 
+- `ALWAYS_DEPLOY`: product changes are not done until they are committed on
+  `main`, pushed, deployed to the real server, and verified there.
 - The project is server-first by default.
 - Treat `localhost` only as the workbench for development, validation, git, push, and deploy.
 - When the user asks for a product change or asks whether it is done, assume the expected end state is deployed on the real server unless they explicitly say local-only.
+- If the user asks "quedo?", "esta listo?", or any equivalent status question,
+  answer against the deployed server state, not the local checkout.
 - `main` is the operational branch.
 - If something is meant to run on the server, it should be committed on `main`.
 - `docker-compose.yml` should read `.env`.
@@ -49,10 +53,14 @@ can inspect images, videos, audio, documents, and stickers from the CRM.
 
 ## Rollout Rule
 
-1. Deploy the code to the server.
-2. Verify `/api/runtime` readiness.
-3. Verify `/api/funnels`.
-4. Verify sheet ingestion and WhatsApp flow on the real server.
+`ALWAYS_DEPLOY` sequence:
+
+1. Commit the product change on `main`.
+2. Push `main`.
+3. Deploy the code to the real server.
+4. Verify `/api/runtime` readiness on the server.
+5. Verify `/api/funnels` on the server.
+6. Verify sheet ingestion and WhatsApp flow on the real server when the change touches those surfaces.
 
 For a new niche funnel, create/edit the funnel definition first, deploy code,
 then verify that funnel against its configured sheet and WhatsApp routing.

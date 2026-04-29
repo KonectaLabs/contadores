@@ -131,6 +131,8 @@ Treat the spreadsheet as the source of truth for:
 
 Operational rule:
 
+- `ALWAYS_DEPLOY`: product work is complete only after the change is committed
+  on `main`, pushed, deployed to the real server, and verified there.
 - Product work is server-first by default; `localhost` is only for development, validation, git, push, and deploy.
 - Enabled campaign funnels poll their configured sheet on a timer.
 - New niche funnels should define their own sheet source in the funnel config.
