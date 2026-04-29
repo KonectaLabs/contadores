@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import mimetypes
+import os
 import re
 import uuid
 import unicodedata
@@ -51,6 +52,11 @@ OPENER_FOLLOWUP_SEQUENCE_STEP = "opener_followup_24h"
 OPENER_FOLLOWUP_RETRY_SEQUENCE_STEP = "opener_followup_24h_template_retry_20260424"
 MANUAL_PING_SEQUENCE_STEP = "manual_ping_template"
 OPENER_FOLLOWUP_DELAY = timedelta(hours=24)
+CONTADORES_DELIVERY_MAX_ATTEMPTS = max(1, int(os.getenv("CONTADORES_DELIVERY_MAX_ATTEMPTS", "3")))
+CONTADORES_DELIVERY_RETRY_DELAY_SECONDS = max(
+    0,
+    int(os.getenv("CONTADORES_DELIVERY_RETRY_DELAY_SECONDS", "60")),
+)
 ABOGADOS_FUNNEL_ID = "abogados"
 ABOGADOS_PREFILLED_MESSAGE_ROUTE = "abogados_prefilled_proposal"
 ABOGADOS_PREFILLED_WHATSAPP_TEXTS = {
@@ -2441,6 +2447,34 @@ async def set_contadores_message_delivery_by_external_id(
     row = matches[0]
     if row.id is None:
         raise HTTPException(status_code=404, detail="Outbound Contadores message not found for external_id")
+    if command.status.strip().lower() == MessageDeliveryStatus.FAILED.value:
+        updated = ContadoresMessage.record_delivery_failure(
+            message_id=row.id,
+            error="whatsapp_provider_status_failed",
+            max_attempts=CONTADORES_DELIVERY_MAX_ATTEMPTS,
+            retry_delay_seconds=CONTADORES_DELIVERY_RETRY_DELAY_SECONDS,
+        )
+        if updated is None:
+            raise HTTPException(status_code=404, detail="Outbound Contadores message not found for external_id")
+        ContadoresEvent.add(
+            lead_id=updated.lead_id,
+            event_type="outbound_delivery_failed",
+            actor="system",
+            summary=(
+                f"WhatsApp provider reported failure for message #{updated.id}. "
+                f"Attempt {updated.delivery_attempts}/{CONTADORES_DELIVERY_MAX_ATTEMPTS}."
+            ),
+            payload={
+                "message_id": updated.id,
+                "external_id": command.external_id,
+                "delivery_status": updated.delivery_status.value,
+                "delivery_attempts": updated.delivery_attempts,
+                "max_attempts": CONTADORES_DELIVERY_MAX_ATTEMPTS,
+                "retry_delay_seconds": CONTADORES_DELIVERY_RETRY_DELAY_SECONDS,
+                "error": updated.last_delivery_error,
+            },
+        )
+        return build_message_response(updated)
     updated = ContadoresMessage.update_delivery_status(
         message_id=row.id,
         delivery_status=command.status,

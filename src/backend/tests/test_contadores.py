@@ -244,6 +244,50 @@ def test_contadores_delivery_failure_retries_then_surfaces_error(monkeypatch, tm
     assert detail.json()["messages"][0]["last_delivery_error"] == "invalid recipient phone"
 
 
+def test_contadores_provider_failed_status_requeues_before_final_failure(monkeypatch, tmp_path) -> None:
+    """Meta failed webhooks should use the same retry budget as send exceptions."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    ContadoresConfig.update(enabled=True)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-provider-failed",
+        phone="+5491111111114",
+        full_name="Provider Failed Lead",
+    )
+    message = ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=True,
+        text="Hola",
+        external_id="wamid.failed.1",
+        delivery_status=MessageDeliveryStatus.SENT,
+        sequence_step="opener",
+    )
+
+    with TestClient(app) as client:
+        first = client.put(
+            "/api/contadores/messages/delivery/by-external-id",
+            json={"external_id": message.external_id, "status": "failed"},
+        )
+        second = client.put(
+            "/api/contadores/messages/delivery/by-external-id",
+            json={"external_id": message.external_id, "status": "failed"},
+        )
+        third = client.put(
+            "/api/contadores/messages/delivery/by-external-id",
+            json={"external_id": message.external_id, "status": "failed"},
+        )
+
+    assert first.status_code == 200
+    assert first.json()["delivery_status"] == "undelivered"
+    assert first.json()["delivery_attempts"] == 1
+    assert second.status_code == 200
+    assert second.json()["delivery_status"] == "undelivered"
+    assert second.json()["delivery_attempts"] == 2
+    assert third.status_code == 200
+    assert third.json()["delivery_status"] == "failed"
+    assert third.json()["delivery_attempts"] == 3
+    assert third.json()["last_delivery_error"] == "whatsapp_provider_status_failed"
+
+
 def test_contadores_zero_weight_strategy_is_not_auto_assigned() -> None:
     """A configured zero-weight strategy should stay available without receiving automatic traffic."""
     chosen_ids = {
