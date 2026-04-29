@@ -182,7 +182,7 @@ export function App() {
   const [showSendModal, setShowSendModal] = useState(false);
   const [showBulkSendModal, setShowBulkSendModal] = useState(false);
   const [sendKind, setSendKind] = useState<SendKind>("custom");
-  const [bulkSendKind, setBulkSendKind] = useState<BulkSendKind>("send-manual-ping");
+  const [bulkSendKind, setBulkSendKind] = useState<BulkSendKind>("custom");
   const [manualText, setManualText] = useState("");
   const [manualFiles, setManualFiles] = useState<File[]>([]);
   const [bulkTagsDraft, setBulkTagsDraft] = useState("");
@@ -1222,7 +1222,7 @@ export function App() {
                 className="ct-btn ct-btn-ghost"
                 disabled={!selectedLeadIds.length || Boolean(actionBusy)}
                 onClick={() => {
-                  setBulkSendKind("send-manual-ping");
+                  setBulkSendKind("custom");
                   setShowBulkSendModal(true);
                 }}
               >

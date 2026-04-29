@@ -41,6 +41,9 @@ This is not part of the automatic sequence and is not the 24-hour opener
 follow-up. It is only queued by a manual operator action and pauses automation
 for that lead.
 
+Bulk CRM actions must never preselect `Manual ping`. The operator must
+explicitly choose that template before it can be queued.
+
 Marking a lead as `booked` must not send any WhatsApp message. The legacy
 `send-manual-booked` action name is kept as a compatibility alias, but it only
 marks the lead as `booked` and pauses automation.
