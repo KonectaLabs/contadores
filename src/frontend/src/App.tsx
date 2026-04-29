@@ -1440,6 +1440,12 @@ function WorkstationView({
     setProfessionalPhotoModalOpen(true);
   }
 
+  function closeProfessionalPhotoModal() {
+    setProfessionalPhotoModalOpen(false);
+    onProfessionalPhotoMediaIdsChange([]);
+    onProfessionalPhotoContextChange("");
+  }
+
   function startMediaEdit(asset: WorkstationMediaAsset) {
     setEditingMediaId(asset.id);
     setMediaEditTitle(asset.title || asset.original_filename);
@@ -1517,7 +1523,7 @@ function WorkstationView({
     event.preventDefault();
     const started = await onCreateProfessionalPhoto(selectedProfessionalPhotoMediaIds, professionalPhotoContext);
     if (started) {
-      setProfessionalPhotoModalOpen(false);
+      closeProfessionalPhotoModal();
     }
   }
 
@@ -1845,7 +1851,7 @@ function WorkstationView({
           busy={actionBusy === "professional-photo-start"}
           onToggleMedia={onToggleProfessionalPhotoMedia}
           onContextChange={onProfessionalPhotoContextChange}
-          onClose={() => setProfessionalPhotoModalOpen(false)}
+          onClose={closeProfessionalPhotoModal}
           onSubmit={submitProfessionalPhotoModal}
         />
       ) : null}

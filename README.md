@@ -208,6 +208,11 @@ desde fotos fuente, y export ZIP. La media se puede subir con el selector de
 archivo, arrastrando un archivo sobre el panel `Media`, o pegando una imagen o
 archivo desde el portapapeles mientras ese panel esta activo.
 
+La foto profesional se dispara desde el boton `Actions` del cliente. La accion
+`Hacer foto profesional` abre un modal para seleccionar imagenes de `media/`,
+arranca un job async en el backend y la UI hace polling hasta mostrar el
+resultado o el error.
+
 La carpeta canonica por cliente queda en:
 
 ```text

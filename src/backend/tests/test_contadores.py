@@ -6,6 +6,7 @@ from io import BytesIO
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
+import time
 import zipfile
 
 from fastapi.testclient import TestClient
@@ -2061,3 +2062,58 @@ def test_workstation_professional_photo_versions_use_codex_context(monkeypatch, 
     assert calls[0]["local_images"]
     assert "client-professional-photo" in calls[0]["prompt"]
     assert "client-professional-photo-edit" in calls[1]["prompt"]
+
+
+def test_workstation_professional_photo_job_can_be_polled(monkeypatch, tmp_path) -> None:
+    """Async professional photo jobs should expose status until the result is ready."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    data_dir = tmp_path / "data"
+    monkeypatch.setattr(database_module, "DATA_DIR", data_dir)
+    workstation_endpoints.professional_photo_jobs.clear()
+
+    def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
+        output_marker = "Required output path:\n"
+        output_path = prompt.split(output_marker, 1)[1].splitlines()[0].strip()
+        Path(output_path).write_bytes(b"generated-job-jpg")
+        return SimpleNamespace(final_response=f"created {output_path}", items=[])
+
+    monkeypatch.setattr(workstation_endpoints, "run_codex_with_context", fake_run_codex_with_context)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-workstation-photo-job",
+        phone="+5491777777777",
+        full_name="Cliente Job Foto",
+    )
+
+    with TestClient(app) as client:
+        created = client.post(f"/api/workstation/clients/from-lead/{lead.id}").json()
+        client_id = created["client"]["id"]
+        media_response = client.post(
+            f"/api/workstation/clients/{client_id}/media",
+            data={"title": "Foto fuente"},
+            files={"file": ("cliente.jpg", b"source-jpg", "image/jpeg")},
+        )
+        media_id = media_response.json()["id"]
+        start_response = client.post(
+            f"/api/workstation/clients/{client_id}/professional-photo/jobs",
+            json={"media_asset_ids": [media_id], "context": "contador premium"},
+        )
+        job_id = start_response.json()["job_id"]
+
+        status_response = start_response
+        for _ in range(20):
+            status_response = client.get(f"/api/workstation/clients/{client_id}/professional-photo/jobs/{job_id}")
+            if status_response.json()["status"] == "completed":
+                break
+            time.sleep(0.05)
+
+        detail_response = client.get(f"/api/workstation/clients/{client_id}")
+
+    workstation_endpoints.professional_photo_jobs.clear()
+
+    assert start_response.status_code == 202
+    assert status_response.status_code == 200
+    status_payload = status_response.json()
+    assert status_payload["status"] == "completed"
+    assert status_payload["result"]["version"] == "v001"
+    assert status_payload["result"]["image_path"].endswith("professional-photo/v001/professional-photo.jpg")
+    assert [photo["version"] for photo in detail_response.json()["professional_photos"]] == ["v001"]

@@ -26,6 +26,10 @@ Read these files first:
 The Workstation UI can also export the same folder as a ZIP, but Codex should
 prefer reading the current folder directly when running inside this repo.
 
+Professional portraits are started from the Workstation client's `Actions`
+button. The UI opens a media-selection modal, starts an async backend job, then
+polls the job until the generated version appears under `professional-photo/`.
+
 ## Operating Rules
 
 - Do not call GPT Image or other paid image APIs unless the user explicitly asks.

@@ -2011,9 +2011,8 @@ body {
 }
 
 #contadoresView .ct-topbar {
-  position: sticky;
-  top: 0;
-  z-index: 20;
+  position: relative;
+  z-index: 10;
   display: grid;
   grid-template-columns: auto auto 1fr auto;
   align-items: center;
@@ -3852,9 +3851,7 @@ body {
 }
 
 #contadoresView .workstation-head {
-  position: sticky;
-  top: 0;
-  z-index: 5;
+  position: static;
   background: var(--ct-surface);
 }
 
@@ -3893,6 +3890,49 @@ body {
 
 #contadoresView .workstation-crm-link {
   width: max-content;
+}
+
+#contadoresView .workstation-action-menu {
+  position: relative;
+}
+
+#contadoresView .workstation-action-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 8;
+  min-width: 240px;
+  padding: 6px;
+  border: 1px solid var(--ct-line);
+  border-radius: var(--ct-radius);
+  background: var(--ct-surface);
+  box-shadow: 0 16px 34px rgba(32, 33, 36, 0.14);
+}
+
+#contadoresView .workstation-action-popover button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--ct-radius-sm);
+  background: transparent;
+  color: var(--ct-ink);
+  cursor: pointer;
+  font: 700 12px/1.2 var(--font-sans);
+  text-align: left;
+}
+
+#contadoresView .workstation-action-popover button:hover:not(:disabled) {
+  background: var(--ct-surface-2);
+  color: var(--ct-accent-strong);
+}
+
+#contadoresView .workstation-action-popover button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 #contadoresView .workstation-panel-head,
@@ -4017,23 +4057,67 @@ body {
   gap: 8px;
 }
 
-#contadoresView .workstation-media-check {
-  display: inline-flex;
+#contadoresView .workstation-photo-job {
+  display: flex;
   align-items: center;
-  gap: 6px;
-  min-height: 34px;
-  padding: 0 10px;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px 12px;
   border: 1px solid var(--ct-line);
-  border-radius: var(--ct-radius-sm);
-  background: var(--ct-surface-2);
-  color: var(--ct-ink-muted);
-  font: 700 11px/1 var(--font-sans);
+  border-radius: var(--ct-radius);
+  background: var(--ct-surface);
 }
 
-#contadoresView .workstation-helper {
-  margin: 0;
+#contadoresView .workstation-photo-job.completed {
+  border-color: color-mix(in srgb, var(--ct-success) 38%, var(--ct-line));
+}
+
+#contadoresView .workstation-photo-job.failed {
+  border-color: rgba(178, 61, 61, 0.38);
+}
+
+#contadoresView .workstation-photo-job > svg {
+  flex: 0 0 auto;
+  color: var(--ct-accent-strong);
+}
+
+#contadoresView .workstation-photo-job.completed > svg {
+  color: var(--ct-success);
+}
+
+#contadoresView .workstation-photo-job.failed > svg {
+  color: var(--ct-danger);
+}
+
+#contadoresView .workstation-photo-job div {
+  min-width: 0;
+}
+
+#contadoresView .workstation-photo-job strong,
+#contadoresView .workstation-photo-job span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+#contadoresView .workstation-photo-job strong {
+  color: var(--ct-ink);
+  font: 700 13px/1.25 var(--font-sans);
+}
+
+#contadoresView .workstation-photo-job span {
+  margin-top: 3px;
   color: var(--ct-ink-muted);
-  font: 500 12px/1.4 var(--font-sans);
+  font: 500 11px/1.35 var(--font-mono);
+}
+
+#contadoresView .workstation-spinner {
+  animation: workstation-spin 900ms linear infinite;
+}
+
+@keyframes workstation-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 #contadoresView .workstation-photo-grid {
@@ -4088,6 +4172,113 @@ body {
 
 #contadoresView .workstation-photo-edit input {
   min-width: 0;
+}
+
+#contadoresView .workstation-photo-modal {
+  width: min(760px, 100%);
+}
+
+#contadoresView .workstation-modal-close {
+  width: 36px;
+  padding: 0;
+}
+
+#contadoresView .workstation-photo-picker {
+  display: grid;
+  gap: 10px;
+}
+
+#contadoresView .workstation-photo-picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+#contadoresView .workstation-photo-picker-head span,
+#contadoresView .workstation-photo-picker-head strong {
+  color: var(--ct-ink-muted);
+  font: 700 10px/1 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+#contadoresView .workstation-photo-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+#contadoresView .workstation-photo-picker-card {
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid var(--ct-line);
+  border-radius: var(--ct-radius);
+  background: var(--ct-surface);
+  color: var(--ct-ink);
+  cursor: pointer;
+  text-align: left;
+}
+
+#contadoresView .workstation-photo-picker-card:hover,
+#contadoresView .workstation-photo-picker-card.selected {
+  border-color: var(--ct-accent);
+}
+
+#contadoresView .workstation-photo-picker-card.selected {
+  background: color-mix(in srgb, var(--ct-accent) 7%, var(--ct-surface));
+}
+
+#contadoresView .workstation-photo-picker-card img {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  border: 1px solid var(--ct-line-soft);
+  border-radius: var(--ct-radius-sm);
+  background: var(--ct-surface-2);
+  object-fit: contain;
+}
+
+#contadoresView .workstation-photo-picker-card div {
+  min-width: 0;
+}
+
+#contadoresView .workstation-photo-picker-card strong,
+#contadoresView .workstation-photo-picker-card span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+#contadoresView .workstation-photo-picker-card strong {
+  color: var(--ct-ink);
+  font: 700 13px/1.2 var(--font-sans);
+}
+
+#contadoresView .workstation-photo-picker-card div span {
+  margin-top: 3px;
+  color: var(--ct-ink-muted);
+  font: 500 11px/1.3 var(--font-mono);
+}
+
+#contadoresView .workstation-select-pill {
+  width: max-content;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--ct-line);
+  border-radius: var(--ct-radius-sm);
+  background: var(--ct-surface-2);
+  color: var(--ct-ink-muted);
+  font: 700 11px/1 var(--font-sans);
+}
+
+#contadoresView .workstation-photo-picker-card.selected .workstation-select-pill {
+  border-color: var(--ct-accent);
+  background: var(--ct-accent);
+  color: #ffffff;
 }
 
 @media (max-width: 1180px) {
