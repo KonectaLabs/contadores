@@ -21,7 +21,7 @@ Read these files first:
 - `profile.json`: client, lead, folder, and media metadata.
 - `notes.txt`: operator meeting notes and client requirements.
 - `conversation.txt`: CRM/WhatsApp transcript.
-- `media/`: uploaded client files such as logos, photos, screenshots, or visual references.
+- `media/`: uploaded client files such as logos, photos, screenshots, or visual references. Operators can add these from the Workstation file selector, by dropping a file on the `Media` panel, or by pasting a clipboard file while that panel is active.
 
 The Workstation UI can also export the same folder as a ZIP, but Codex should
 prefer reading the current folder directly when running inside this repo.

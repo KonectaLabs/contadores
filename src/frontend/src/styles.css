@@ -3785,6 +3785,18 @@ body {
   background: var(--ct-surface-2);
 }
 
+#contadoresView .workstation-media-panel {
+  outline: 0;
+  transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+}
+
+#contadoresView .workstation-media-panel.drag-active,
+#contadoresView .workstation-media-panel:focus-visible {
+  border-color: var(--ct-accent);
+  background: color-mix(in srgb, var(--ct-accent) 8%, var(--ct-surface-2));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ct-accent) 18%, transparent);
+}
+
 #contadoresView .workstation-grid .workstation-panel {
   margin: 0;
 }

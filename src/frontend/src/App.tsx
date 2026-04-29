@@ -1,4 +1,5 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { ClipboardEvent, DragEvent, FormEvent } from "react";
 import {
   ArrowSquareOut,
   Copy,
@@ -496,15 +497,14 @@ export function App() {
     }
   }
 
-  async function uploadWorkstationMedia(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function uploadWorkstationMediaFile(fileToUpload: File, title: string) {
     const clientId = workstationDetail?.client.id ?? selectedWorkstationClientId;
-    if (!clientId || !workstationFile) {
+    if (!clientId) {
       return;
     }
     const form = new FormData();
-    form.append("title", workstationFileTitle);
-    form.append("file", workstationFile);
+    form.append("title", title);
+    form.append("file", fileToUpload);
     setActionBusy("workstation-upload");
     try {
       await apiFetch(`/api/workstation/clients/${clientId}/media`, {
@@ -520,6 +520,19 @@ export function App() {
     } finally {
       setActionBusy(null);
     }
+  }
+
+  async function uploadWorkstationMedia(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!workstationFile) {
+      return;
+    }
+    await uploadWorkstationMediaFile(workstationFile, workstationFileTitle);
+  }
+
+  async function uploadWorkstationMediaFromFile(fileToUpload: File) {
+    setWorkstationFile(fileToUpload);
+    await uploadWorkstationMediaFile(fileToUpload, workstationFileTitle);
   }
 
   async function deleteWorkstationMedia(asset: WorkstationMediaAsset) {
@@ -976,6 +989,11 @@ export function App() {
           onFileTitleChange={setWorkstationFileTitle}
           onFileChange={setWorkstationFile}
           onUploadMedia={uploadWorkstationMedia}
+          onUploadMediaFile={(fileToUpload) => {
+            uploadWorkstationMediaFromFile(fileToUpload).catch((reason) => {
+              setError(reason instanceof Error ? reason.message : "Could not upload media.");
+            });
+          }}
           onDeleteMedia={deleteWorkstationMedia}
           onToggleProfessionalPhotoMedia={toggleProfessionalPhotoMedia}
           onProfessionalPhotoContextChange={setProfessionalPhotoContext}
@@ -1250,6 +1268,7 @@ function WorkstationView({
   onFileTitleChange,
   onFileChange,
   onUploadMedia,
+  onUploadMediaFile,
   onDeleteMedia,
   selectedProfessionalPhotoMediaIds,
   professionalPhotoContext,
@@ -1281,6 +1300,7 @@ function WorkstationView({
   onFileTitleChange: (value: string) => void;
   onFileChange: (file: File | null) => void;
   onUploadMedia: (event: FormEvent<HTMLFormElement>) => void;
+  onUploadMediaFile: (file: File) => void;
   onDeleteMedia: (asset: WorkstationMediaAsset) => void;
   onToggleProfessionalPhotoMedia: (assetId: string) => void;
   onProfessionalPhotoContextChange: (value: string) => void;
@@ -1294,6 +1314,70 @@ function WorkstationView({
   const funnelLabel = funnel?.label ?? activeClient?.funnel_id ?? "selected funnel";
   const imageAssets = (detail?.media ?? []).filter((asset) => asset.content_type?.startsWith("image/"));
   const professionalPhotos = detail?.professional_photos ?? [];
+  const [mediaDropActive, setMediaDropActive] = useState(false);
+  const canUploadMedia = Boolean(activeClient) && actionBusy !== "workstation-upload";
+
+  function clipboardFile(event: ClipboardEvent<HTMLElement>): File | null {
+    for (const fileItem of Array.from(event.clipboardData.files)) {
+      if (fileItem.size > 0) {
+        return fileItem;
+      }
+    }
+    for (const item of Array.from(event.clipboardData.items)) {
+      const fileItem = item.kind === "file" ? item.getAsFile() : null;
+      if (fileItem && fileItem.size > 0) {
+        return fileItem;
+      }
+    }
+    return null;
+  }
+
+  function droppedFile(event: DragEvent<HTMLElement>): File | null {
+    for (const fileItem of Array.from(event.dataTransfer.files)) {
+      if (fileItem.size > 0) {
+        return fileItem;
+      }
+    }
+    return null;
+  }
+
+  function handleMediaDragOver(event: DragEvent<HTMLElement>) {
+    if (!Array.from(event.dataTransfer.types).includes("Files")) {
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = canUploadMedia ? "copy" : "none";
+    setMediaDropActive(true);
+  }
+
+  function handleMediaDragLeave(event: DragEvent<HTMLElement>) {
+    const nextTarget = event.relatedTarget;
+    if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) {
+      return;
+    }
+    setMediaDropActive(false);
+  }
+
+  function handleMediaDrop(event: DragEvent<HTMLElement>) {
+    if (!Array.from(event.dataTransfer.types).includes("Files")) {
+      return;
+    }
+    event.preventDefault();
+    setMediaDropActive(false);
+    const fileToUpload = droppedFile(event);
+    if (fileToUpload && canUploadMedia) {
+      onUploadMediaFile(fileToUpload);
+    }
+  }
+
+  function handleMediaPaste(event: ClipboardEvent<HTMLElement>) {
+    const fileToUpload = clipboardFile(event);
+    if (!fileToUpload || !canUploadMedia) {
+      return;
+    }
+    event.preventDefault();
+    onUploadMediaFile(fileToUpload);
+  }
 
   return (
     <div className="ct-surface workstation-surface">
@@ -1399,7 +1483,15 @@ function WorkstationView({
                 />
               </section>
 
-              <section className="workstation-panel">
+              <section
+                className={`workstation-panel workstation-media-panel ${mediaDropActive ? "drag-active" : ""}`}
+                onDragOver={handleMediaDragOver}
+                onDragLeave={handleMediaDragLeave}
+                onDrop={handleMediaDrop}
+                onPaste={handleMediaPaste}
+                tabIndex={0}
+                aria-label="Workstation media"
+              >
                 <div className="workstation-panel-head">
                   <div>
                     <span>Media</span>

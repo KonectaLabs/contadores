@@ -195,7 +195,9 @@ Al convertir:
 
 Cada cliente de Workstation tiene notas editables, media subida manualmente con
 titulo, copia de notas, copia de todo el contexto, foto profesional generada
-desde fotos fuente, y export ZIP.
+desde fotos fuente, y export ZIP. La media se puede subir con el selector de
+archivo, arrastrando un archivo sobre el panel `Media`, o pegando una imagen o
+archivo desde el portapapeles mientras ese panel esta activo.
 
 La carpeta canonica por cliente queda en:
 
