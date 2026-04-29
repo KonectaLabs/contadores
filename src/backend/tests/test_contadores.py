@@ -54,6 +54,16 @@ def force_loom_strategy(monkeypatch, strategy_id: str = "loom_mp4") -> None:
     monkeypatch.setattr(contadores_endpoints, "choose_contadores_strategy", lambda **kwargs: strategy)
 
 
+def add_recent_inbound(lead_id: str, *, text: str = "Si, me interesa") -> ContadoresMessage:
+    """Add one recent inbound WhatsApp message to keep the 24-hour window open."""
+    return ContadoresMessage.add(
+        lead_id=lead_id,
+        from_me=False,
+        text=text,
+        created_at=now_utc() - timedelta(minutes=5),
+    )
+
+
 def build_abogados_test_funnel(
     *,
     referral_ids: list[str] | None = None,
@@ -161,6 +171,7 @@ def test_contadores_pending_delivery_keeps_full_mp4_sequence(monkeypatch, tmp_pa
         phone="+5491111111111",
         full_name="Ana Perez",
     )
+    add_recent_inbound(lead.id)
 
     contadores_endpoints.send_loom_sequence(lead=lead, config=config, strategy_id="loom_mp4")
 
@@ -182,6 +193,7 @@ def test_contadores_pending_delivery_exposes_loom_mp4_media(monkeypatch, tmp_pat
         phone="+5491111111112",
         full_name="Media Lead",
     )
+    add_recent_inbound(lead.id)
 
     contadores_endpoints.send_loom_sequence(lead=lead, config=config, strategy_id="loom_mp4")
 
@@ -288,6 +300,70 @@ def test_contadores_provider_failed_status_requeues_before_final_failure(monkeyp
     assert third.json()["last_delivery_error"] == "whatsapp_provider_status_failed"
 
 
+def test_contadores_custom_manual_message_requires_open_whatsapp_window(monkeypatch, tmp_path) -> None:
+    """Custom/manual WhatsApp should be blocked when the 24-hour window is closed."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    ContadoresConfig.update(enabled=True)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-closed-window",
+        phone="+5491111111115",
+        full_name="Closed Window Lead",
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            f"/api/contadores/leads/{lead.id}/messages/manual",
+            json={"text": "Hola, te escribo manualmente"},
+        )
+
+    assert response.status_code == 400
+    assert "24-hour" in response.json()["detail"]
+    assert ContadoresMessage.list_by_lead(lead.id) == []
+
+
+def test_contadores_custom_manual_message_works_inside_whatsapp_window(monkeypatch, tmp_path) -> None:
+    """Custom/manual WhatsApp should be allowed after a recent lead reply."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    ContadoresConfig.update(enabled=True)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-open-window",
+        phone="+5491111111116",
+        full_name="Open Window Lead",
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=False,
+        text="Si, me interesa",
+        created_at=now_utc() - timedelta(hours=2),
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            f"/api/contadores/leads/{lead.id}/messages/manual",
+            json={"text": "Genial, te paso mas informacion"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["queued_message_ids"] == [2]
+
+
+def test_contadores_manual_ping_template_bypasses_closed_whatsapp_window(monkeypatch, tmp_path) -> None:
+    """Approved templates should remain available outside the 24-hour window."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    ContadoresConfig.update(enabled=True)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-template-window",
+        phone="+5491111111117",
+        full_name="Template Window Lead",
+    )
+
+    with TestClient(app) as client:
+        response = client.post(f"/api/contadores/leads/{lead.id}/actions/send-manual-ping")
+
+    assert response.status_code == 200
+    assert response.json()["queued_message_ids"] == [1]
+
+
 def test_contadores_zero_weight_strategy_is_not_auto_assigned() -> None:
     """A configured zero-weight strategy should stay available without receiving automatic traffic."""
     chosen_ids = {
@@ -310,6 +386,7 @@ def test_contadores_strategy_weights_are_configurable(monkeypatch, tmp_path) -> 
         phone="+5491111111199",
         full_name="Weight Lead",
     )
+    add_recent_inbound(lead.id)
 
     contadores_endpoints.send_loom_sequence(lead=lead, config=config)
 
@@ -343,6 +420,7 @@ def test_contadores_strategy_stats_count_calendly_and_booked(monkeypatch, tmp_pa
         phone="+5491111111113",
         full_name="Stats Lead",
     )
+    add_recent_inbound(lead.id)
 
     contadores_endpoints.send_loom_sequence(lead=lead, config=config, strategy_id="loom_mp4")
     for message in ContadoresMessage.list_by_lead(lead.id):
@@ -458,6 +536,7 @@ def test_manual_outbound_can_queue_multiple_uploaded_files(monkeypatch, tmp_path
         phone="+5491888888877",
         full_name="File Lead",
     )
+    add_recent_inbound(lead.id)
 
     with TestClient(app) as client:
         upload_response = client.post(
@@ -495,8 +574,9 @@ def test_manual_outbound_can_queue_multiple_uploaded_files(monkeypatch, tmp_path
     assert image_file.read_bytes() == b"png-bytes"
     video_file = data_dir / Path(messages[2]["media_path"]).relative_to("data")
     assert video_file.read_bytes() == b"video-bytes"
-    assert [item["media_type"] for item in detail_response.json()["messages"][:3]] == ["document", "image", "video"]
-    assert detail_response.json()["messages"][0]["media_url"].startswith("/api/contadores/media/")
+    outbound_messages = [item for item in detail_response.json()["messages"] if item["from_me"]]
+    assert [item["media_type"] for item in outbound_messages] == ["document", "image", "video"]
+    assert outbound_messages[0]["media_url"].startswith("/api/contadores/media/")
 
 
 def test_manual_booked_action_marks_booked_without_queueing_template(monkeypatch, tmp_path) -> None:
@@ -600,6 +680,8 @@ def test_bulk_custom_message_pauses_selected_leads(monkeypatch, tmp_path) -> Non
         phone="+5491888888812",
         full_name="Custom Two",
     )
+    add_recent_inbound(first.id)
+    add_recent_inbound(second.id)
 
     with TestClient(app) as client:
         response = client.post(
@@ -667,6 +749,7 @@ def test_contadores_automation_tick_sends_video_check_after_wait(monkeypatch, tm
         stage=ContadoresLeadStage.AWAITING_VIDEO_REPLY,
         opener_sent_at=loom_sent_at - timedelta(minutes=1),
         first_reply_received_at=loom_sent_at - timedelta(minutes=1),
+        last_inbound_at=loom_sent_at - timedelta(minutes=1),
         loom_sent_at=loom_sent_at,
     )
 
@@ -1277,6 +1360,7 @@ def test_contadores_send_calendly_keeps_manual_handoff(monkeypatch, tmp_path) ->
         phone="+5491444444400",
         full_name="Lara Calendly",
     )
+    add_recent_inbound(lead.id)
     ContadoresLead.update_flow_state(
         lead.id,
         stage=ContadoresLeadStage.NEEDS_HUMAN,
@@ -1297,7 +1381,7 @@ def test_contadores_send_calendly_keeps_manual_handoff(monkeypatch, tmp_path) ->
     assert payload["lead"]["automation_paused"] is True
     assert payload["lead"]["automation_paused_reason"] == "manual_calendly_send"
     assert payload["lead"]["calendly_sent_at"] is not None
-    assert payload["queued_message_ids"] == [1, 2]
+    assert payload["queued_message_ids"] == [2, 3]
 
     assert detail.status_code == 200
     assert detail.json()["lead"]["stage"] == "needs_human"
@@ -1317,6 +1401,7 @@ def test_contadores_send_calendly_link_only_marks_calendly_sent(monkeypatch, tmp
         phone="+5491444444402",
         full_name="Lara Calendly Link",
     )
+    add_recent_inbound(lead.id)
     ContadoresLead.update_flow_state(
         lead.id,
         stage=ContadoresLeadStage.NEEDS_HUMAN,
@@ -1336,7 +1421,7 @@ def test_contadores_send_calendly_link_only_marks_calendly_sent(monkeypatch, tmp
     assert payload["lead"]["automation_paused"] is True
     assert payload["lead"]["automation_paused_reason"] == "manual_calendly_send"
     assert payload["lead"]["calendly_sent_at"] is not None
-    assert payload["queued_message_ids"] == [1]
+    assert payload["queued_message_ids"] == [2]
 
     assert detail.status_code == 200
     assert detail.json()["lead"]["stage"] == "needs_human"
@@ -1923,6 +2008,7 @@ def test_contadores_leads_filter_by_prior_loom_strategy_inside_calendly(monkeypa
         phone="+5491555555564",
         full_name="MP4 Lead",
     )
+    add_recent_inbound(mp4_lead.id)
     contadores_endpoints.send_loom_sequence(lead=mp4_lead, config=config, strategy_id="loom_mp4")
     ContadoresLead.update_flow_state(
         unassigned_lead.id,

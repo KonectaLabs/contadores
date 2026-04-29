@@ -221,6 +221,12 @@ se reintenta hasta `CONTADORES_DELIVERY_MAX_ATTEMPTS` veces, esperando
 intentos, el mensaje queda en `failed`, el lead se marca con una alerta roja en
 el CRM, y el detalle del chat muestra el error expandible junto al mensaje.
 
+Los mensajes no-template solo se pueden encolar si el ultimo inbound del lead
+esta dentro de la ventana de 24 horas de WhatsApp. Si la ventana esta cerrada,
+el backend rechaza custom/media/Calendly/Loom no-template antes de llegar a
+Meta, y la UI bloquea el composer custom indicando que hay que usar un template
+aprobado como `Manual ping`.
+
 Para reencolar mensajes historicos que ya quedaron en `failed`:
 
 ```bash

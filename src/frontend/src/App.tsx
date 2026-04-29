@@ -44,6 +44,7 @@ import type {
 } from "./types";
 
 const REFRESH_MS = 12000;
+const WHATSAPP_CUSTOM_WINDOW_MS = 24 * 60 * 60 * 1000;
 const DASHBOARD_FUNNEL_STORAGE_KEY = "contadores.dashboard.selectedFunnelId";
 const DASHBOARD_STAGE_STORAGE_KEY = "contadores.dashboard.stageFilter";
 const DASHBOARD_SECTION_STORAGE_KEY = "contadores.dashboard.activeSection";
@@ -218,6 +219,12 @@ export function App() {
     return leadList.leads.find((lead) => lead.id === selectedLeadId) ?? null;
   }, [detail, leadList, selectedLeadId]);
   const visibleLeadIds = useMemo(() => (leadList?.leads ?? []).map((lead) => lead.id), [leadList]);
+  const selectedVisibleLeads = useMemo(
+    () => (leadList?.leads ?? []).filter((lead) => selectedLeadIds.includes(lead.id)),
+    [leadList, selectedLeadIds],
+  );
+  const selectedLeadCustomBlockReason = customMessageBlockReason(selectedLead);
+  const bulkCustomBlockedCount = selectedVisibleLeads.filter((lead) => customMessageBlockReason(lead)).length;
   const workstationClients = workstationList?.clients ?? [];
   const selectedVisibleCount = selectedLeadIds.filter((leadId) => visibleLeadIds.includes(leadId)).length;
   const allVisibleSelected = visibleLeadIds.length > 0 && selectedVisibleCount === visibleLeadIds.length;
@@ -743,6 +750,10 @@ export function App() {
         if (!text) {
           return;
         }
+        if (selectedLeadCustomBlockReason) {
+          setError(selectedLeadCustomBlockReason);
+          return;
+        }
         await queueCustomManualMessage(leadId, text);
       } else {
         await apiFetch<QuickActionResponse>(`/api/contadores/leads/${leadId}/actions/${sendKind}`, {
@@ -768,6 +779,10 @@ export function App() {
 
     setActionBusy("bulk-send-modal");
     try {
+      if (bulkSendKind === "custom" && bulkCustomBlockedCount > 0) {
+        setError(`Custom WhatsApp is blocked for ${bulkCustomBlockedCount} selected chat${bulkCustomBlockedCount === 1 ? "" : "s"} because the 24-hour window is closed. Use Manual ping template instead.`);
+        return;
+      }
       const payload = await apiFetch<BulkActionResponse>("/api/contadores/leads/bulk-action", {
         method: "POST",
         body: JSON.stringify({
@@ -806,6 +821,10 @@ export function App() {
     const leadId = selectedLead?.id ?? selectedLeadId;
     const text = manualText.trim();
     if (!leadId || (!text && !manualFiles.length)) {
+      return;
+    }
+    if (selectedLeadCustomBlockReason) {
+      setError(selectedLeadCustomBlockReason);
       return;
     }
 
@@ -1281,6 +1300,7 @@ export function App() {
 
             <ManualDock
               disabled={!selectedLead || Boolean(actionBusy)}
+              blockReason={selectedLeadCustomBlockReason}
               value={manualText}
               files={manualFiles}
               onChange={setManualText}
@@ -1318,6 +1338,7 @@ export function App() {
           kind={sendKind}
           text={manualText}
           funnel={selectedFunnel}
+          customBlockReason={selectedLeadCustomBlockReason}
           busy={actionBusy === "send-modal"}
           onKindChange={setSendKind}
           onTextChange={setManualText}
@@ -1333,6 +1354,7 @@ export function App() {
           tagsText={bulkTagsDraft}
           funnel={selectedFunnel}
           selectedCount={selectedLeadIds.length}
+          customBlockedCount={bulkCustomBlockedCount}
           busy={actionBusy === "bulk-send-modal"}
           onKindChange={setBulkSendKind}
           onTextChange={setManualText}
@@ -2718,6 +2740,7 @@ function LeadStrategies({ messages, loading, hasLead }: { messages: MessageItem[
 
 function ManualDock({
   disabled,
+  blockReason,
   value,
   files,
   onChange,
@@ -2725,6 +2748,7 @@ function ManualDock({
   onSubmit,
 }: {
   disabled: boolean;
+  blockReason: string | null;
   value: string;
   files: File[];
   onChange: (value: string) => void;
@@ -2733,6 +2757,7 @@ function ManualDock({
 }) {
   const [dragActive, setDragActive] = useState(false);
   const hasContent = Boolean(value.trim() || files.length);
+  const blocked = Boolean(blockReason);
 
   function usableFiles(fileList: FileList | File[]): File[] {
     return Array.from(fileList).filter((item) => item.size > 0);
@@ -2774,7 +2799,7 @@ function ManualDock({
       return;
     }
     event.preventDefault();
-    event.dataTransfer.dropEffect = disabled ? "none" : "copy";
+    event.dataTransfer.dropEffect = disabled || blocked ? "none" : "copy";
     setDragActive(true);
   }
 
@@ -2792,14 +2817,14 @@ function ManualDock({
     }
     event.preventDefault();
     setDragActive(false);
-    if (!disabled) {
+    if (!disabled && !blocked) {
       mergeFiles(usableFiles(event.dataTransfer.files));
     }
   }
 
   function handlePaste(event: ClipboardEvent<HTMLFormElement>) {
     const pastedFiles = filesFromClipboard(event);
-    if (!pastedFiles.length || disabled) {
+    if (!pastedFiles.length || disabled || blocked) {
       return;
     }
     event.preventDefault();
@@ -2821,12 +2846,14 @@ function ManualDock({
     >
       <div className="ct-manual-head">
         <span className="ct-manual-lock">Manual outbound</span>
-        <p className="ct-manual-hint">Sending a custom message pauses automation for this lead.</p>
+        <p className={`ct-manual-hint ${blocked ? "blocked" : ""}`}>
+          {blockReason || "Sending a custom message pauses automation for this lead."}
+        </p>
       </div>
       <textarea
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        disabled={disabled}
+        disabled={disabled || blocked}
         rows={3}
         placeholder="Write the WhatsApp message to send, or drop/paste a file..."
       />
@@ -2837,7 +2864,7 @@ function ManualDock({
           <input
             type="file"
             multiple
-            disabled={disabled}
+            disabled={disabled || blocked}
             onChange={(event) => {
               mergeFiles(usableFiles(event.target.files ?? []));
               event.currentTarget.value = "";
@@ -2850,7 +2877,7 @@ function ManualDock({
               <div className="ct-manual-file-chip" key={`${file.name}:${file.size}:${file.lastModified}:${index}`}>
                 <span>{file.name}</span>
                 <strong>{formatBytes(file.size)}</strong>
-                <button type="button" onClick={() => removeFile(index)} disabled={disabled} aria-label={`Remove ${file.name}`}>
+                <button type="button" onClick={() => removeFile(index)} disabled={disabled || blocked} aria-label={`Remove ${file.name}`}>
                   <Trash size={13} weight="bold" />
                 </button>
               </div>
@@ -2861,7 +2888,7 @@ function ManualDock({
         )}
       </div>
       <div className="ct-manual-actions">
-        <button type="submit" className="ct-btn ct-btn-primary" disabled={disabled || !hasContent}>Send and pause automation</button>
+        <button type="submit" className="ct-btn ct-btn-primary" disabled={disabled || blocked || !hasContent}>Send and pause automation</button>
       </div>
     </form>
   );
@@ -3038,6 +3065,7 @@ function SendModal({
   kind,
   text,
   funnel,
+  customBlockReason,
   busy,
   onKindChange,
   onTextChange,
@@ -3047,6 +3075,7 @@ function SendModal({
   kind: SendKind;
   text: string;
   funnel: FunnelDefinition | null;
+  customBlockReason: string | null;
   busy: boolean;
   onKindChange: (kind: SendKind) => void;
   onTextChange: (value: string) => void;
@@ -3058,6 +3087,7 @@ function SendModal({
   const availableOptions = funnel?.kind === "inbox"
     ? sendOptions.filter((option) => ["custom", "send-opener", "send-manual-ping"].includes(option.value))
     : sendOptions;
+  const customBlocked = Boolean(customBlockReason);
 
   return (
     <div className="ct-modal open" aria-hidden="false">
@@ -3080,12 +3110,13 @@ function SendModal({
                   type="radio"
                   name="ctSendKind"
                   value={option.value}
+                  disabled={option.value === "custom" && customBlocked}
                   checked={kind === option.value}
                   onChange={() => onKindChange(option.value)}
                 />
                 <div>
                   <strong>{option.title}</strong>
-                  <span>{sendOptionPreview(option.value, funnel) || option.help}</span>
+                  <span>{option.value === "custom" && customBlockReason ? customBlockReason : sendOptionPreview(option.value, funnel) || option.help}</span>
                 </div>
               </label>
             ))}
@@ -3096,6 +3127,7 @@ function SendModal({
             <textarea
               value={text}
               onChange={(event) => onTextChange(event.target.value)}
+              disabled={customBlocked}
               rows={4}
               placeholder="Write the WhatsApp message to send..."
             />
@@ -3103,7 +3135,7 @@ function SendModal({
         </div>
         <footer className="ct-modal-foot">
           <button type="button" className="ct-btn ct-btn-ghost" onClick={onClose}>Cancel</button>
-          <button type="submit" className="ct-btn ct-btn-primary" disabled={busy || (kind === "custom" && !text.trim())}>
+          <button type="submit" className="ct-btn ct-btn-primary" disabled={busy || (kind === "custom" && (customBlocked || !text.trim()))}>
             {busy ? "Sending..." : pausesAutomation ? "Send and pause automation" : "Send and mark Calendly sent"}
           </button>
         </footer>
@@ -3118,6 +3150,7 @@ function BulkSendModal({
   tagsText,
   funnel,
   selectedCount,
+  customBlockedCount,
   busy,
   onKindChange,
   onTextChange,
@@ -3130,6 +3163,7 @@ function BulkSendModal({
   tagsText: string;
   funnel: FunnelDefinition | null;
   selectedCount: number;
+  customBlockedCount: number;
   busy: boolean;
   onKindChange: (kind: BulkSendKind) => void;
   onTextChange: (value: string) => void;
@@ -3147,6 +3181,7 @@ function BulkSendModal({
     { value: "set-tags" as const, title: "Set tags", help: "Replace tags for the selected leads." },
   ];
   const tagValues = tagsText.split(",").map((tag) => tag.trim()).filter(Boolean);
+  const customBlocked = customBlockedCount > 0;
 
   return (
     <div className="ct-modal open" aria-hidden="false">
@@ -3177,12 +3212,17 @@ function BulkSendModal({
                   type="radio"
                   name="ctBulkSendKind"
                   value={option.value}
+                  disabled={option.value === "custom" && customBlocked}
                   checked={kind === option.value}
                   onChange={() => onKindChange(option.value)}
                 />
                 <div>
                   <strong>{option.title}</strong>
-                  <span>{option.value === "set-tags" ? option.help : sendOptionPreview(option.value, funnel) || option.help}</span>
+                  <span>
+                    {option.value === "custom" && customBlocked
+                      ? `Custom WhatsApp is blocked for ${customBlockedCount} selected chat${customBlockedCount === 1 ? "" : "s"} because the 24-hour window is closed.`
+                      : option.value === "set-tags" ? option.help : sendOptionPreview(option.value, funnel) || option.help}
+                  </span>
                 </div>
               </label>
             ))}
@@ -3193,6 +3233,7 @@ function BulkSendModal({
             <textarea
               value={text}
               onChange={(event) => onTextChange(event.target.value)}
+              disabled={customBlocked}
               rows={4}
               placeholder="Write the WhatsApp message to send..."
             />
@@ -3209,7 +3250,7 @@ function BulkSendModal({
         </div>
         <footer className="ct-modal-foot">
           <button type="button" className="ct-btn ct-btn-ghost" onClick={onClose}>Cancel</button>
-          <button type="submit" className="ct-btn ct-btn-primary" disabled={busy || !selectedCount || (kind === "custom" && !text.trim()) || (kind === "set-tags" && !tagValues.length)}>
+          <button type="submit" className="ct-btn ct-btn-primary" disabled={busy || !selectedCount || (kind === "custom" && (customBlocked || !text.trim())) || (kind === "set-tags" && !tagValues.length)}>
             {busy ? "Applying..." : `Apply to ${selectedCount}`}
           </button>
         </footer>
@@ -3398,6 +3439,23 @@ function leadPreview(lead: LeadSummary): string {
     return "Booked through Calendly or manually marked.";
   }
   return truncate(`${lead.platform || "-"} · ${lead.email || lead.phone || "-"}`, 120);
+}
+
+function customMessageBlockReason(lead: LeadSummary | null): string | null {
+  if (!lead) {
+    return null;
+  }
+  if (!lead.last_inbound_at) {
+    return "Custom WhatsApp is blocked until the lead sends a message. Use an approved template such as Manual ping.";
+  }
+  const lastInboundAt = new Date(lead.last_inbound_at).getTime();
+  if (Number.isNaN(lastInboundAt)) {
+    return "Custom WhatsApp is blocked because the last inbound time is unavailable. Use an approved template such as Manual ping.";
+  }
+  if (Date.now() - lastInboundAt >= WHATSAPP_CUSTOM_WINDOW_MS) {
+    return "The 24-hour WhatsApp window is closed. Use an approved template such as Manual ping.";
+  }
+  return null;
 }
 
 function monogram(value: string): string {

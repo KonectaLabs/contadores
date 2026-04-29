@@ -3275,6 +3275,10 @@ body {
   font: 500 11px/1.4 var(--font-mono);
 }
 
+#contadoresView .ct-manual-hint.blocked {
+  color: #9f1239;
+}
+
 #contadoresView .ct-manual textarea,
 #contadoresView .ct-modal-field textarea {
   width: 100%;

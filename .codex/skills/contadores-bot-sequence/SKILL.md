@@ -69,6 +69,11 @@ clipboard images/files. Uploaded outbound files are stored under
 `contadores_messages` row, shown in the CRM timeline, and dispatched by the bot
 as WhatsApp image, video, audio, or document media.
 
+Manual/custom outbound is only allowed while WhatsApp's 24-hour customer service
+window is open. If `last_inbound_at` is older than 24 hours or missing, do not
+queue non-template sends. The UI should block the custom composer and point the
+operator to an approved template such as `Manual ping`.
+
 ## Runtime rule
 
 - This flow runs from sheet-imported leads and Click-to-WhatsApp inbounds.

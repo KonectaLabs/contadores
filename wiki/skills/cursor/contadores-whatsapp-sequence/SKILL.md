@@ -39,6 +39,9 @@ description: >-
 - Todo envio fallido debe persistir error en `contadores_messages`, reintentarse
   hasta `CONTADORES_DELIVERY_MAX_ATTEMPTS`, y quedar visible en el CRM con alerta
   roja cuando se agotan los intentos.
+- Los envios no-template solo se pueden encolar dentro de las 24 horas desde el
+  ultimo inbound del lead. Si la ventana esta cerrada, bloquear custom/media y
+  pedir usar template aprobado, por ejemplo `Manual ping`.
 
 ## Copy canónico
 

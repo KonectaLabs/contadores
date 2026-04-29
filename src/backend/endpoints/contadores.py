@@ -52,6 +52,7 @@ OPENER_FOLLOWUP_SEQUENCE_STEP = "opener_followup_24h"
 OPENER_FOLLOWUP_RETRY_SEQUENCE_STEP = "opener_followup_24h_template_retry_20260424"
 MANUAL_PING_SEQUENCE_STEP = "manual_ping_template"
 OPENER_FOLLOWUP_DELAY = timedelta(hours=24)
+WHATSAPP_CUSTOM_MESSAGE_WINDOW = timedelta(hours=24)
 CONTADORES_DELIVERY_MAX_ATTEMPTS = max(1, int(os.getenv("CONTADORES_DELIVERY_MAX_ATTEMPTS", "3")))
 CONTADORES_DELIVERY_RETRY_DELAY_SECONDS = max(
     0,
@@ -127,6 +128,32 @@ def resolve_contadores_template_name(
     if sequence_step == MANUAL_PING_SEQUENCE_STEP:
         return funnel.manual_ping_template_name
     return None
+
+
+def is_whatsapp_custom_window_open(lead: ContadoresLead, *, now: datetime | None = None) -> bool:
+    """Return True when non-template WhatsApp sends are still allowed."""
+    last_inbound_at = ensure_utc_datetime(lead.last_inbound_at)
+    if last_inbound_at is None:
+        refreshed = ContadoresLead.get_by_id(lead.id)
+        last_inbound_at = ensure_utc_datetime(refreshed.last_inbound_at) if refreshed else None
+    if last_inbound_at is None:
+        return False
+    return (now or now_utc()) < last_inbound_at + WHATSAPP_CUSTOM_MESSAGE_WINDOW
+
+
+def assert_whatsapp_custom_window_open(lead: ContadoresLead, *, sequence_step: str | None) -> None:
+    """Reject non-template outbound messages outside WhatsApp's 24-hour window."""
+    if resolve_contadores_template_name(sequence_step, funnel_id=lead.funnel_id):
+        return
+    if is_whatsapp_custom_window_open(lead):
+        return
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            "WhatsApp 24-hour customer service window is closed for this lead. "
+            "Send an approved template such as Manual ping instead of a custom message."
+        ),
+    )
 
 
 def build_video_check_text(funnel_id: str | None = None) -> str:
@@ -783,6 +810,7 @@ def enqueue_lead_outbound(
     media_filename: str | None = None,
 ) -> ContadoresMessage:
     """Create one pending outbound message plus event."""
+    assert_whatsapp_custom_window_open(lead, sequence_step=sequence_step)
     row = ContadoresMessage.add(
         lead_id=lead.id,
         from_me=True,
@@ -839,6 +867,7 @@ def send_loom_sequence(
     assigned_by: str = "system",
 ) -> list[ContadoresMessage]:
     """Queue the selected Loom/video strategy."""
+    assert_whatsapp_custom_window_open(lead, sequence_step="loom_intro")
     funnel = resolve_funnel(lead.funnel_id)
     if funnel.id == "contadores":
         strategy = choose_contadores_strategy(
@@ -2108,6 +2137,7 @@ async def create_contadores_manual_media_message(
         raise HTTPException(status_code=404, detail="Lead not found")
     if not file:
         raise HTTPException(status_code=400, detail="Attach at least one file")
+    assert_whatsapp_custom_window_open(lead, sequence_step="manual")
 
     config = get_effective_funnel_config(lead.funnel_id)
     queued_rows: list[ContadoresMessage] = []
