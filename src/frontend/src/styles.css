@@ -2124,13 +2124,15 @@ body {
   color: var(--ct-accent-strong);
 }
 
-#contadoresView .ct-section-switch button span {
+#contadoresView .ct-section-badge {
   min-width: 16px;
   height: 16px;
+  padding: 0 4px;
   border-radius: 999px;
-  background: var(--ct-accent);
+  background: var(--ct-danger);
   color: #ffffff;
   font: 700 10px/16px var(--font-mono);
+  letter-spacing: 0;
   text-align: center;
 }
 
