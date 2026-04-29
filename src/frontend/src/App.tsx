@@ -857,6 +857,7 @@ export function App() {
   const visibleCount = leadList?.leads.length ?? 0;
   const totalCount = metrics?.total ?? 0;
   const totalManualAttentionCount = Object.values(manualAttentionCounts).reduce((total, count) => total + count, 0);
+  const showGlobalCrmAttentionBadge = activeSection !== "crm" && totalManualAttentionCount > 0;
   const workstationTitle = selectedFunnel
     ? `Workstation · ${selectedFunnel.label}`
     : "Workstation";
@@ -883,11 +884,11 @@ export function App() {
           <button
             type="button"
             className={activeSection === "crm" ? "active" : ""}
-            aria-label={totalManualAttentionCount > 0 ? `CRM, ${totalManualAttentionCount} needs answer` : "CRM"}
+            aria-label={showGlobalCrmAttentionBadge ? `CRM, ${totalManualAttentionCount} needs answer` : "CRM"}
             onClick={() => setActiveSection("crm")}
           >
             CRM
-            {totalManualAttentionCount > 0 ? (
+            {showGlobalCrmAttentionBadge ? (
               <span className="ct-section-badge">{compactNumber(totalManualAttentionCount)}</span>
             ) : null}
           </button>
