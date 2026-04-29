@@ -45,6 +45,11 @@ INTERNAL_API_TOKEN = os.getenv("INTERNAL_API_TOKEN", "").strip()
 BOT_TICK_SECONDS = max(5, int(os.getenv("BOT_TICK_SECONDS", "5")))
 BACKEND_BOOT_TIMEOUT_SECONDS = max(5, int(os.getenv("BACKEND_BOOT_TIMEOUT_SECONDS", "120")))
 BACKEND_BOOT_POLL_SECONDS = max(1, int(os.getenv("BACKEND_BOOT_POLL_SECONDS", "2")))
+CONTADORES_DELIVERY_MAX_ATTEMPTS = max(1, int(os.getenv("CONTADORES_DELIVERY_MAX_ATTEMPTS", "3")))
+CONTADORES_DELIVERY_RETRY_DELAY_SECONDS = max(
+    0,
+    int(os.getenv("CONTADORES_DELIVERY_RETRY_DELAY_SECONDS", "60")),
+)
 
 
 class ContadoresConfigPayload(BaseModel):
@@ -457,6 +462,24 @@ async def mark_backend_contadores_message_sent(
     response.raise_for_status()
 
 
+async def record_backend_contadores_message_failure(
+    client: httpx.AsyncClient,
+    *,
+    message_id: int,
+    error: str,
+) -> None:
+    """Persist one failed WhatsApp send attempt for backend retry/alerting."""
+    response = await client.post(
+        backend_url(f"/api/contadores/messages/{message_id}/delivery-failure"),
+        json={
+            "error": error,
+            "max_attempts": CONTADORES_DELIVERY_MAX_ATTEMPTS,
+            "retry_delay_seconds": CONTADORES_DELIVERY_RETRY_DELAY_SECONDS,
+        },
+    )
+    response.raise_for_status()
+
+
 async def mark_backend_contadores_message_status(
     client: httpx.AsyncClient,
     *,
@@ -690,6 +713,10 @@ async def dispatch_one_contadores_message(
 ) -> DeliveryReceipt:
     """Dispatch one Contadores WhatsApp outbound message."""
     to_phone = item.phone or item.normalized_phone
+    if not str(to_phone or "").strip():
+        raise ValueError("missing_whatsapp_phone: lead has no phone number to send to")
+    if len("".join(ch for ch in str(to_phone) if ch.isdigit())) < 8:
+        raise ValueError(f"invalid_whatsapp_phone: {to_phone}")
     media_type = (item.media_type or "").strip().lower()
     if media_type == "video":
         return await whatsapp_provider.send_video(
@@ -774,6 +801,19 @@ async def dispatch_pending_contadores_messages(
                 )
             )
         except Exception as exc:
+            error = str(exc) or exc.__class__.__name__
+            try:
+                await record_backend_contadores_message_failure(
+                    client,
+                    message_id=item.message_id,
+                    error=error,
+                )
+            except Exception:
+                logger.exception(
+                    "Could not persist Contadores dispatch failure for message_id=%s lead_id=%s",
+                    item.message_id,
+                    item.lead_id,
+                )
             logger.exception(
                 "Failed Contadores dispatch for message_id=%s lead_id=%s",
                 item.message_id,
@@ -786,7 +826,7 @@ async def dispatch_pending_contadores_messages(
                     channel="whatsapp",
                     status="failed",
                     contact_value=item.phone,
-                    error=str(exc),
+                    error=error,
                 )
             )
 

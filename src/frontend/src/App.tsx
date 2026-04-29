@@ -13,6 +13,7 @@ import {
   SpinnerGap,
   Trash,
   UploadSimple,
+  WarningCircle,
   X,
 } from "@phosphor-icons/react";
 import { apiFetch } from "./api";
@@ -2338,9 +2339,10 @@ function LeadList({
         const turn = manualTurn(lead);
         const strategyTag = strategyTagForLead(lead);
         const checked = selectedLeadIds.includes(lead.id);
+        const hasOutboundError = (lead.outbound_error_count || 0) > 0;
         return (
           <div
-            className={`ct-lead-row ${lead.id === selectedLeadId ? "active" : ""} ${checked ? "selected" : ""}`}
+            className={`ct-lead-row ${lead.id === selectedLeadId ? "active" : ""} ${checked ? "selected" : ""} ${hasOutboundError ? "has-error" : ""}`}
             key={lead.id}
           >
             <label className="ct-lead-check" aria-label={`Select ${lead.full_name || lead.phone || "lead"}`}>
@@ -2369,6 +2371,12 @@ function LeadList({
                     {strategyTag ? <span className="ct-lead-strategy-tag">{strategyTag}</span> : null}
                     {(lead.tags ?? []).slice(0, 3).map((tag) => <span className="ct-lead-tag" key={tag}>#{tag}</span>)}
                     {turn ? <span className={`ct-lead-turn ${turn}`}>{turn === "needs_reply" ? "Needs reply" : "Answered"}</span> : null}
+                    {hasOutboundError ? (
+                      <span className="ct-lead-delivery-error" title={lead.latest_outbound_error || "WhatsApp delivery failed"}>
+                        <WarningCircle size={13} weight="fill" />
+                        Send failed
+                      </span>
+                    ) : null}
                   </div>
                 </div>
                 <div className="ct-lead-meta">
@@ -2564,6 +2572,8 @@ function MessageTimeline({ messages, loading, hasLead }: { messages: MessageItem
     <div className="ct-timeline">
       {messages.map((message) => {
         const direction = message.from_me ? "outbound" : "inbound";
+        const deliveryStatus = String(message.delivery_status || "").toLowerCase();
+        const hasDeliveryError = message.from_me && deliveryStatus === "failed";
         const meta = [
           shortDate(message.created_at),
           message.sequence_step,
@@ -2574,17 +2584,27 @@ function MessageTimeline({ messages, loading, hasLead }: { messages: MessageItem
         return (
           <div className={`crm-message-shell ${direction}`} key={message.id}>
             <div className="crm-message-rail">
-              <span className={`crm-message-dot ${direction}`} />
+              <span className={`crm-message-dot ${direction} ${hasDeliveryError ? "failed" : ""}`} />
             </div>
-            <article className={`crm-message-card ${direction} ${message.delivery_status === "undelivered" ? "pending" : ""}`}>
+            <article className={`crm-message-card ${direction} ${deliveryStatus === "undelivered" ? "pending" : ""} ${hasDeliveryError ? "failed" : ""}`}>
               <div className="crm-message-meta">
                 <div className="crm-message-eyebrow">
                   <span className={`crm-message-author ${direction}`}>{message.from_me ? "Bot / Operator" : "Lead"}</span>
                   <span>{meta.join(" · ")}</span>
                 </div>
+                {hasDeliveryError ? (
+                  <WarningCircle className="crm-message-error-icon" size={18} weight="fill" aria-label="WhatsApp delivery failed" />
+                ) : null}
               </div>
               <MessageMedia message={message} />
               <p className="crm-message-body">{message.text || ""}</p>
+              {hasDeliveryError ? (
+                <details className="crm-message-error">
+                  <summary>Why it failed</summary>
+                  <p>{message.last_delivery_error || "WhatsApp reported a delivery failure without details."}</p>
+                  <span>{message.delivery_attempts ? `${message.delivery_attempts} send attempts` : "No retry metadata"}</span>
+                </details>
+              ) : null}
             </article>
           </div>
         );

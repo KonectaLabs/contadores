@@ -1496,6 +1496,9 @@ class ContadoresMessage(SQLModel, table=True):
     text: str
     delivery_status: MessageDeliveryStatus = Field(default=MessageDeliveryStatus.DELIVERED, index=True)
     external_id: str | None = Field(default=None, index=True)
+    delivery_attempts: int = Field(default=0, index=True)
+    last_delivery_error: str | None = Field(default=None)
+    last_delivery_error_at: datetime | None = Field(default=None)
     dispatch_after: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
     sequence_step: str | None = Field(default=None, index=True)
     strategy_assignment_id: int | None = Field(
@@ -1699,6 +1702,37 @@ class ContadoresMessage(SQLModel, table=True):
             return rows
 
     @classmethod
+    def count_delivery_issues_by_lead(cls, lead_id: str) -> int:
+        """Count outbound messages that still need operator attention."""
+        with Session(engine) as session:
+            statement = (
+                select(cls.id)
+                .where(
+                    cls.lead_id == lead_id,
+                    cls.from_me.is_(True),
+                    cls.delivery_status == MessageDeliveryStatus.FAILED,
+                )
+            )
+            return len(list(session.exec(statement).all()))
+
+    @classmethod
+    def latest_delivery_issue_for_lead(cls, lead_id: str) -> str | None:
+        """Return the newest stored delivery error for one lead."""
+        with Session(engine) as session:
+            statement = (
+                select(cls.last_delivery_error)
+                .where(
+                    cls.lead_id == lead_id,
+                    cls.from_me.is_(True),
+                    cls.delivery_status == MessageDeliveryStatus.FAILED,
+                    cls.last_delivery_error.is_not(None),
+                )
+                .order_by(cls.last_delivery_error_at.desc(), cls.id.desc())
+                .limit(1)
+            )
+            return session.exec(statement).first()
+
+    @classmethod
     def list_pending_delivery(cls, *, limit: int = 100) -> list["ContadoresMessage"]:
         """List every pending outbound step that is due for dispatch."""
         now_utc = datetime.now(timezone.utc)
@@ -1752,6 +1786,10 @@ class ContadoresMessage(SQLModel, table=True):
         message_id: int,
         delivery_status: MessageDeliveryStatus | str,
         external_id: str | None = None,
+        delivery_attempts: int | None = None,
+        last_delivery_error: str | None = None,
+        clear_delivery_error: bool = False,
+        dispatch_after: datetime | None = None,
     ) -> Optional["ContadoresMessage"]:
         """Update one outbound message delivery status."""
         with Session(engine) as session:
@@ -1764,6 +1802,76 @@ class ContadoresMessage(SQLModel, table=True):
             )
             if external_id is not None:
                 row.external_id = (external_id or "").strip() or None
+            if delivery_attempts is not None:
+                row.delivery_attempts = max(0, int(delivery_attempts))
+            if dispatch_after is not None:
+                row.dispatch_after = dispatch_after
+            if clear_delivery_error:
+                row.last_delivery_error = None
+                row.last_delivery_error_at = None
+            elif last_delivery_error is not None:
+                row.last_delivery_error = " ".join(str(last_delivery_error).split()).strip()[:2000] or None
+                row.last_delivery_error_at = datetime.now(timezone.utc) if row.last_delivery_error else None
+            session.add(row)
+            lead = session.get(ContadoresLead, row.lead_id)
+            if lead:
+                lead.updated_at = datetime.now(timezone.utc)
+                session.add(lead)
+            session.commit()
+            session.refresh(row)
+            session.expunge(row)
+            return row
+
+    @classmethod
+    def record_delivery_failure(
+        cls,
+        *,
+        message_id: int,
+        error: str,
+        max_attempts: int = 3,
+        retry_delay_seconds: int = 60,
+    ) -> Optional["ContadoresMessage"]:
+        """Store a failed send attempt and requeue until the retry budget is spent."""
+        with Session(engine) as session:
+            row = session.get(cls, message_id)
+            if row is None:
+                return None
+            now = datetime.now(timezone.utc)
+            attempts = max(0, int(row.delivery_attempts or 0)) + 1
+            row.delivery_attempts = attempts
+            row.last_delivery_error = " ".join(str(error).split()).strip()[:2000] or "unknown delivery error"
+            row.last_delivery_error_at = now
+            if attempts < max_attempts:
+                row.delivery_status = MessageDeliveryStatus.UNDELIVERED
+                row.dispatch_after = now + timedelta(seconds=max(0, retry_delay_seconds))
+            else:
+                row.delivery_status = MessageDeliveryStatus.FAILED
+            session.add(row)
+            lead = session.get(ContadoresLead, row.lead_id)
+            if lead:
+                lead.updated_at = now
+                session.add(lead)
+            session.commit()
+            session.refresh(row)
+            session.expunge(row)
+            return row
+
+    @classmethod
+    def requeue_failed_delivery(
+        cls,
+        *,
+        message_id: int,
+        reset_attempts: bool = True,
+    ) -> Optional["ContadoresMessage"]:
+        """Put one failed outbound message back into the pending delivery queue."""
+        with Session(engine) as session:
+            row = session.get(cls, message_id)
+            if row is None:
+                return None
+            row.delivery_status = MessageDeliveryStatus.UNDELIVERED
+            row.dispatch_after = datetime.now(timezone.utc)
+            if reset_attempts:
+                row.delivery_attempts = 0
             session.add(row)
             lead = session.get(ContadoresLead, row.lead_id)
             if lead:
@@ -3835,6 +3943,7 @@ def init_db() -> None:
     ensure_contadores_funnel_columns()
     ensure_contadores_tags_column()
     ensure_contadores_strategy_columns()
+    ensure_contadores_message_delivery_columns()
     ensure_contadores_config_strategy_weights_column()
     logger.info(f"Database initialized at {DATABASE_URL}")
 
@@ -3979,6 +4088,31 @@ def ensure_contadores_strategy_columns() -> None:
                 f"CREATE INDEX IF NOT EXISTS ix_contadores_messages_{column_name} "
                 f"ON contadores_messages ({column_name})"
             )
+
+
+def ensure_contadores_message_delivery_columns() -> None:
+    """Add retry/error metadata to existing Contadores message tables."""
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        if "contadores_messages" not in inspector.get_table_names():
+            return
+        message_columns = {column["name"] for column in inspector.get_columns("contadores_messages")}
+        column_definitions = {
+            "delivery_attempts": "INTEGER NOT NULL DEFAULT 0",
+            "last_delivery_error": "TEXT",
+            "last_delivery_error_at": "TIMESTAMP",
+        }
+        for column_name, column_type in column_definitions.items():
+            if column_name in message_columns:
+                continue
+            connection.exec_driver_sql(
+                f"ALTER TABLE contadores_messages ADD COLUMN {column_name} {column_type}"
+            )
+            logger.info("Added missing contadores_messages.%s column.", column_name)
+        connection.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_contadores_messages_delivery_attempts "
+            "ON contadores_messages (delivery_attempts)"
+        )
 
 
 def ensure_contadores_config_strategy_weights_column() -> None:

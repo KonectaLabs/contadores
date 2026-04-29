@@ -36,6 +36,9 @@ description: >-
 - No mezclar el texto del mensaje 2 con el MP4.
 - No mezclar el texto del mensaje 4 con el link del Calendly.
 - El trigger es mecánico: cualquier respuesta sirve; no hace falta clasificar intención.
+- Todo envio fallido debe persistir error en `contadores_messages`, reintentarse
+  hasta `CONTADORES_DELIVERY_MAX_ATTEMPTS`, y quedar visible en el CRM con alerta
+  roja cuando se agotan los intentos.
 
 ## Copy canónico
 

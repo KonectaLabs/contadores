@@ -141,6 +141,8 @@ export interface LeadSummary {
   workstation_client_id: string | null;
   automation_paused: boolean;
   automation_paused_reason: string | null;
+  outbound_error_count: number;
+  latest_outbound_error: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -152,6 +154,9 @@ export interface MessageItem {
   text: string;
   delivery_status: string;
   external_id: string | null;
+  delivery_attempts: number;
+  last_delivery_error: string | null;
+  last_delivery_error_at: string | null;
   dispatch_after: string;
   sequence_step: string | null;
   strategy_step: string | null;

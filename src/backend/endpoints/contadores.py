@@ -577,6 +577,7 @@ def build_lead_summary(
     """Serialize one lead row for list/detail views."""
     effective_stage = derive_effective_lead_stage(lead)
     workstation_client = WorkstationClient.get_by_lead_id(lead.id)
+    outbound_error_count = ContadoresMessage.count_delivery_issues_by_lead(lead.id)
     return ContadoresLeadSummary(
         id=lead.id,
         funnel_id=lead.funnel_id,
@@ -616,6 +617,10 @@ def build_lead_summary(
         workstation_client_id=workstation_client.id if workstation_client else None,
         automation_paused=bool(lead.automation_paused),
         automation_paused_reason=lead.automation_paused_reason,
+        outbound_error_count=outbound_error_count,
+        latest_outbound_error=ContadoresMessage.latest_delivery_issue_for_lead(lead.id)
+        if outbound_error_count
+        else None,
         created_at=format_timestamp_seconds(lead.created_at) or "",
         updated_at=format_timestamp_seconds(lead.updated_at) or "",
     )
@@ -630,6 +635,9 @@ def build_message_response(message: ContadoresMessage) -> "ContadoresMessageResp
         text=message.text,
         delivery_status=message.delivery_status.value,
         external_id=message.external_id,
+        delivery_attempts=message.delivery_attempts,
+        last_delivery_error=message.last_delivery_error,
+        last_delivery_error_at=format_timestamp_seconds(message.last_delivery_error_at),
         dispatch_after=format_timestamp_seconds(message.dispatch_after) or "",
         sequence_step=message.sequence_step,
         strategy_assignment_id=message.strategy_assignment_id,
@@ -1315,6 +1323,8 @@ class ContadoresLeadSummary(BaseModel):
     workstation_client_id: str | None = None
     automation_paused: bool = False
     automation_paused_reason: str | None = None
+    outbound_error_count: int = 0
+    latest_outbound_error: str | None = None
     created_at: str
     updated_at: str
 
@@ -1328,6 +1338,9 @@ class ContadoresMessageResponse(BaseModel):
     text: str
     delivery_status: str
     external_id: str | None = None
+    delivery_attempts: int = 0
+    last_delivery_error: str | None = None
+    last_delivery_error_at: str | None = None
     dispatch_after: str
     sequence_step: str | None = None
     strategy_assignment_id: int | None = None
@@ -1513,6 +1526,14 @@ class SetContadoresMessageDeliveryByIdCommand(BaseModel):
 
     status: str = Field(min_length=1)
     external_id: str | None = None
+
+
+class RecordContadoresMessageFailureCommand(BaseModel):
+    """Provider send failure keyed by local message id."""
+
+    error: str = Field(min_length=1)
+    max_attempts: int = Field(default=3, ge=1, le=10)
+    retry_delay_seconds: int = Field(default=60, ge=0, le=3600)
 
 
 class UpdateContadoresMessageCommand(BaseModel):
@@ -2363,9 +2384,47 @@ async def set_contadores_message_delivery_by_id(
         message_id=message_id,
         delivery_status=command.status,
         external_id=command.external_id,
+        clear_delivery_error=command.status.strip().lower() in {
+            MessageDeliveryStatus.SENT.value,
+            MessageDeliveryStatus.DELIVERED.value,
+        },
     )
     if updated is None:
         raise HTTPException(status_code=404, detail="Contadores message not found")
+    return build_message_response(updated)
+
+
+@contadores_router.post("/messages/{message_id}/delivery-failure", response_model=ContadoresMessageResponse)
+async def record_contadores_message_delivery_failure(
+    message_id: int,
+    command: RecordContadoresMessageFailureCommand,
+) -> ContadoresMessageResponse:
+    """Record one failed WhatsApp send attempt and requeue up to the retry cap."""
+    updated = ContadoresMessage.record_delivery_failure(
+        message_id=message_id,
+        error=command.error,
+        max_attempts=command.max_attempts,
+        retry_delay_seconds=command.retry_delay_seconds,
+    )
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Contadores message not found")
+    ContadoresEvent.add(
+        lead_id=updated.lead_id,
+        event_type="outbound_delivery_failed",
+        actor="system",
+        summary=(
+            f"WhatsApp send failed for message #{updated.id}. "
+            f"Attempt {updated.delivery_attempts}/{command.max_attempts}."
+        ),
+        payload={
+            "message_id": updated.id,
+            "delivery_status": updated.delivery_status.value,
+            "delivery_attempts": updated.delivery_attempts,
+            "max_attempts": command.max_attempts,
+            "retry_delay_seconds": command.retry_delay_seconds,
+            "error": updated.last_delivery_error,
+        },
+    )
     return build_message_response(updated)
 
 
@@ -2386,6 +2445,10 @@ async def set_contadores_message_delivery_by_external_id(
         message_id=row.id,
         delivery_status=command.status,
         external_id=command.external_id,
+        clear_delivery_error=command.status.strip().lower() in {
+            MessageDeliveryStatus.SENT.value,
+            MessageDeliveryStatus.DELIVERED.value,
+        },
     )
     if updated is None:
         raise HTTPException(status_code=404, detail="Outbound Contadores message not found for external_id")

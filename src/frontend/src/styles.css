@@ -2634,6 +2634,11 @@ body {
   border-color: rgba(15, 118, 110, 0.42);
 }
 
+#contadoresView .ct-lead-row.has-error {
+  border-color: rgba(190, 18, 60, 0.34);
+  background: rgba(255, 241, 242, 0.68);
+}
+
 #contadoresView .ct-lead-check {
   justify-content: center;
   align-self: stretch;
@@ -2711,6 +2716,7 @@ body {
 #contadoresView .ct-lead-tag,
 #contadoresView .ct-lead-converted,
 #contadoresView .ct-lead-turn,
+#contadoresView .ct-lead-delivery-error,
 #contadoresView .ct-strategy-chip,
 #contadoresView .ct-strategy-metrics span,
 #contadoresView .ct-lead-strategy-meta span {
@@ -2725,6 +2731,13 @@ body {
   font: 600 10px/1 var(--font-mono);
   letter-spacing: 0.04em;
   white-space: nowrap;
+}
+
+#contadoresView .ct-lead-delivery-error {
+  gap: 4px;
+  border-color: rgba(190, 18, 60, 0.28);
+  background: #ffe4e6;
+  color: #9f1239;
 }
 
 #contadoresView .ct-lead-stage {
@@ -2998,6 +3011,14 @@ body {
   background: var(--ct-warn);
 }
 
+#contadoresView .crm-message-dot.failed {
+  width: 14px;
+  height: 14px;
+  margin-top: -3px;
+  background: #be123c;
+  box-shadow: 0 0 0 4px rgba(190, 18, 60, 0.12);
+}
+
 #contadoresView .crm-message-card,
 #contadoresView .ct-event-card,
 #contadoresView .ct-lead-strategy-card {
@@ -3015,6 +3036,11 @@ body {
 #contadoresView .crm-message-card.inbound {
   border-color: rgba(194, 65, 12, 0.18);
   background: var(--ct-warn-bg);
+}
+
+#contadoresView .crm-message-card.failed {
+  border-color: rgba(190, 18, 60, 0.42);
+  background: #fff1f2;
 }
 
 #contadoresView .crm-message-meta,
@@ -3044,6 +3070,41 @@ body {
 
 #contadoresView .crm-message-author.outbound { color: var(--ct-accent-strong); }
 #contadoresView .crm-message-author.inbound { color: var(--ct-warn); }
+
+#contadoresView .crm-message-error-icon {
+  flex: 0 0 auto;
+  color: #be123c;
+}
+
+#contadoresView .crm-message-error,
+#contadoresView .ct-lead-delivery-error {
+  color: #9f1239;
+}
+
+#contadoresView .crm-message-error {
+  margin-top: 10px;
+  padding: 9px 10px;
+  border: 1px solid rgba(190, 18, 60, 0.22);
+  border-radius: var(--ct-radius-sm);
+  background: rgba(255, 255, 255, 0.72);
+  font: 500 12px/1.4 var(--font-sans);
+}
+
+#contadoresView .crm-message-error summary {
+  cursor: pointer;
+  font-weight: 800;
+}
+
+#contadoresView .crm-message-error p {
+  margin: 7px 0 4px;
+  overflow-wrap: anywhere;
+}
+
+#contadoresView .crm-message-error span {
+  color: var(--ct-ink-muted);
+  font: 700 10px/1 var(--font-mono);
+  text-transform: uppercase;
+}
 
 #contadoresView .crm-message-body,
 #contadoresView .ct-event-card p {

@@ -196,6 +196,54 @@ def test_contadores_pending_delivery_exposes_loom_mp4_media(monkeypatch, tmp_pat
     assert [item["strategy_id"] for item in payload["messages"]] == ["loom_mp4", "loom_mp4"]
 
 
+def test_contadores_delivery_failure_retries_then_surfaces_error(monkeypatch, tmp_path) -> None:
+    """Delivery failures should retry twice and then become visible on the lead/message."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    ContadoresConfig.update(enabled=True)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-retry",
+        phone="+5491111111113",
+        full_name="Retry Lead",
+    )
+    message = ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=True,
+        text="Hola",
+        delivery_status=MessageDeliveryStatus.UNDELIVERED,
+        sequence_step="opener",
+    )
+
+    with TestClient(app) as client:
+        first = client.post(
+            f"/api/contadores/messages/{message.id}/delivery-failure",
+            json={"error": "invalid recipient phone", "max_attempts": 3, "retry_delay_seconds": 0},
+        )
+        second = client.post(
+            f"/api/contadores/messages/{message.id}/delivery-failure",
+            json={"error": "invalid recipient phone", "max_attempts": 3, "retry_delay_seconds": 0},
+        )
+        third = client.post(
+            f"/api/contadores/messages/{message.id}/delivery-failure",
+            json={"error": "invalid recipient phone", "max_attempts": 3, "retry_delay_seconds": 0},
+        )
+        detail = client.get(f"/api/contadores/leads/{lead.id}")
+
+    assert first.status_code == 200
+    assert first.json()["delivery_status"] == "undelivered"
+    assert first.json()["delivery_attempts"] == 1
+    assert second.status_code == 200
+    assert second.json()["delivery_status"] == "undelivered"
+    assert second.json()["delivery_attempts"] == 2
+    assert third.status_code == 200
+    assert third.json()["delivery_status"] == "failed"
+    assert third.json()["delivery_attempts"] == 3
+    assert third.json()["last_delivery_error"] == "invalid recipient phone"
+    assert detail.status_code == 200
+    assert detail.json()["lead"]["outbound_error_count"] == 1
+    assert detail.json()["lead"]["latest_outbound_error"] == "invalid recipient phone"
+    assert detail.json()["messages"][0]["last_delivery_error"] == "invalid recipient phone"
+
+
 def test_contadores_zero_weight_strategy_is_not_auto_assigned() -> None:
     """A configured zero-weight strategy should stay available without receiving automatic traffic."""
     chosen_ids = {

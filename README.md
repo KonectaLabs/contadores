@@ -213,6 +213,21 @@ La foto profesional se dispara desde el boton `Actions` del cliente. La accion
 arranca un job async en el backend y la UI hace polling hasta mostrar el
 resultado o el error.
 
+## WhatsApp delivery failures
+
+El bot registra cada error de envio en el backend. Un mensaje saliente fallido
+se reintenta hasta `CONTADORES_DELIVERY_MAX_ATTEMPTS` veces, esperando
+`CONTADORES_DELIVERY_RETRY_DELAY_SECONDS` entre intentos. Cuando se agotan los
+intentos, el mensaje queda en `failed`, el lead se marca con una alerta roja en
+el CRM, y el detalle del chat muestra el error expandible junto al mensaje.
+
+Para reencolar mensajes historicos que ya quedaron en `failed`:
+
+```bash
+uv run python src/scripts/requeue_failed_contadores_messages.py --dry-run
+uv run python src/scripts/requeue_failed_contadores_messages.py
+```
+
 La carpeta canonica por cliente queda en:
 
 ```text

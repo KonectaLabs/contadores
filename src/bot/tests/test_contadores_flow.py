@@ -265,6 +265,53 @@ def test_dispatch_pending_contadores_messages_sends_immediately_without_random_d
     assert sent_calls == [(11, "wa-11"), (12, "wa-12")]
 
 
+def test_dispatch_pending_contadores_messages_persists_send_failure(monkeypatch) -> None:
+    """Failed sends should be reported back to the backend for retry/alerting."""
+    failure_calls: list[tuple[int, str]] = []
+
+    async def fake_dispatch_one_contadores_message(*, item, whatsapp_provider):
+        del item
+        del whatsapp_provider
+        raise RuntimeError("invalid recipient phone number")
+
+    async def fake_record_backend_contadores_message_failure(client, *, message_id: int, error: str):
+        del client
+        failure_calls.append((message_id, error))
+
+    monkeypatch.setattr(utils, "dispatch_one_contadores_message", fake_dispatch_one_contadores_message)
+    monkeypatch.setattr(
+        utils,
+        "record_backend_contadores_message_failure",
+        fake_record_backend_contadores_message_failure,
+    )
+
+    pending = [
+        PendingContadoresDeliveryMessage(
+            message_id=31,
+            lead_id="lead-3",
+            external_lead_id="sheet-3",
+            phone="+5491333333333",
+            normalized_phone="5491333333333",
+            full_name="Lead Three",
+            text="Hola",
+            dispatch_after="2026-04-21T10:00:00Z",
+            created_at="2026-04-21T10:00:00Z",
+            sequence_step="opener",
+        )
+    ]
+
+    results = asyncio.run(
+        dispatch_pending_contadores_messages(
+            SimpleNamespace(),
+            pending=pending,
+            whatsapp_provider=SimpleNamespace(configured=True),
+        )
+    )
+
+    assert [item.status for item in results] == ["failed"]
+    assert failure_calls == [(31, "invalid recipient phone number")]
+
+
 def test_dispatch_one_contadores_message_uses_template_without_body_params() -> None:
     """Contadores template-backed steps should use approved templates with no variables."""
     template_calls: list[tuple[str, str, str, list[str], str | None]] = []

@@ -35,6 +35,17 @@ same path through one stable media URL. WhatsApp media sent by leads should also
 be downloaded into `data/contadores/inbound_media` when available so operators
 can inspect images, videos, audio, documents, and stickers from the CRM.
 
+Outbound WhatsApp send failures are persisted on `contadores_messages`. The bot
+reports send exceptions to the backend, the backend requeues until
+`CONTADORES_DELIVERY_MAX_ATTEMPTS`, and after the retry budget is exhausted the
+CRM must show the failed message with the stored error. Historical failed rows
+can be requeued with:
+
+```bash
+uv run python src/scripts/requeue_failed_contadores_messages.py --dry-run
+uv run python src/scripts/requeue_failed_contadores_messages.py
+```
+
 ## Branch And Deploy Rule
 
 - `ALWAYS_DEPLOY`: product changes are not done until they are committed on
