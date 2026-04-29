@@ -1666,10 +1666,13 @@ function WorkstationView({
                 <div className="workstation-panel-head">
                   <div>
                     <span>Conversation</span>
-                    <strong>CRM chat snapshot</strong>
+                    <strong>CRM chat</strong>
                   </div>
                 </div>
-                <MessageTimeline messages={detail?.messages ?? []} loading={loading} hasLead={Boolean(activeClient)} />
+                <button type="button" className="ct-btn ct-btn-ghost workstation-crm-link" onClick={() => onOpenCrmLead(selectedLead)}>
+                  <ArrowSquareOut size={15} weight="bold" />
+                  Open CRM chat
+                </button>
               </section>
             </>
           )}

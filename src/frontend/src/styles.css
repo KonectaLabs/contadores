@@ -3891,6 +3891,10 @@ body {
   margin: 0;
 }
 
+#contadoresView .workstation-crm-link {
+  width: max-content;
+}
+
 #contadoresView .workstation-panel-head,
 #contadoresView .workstation-panel-actions,
 #contadoresView .workstation-media-actions {
