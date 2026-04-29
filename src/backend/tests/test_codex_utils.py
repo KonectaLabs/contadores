@@ -110,6 +110,65 @@ def test_run_codex_uses_no_approval_and_full_access_by_default(monkeypatch, tmp_
     assert run_kwargs["service_tier"] is None
 
 
+def test_run_codex_creates_codex_home(monkeypatch, tmp_path):
+    """Codex CLI fails on deploy if CODEX_HOME points at a missing volume folder."""
+    calls = {}
+    codex_home = tmp_path / "data" / "codex-home"
+
+    class FakeAskForApprovalValue:
+        never = "never"
+
+    class FakeValue:
+        def __init__(self, value):
+            self.value = value
+
+    class FakeWrapper:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    class FakeResult:
+        final_response = "done"
+        items = []
+
+    class FakeThread:
+        def run(self, prompt, **kwargs):
+            return FakeResult()
+
+    class FakeCodex:
+        def __init__(self, config):
+            calls["config"] = config
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def thread_start(self, *, model):
+            return FakeThread()
+
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.setattr(
+        codex_utils,
+        "_load_codex_sdk",
+        lambda: {
+            "AppServerConfig": lambda **kwargs: kwargs,
+            "AskForApproval": lambda **kwargs: FakeWrapper(**kwargs),
+            "AskForApprovalValue": FakeAskForApprovalValue,
+            "Codex": FakeCodex,
+            "DangerFullAccessSandboxPolicy": lambda **kwargs: FakeWrapper(**kwargs),
+            "ReasoningEffort": FakeValue,
+            "SandboxPolicy": lambda **kwargs: FakeWrapper(**kwargs),
+            "ServiceTier": FakeValue,
+        },
+    )
+
+    codex_utils.run_codex("do the thing", cwd=tmp_path)
+
+    assert codex_home.is_dir()
+    assert calls["config"]["env"]["CODEX_HOME"] == str(codex_home)
+
+
 def test_run_codex_accepts_effort_and_service_tier(monkeypatch, tmp_path):
     """The SDK exposes effort and service tier as run-level controls."""
     calls = {}

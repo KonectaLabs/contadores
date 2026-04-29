@@ -386,6 +386,9 @@ def _run_codex_input(
 
 def _build_child_env(*, prefer_chatgpt_login: bool) -> dict[str, str]:
     env = dict(os.environ)
+    codex_home = env.get("CODEX_HOME")
+    if codex_home:
+        Path(codex_home).expanduser().mkdir(parents=True, exist_ok=True)
     if prefer_chatgpt_login:
         env.pop("OPENAI_API_KEY", None)
     return env
