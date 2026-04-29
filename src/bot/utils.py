@@ -467,12 +467,22 @@ async def record_backend_contadores_message_failure(
     *,
     message_id: int,
     error: str,
+    error_code: int | None = None,
+    error_title: str | None = None,
+    error_message: str | None = None,
+    error_details: str | None = None,
+    error_user_message: str | None = None,
 ) -> None:
     """Persist one failed WhatsApp send attempt for backend retry/alerting."""
     response = await client.post(
         backend_url(f"/api/contadores/messages/{message_id}/delivery-failure"),
         json={
             "error": error,
+            "error_code": error_code,
+            "error_title": error_title,
+            "error_message": error_message,
+            "error_details": error_details,
+            "error_user_message": error_user_message,
             "max_attempts": CONTADORES_DELIVERY_MAX_ATTEMPTS,
             "retry_delay_seconds": CONTADORES_DELIVERY_RETRY_DELAY_SECONDS,
         },
@@ -485,6 +495,12 @@ async def mark_backend_contadores_message_status(
     *,
     external_id: str,
     status: str,
+    error: str | None = None,
+    error_code: int | None = None,
+    error_title: str | None = None,
+    error_message: str | None = None,
+    error_details: str | None = None,
+    error_user_message: str | None = None,
 ) -> dict[str, Any]:
     """Update one Contadores outbound message by provider external id."""
     response = await client.put(
@@ -492,6 +508,12 @@ async def mark_backend_contadores_message_status(
         json={
             "external_id": external_id,
             "status": status,
+            "error": error,
+            "error_code": error_code,
+            "error_title": error_title,
+            "error_message": error_message,
+            "error_details": error_details,
+            "error_user_message": error_user_message,
         },
     )
     response.raise_for_status()
@@ -554,6 +576,30 @@ def map_whatsapp_provider_status(status: str) -> str:
     return "delivered"
 
 
+def clean_error_field(value: Any) -> str | None:
+    """Return one compact provider error field."""
+    clean = " ".join(str(value or "").split()).strip()
+    return clean or None
+
+
+def parse_error_code(value: Any) -> int | None:
+    """Parse one optional provider error code."""
+    clean = clean_error_field(value) or ""
+    return int(clean) if clean.isdigit() else None
+
+
+def build_exception_delivery_error(exc: Exception) -> dict[str, Any]:
+    """Extract structured WhatsApp error fields from an exception."""
+    return {
+        "error": clean_error_field(str(exc)) or exc.__class__.__name__,
+        "error_code": parse_error_code(getattr(exc, "code", None)),
+        "error_title": clean_error_field(getattr(exc, "user_title", None)),
+        "error_message": clean_error_field(getattr(exc, "message", None)),
+        "error_details": clean_error_field(getattr(exc, "details", None)),
+        "error_user_message": clean_error_field(getattr(exc, "user_msg", None)),
+    }
+
+
 async def process_whatsapp_message_status_event(
     client: httpx.AsyncClient,
     *,
@@ -566,6 +612,12 @@ async def process_whatsapp_message_status_event(
             client,
             external_id=event.external_id,
             status=target_status,
+            error=event.error,
+            error_code=event.error_code,
+            error_title=event.error_title,
+            error_message=event.error_message,
+            error_details=event.error_details,
+            error_user_message=event.error_user_message,
         )
     except httpx.HTTPStatusError as exc:
         if exc.response is not None and exc.response.status_code == 404:
@@ -801,12 +853,12 @@ async def dispatch_pending_contadores_messages(
                 )
             )
         except Exception as exc:
-            error = str(exc) or exc.__class__.__name__
+            error_payload = build_exception_delivery_error(exc)
             try:
                 await record_backend_contadores_message_failure(
                     client,
                     message_id=item.message_id,
-                    error=error,
+                    **error_payload,
                 )
             except Exception:
                 logger.exception(
@@ -826,7 +878,7 @@ async def dispatch_pending_contadores_messages(
                     channel="whatsapp",
                     status="failed",
                     contact_value=item.phone,
-                    error=error,
+                    error=str(error_payload["error"]),
                 )
             )
 

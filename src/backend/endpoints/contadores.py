@@ -68,6 +68,44 @@ WHATSAPP_GENERAL_TAG = "whatsapp"
 WHATSAPP_FUNNEL_TAG = "whatsapp_funnel"
 BULK_SET_TAGS_ACTION = "set-tags"
 
+WHATSAPP_DELIVERY_ERROR_BY_CODE = {
+    130429: "WhatsApp throughput limit was reached. Retry later.",
+    130497: "This WhatsApp Business Account is restricted from messaging this country.",
+    131000: "WhatsApp failed with an unknown provider error.",
+    131005: "WhatsApp rejected the send because the app is missing permission or access.",
+    131008: "WhatsApp rejected the send because a required parameter is missing.",
+    131009: "WhatsApp rejected the send because one of the parameters is invalid.",
+    131016: "WhatsApp service is temporarily unavailable. Retry later.",
+    131021: "The sender and recipient WhatsApp numbers are the same.",
+    131026: (
+        "WhatsApp could not deliver this message. Most common cause: the recipient phone "
+        "is not registered on WhatsApp or cannot currently receive business messages."
+    ),
+    131030: "This recipient is not in the allowed list for the configured WhatsApp test number.",
+    131031: "The WhatsApp Business Account is locked or restricted.",
+    131042: "WhatsApp blocked the send because the business payment method has an issue.",
+    131044: "WhatsApp blocked the send because the business payment method has an issue.",
+    131047: (
+        "WhatsApp blocked this free-form message because the 24-hour customer service "
+        "window is closed. Use an approved template instead."
+    ),
+    131048: "WhatsApp rate-limited this phone number because recent messages looked like spam.",
+    131050: "The user has opted out of marketing messages from this business.",
+    131052: "WhatsApp could not download the media attached by the user.",
+    131053: "WhatsApp could not upload the media file for this outbound message.",
+    131056: "Too many messages were sent to the same recipient in a short period.",
+    131057: "The WhatsApp Business Account is in maintenance mode.",
+    132000: "The template parameters do not match the template definition.",
+    132001: "The WhatsApp template does not exist in this language or has not been approved.",
+    132005: "The WhatsApp template text is too long.",
+    132007: "The WhatsApp template content violates a policy.",
+    132008: "A WhatsApp template parameter value is invalid.",
+    132012: "A WhatsApp template parameter format does not match the template definition.",
+    132015: "The WhatsApp template is paused because of low quality.",
+    132016: "The WhatsApp template was disabled because of repeated low quality.",
+    135000: "WhatsApp failed with a generic provider error.",
+}
+
 
 def format_timestamp_seconds(value: datetime | None) -> str | None:
     """Format datetimes with second precision in UTC."""
@@ -80,6 +118,76 @@ def format_timestamp_seconds(value: datetime | None) -> str | None:
 def now_utc() -> datetime:
     """Return current UTC timestamp."""
     return datetime.now(timezone.utc)
+
+
+def clean_delivery_error_part(value: object | None) -> str:
+    """Normalize one provider error field for operator-facing text."""
+    return " ".join(str(value or "").split()).strip()
+
+
+def parse_delivery_error_code(*values: object | None) -> int | None:
+    """Return the first explicit or embedded WhatsApp/Meta error code."""
+    for value in values:
+        clean_value = clean_delivery_error_part(value)
+        if not clean_value:
+            continue
+        if clean_value.isdigit():
+            return int(clean_value)
+        match = re.search(r"\b(13\d{4}|130\d{3})\b", clean_value)
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def append_delivery_error_detail(parts: list[str], label: str, value: object | None) -> None:
+    """Append one non-empty detail once."""
+    clean_value = clean_delivery_error_part(value)
+    if not clean_value:
+        return
+    detail = f"{label}: {clean_value}"
+    if detail not in parts:
+        parts.append(detail)
+
+
+def format_whatsapp_delivery_error(
+    error: str | None = None,
+    *,
+    error_code: int | None = None,
+    error_title: str | None = None,
+    error_message: str | None = None,
+    error_details: str | None = None,
+    error_user_message: str | None = None,
+) -> str:
+    """Turn raw WhatsApp/Meta failure data into a useful operator explanation."""
+    raw_error = clean_delivery_error_part(error)
+    if raw_error.startswith(("WhatsApp could not", "WhatsApp blocked", "WhatsApp rejected", "WhatsApp reported")):
+        return raw_error
+
+    code = parse_delivery_error_code(error_code, raw_error, error_message, error_details)
+    if code in WHATSAPP_DELIVERY_ERROR_BY_CODE:
+        parts = [WHATSAPP_DELIVERY_ERROR_BY_CODE[code], f"Meta code: {code}."]
+    else:
+        normalized = raw_error.lower()
+        if normalized in {"whatsapp_provider_status_failed", "failed"}:
+            parts = [
+                "WhatsApp reported delivery failure but did not include a reason. "
+                "Check whether the phone exists on WhatsApp and can receive business messages."
+            ]
+        elif "invalid" in normalized and ("phone" in normalized or "recipient" in normalized):
+            parts = ["Recipient phone looks invalid before sending. Check the country code and WhatsApp digits."]
+        elif "missing" in normalized and ("phone" in normalized or "recipient" in normalized):
+            parts = ["No WhatsApp recipient phone was available for this lead."]
+        elif "media file not found" in normalized:
+            parts = ["The media file configured for this WhatsApp message was not found on the server."]
+        elif "provider is not configured" in normalized:
+            parts = ["WhatsApp sending is not configured on the bot."]
+        else:
+            parts = [raw_error or "WhatsApp delivery failed, but the provider did not include a reason."]
+
+    append_delivery_error_detail(parts, "Meta title", error_title)
+    append_delivery_error_detail(parts, "Meta message", error_user_message or error_message)
+    append_delivery_error_detail(parts, "Meta details", error_details)
+    return " ".join(parts)[:2000]
 
 
 def ensure_utc_datetime(value: datetime | None) -> datetime | None:
@@ -662,9 +770,11 @@ def build_lead_summary(
         automation_paused=bool(lead.automation_paused),
         automation_paused_reason=lead.automation_paused_reason,
         outbound_error_count=outbound_error_count,
-        latest_outbound_error=ContadoresMessage.latest_delivery_issue_for_lead(lead.id)
-        if outbound_error_count
-        else None,
+        latest_outbound_error=(
+            format_whatsapp_delivery_error(ContadoresMessage.latest_delivery_issue_for_lead(lead.id))
+            if outbound_error_count
+            else None
+        ),
         created_at=format_timestamp_seconds(lead.created_at) or "",
         updated_at=format_timestamp_seconds(lead.updated_at) or "",
     )
@@ -680,7 +790,9 @@ def build_message_response(message: ContadoresMessage) -> "ContadoresMessageResp
         delivery_status=message.delivery_status.value,
         external_id=message.external_id,
         delivery_attempts=message.delivery_attempts,
-        last_delivery_error=message.last_delivery_error,
+        last_delivery_error=format_whatsapp_delivery_error(message.last_delivery_error)
+        if message.last_delivery_error
+        else None,
         last_delivery_error_at=format_timestamp_seconds(message.last_delivery_error_at),
         delivery_error_acknowledged_at=format_timestamp_seconds(message.delivery_error_acknowledged_at),
         dispatch_after=format_timestamp_seconds(message.dispatch_after) or "",
@@ -1568,6 +1680,12 @@ class SetContadoresMessageDeliveryCommand(BaseModel):
 
     external_id: str = Field(min_length=1)
     status: str = Field(min_length=1)
+    error: str | None = None
+    error_code: int | None = None
+    error_title: str | None = None
+    error_message: str | None = None
+    error_details: str | None = None
+    error_user_message: str | None = None
 
 
 class SetContadoresMessageDeliveryByIdCommand(BaseModel):
@@ -1581,6 +1699,11 @@ class RecordContadoresMessageFailureCommand(BaseModel):
     """Provider send failure keyed by local message id."""
 
     error: str = Field(min_length=1)
+    error_code: int | None = None
+    error_title: str | None = None
+    error_message: str | None = None
+    error_details: str | None = None
+    error_user_message: str | None = None
     max_attempts: int = Field(default=3, ge=1, le=10)
     retry_delay_seconds: int = Field(default=60, ge=0, le=3600)
 
@@ -2469,9 +2592,17 @@ async def record_contadores_message_delivery_failure(
     command: RecordContadoresMessageFailureCommand,
 ) -> ContadoresMessageResponse:
     """Record one failed WhatsApp send attempt and requeue up to the retry cap."""
+    delivery_error = format_whatsapp_delivery_error(
+        command.error,
+        error_code=command.error_code,
+        error_title=command.error_title,
+        error_message=command.error_message,
+        error_details=command.error_details,
+        error_user_message=command.error_user_message,
+    )
     updated = ContadoresMessage.record_delivery_failure(
         message_id=message_id,
-        error=command.error,
+        error=delivery_error,
         max_attempts=command.max_attempts,
         retry_delay_seconds=command.retry_delay_seconds,
     )
@@ -2492,6 +2623,8 @@ async def record_contadores_message_delivery_failure(
             "max_attempts": command.max_attempts,
             "retry_delay_seconds": command.retry_delay_seconds,
             "error": updated.last_delivery_error,
+            "raw_error": command.error,
+            "error_code": command.error_code,
         },
     )
     return build_message_response(updated)
@@ -2531,9 +2664,17 @@ async def set_contadores_message_delivery_by_external_id(
     if row.id is None:
         raise HTTPException(status_code=404, detail="Outbound Contadores message not found for external_id")
     if command.status.strip().lower() == MessageDeliveryStatus.FAILED.value:
+        delivery_error = format_whatsapp_delivery_error(
+            command.error or "whatsapp_provider_status_failed",
+            error_code=command.error_code,
+            error_title=command.error_title,
+            error_message=command.error_message,
+            error_details=command.error_details,
+            error_user_message=command.error_user_message,
+        )
         updated = ContadoresMessage.record_delivery_failure(
             message_id=row.id,
-            error="whatsapp_provider_status_failed",
+            error=delivery_error,
             max_attempts=CONTADORES_DELIVERY_MAX_ATTEMPTS,
             retry_delay_seconds=CONTADORES_DELIVERY_RETRY_DELAY_SECONDS,
         )
@@ -2555,6 +2696,8 @@ async def set_contadores_message_delivery_by_external_id(
                 "max_attempts": CONTADORES_DELIVERY_MAX_ATTEMPTS,
                 "retry_delay_seconds": CONTADORES_DELIVERY_RETRY_DELAY_SECONDS,
                 "error": updated.last_delivery_error,
+                "raw_error": command.error,
+                "error_code": command.error_code,
             },
         )
         return build_message_response(updated)

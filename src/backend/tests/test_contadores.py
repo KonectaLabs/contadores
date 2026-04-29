@@ -249,11 +249,11 @@ def test_contadores_delivery_failure_retries_then_surfaces_error(monkeypatch, tm
     assert third.status_code == 200
     assert third.json()["delivery_status"] == "failed"
     assert third.json()["delivery_attempts"] == 3
-    assert third.json()["last_delivery_error"] == "invalid recipient phone"
+    assert "Recipient phone looks invalid" in third.json()["last_delivery_error"]
     assert detail.status_code == 200
     assert detail.json()["lead"]["outbound_error_count"] == 1
-    assert detail.json()["lead"]["latest_outbound_error"] == "invalid recipient phone"
-    assert detail.json()["messages"][0]["last_delivery_error"] == "invalid recipient phone"
+    assert "Recipient phone looks invalid" in detail.json()["lead"]["latest_outbound_error"]
+    assert "Recipient phone looks invalid" in detail.json()["messages"][0]["last_delivery_error"]
 
 
 def test_contadores_delivery_failure_acknowledgement_clears_lead_alert(monkeypatch, tmp_path) -> None:
@@ -288,7 +288,7 @@ def test_contadores_delivery_failure_acknowledgement_clears_lead_alert(monkeypat
     assert failed.json()["delivery_error_acknowledged_at"] is None
     assert acknowledged.status_code == 200
     assert acknowledged.json()["delivery_status"] == "failed"
-    assert acknowledged.json()["last_delivery_error"] == "invalid recipient phone"
+    assert "Recipient phone looks invalid" in acknowledged.json()["last_delivery_error"]
     assert acknowledged.json()["delivery_error_acknowledged_at"] is not None
     assert detail.status_code == 200
     assert detail.json()["lead"]["outbound_error_count"] == 0
@@ -317,15 +317,33 @@ def test_contadores_provider_failed_status_requeues_before_final_failure(monkeyp
     with TestClient(app) as client:
         first = client.put(
             "/api/contadores/messages/delivery/by-external-id",
-            json={"external_id": message.external_id, "status": "failed"},
+            json={
+                "external_id": message.external_id,
+                "status": "failed",
+                "error_code": 131026,
+                "error_message": "Message undeliverable",
+                "error_details": "The recipient is not a WhatsApp user.",
+            },
         )
         second = client.put(
             "/api/contadores/messages/delivery/by-external-id",
-            json={"external_id": message.external_id, "status": "failed"},
+            json={
+                "external_id": message.external_id,
+                "status": "failed",
+                "error_code": 131026,
+                "error_message": "Message undeliverable",
+                "error_details": "The recipient is not a WhatsApp user.",
+            },
         )
         third = client.put(
             "/api/contadores/messages/delivery/by-external-id",
-            json={"external_id": message.external_id, "status": "failed"},
+            json={
+                "external_id": message.external_id,
+                "status": "failed",
+                "error_code": 131026,
+                "error_message": "Message undeliverable",
+                "error_details": "The recipient is not a WhatsApp user.",
+            },
         )
 
     assert first.status_code == 200
@@ -337,7 +355,8 @@ def test_contadores_provider_failed_status_requeues_before_final_failure(monkeyp
     assert third.status_code == 200
     assert third.json()["delivery_status"] == "failed"
     assert third.json()["delivery_attempts"] == 3
-    assert third.json()["last_delivery_error"] == "whatsapp_provider_status_failed"
+    assert "not registered on WhatsApp" in third.json()["last_delivery_error"]
+    assert "Meta code: 131026" in third.json()["last_delivery_error"]
 
 
 def test_contadores_custom_manual_message_requires_open_whatsapp_window(monkeypatch, tmp_path) -> None:

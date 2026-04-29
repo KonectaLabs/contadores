@@ -232,6 +232,12 @@ class WhatsAppMessageStatusEvent(BaseModel):
 
     external_id: str
     status: str
+    error: str | None = None
+    error_code: int | None = None
+    error_title: str | None = None
+    error_message: str | None = None
+    error_details: str | None = None
+    error_user_message: str | None = None
 
 
 class GmailProvider:
@@ -1541,10 +1547,29 @@ class WhatsAppProvider:
             return None
         if normalized_status not in {"sent", "delivered", "read", "failed"}:
             return None
+        error = getattr(status_update, "error", None)
         return WhatsAppMessageStatusEvent(
             external_id=external_id,
             status=normalized_status,
+            error=self._clean_optional_text(error),
+            error_code=self._parse_optional_error_code(getattr(error, "code", None)),
+            error_title=self._clean_optional_text(getattr(error, "user_title", None)),
+            error_message=self._clean_optional_text(getattr(error, "message", None)),
+            error_details=self._clean_optional_text(getattr(error, "details", None)),
+            error_user_message=self._clean_optional_text(getattr(error, "user_msg", None)),
         )
+
+    @staticmethod
+    def _clean_optional_text(value: Any) -> str | None:
+        """Return one compact string field or None."""
+        clean = " ".join(str(value or "").split()).strip()
+        return clean or None
+
+    @staticmethod
+    def _parse_optional_error_code(value: Any) -> int | None:
+        """Parse optional Meta error code from webhook error objects."""
+        clean = " ".join(str(value or "").split()).strip()
+        return int(clean) if clean.isdigit() else None
 
     def _normalize_outbound_recipient(self, to: str) -> str:
         """Normalize WhatsApp destination to digits-only phone format accepted by Cloud API."""

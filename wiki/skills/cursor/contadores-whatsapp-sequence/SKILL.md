@@ -41,6 +41,11 @@ description: >-
   roja cuando se agotan los intentos. Si el operador marca el error como visto,
   el mensaje conserva el detalle del fallo, pero deja de contar para la alerta
   roja del chat.
+- Si Meta manda `status=failed`, preservar los campos de error del webhook
+  (`code`, mensaje y detalles) y mostrar una explicacion accionable. Casos
+  importantes: `131026` suele indicar numero no registrado en WhatsApp o
+  destinatario que no puede recibir mensajes de empresa; `131047` indica ventana
+  de 24 horas cerrada para mensajes no-template.
 - Los envios no-template solo se pueden encolar dentro de las 24 horas desde el
   ultimo inbound del lead. Si la ventana esta cerrada, bloquear custom/media y
   pedir usar template aprobado, por ejemplo `Manual ping`.

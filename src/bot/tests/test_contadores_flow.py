@@ -274,8 +274,9 @@ def test_dispatch_pending_contadores_messages_persists_send_failure(monkeypatch)
         del whatsapp_provider
         raise RuntimeError("invalid recipient phone number")
 
-    async def fake_record_backend_contadores_message_failure(client, *, message_id: int, error: str):
+    async def fake_record_backend_contadores_message_failure(client, *, message_id: int, error: str, **kwargs):
         del client
+        del kwargs
         failure_calls.append((message_id, error))
 
     monkeypatch.setattr(utils, "dispatch_one_contadores_message", fake_dispatch_one_contadores_message)
@@ -558,8 +559,8 @@ def test_send_contadores_pending_alerts_includes_direct_lead_link(monkeypatch) -
 def test_process_whatsapp_message_status_event_ignores_missing_contadores_message(monkeypatch) -> None:
     """Unknown WhatsApp delivery ids should be ignored after the app split."""
 
-    async def fake_mark_backend_contadores_message_status(client, *, external_id: str, status: str):
-        del client, external_id, status
+    async def fake_mark_backend_contadores_message_status(client, *, external_id: str, status: str, **kwargs):
+        del client, external_id, status, kwargs
         request = httpx.Request("PUT", "http://backend/api/contadores/messages/delivery/by-external-id")
         response = httpx.Response(404, request=request)
         raise httpx.HTTPStatusError("not found", request=request, response=response)

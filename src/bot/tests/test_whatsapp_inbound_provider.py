@@ -394,3 +394,27 @@ def test_build_message_status_event_maps_supported_statuses() -> None:
     assert event is not None
     assert event.external_id == "wamid.outbound.1"
     assert event.status == "delivered"
+
+
+def test_build_message_status_event_keeps_provider_error_details() -> None:
+    provider = build_provider()
+    status_update = SimpleNamespace(
+        id="wamid.outbound.2",
+        status=SimpleNamespace(value="failed"),
+        error=SimpleNamespace(
+            code=131026,
+            message="Message undeliverable",
+            details="The recipient is not a WhatsApp user.",
+            user_title="Unable to deliver",
+            user_msg="Check the recipient phone number.",
+        ),
+    )
+
+    event = provider._build_message_status_event(status_update)
+
+    assert event is not None
+    assert event.external_id == "wamid.outbound.2"
+    assert event.status == "failed"
+    assert event.error_code == 131026
+    assert event.error_message == "Message undeliverable"
+    assert event.error_details == "The recipient is not a WhatsApp user."
