@@ -803,9 +803,7 @@ export function App() {
             className={activeSection === "workstation" ? "active" : ""}
             onClick={() => setActiveSection("workstation")}
           >
-            <CurrencyDollar size={15} weight="bold" />
             Workstation
-            {workstationClients.length ? <span>{compactNumber(workstationClients.length)}</span> : null}
           </button>
         </nav>
 
@@ -1781,7 +1779,6 @@ function LeadList({
                     <span className="ct-lead-stage" data-tone={tone}>{inboxMode ? "Inbox" : formatStageLabel(lead.stage)}</span>
                     {lead.workstation_client_id ? (
                       <span className="ct-lead-converted">
-                        <CurrencyDollar size={12} weight="bold" />
                         Converted
                       </span>
                     ) : null}

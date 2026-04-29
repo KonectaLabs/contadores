@@ -181,7 +181,7 @@ Media en WhatsApp:
 La UI tiene dos superficies: `CRM` para captar y conversar con leads, y
 `Workstation` para trabajar con clientes que ya pagaron.
 
-Desde el detalle de un lead se puede usar `$ Convert` para crear un cliente de
+Desde el detalle de un lead se puede usar `Convert` para crear un cliente de
 Workstation. La conversion es idempotente: si el lead ya fue convertido, la UI
 muestra `Open Workstation` y conserva el link al chat original del CRM.
 
