@@ -3265,13 +3265,22 @@ body {
   cursor: pointer;
 }
 
+#contadoresView .ct-manual-file-list {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+
 #contadoresView .ct-manual-file-chip {
   display: inline-grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 8px;
   min-width: 0;
-  max-width: min(520px, 100%);
+  max-width: min(260px, 100%);
   padding: 6px 8px;
   border: 1px solid var(--ct-line);
   border-radius: var(--ct-radius-sm);

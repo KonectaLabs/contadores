@@ -95,9 +95,9 @@ Enviar inmediatamente después del mensaje 4.
 - La vista CRM `Manual` muestra todos los manuales; el pipeline tiene un bloque
   `Needs answer` entre Manual y Closed para los manuales cuyo
   `manual_reply_status` sigue en `needs_reply`.
-- `Manual outbound` permite texto y un adjunto. El operador puede elegir,
-  arrastrar o pegar una imagen/archivo; el backend lo guarda en
-  `data/contadores/outbound_media/{lead_id}/` y el bot lo envia como imagen,
+- `Manual outbound` permite texto y uno o mas adjuntos. El operador puede
+  elegir, arrastrar o pegar imagenes/archivos; el backend los guarda en
+  `data/contadores/outbound_media/{lead_id}/` y el bot los envia como imagen,
   video, audio o documento de WhatsApp.
 - Modelar los delays como `30 s` y `3 min`, no aproximarlos en texto libre.
 - Si más adelante cambia el copy, mantener esta skill como fuente canónica del orden

@@ -176,7 +176,7 @@ export function App() {
   const [sendKind, setSendKind] = useState<SendKind>("custom");
   const [bulkSendKind, setBulkSendKind] = useState<BulkSendKind>("send-manual-ping");
   const [manualText, setManualText] = useState("");
-  const [manualFile, setManualFile] = useState<File | null>(null);
+  const [manualFiles, setManualFiles] = useState<File[]>([]);
   const [bulkTagsDraft, setBulkTagsDraft] = useState("");
   const [selectedLeadIds, setSelectedLeadIds] = useState<string[]>([]);
   const [workstationList, setWorkstationList] = useState<WorkstationClientListResponse | null>(null);
@@ -733,13 +733,13 @@ export function App() {
     event.preventDefault();
     const leadId = selectedLead?.id ?? selectedLeadId;
     const text = manualText.trim();
-    if (!leadId || (!text && !manualFile)) {
+    if (!leadId || (!text && !manualFiles.length)) {
       return;
     }
 
     setActionBusy("manual-dock");
     try {
-      await queueCustomManualMessage(leadId, text, manualFile);
+      await queueCustomManualMessage(leadId, text, manualFiles);
       await loadDashboard();
       await loadDetail(leadId);
     } catch (reason) {
@@ -749,11 +749,11 @@ export function App() {
     }
   }
 
-  async function queueCustomManualMessage(leadId: string, text: string, file: File | null = null) {
-    if (file) {
+  async function queueCustomManualMessage(leadId: string, text: string, files: File[] = []) {
+    if (files.length) {
       const form = new FormData();
       form.append("text", text);
-      form.append("file", file);
+      files.forEach((file) => form.append("file", file));
       await apiFetch<QuickActionResponse>(`/api/contadores/leads/${leadId}/messages/manual-media`, {
         method: "POST",
         body: form,
@@ -765,7 +765,7 @@ export function App() {
       });
     }
     setManualText("");
-    setManualFile(null);
+    setManualFiles([]);
   }
 
   async function moveLeadToFunnel(targetFunnelId: string, targetStage: LeadStage) {
@@ -1207,9 +1207,9 @@ export function App() {
             <ManualDock
               disabled={!selectedLead || Boolean(actionBusy)}
               value={manualText}
-              file={manualFile}
+              files={manualFiles}
               onChange={setManualText}
-              onFileChange={setManualFile}
+              onFilesChange={setManualFiles}
               onSubmit={submitManualDock}
             />
           </section>
@@ -2431,42 +2431,54 @@ function LeadStrategies({ messages, loading, hasLead }: { messages: MessageItem[
 function ManualDock({
   disabled,
   value,
-  file,
+  files,
   onChange,
-  onFileChange,
+  onFilesChange,
   onSubmit,
 }: {
   disabled: boolean;
   value: string;
-  file: File | null;
+  files: File[];
   onChange: (value: string) => void;
-  onFileChange: (file: File | null) => void;
+  onFilesChange: (files: File[]) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   const [dragActive, setDragActive] = useState(false);
-  const hasContent = Boolean(value.trim() || file);
+  const hasContent = Boolean(value.trim() || files.length);
 
-  function firstFile(files: FileList | File[]): File | null {
-    for (const item of Array.from(files)) {
-      if (item.size > 0) {
-        return item;
-      }
-    }
-    return null;
+  function usableFiles(fileList: FileList | File[]): File[] {
+    return Array.from(fileList).filter((item) => item.size > 0);
   }
 
-  function fileFromClipboard(event: ClipboardEvent<HTMLElement>): File | null {
-    const directFile = firstFile(event.clipboardData.files);
-    if (directFile) {
-      return directFile;
+  function mergeFiles(nextFiles: File[]) {
+    if (!nextFiles.length) {
+      return;
     }
+    const seen = new Set(files.map((item) => `${item.name}:${item.size}:${item.lastModified}`));
+    const merged = [...files];
+    nextFiles.forEach((item) => {
+      const key = `${item.name}:${item.size}:${item.lastModified}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        merged.push(item);
+      }
+    });
+    onFilesChange(merged);
+  }
+
+  function filesFromClipboard(event: ClipboardEvent<HTMLElement>): File[] {
+    const pastedFiles = usableFiles(event.clipboardData.files);
+    if (pastedFiles.length) {
+      return pastedFiles;
+    }
+    const result: File[] = [];
     for (const item of Array.from(event.clipboardData.items)) {
       const pastedFile = item.kind === "file" ? item.getAsFile() : null;
       if (pastedFile && pastedFile.size > 0) {
-        return pastedFile;
+        result.push(pastedFile);
       }
     }
-    return null;
+    return result;
   }
 
   function handleDragOver(event: DragEvent<HTMLFormElement>) {
@@ -2493,17 +2505,21 @@ function ManualDock({
     event.preventDefault();
     setDragActive(false);
     if (!disabled) {
-      onFileChange(firstFile(event.dataTransfer.files));
+      mergeFiles(usableFiles(event.dataTransfer.files));
     }
   }
 
   function handlePaste(event: ClipboardEvent<HTMLFormElement>) {
-    const pastedFile = fileFromClipboard(event);
-    if (!pastedFile || disabled) {
+    const pastedFiles = filesFromClipboard(event);
+    if (!pastedFiles.length || disabled) {
       return;
     }
     event.preventDefault();
-    onFileChange(pastedFile);
+    mergeFiles(pastedFiles);
+  }
+
+  function removeFile(indexToRemove: number) {
+    onFilesChange(files.filter((_, index) => index !== indexToRemove));
   }
 
   return (
@@ -2529,23 +2545,31 @@ function ManualDock({
       <div className="ct-manual-file-row">
         <label className="ct-manual-file-picker">
           <UploadSimple size={14} weight="bold" />
-          <span>{file ? "Replace file" : "Attach file"}</span>
+          <span>{files.length ? "Add files" : "Attach files"}</span>
           <input
             type="file"
+            multiple
             disabled={disabled}
-            onChange={(event) => onFileChange(event.target.files?.[0] ?? null)}
+            onChange={(event) => {
+              mergeFiles(usableFiles(event.target.files ?? []));
+              event.currentTarget.value = "";
+            }}
           />
         </label>
-        {file ? (
-          <div className="ct-manual-file-chip">
-            <span>{file.name}</span>
-            <strong>{formatBytes(file.size)}</strong>
-            <button type="button" onClick={() => onFileChange(null)} disabled={disabled} aria-label={`Remove ${file.name}`}>
-              <Trash size={13} weight="bold" />
-            </button>
+        {files.length ? (
+          <div className="ct-manual-file-list">
+            {files.map((file, index) => (
+              <div className="ct-manual-file-chip" key={`${file.name}:${file.size}:${file.lastModified}:${index}`}>
+                <span>{file.name}</span>
+                <strong>{formatBytes(file.size)}</strong>
+                <button type="button" onClick={() => removeFile(index)} disabled={disabled} aria-label={`Remove ${file.name}`}>
+                  <Trash size={13} weight="bold" />
+                </button>
+              </div>
+            ))}
           </div>
         ) : (
-          <p className="ct-manual-hint">Drop a file here or paste an image/file from clipboard.</p>
+          <p className="ct-manual-hint">Drop files here or paste images/files from clipboard.</p>
         )}
       </div>
       <div className="ct-manual-actions">

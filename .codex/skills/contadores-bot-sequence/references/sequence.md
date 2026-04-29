@@ -92,7 +92,8 @@ The backoffice Manual stage is the full manual queue. The pipeline also has a
 `manual_reply_status=needs_reply`, until an operator replies or marks the lead
 answered.
 
-Manual outbound supports text plus one media/file attachment. The operator can
-choose a file, drag it into the composer, or paste a clipboard image/file. The
-backend stores these under `data/contadores/outbound_media/{lead_id}/`; the bot
-sends them as WhatsApp image, video, audio, or document media.
+Manual outbound supports text plus one or more media/file attachments. The
+operator can choose files, drag them into the composer, or paste clipboard
+images/files. The backend stores these under
+`data/contadores/outbound_media/{lead_id}/`; the bot sends them as WhatsApp
+image, video, audio, or document media.

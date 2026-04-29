@@ -168,7 +168,7 @@ Vista Manual del backoffice:
 - `Manual` muestra todos los leads manuales.
 - `Needs answer` aparece como un bloque del pipeline entre `Manual` y `Closed`.
 - Al marcarlos como respondidos, salen de `Needs answer` y siguen quedando en `Manual`.
-- `Manual outbound` permite enviar texto, media o archivos. Los adjuntos se
+- `Manual outbound` permite enviar texto, media o archivos. Uno o mas adjuntos se
   pueden seleccionar, arrastrar sobre el composer, o pegar desde el
   portapapeles; enviar algo desde ahi pausa la automatizacion del lead.
 

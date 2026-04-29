@@ -2073,26 +2073,32 @@ async def create_contadores_manual_message(
 async def create_contadores_manual_media_message(
     lead_id: str,
     text: str = Form(default=""),
-    file: UploadFile = File(...),
+    file: list[UploadFile] = File(...),
 ) -> ContadoresQuickActionResponse:
-    """Queue one manual outbound WhatsApp media/file message."""
+    """Queue one manual outbound WhatsApp media/file send with one or more files."""
     lead = ContadoresLead.get_by_id(lead_id)
     if lead is None:
         raise HTTPException(status_code=404, detail="Lead not found")
+    if not file:
+        raise HTTPException(status_code=400, detail="Attach at least one file")
 
-    media_path, media_type, media_filename, media_mime_type = await save_manual_outbound_media_async(
-        lead=lead,
-        upload=file,
-    )
     config = get_effective_funnel_config(lead.funnel_id)
-    queued_rows = queue_manual_message_for_lead(
-        lead=lead,
-        text=text,
-        media_path=media_path,
-        media_type=media_type,
-        media_filename=media_filename,
-        media_mime_type=media_mime_type,
-    )
+    queued_rows: list[ContadoresMessage] = []
+    for index, upload in enumerate(file):
+        media_path, media_type, media_filename, media_mime_type = await save_manual_outbound_media_async(
+            lead=lead,
+            upload=upload,
+        )
+        queued_rows.extend(
+            queue_manual_message_for_lead(
+                lead=lead,
+                text=text if index == 0 else "",
+                media_path=media_path,
+                media_type=media_type,
+                media_filename=media_filename,
+                media_mime_type=media_mime_type,
+            )
+        )
     updated = ContadoresLead.get_by_id(lead.id) or lead
     return ContadoresQuickActionResponse(
         lead=build_lead_summary(updated, config=config),

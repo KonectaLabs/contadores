@@ -354,8 +354,8 @@ def test_manual_ping_action_queues_template_and_pauses_automation(monkeypatch, t
     assert lead_payload["automation_paused"] is True
 
 
-def test_manual_outbound_can_queue_uploaded_document(monkeypatch, tmp_path) -> None:
-    """Manual outbound should persist an operator attachment for bot delivery."""
+def test_manual_outbound_can_queue_multiple_uploaded_files(monkeypatch, tmp_path) -> None:
+    """Manual outbound should persist multiple operator attachments for bot delivery."""
     configure_contadores_db(monkeypatch, tmp_path)
     data_dir = tmp_path / "data"
     monkeypatch.setattr(contadores_endpoints, "DATA_DIR", data_dir)
@@ -370,23 +370,39 @@ def test_manual_outbound_can_queue_uploaded_document(monkeypatch, tmp_path) -> N
         upload_response = client.post(
             f"/api/contadores/leads/{lead.id}/messages/manual-media",
             data={"text": "Te mando el presupuesto"},
-            files={"file": ("presupuesto.pdf", b"pdf-bytes", "application/pdf")},
+            files=[
+                ("file", ("presupuesto.pdf", b"pdf-bytes", "application/pdf")),
+                ("file", ("foto.png", b"png-bytes", "image/png")),
+                ("file", ("demo.mp4", b"video-bytes", "video/mp4")),
+            ],
         )
         pending_response = client.get("/api/contadores/messages/pending-delivery")
         detail_response = client.get(f"/api/contadores/leads/{lead.id}")
 
     assert upload_response.status_code == 200
+    assert len(upload_response.json()["queued_message_ids"]) == 3
     assert pending_response.status_code == 200
     messages = pending_response.json()["messages"]
-    assert len(messages) == 1
+    assert len(messages) == 3
     assert messages[0]["text"] == "Te mando el presupuesto"
     assert messages[0]["media_type"] == "document"
     assert messages[0]["media_filename"] == "presupuesto.pdf"
     assert messages[0]["media_mime_type"] == "application/pdf"
     assert messages[0]["media_path"].startswith(f"data/contadores/outbound_media/{lead.id}/")
+    assert messages[1]["text"] == "[image] foto.png"
+    assert messages[1]["media_type"] == "image"
+    assert messages[1]["media_filename"] == "foto.png"
+    assert messages[2]["text"] == "[video] demo.mp4"
+    assert messages[2]["media_type"] == "video"
+    assert messages[2]["media_filename"] == "demo.mp4"
 
     media_file = data_dir / Path(messages[0]["media_path"]).relative_to("data")
     assert media_file.read_bytes() == b"pdf-bytes"
+    image_file = data_dir / Path(messages[1]["media_path"]).relative_to("data")
+    assert image_file.read_bytes() == b"png-bytes"
+    video_file = data_dir / Path(messages[2]["media_path"]).relative_to("data")
+    assert video_file.read_bytes() == b"video-bytes"
+    assert [item["media_type"] for item in detail_response.json()["messages"][:3]] == ["document", "image", "video"]
     assert detail_response.json()["messages"][0]["media_url"].startswith("/api/contadores/media/")
 
 
