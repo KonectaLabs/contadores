@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ClipboardEvent, DragEvent, FormEvent } from "react";
 import {
   ArrowSquareOut,
@@ -201,6 +201,7 @@ export function App() {
   const [professionalPhotoJob, setProfessionalPhotoJob] = useState<WorkstationProfessionalPhotoJobResponse | null>(null);
   const [workstationLoading, setWorkstationLoading] = useState(false);
   const [acknowledgingDeliveryErrorIds, setAcknowledgingDeliveryErrorIds] = useState<number[]>([]);
+  const detailRequestId = useRef(0);
   const debouncedQuery = useDebouncedValue(query, 250);
   const debouncedWorkstationQuery = useDebouncedValue(workstationQuery, 250);
 
@@ -220,6 +221,7 @@ export function App() {
     }
     return leadList.leads.find((lead) => lead.id === selectedLeadId) ?? null;
   }, [detail, leadList, selectedLeadId]);
+  const selectedLeadDetail = detail?.lead.id === selectedLeadId ? detail : null;
   const visibleLeadIds = useMemo(() => (leadList?.leads ?? []).map((lead) => lead.id), [leadList]);
   const selectedVisibleLeads = useMemo(
     () => (leadList?.leads ?? []).filter((lead) => selectedLeadIds.includes(lead.id)),
@@ -328,12 +330,18 @@ export function App() {
   }, [debouncedWorkstationQuery, selectedFunnelId]);
 
   const loadDetail = useCallback(async (leadId: string) => {
+    const requestId = detailRequestId.current + 1;
+    detailRequestId.current = requestId;
     setDetailLoading(true);
     try {
       const payload = await apiFetch<LeadDetailResponse>(`/api/contadores/leads/${leadId}`);
-      setDetail(payload);
+      if (detailRequestId.current === requestId) {
+        setDetail(payload);
+      }
     } finally {
-      setDetailLoading(false);
+      if (detailRequestId.current === requestId) {
+        setDetailLoading(false);
+      }
     }
   }, []);
 
@@ -409,6 +417,7 @@ export function App() {
       return;
     }
     setActiveTab("messages");
+    setDetail((current) => current?.lead.id === selectedLeadId ? current : null);
     loadDetail(selectedLeadId).catch((reason) => {
       setError(reason instanceof Error ? reason.message : "Could not load the lead.");
     });
@@ -1327,7 +1336,7 @@ export function App() {
             <div className="ct-panes">
               <section className={`ct-pane ${isInboxFunnel || activeTab === "messages" ? "active" : ""}`}>
                 <MessageTimeline
-                  messages={detail?.messages ?? []}
+                  messages={selectedLeadDetail?.messages ?? []}
                   loading={detailLoading}
                   hasLead={Boolean(selectedLead)}
                   acknowledgingIds={acknowledgingDeliveryErrorIds}
@@ -1337,7 +1346,7 @@ export function App() {
 
               {!isInboxFunnel ? (
                 <section className={`ct-pane ${activeTab === "strategies" ? "active" : ""}`}>
-                  <LeadStrategies messages={detail?.messages ?? []} loading={detailLoading} hasLead={Boolean(selectedLead)} />
+                  <LeadStrategies messages={selectedLeadDetail?.messages ?? []} loading={detailLoading} hasLead={Boolean(selectedLead)} />
                 </section>
               ) : null}
             </div>
