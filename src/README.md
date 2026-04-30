@@ -11,3 +11,7 @@ Usar `PYTHONPATH=src` para ejecutar imports del paquete `backend`.
 La capa `backend/funnel_config.py` expone funnels por nicho desde
 `FUNNELS_CONFIG_PATH` o `data/funnels.json`; `contadores` sigue siendo el
 primer funnel operativo.
+
+`backend/endpoints/public_image_generation.py` expone
+`POST /api/public/image-generation`, un endpoint sin autenticacion que recibe
+`prompt` y `images` por multipart, llama a Codex y devuelve la imagen generada.

@@ -276,6 +276,21 @@ autenticacion de Codex pueda persistir en el volumen `data/`. Si
 lanzar Codex para priorizar el login ChatGPT/Codex. Si se configura en `false`,
 el proceso Codex conserva `OPENAI_API_KEY`.
 
+El backend tambien expone un endpoint publico, sin cookie ni token, para generar
+una imagen con Codex desde un prompt y referencias visuales opcionales:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/public/image-generation \
+  -F 'prompt=Crear una imagen usando estas referencias' \
+  -F 'images=@referencia-1.png' \
+  -F 'images=@referencia-2.jpg' \
+  -o generated-image.png
+```
+
+Cada request guarda sus inputs, metadata y `generated-image.png` en
+`data/public-image-generations/{job_id}/`. El response devuelve directamente la
+imagen generada.
+
 El ZIP se descarga desde:
 
 ```bash
