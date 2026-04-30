@@ -2452,7 +2452,10 @@ function LeadList({
                   </div>
                 </div>
                 <div className="ct-lead-meta">
-                  <span className="ct-lead-meta-main">{lead.phone || "-"}</span>
+                  <span className="ct-lead-meta-main">
+                    <PhoneCountryFlag phone={lead.phone || lead.normalized_phone} />
+                    <span>{lead.phone || "-"}</span>
+                  </span>
                   <span className="ct-lead-time">{relativeTime(lastInteractionAt(lead))}</span>
                 </div>
                 <p className="ct-lead-preview">{leadPreview(lead)}</p>
@@ -2501,7 +2504,12 @@ function LeadDetailHeader({
           <p className="ct-detail-kicker">{lead ? (inboxMode ? "Inbox" : formatStageLabel(lead.stage)) : "Select a lead"}</p>
           <h3>{lead?.full_name || lead?.phone || "No lead selected"}</h3>
           <p className="ct-detail-meta">
-            {lead ? [lead.phone || "-", lead.email || "-", lead.platform || "-", lead.external_lead_id || "-"].join(" · ") : "Open a lead to inspect messages, strategy history, and manual controls."}
+            {lead ? (
+              <>
+                <PhoneCountryFlag phone={lead.phone || lead.normalized_phone} />
+                <span>{[lead.phone || "-", lead.email || "-", lead.platform || "-", lead.external_lead_id || "-"].join(" · ")}</span>
+              </>
+            ) : "Open a lead to inspect messages, strategy history, and manual controls."}
           </p>
         </div>
       </div>
@@ -3546,6 +3554,66 @@ function leadPreview(lead: LeadSummary): string {
     return "Booked through Calendly or manually marked.";
   }
   return truncate(`${lead.platform || "-"} · ${lead.email || lead.phone || "-"}`, 120);
+}
+
+function PhoneCountryFlag({ phone }: { phone: string | null | undefined }) {
+  const country = phoneCountry(phone);
+  if (!country) {
+    return null;
+  }
+
+  return (
+    <span className="ct-phone-flag" aria-label={country.name} title={country.name}>
+      {countryFlag(country.iso2)}
+    </span>
+  );
+}
+
+const PHONE_COUNTRIES = [
+  { code: "1939", iso2: "PR", name: "Puerto Rico" },
+  { code: "1849", iso2: "DO", name: "Dominican Republic" },
+  { code: "1829", iso2: "DO", name: "Dominican Republic" },
+  { code: "1809", iso2: "DO", name: "Dominican Republic" },
+  { code: "1787", iso2: "PR", name: "Puerto Rico" },
+  { code: "598", iso2: "UY", name: "Uruguay" },
+  { code: "595", iso2: "PY", name: "Paraguay" },
+  { code: "593", iso2: "EC", name: "Ecuador" },
+  { code: "591", iso2: "BO", name: "Bolivia" },
+  { code: "507", iso2: "PA", name: "Panama" },
+  { code: "506", iso2: "CR", name: "Costa Rica" },
+  { code: "505", iso2: "NI", name: "Nicaragua" },
+  { code: "504", iso2: "HN", name: "Honduras" },
+  { code: "503", iso2: "SV", name: "El Salvador" },
+  { code: "502", iso2: "GT", name: "Guatemala" },
+  { code: "351", iso2: "PT", name: "Portugal" },
+  { code: "58", iso2: "VE", name: "Venezuela" },
+  { code: "57", iso2: "CO", name: "Colombia" },
+  { code: "56", iso2: "CL", name: "Chile" },
+  { code: "55", iso2: "BR", name: "Brazil" },
+  { code: "54", iso2: "AR", name: "Argentina" },
+  { code: "53", iso2: "CU", name: "Cuba" },
+  { code: "52", iso2: "MX", name: "Mexico" },
+  { code: "51", iso2: "PE", name: "Peru" },
+  { code: "49", iso2: "DE", name: "Germany" },
+  { code: "44", iso2: "GB", name: "United Kingdom" },
+  { code: "39", iso2: "IT", name: "Italy" },
+  { code: "34", iso2: "ES", name: "Spain" },
+  { code: "33", iso2: "FR", name: "France" },
+  { code: "1", iso2: "US", name: "United States" },
+] as const;
+
+function phoneCountry(phone: string | null | undefined): (typeof PHONE_COUNTRIES)[number] | null {
+  const digits = (phone || "").replace(/\D/g, "");
+  if (!digits) {
+    return null;
+  }
+  return PHONE_COUNTRIES.find((country) => digits.startsWith(country.code)) ?? null;
+}
+
+function countryFlag(iso2: string): string {
+  return iso2
+    .toUpperCase()
+    .replace(/[A-Z]/g, (letter) => String.fromCodePoint(0x1f1e6 + letter.charCodeAt(0) - 65));
 }
 
 function customMessageBlockReason(lead: LeadSummary | null): string | null {
