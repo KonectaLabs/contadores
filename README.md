@@ -289,7 +289,11 @@ curl -X POST http://127.0.0.1:8000/api/public/image-generation \
 
 Cada request guarda sus inputs, metadata y `generated-image.png` en
 `data/public-image-generations/{job_id}/`. El response devuelve directamente la
-imagen generada.
+imagen generada. El camino principal usa Codex con el login ChatGPT guardado en
+`CODEX_HOME`; si Codex falla o no crea el archivo esperado, el backend hace
+fallback a la OpenAI Images API con `OPENAI_API_KEY`. El modelo de fallback se
+configura con `OPENAI_IMAGE_FALLBACK_MODEL` y por defecto usa `gpt-image-1.5`,
+que es el modelo GPT Image recomendado en la documentacion actual de OpenAI.
 
 El ZIP se descarga desde:
 

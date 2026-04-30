@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -83,3 +84,78 @@ def test_public_image_generation_is_not_blocked_by_cookie_auth(monkeypatch, tmp_
     assert public_response.status_code == 200
     assert public_response.content == b"public-output"
     assert protected_response.status_code == 401
+
+
+def test_public_image_generation_falls_back_to_openai_generation(monkeypatch, tmp_path) -> None:
+    """If Codex fails without input images, use the Images API generation endpoint."""
+    data_dir = tmp_path / "data"
+    monkeypatch.setattr(database_module, "DATA_DIR", data_dir)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    calls: list[dict[str, object]] = []
+
+    def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
+        raise RuntimeError("codex login failed")
+
+    def fake_call_openai_image_generation(*, api_key: str, prompt: str) -> dict[str, object]:
+        calls.append({"api_key": api_key, "prompt": prompt, "type": "generation"})
+        return {"data": [{"b64_json": base64.b64encode(b"fallback-png").decode("ascii")}]}
+
+    monkeypatch.setattr(public_image_generation, "run_codex_with_context", fake_run_codex_with_context)
+    monkeypatch.setattr(public_image_generation, "call_openai_image_generation", fake_call_openai_image_generation)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/public/image-generation",
+            data={"prompt": "Generar una imagen fallback"},
+        )
+
+    assert response.status_code == 200
+    assert response.content == b"fallback-png"
+    assert calls == [{"api_key": "sk-test", "prompt": "Generar una imagen fallback", "type": "generation"}]
+
+
+def test_public_image_generation_falls_back_to_openai_edit_with_images(monkeypatch, tmp_path) -> None:
+    """If Codex fails with input images, pass those images to the Images API edit endpoint."""
+    data_dir = tmp_path / "data"
+    monkeypatch.setattr(database_module, "DATA_DIR", data_dir)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    calls: list[dict[str, object]] = []
+
+    def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
+        raise RuntimeError("codex did not create output")
+
+    def fake_call_openai_image_edit(
+        *,
+        api_key: str,
+        prompt: str,
+        input_paths: list[Path],
+    ) -> dict[str, object]:
+        calls.append(
+            {
+                "api_key": api_key,
+                "prompt": prompt,
+                "input_count": len(input_paths),
+                "input_names": [path.name for path in input_paths],
+            }
+        )
+        return {"data": [{"b64_json": base64.b64encode(b"fallback-edit-png").decode("ascii")}]}
+
+    monkeypatch.setattr(public_image_generation, "run_codex_with_context", fake_run_codex_with_context)
+    monkeypatch.setattr(public_image_generation, "call_openai_image_edit", fake_call_openai_image_edit)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/public/image-generation",
+            data={"prompt": "Editar con referencias"},
+            files=[
+                ("images", ("referencia.jpg", b"source-jpg", "image/jpeg")),
+                ("images", ("logo.png", b"source-png", "image/png")),
+            ],
+        )
+
+    assert response.status_code == 200
+    assert response.content == b"fallback-edit-png"
+    assert calls[0]["api_key"] == "sk-test"
+    assert calls[0]["prompt"] == "Editar con referencias"
+    assert calls[0]["input_count"] == 2
+    assert calls[0]["input_names"] == ["01-referencia.jpg", "02-logo.png"]
