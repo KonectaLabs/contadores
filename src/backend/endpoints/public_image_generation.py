@@ -10,6 +10,7 @@ import uuid
 from contextlib import ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Lock
 
 import base64
 import httpx
@@ -33,6 +34,9 @@ OUTPUT_FILENAME = "generated-image.png"
 OPENAI_IMAGE_FALLBACK_MODEL = os.getenv("OPENAI_IMAGE_FALLBACK_MODEL", "gpt-image-1.5")
 OPENAI_IMAGE_FALLBACK_SIZE = os.getenv("OPENAI_IMAGE_FALLBACK_SIZE", "1024x1024")
 OPENAI_IMAGE_FALLBACK_QUALITY = os.getenv("OPENAI_IMAGE_FALLBACK_QUALITY", "medium")
+OPENAI_IMAGE_FALLBACK_LIMIT = 10
+openai_image_fallback_count = 0
+openai_image_fallback_lock = Lock()
 
 
 def generation_root() -> Path:
@@ -189,6 +193,8 @@ def run_openai_image_fallback_sync(
             detail=f"Codex failed and OPENAI_API_KEY is not configured for fallback: {codex_error}",
         )
 
+    fallback_number = reserve_openai_image_fallback()
+
     if input_paths:
         response_payload = call_openai_image_edit(
             api_key=api_key,
@@ -222,7 +228,23 @@ def run_openai_image_fallback_sync(
         "model": OPENAI_IMAGE_FALLBACK_MODEL,
         "size": OPENAI_IMAGE_FALLBACK_SIZE,
         "quality": OPENAI_IMAGE_FALLBACK_QUALITY,
+        "fallback_number": fallback_number,
+        "fallback_limit": OPENAI_IMAGE_FALLBACK_LIMIT,
     }
+
+
+def reserve_openai_image_fallback() -> int:
+    """Reserve one in-process Images API fallback slot or fail before calling OpenAI."""
+    global openai_image_fallback_count
+
+    with openai_image_fallback_lock:
+        if openai_image_fallback_count >= OPENAI_IMAGE_FALLBACK_LIMIT:
+            raise HTTPException(
+                status_code=429,
+                detail=f"OpenAI image fallback limit reached ({OPENAI_IMAGE_FALLBACK_LIMIT}).",
+            )
+        openai_image_fallback_count += 1
+        return openai_image_fallback_count
 
 
 def call_openai_image_generation(*, api_key: str, prompt: str) -> dict[str, object]:

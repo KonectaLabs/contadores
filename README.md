@@ -294,6 +294,8 @@ imagen generada. El camino principal usa Codex con el login ChatGPT guardado en
 fallback a la OpenAI Images API con `OPENAI_API_KEY`. El modelo de fallback se
 configura con `OPENAI_IMAGE_FALLBACK_MODEL` y por defecto usa `gpt-image-1.5`,
 que es el modelo GPT Image recomendado en la documentacion actual de OpenAI.
+El fallback por API tiene un limite simple en memoria de 10 usos por proceso;
+Codex no tiene limite en este endpoint.
 
 El ZIP se descarga desde:
 

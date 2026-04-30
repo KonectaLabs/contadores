@@ -159,3 +159,37 @@ def test_public_image_generation_falls_back_to_openai_edit_with_images(monkeypat
     assert calls[0]["prompt"] == "Editar con referencias"
     assert calls[0]["input_count"] == 2
     assert calls[0]["input_names"] == ["01-referencia.jpg", "02-logo.png"]
+
+
+def test_public_image_generation_limits_openai_fallback_calls(monkeypatch, tmp_path) -> None:
+    """Codex can be retried freely, but Images API fallback is capped in process."""
+    data_dir = tmp_path / "data"
+    monkeypatch.setattr(database_module, "DATA_DIR", data_dir)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setattr(public_image_generation, "openai_image_fallback_count", 0)
+    api_call_count = 0
+
+    def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
+        raise RuntimeError("codex failed")
+
+    def fake_call_openai_image_generation(*, api_key: str, prompt: str) -> dict[str, object]:
+        nonlocal api_call_count
+        api_call_count += 1
+        return {"data": [{"b64_json": base64.b64encode(b"fallback-png").decode("ascii")}]}
+
+    monkeypatch.setattr(public_image_generation, "run_codex_with_context", fake_run_codex_with_context)
+    monkeypatch.setattr(public_image_generation, "call_openai_image_generation", fake_call_openai_image_generation)
+
+    with TestClient(app) as client:
+        responses = [
+            client.post(
+                "/api/public/image-generation",
+                data={"prompt": f"Fallback {index}"},
+            )
+            for index in range(public_image_generation.OPENAI_IMAGE_FALLBACK_LIMIT + 1)
+        ]
+
+    assert [response.status_code for response in responses[:10]] == [200] * 10
+    assert responses[10].status_code == 429
+    assert "fallback limit reached" in responses[10].json()["detail"].lower()
+    assert api_call_count == public_image_generation.OPENAI_IMAGE_FALLBACK_LIMIT
