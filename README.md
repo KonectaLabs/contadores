@@ -164,6 +164,7 @@ Acciones manuales de Calendly:
 
 - `Calendly with intro` encola el texto previo y despues el link de Calendly.
 - `Calendly link only` encola solo el link de Calendly.
+- El link de Calendly es siempre `https://calendly.com/facundogoiriz/crecimiento`, para Contadores, Abogados y cualquier otro funnel.
 - Ambas acciones registran `calendly_sent_at` y mantienen el lead en Manual. La automatizacion sigue usando siempre texto previo + link y puede dejar el lead fuera de Manual.
 
 Vista Manual del backoffice:

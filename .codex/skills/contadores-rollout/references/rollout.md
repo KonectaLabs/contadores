@@ -31,7 +31,7 @@ protected media endpoint for CRM review.
 - `CONTADORES_ENABLED=true`
 - `CONTADORES_SHEET_URL=...`
 - `CONTADORES_SHEET_GID=...`
-- `CONTADORES_CALENDLY_BASE_URL=...`
+- Calendly fijo del producto: `https://calendly.com/facundogoiriz/crecimiento`
 - `FUNNELS_CONFIG_PATH=data/funnels.json`
 
 ## Safe release sequence

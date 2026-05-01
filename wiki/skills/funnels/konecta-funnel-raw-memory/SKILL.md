@@ -53,7 +53,7 @@ Facundo also wants the codebase to stop being only "Contadores". The platform sh
 - opener template and text;
 - pitch/video intro message;
 - whether the video is a link or an uploaded MP4;
-- Calendly message and URL;
+- Calendly message; URL is fixed as `https://calendly.com/facundogoiriz/crecimiento`;
 - follow-up messages and template-backed follow-ups;
 - strategy/sequence settings.
 
@@ -77,4 +77,3 @@ Facundo wants documentation first. The raw memory must be preserved so future ag
   `/Users/fgoiriz/private/repos/contadores/src/scripts/whatsapp_templates.py`
 - Captions CLI:
   `/Users/fgoiriz/private/repos/tiktok-captions-cli`
-

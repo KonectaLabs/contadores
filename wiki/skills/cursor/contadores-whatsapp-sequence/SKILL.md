@@ -12,7 +12,7 @@ description: >-
 
 ## Variables obligatorias
 
-- `CONTADORES_CALENDLY_URL` or `CONTADORES_CALENDLY_BASE_URL`
+- Calendly fijo: `https://calendly.com/facundogoiriz/crecimiento`
 - Funnel `loom_mp4.media_path`
 
 ## Reglas del flujo
@@ -32,7 +32,7 @@ description: >-
 - El mensaje 2 no lleva link.
 - El mensaje 3 debe ser el MP4 configurado, no un link de Loom.
 - El mensaje 4 no lleva link.
-- El mensaje 5 debe ser solo la URL de `CONTADORES_CALENDLY_URL`.
+- El mensaje 5 debe ser solo `https://calendly.com/facundogoiriz/crecimiento`.
 - No mezclar el texto del mensaje 2 con el MP4.
 - No mezclar el texto del mensaje 4 con el link del Calendly.
 - El trigger es mecánico: cualquier respuesta sirve; no hace falta clasificar intención.
@@ -91,12 +91,12 @@ Elige el horario que mejor te quede:
 Enviar inmediatamente después del mensaje 4.
 
 ```text
-{CONTADORES_CALENDLY_URL}
+https://calendly.com/facundogoiriz/crecimiento
 ```
 
 ## Notas de implementación
 
-- Leer los links desde la capa de configuración.
+- Usar el Calendly fijo compartido por todos los funnels.
 - Guardar la secuencia como cinco mensajes separados.
 - Para Click-to-WhatsApp, rutear por `referral.source_id` contra `whatsapp_referral_source_ids`. No agregar ruteo amplio por texto editable.
 - Excepcion aprobada: si el texto normalizado es `Hola! Quiero mas informacion de su propuesta para abogados!`, rutear a `abogados`.

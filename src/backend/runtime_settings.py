@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from backend.calendly import normalize_calendly_url
+
 
 def _read_str(*names: str, default: str = "") -> str:
     """Read the first non-empty environment value."""
@@ -65,8 +67,6 @@ class RuntimeSettings:
         issues: list[str] = []
         if not self.sheet_url:
             issues.append("CONTADORES_SHEET_URL is empty.")
-        if not self.calendly_base_url:
-            issues.append("CONTADORES_CALENDLY_BASE_URL is empty.")
         return issues
 
     def public_dict(self) -> dict[str, object]:
@@ -93,10 +93,12 @@ def get_runtime_settings() -> RuntimeSettings:
         sheet_gid=_read_str("CONTADORES_SHEET_GID", "GOOGLE_SHEET_GID", default=""),
         sheet_poll_seconds=max(30, _read_int("CONTADORES_SHEET_POLL_SECONDS", default=30)),
         loom_url=_read_str("CONTADORES_LOOM_URL", default=""),
-        calendly_base_url=_read_str(
-            "CONTADORES_CALENDLY_BASE_URL",
-            "CONTADORES_CALENDLY_URL",
-            default="https://calendly.com",
+        calendly_base_url=normalize_calendly_url(
+            _read_str(
+                "CONTADORES_CALENDLY_BASE_URL",
+                "CONTADORES_CALENDLY_URL",
+                default="",
+            )
         ),
         alert_emails=_read_alert_emails(),
     )

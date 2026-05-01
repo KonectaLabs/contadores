@@ -28,7 +28,7 @@ Each funnel needs:
 - `loom_intro_text`;
 - `video_check_text`;
 - `calendly_intro_text`;
-- `calendly_base_url`;
+- `calendly_base_url`: always `https://calendly.com/facundogoiriz/crecimiento`;
 - `alert_emails`;
 - `whatsapp_referral_source_ids`: Meta Click-to-WhatsApp `referral.source_id` values that should create/reuse leads in this funnel;
 - wait windows:

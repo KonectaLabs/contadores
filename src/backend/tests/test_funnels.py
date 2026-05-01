@@ -87,6 +87,7 @@ def test_funnels_endpoint_persists_new_niche(monkeypatch, tmp_path) -> None:
     ids = [item["id"] for item in list_response.json()["funnels"]]
     assert ids == ["contadores", "abogados", "general"]
     abogados = list_response.json()["funnels"][1]
+    assert abogados["calendly_base_url"] == "https://calendly.com/facundogoiriz/crecimiento"
     assert abogados["whatsapp_referral_source_ids"] == ["120244283740930010"]
 
 
@@ -180,6 +181,8 @@ def test_funnels_endpoint_sanitizes_retired_link_strategy(monkeypatch, tmp_path)
 
     assert response.status_code == 200
     funnels = {item["id"]: item for item in response.json()["funnels"]}
+    assert funnels["contadores"]["calendly_base_url"] == "https://calendly.com/facundogoiriz/crecimiento"
+    assert funnels["abogados"]["calendly_base_url"] == "https://calendly.com/facundogoiriz/crecimiento"
     assert funnels["contadores"]["whatsapp_referral_source_ids"] == []
     assert [item["id"] for item in funnels["contadores"]["strategies"]] == ["loom_mp4"]
     assert funnels["abogados"]["whatsapp_referral_source_ids"] == ["real-abogados-ad"]

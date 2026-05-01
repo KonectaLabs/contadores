@@ -10,6 +10,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from backend.calendly import KONECTA_CALENDLY_URL, normalize_calendly_url
 from backend.database import DATA_DIR, normalize_email
 
 FunnelKind = Literal["campaign", "inbox"]
@@ -19,7 +20,7 @@ CONTADORES_FUNNEL_ID = "contadores"
 GENERAL_INBOX_FUNNEL_ID = "general"
 MP4_ONLY_FUNNEL_IDS = {CONTADORES_FUNNEL_ID, "abogados"}
 DEFAULT_CONTADORES_LOOM_URL = "https://www.loom.com/share/36b054dea1c94bbaa7470014c2337fca"
-DEFAULT_CONTADORES_CALENDLY_URL = "https://calendly.com/yoelkravchuk/konecta-meet"
+DEFAULT_CONTADORES_CALENDLY_URL = KONECTA_CALENDLY_URL
 DEFAULT_CONTADORES_VIDEO_PATH = "data/contadores/videos/loom_60_seconds_captions.mp4"
 DEFAULT_MANUAL_PING_TEXT = (
     "Hola, queria saber en que situacion quedamos y si queres que retomemos la conversacion"
@@ -159,6 +160,12 @@ class FunnelDefinition(BaseModel):
         """Strip text fields."""
         return (value or "").strip()
 
+    @field_validator("calendly_base_url")
+    @classmethod
+    def force_shared_calendly_url(cls, value: str) -> str:
+        """Keep every funnel on the shared Calendly booking URL."""
+        return normalize_calendly_url(value)
+
     @field_validator(
         "sheet_url",
         "sheet_gid",
@@ -242,10 +249,7 @@ def build_default_contadores_funnel() -> FunnelDefinition:
             "pagas 300 USD -> empezamos a trabajar para vos a las 24 horas.\n\n"
             "Elige el horario que mejor te quede:"
         ),
-        calendly_base_url=(
-            os.getenv("CONTADORES_CALENDLY_BASE_URL", DEFAULT_CONTADORES_CALENDLY_URL)
-            or DEFAULT_CONTADORES_CALENDLY_URL
-        ).strip(),
+        calendly_base_url=normalize_calendly_url(os.getenv("CONTADORES_CALENDLY_BASE_URL")),
         alert_emails=_read_list("CONTADORES_ALERT_EMAILS"),
         whatsapp_referral_source_ids=[],
         initial_reply_quiet_seconds=_read_int("CONTADORES_INITIAL_REPLY_QUIET_SECONDS", default=30),
@@ -310,6 +314,8 @@ def _merge_default_with_override(default: FunnelDefinition, override: FunnelDefi
 def sanitize_funnel_definition(funnel: FunnelDefinition) -> FunnelDefinition:
     """Remove retired campaign wiring from persisted funnel configs."""
     updates: dict[str, object] = {}
+    if funnel.calendly_base_url != KONECTA_CALENDLY_URL:
+        updates["calendly_base_url"] = KONECTA_CALENDLY_URL
     if funnel.id == CONTADORES_FUNNEL_ID and funnel.whatsapp_referral_source_ids:
         updates["whatsapp_referral_source_ids"] = []
     if funnel.id in MP4_ONLY_FUNNEL_IDS:

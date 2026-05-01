@@ -3404,7 +3404,7 @@ function buildBlankFunnel(): FunnelDefinition {
     loom_url: "",
     video_check_text: "conseguiste ver el video?",
     calendly_intro_text: "Para avanzar, el siguiente paso es elegir un horario en el calendario:",
-    calendly_base_url: "https://calendly.com",
+    calendly_base_url: "https://calendly.com/facundogoiriz/crecimiento",
     alert_emails: [],
     whatsapp_referral_source_ids: [],
     initial_reply_quiet_seconds: 30,

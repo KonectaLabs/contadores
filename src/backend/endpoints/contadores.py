@@ -12,13 +12,12 @@ import unicodedata
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import urlsplit, urlunsplit
-
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
+from backend.calendly import normalize_calendly_url
 from backend.ai.contadores_post_loom_classifier import PostLoomReplyClassifierProgram
 from backend.contadores_strategies import (
     LOOM_STEP,
@@ -295,19 +294,8 @@ def build_classifier_context() -> str:
 
 
 def build_calendly_url(*, base_url: str) -> str:
-    """Return the configured Calendly URL without per-lead tracking."""
-    parsed = urlsplit((base_url or "").strip() or "https://calendly.com/yoelkravchuk/konecta-meet")
-    if not parsed.scheme and not parsed.netloc:
-        return f"https://{parsed.path}"
-    return urlunsplit(
-        (
-            parsed.scheme or "https",
-            parsed.netloc,
-            parsed.path or "",
-            parsed.query,
-            parsed.fragment,
-        )
-    )
+    """Return the shared Calendly URL without per-lead tracking."""
+    return normalize_calendly_url(base_url)
 
 
 def build_funnel_strategy_weights(funnel) -> dict[str, dict[str, int]]:

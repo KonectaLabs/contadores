@@ -77,10 +77,10 @@ Elegí el horario que mejor te quede:`
 
 Then send:
 
-`CONTADORES_CALENDLY_BASE_URL`
+`https://calendly.com/facundogoiriz/crecimiento`
 
 Manual operators can also choose `send-calendly-link` from the CRM to send only
-`CONTADORES_CALENDLY_BASE_URL`. That manual shortcut still marks the lead as
+`https://calendly.com/facundogoiriz/crecimiento`. That manual shortcut still marks the lead as
 having reached Calendly, keeps the lead in Manual, and is not used by automation.
 
 ## Human handoff

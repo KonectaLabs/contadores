@@ -23,6 +23,8 @@ from sqlalchemy import Column, Enum as SQLAlchemyEnum, String, UniqueConstraint,
 from sqlalchemy.orm import aliased
 from sqlmodel import Field, Session, SQLModel, create_engine, select
 
+from backend.calendly import normalize_calendly_url
+
 logger = logging.getLogger(__name__)
 
 DATA_DIR = Path(os.getenv("DATA_DIR", Path(__file__).resolve().parents[2] / "data"))
@@ -805,17 +807,8 @@ def _default_contadores_strategy_weights_json() -> str:
 
 
 def _normalize_contadores_calendly_base_url(base_url: str | None) -> str:
-    """Return a usable Calendly base URL for Contadores."""
-    default_url = "https://calendly.com/yoelkravchuk/konecta-meet"
-    raw_value = (base_url or "").strip()
-    if not raw_value:
-        return default_url
-    parsed = urlsplit(raw_value)
-    normalized_host = (parsed.netloc or parsed.path).strip().lower()
-    normalized_path = parsed.path.strip("/")
-    if normalized_host in {"calendly.com", "www.calendly.com"} and not normalized_path:
-        return default_url
-    return raw_value
+    """Return the only Calendly URL used by Contadores."""
+    return normalize_calendly_url(base_url)
 
 
 class ContadoresConfig(SQLModel, table=True):

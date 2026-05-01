@@ -90,7 +90,7 @@ def build_abogados_test_funnel(
         "loom_url": "",
         "video_check_text": "conseguiste ver el video?",
         "calendly_intro_text": "Para avanzar, elegi un horario:",
-        "calendly_base_url": "https://calendly.com/konecta/abogados",
+        "calendly_base_url": "https://calendly.com/facundogoiriz/crecimiento",
         "alert_emails": [],
         "whatsapp_referral_source_ids": referral_ids or [],
         "initial_reply_quiet_seconds": initial_reply_quiet_seconds,
@@ -118,7 +118,7 @@ def test_runtime_endpoint_reports_sheet_readiness(monkeypatch, tmp_path) -> None
     configure_contadores_db(monkeypatch, tmp_path)
     monkeypatch.setenv("CONTADORES_SHEET_URL", "https://docs.google.com/spreadsheets/d/example")
     monkeypatch.setenv("CONTADORES_LOOM_URL", "https://www.loom.com/share/example")
-    monkeypatch.setenv("CONTADORES_CALENDLY_BASE_URL", "https://calendly.com/example")
+    monkeypatch.setenv("CONTADORES_CALENDLY_BASE_URL", "https://calendly.com/facundogoiriz/crecimiento")
 
     with TestClient(app) as client:
         response = client.get("/api/runtime")
@@ -826,13 +826,13 @@ def test_bulk_custom_message_pauses_selected_leads(monkeypatch, tmp_path) -> Non
 
 
 def test_contadores_config_normalizes_generic_calendly_base_url(monkeypatch, tmp_path) -> None:
-    """A generic Calendly host should collapse to the configured meeting URL."""
+    """Any Calendly value should collapse to the shared meeting URL."""
     configure_contadores_db(monkeypatch, tmp_path)
 
     ContadoresConfig.update(calendly_base_url="https://calendly.com")
     config = ContadoresConfig.get()
 
-    assert config.calendly_base_url == "https://calendly.com/yoelkravchuk/konecta-meet"
+    assert config.calendly_base_url == "https://calendly.com/facundogoiriz/crecimiento"
 
 
 def test_contadores_config_does_not_expose_calendly_webhook_tracking(monkeypatch, tmp_path) -> None:
@@ -974,7 +974,7 @@ def test_contadores_automation_tick_classifies_affirmative_reply_and_sends_calen
     assert detail.json()["lead"]["stage"] == "calendly_sent"
     assert detail.json()["lead"]["last_classification_label"] == "wants_to_proceed"
     assert [item["sequence_step"] for item in pending.json()["messages"]] == ["calendly_intro", "calendly_url"]
-    assert pending.json()["messages"][1]["text"] == "https://calendly.com/yoelkravchuk/konecta-meet"
+    assert pending.json()["messages"][1]["text"] == "https://calendly.com/facundogoiriz/crecimiento"
     assert "utm_" not in pending.json()["messages"][1]["text"]
     assert pending.json()["messages"][0]["text"] == (
         "Para avanzar solo falta -> Reunion, nos conocemos -> definimos medio de pago -> "
@@ -1174,7 +1174,7 @@ def test_abogados_ctwa_referral_creates_lead_and_reaches_loom(monkeypatch, tmp_p
         "loom_url": "",
         "video_check_text": "conseguiste ver el video?",
         "calendly_intro_text": "Para avanzar, elegi un horario:",
-        "calendly_base_url": "https://calendly.com/konecta/abogados",
+        "calendly_base_url": "https://calendly.com/facundogoiriz/crecimiento",
         "alert_emails": [],
         "whatsapp_referral_source_ids": ["120244283740930010"],
         "initial_reply_quiet_seconds": 1,
@@ -1502,11 +1502,11 @@ def test_contadores_send_calendly_keeps_manual_handoff(monkeypatch, tmp_path) ->
 
     assert detail.status_code == 200
     assert detail.json()["lead"]["stage"] == "needs_human"
-    assert detail.json()["lead"]["calendly_url"] == "https://calendly.com/yoelkravchuk/konecta-meet"
+    assert detail.json()["lead"]["calendly_url"] == "https://calendly.com/facundogoiriz/crecimiento"
     assert "calendly_tracking_token" not in detail.json()["lead"]
     assert detail.json()["lead"]["automation_paused"] is True
     assert [item["sequence_step"] for item in pending.json()["messages"]] == ["calendly_intro", "calendly_url"]
-    assert pending.json()["messages"][1]["text"] == "https://calendly.com/yoelkravchuk/konecta-meet"
+    assert pending.json()["messages"][1]["text"] == "https://calendly.com/facundogoiriz/crecimiento"
 
 
 def test_contadores_send_calendly_link_only_marks_calendly_sent(monkeypatch, tmp_path) -> None:
@@ -1542,9 +1542,9 @@ def test_contadores_send_calendly_link_only_marks_calendly_sent(monkeypatch, tmp
 
     assert detail.status_code == 200
     assert detail.json()["lead"]["stage"] == "needs_human"
-    assert detail.json()["lead"]["calendly_url"] == "https://calendly.com/yoelkravchuk/konecta-meet"
+    assert detail.json()["lead"]["calendly_url"] == "https://calendly.com/facundogoiriz/crecimiento"
     assert [item["sequence_step"] for item in pending.json()["messages"]] == ["calendly_url"]
-    assert pending.json()["messages"][0]["text"] == "https://calendly.com/yoelkravchuk/konecta-meet"
+    assert pending.json()["messages"][0]["text"] == "https://calendly.com/facundogoiriz/crecimiento"
 
 
 def test_contadores_post_calendly_inbound_returns_to_needs_human(monkeypatch, tmp_path) -> None:

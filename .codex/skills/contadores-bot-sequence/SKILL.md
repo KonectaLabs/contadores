@@ -56,11 +56,12 @@ marks the lead as `booked` and pauses automation.
 
 Operators have two backoffice actions:
 
-- `send-calendly`: send the configured Calendly intro text and then the Calendly URL.
+- `send-calendly`: send the configured Calendly intro text and then `https://calendly.com/facundogoiriz/crecimiento`.
 - `send-calendly-link`: send only the Calendly URL.
 
 Both actions record `calendly_sent_at` and keep the lead in Manual.
 Automation must keep using the full Calendly text + URL sequence.
+The Calendly URL is fixed across Contadores, Abogados, and every other funnel.
 
 ## Manual reply ownership
 
