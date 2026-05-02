@@ -1051,23 +1051,7 @@ button:disabled {
   gap: 8px;
 }
 
-.events-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 30px;
-  padding: 0 9px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface);
-  color: var(--muted);
-  cursor: pointer;
-  font-size: 0.78rem;
-  font-weight: 850;
-}
-
-.message-list,
-.event-list {
+.message-list {
   display: grid;
   gap: 8px;
 }
@@ -1123,35 +1107,6 @@ button:disabled {
   margin: 0;
   white-space: pre-wrap;
   line-height: 1.5;
-}
-
-.event-row {
-  display: grid;
-  grid-template-columns: 118px 150px 1fr;
-  gap: 10px;
-  align-items: start;
-  padding: 8px 0;
-  border-top: 1px solid var(--line);
-  font-size: 0.84rem;
-}
-
-.event-row:first-child {
-  border-top: 0;
-}
-
-.event-row span {
-  color: var(--muted);
-}
-
-.event-row p {
-  margin: 0;
-  color: var(--muted);
-}
-
-.events-panel {
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--line);
 }
 
 .ops-panel {
@@ -1411,11 +1366,6 @@ button:disabled {
   .runtime-stack,
   .form-grid {
     grid-template-columns: 1fr;
-  }
-
-  .event-row {
-    grid-template-columns: 1fr;
-    gap: 4px;
   }
 
   .lead-row-bottom {
@@ -1678,7 +1628,6 @@ body {
 .filter-button,
 .filter-segment button,
 .filter-clear,
-.events-toggle,
 .action-grid button,
 .secondary-actions button,
 .manual-form button,
@@ -1692,7 +1641,6 @@ body {
 .filter-button,
 .filter-segment button,
 .filter-clear,
-.events-toggle,
 .secondary-actions button {
   border-color: var(--line);
   background: rgba(255, 255, 255, 0.76);
@@ -1704,7 +1652,6 @@ body {
 .filter-button:hover,
 .filter-segment button:hover,
 .filter-clear:hover,
-.events-toggle:hover,
 .secondary-actions button:hover {
   border-color: var(--line-strong);
   background: #ffffff;
@@ -3003,7 +2950,6 @@ body {
 }
 
 #contadoresView .ct-timeline,
-#contadoresView .ct-event-timeline,
 #contadoresView .ct-lead-strategies {
   display: flex;
   flex-direction: column;
@@ -3047,7 +2993,6 @@ body {
 }
 
 #contadoresView .crm-message-card,
-#contadoresView .ct-event-card,
 #contadoresView .ct-lead-strategy-card {
   padding: 12px 14px;
   border: 1px solid var(--ct-line);
@@ -3084,7 +3029,6 @@ body {
 }
 
 #contadoresView .crm-message-meta,
-#contadoresView .ct-event-head,
 #contadoresView .ct-lead-strategy-head {
   display: flex;
   align-items: center;
@@ -3100,8 +3044,7 @@ body {
   font: 500 11px/1 var(--font-mono);
 }
 
-#contadoresView .crm-message-author,
-#contadoresView .ct-event-head {
+#contadoresView .crm-message-author {
   color: var(--ct-ink-muted);
   font: 700 10px/1 var(--font-mono);
   letter-spacing: 0.08em;
@@ -3181,8 +3124,7 @@ body {
   text-transform: uppercase;
 }
 
-#contadoresView .crm-message-body,
-#contadoresView .ct-event-card p {
+#contadoresView .crm-message-body {
   margin: 0;
   color: var(--ct-ink);
   font: 400 13px/1.5 var(--font-sans);
@@ -3246,17 +3188,6 @@ body {
 #contadoresView .crm-message-file strong {
   font: 600 13px/1.3 var(--font-sans);
   overflow-wrap: anywhere;
-}
-
-#contadoresView .ct-event-card p {
-  margin-top: 6px;
-}
-
-#contadoresView .ct-event-head time {
-  color: var(--ct-ink-soft);
-  font-weight: 500;
-  letter-spacing: 0;
-  text-transform: none;
 }
 
 #contadoresView .ct-lead-strategy-card {

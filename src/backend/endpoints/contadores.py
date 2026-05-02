@@ -28,7 +28,6 @@ from backend.contadores_strategies import (
 )
 from backend.database import (
     ContadoresConfig,
-    ContadoresEvent,
     ContadoresLead,
     ContadoresLeadStage,
     ContadoresMessage,
@@ -387,15 +386,6 @@ def apply_config_update_to_file_backed_funnel(command: "UpdateContadoresConfigCo
         next_funnel = next_funnel.model_copy(update={"strategies": strategies})
 
     upsert_funnel(next_funnel)
-
-
-def parse_event_payload(payload_json: str) -> dict[str, Any]:
-    """Parse stored event payload safely."""
-    try:
-        payload = json.loads(payload_json or "{}")
-    except json.JSONDecodeError:
-        return {}
-    return payload if isinstance(payload, dict) else {"value": payload}
 
 
 def lead_has_new_inbound_after_calendly(lead: ContadoresLead) -> bool:
@@ -895,19 +885,6 @@ async def save_manual_outbound_media_async(*, lead: ContadoresLead, upload: Uplo
     return relative_path, media_type, original_filename, content_type
 
 
-def build_event_response(event: ContadoresEvent) -> "ContadoresEventResponse":
-    """Serialize one automation event."""
-    return ContadoresEventResponse(
-        id=event.id or 0,
-        lead_id=event.lead_id,
-        event_type=event.event_type,
-        actor=event.actor,
-        summary=event.summary,
-        payload=parse_event_payload(event.payload_json),
-        created_at=format_timestamp_seconds(event.created_at) or "",
-    )
-
-
 def enqueue_lead_outbound(
     *,
     lead: ContadoresLead,
@@ -921,7 +898,7 @@ def enqueue_lead_outbound(
     media_mime_type: str | None = None,
     media_filename: str | None = None,
 ) -> ContadoresMessage:
-    """Create one pending outbound message plus event."""
+    """Create one pending outbound message."""
     assert_whatsapp_custom_window_open(lead, sequence_step=sequence_step)
     row = ContadoresMessage.add(
         lead_id=lead.id,
@@ -939,19 +916,6 @@ def enqueue_lead_outbound(
         media_caption=media_caption,
         media_mime_type=media_mime_type,
         media_filename=media_filename,
-    )
-    ContadoresEvent.add(
-        lead_id=lead.id,
-        event_type="outbound_queued",
-        actor="system",
-        summary=f"Queued outbound step `{sequence_step}`.",
-        payload={
-            "message_id": row.id,
-            "sequence_step": sequence_step,
-            "strategy_step": strategy_assignment.step if strategy_assignment else None,
-            "strategy_id": strategy_assignment.strategy_id if strategy_assignment else None,
-            "media_type": media_type,
-        },
     )
     return row
 
@@ -1137,17 +1101,6 @@ def has_quiet_window(*, last_message_at: datetime | None, quiet_seconds: int, no
     return now >= resolved_last_message_at + timedelta(seconds=quiet_seconds)
 
 
-def queue_manual_action_event(lead_id: str, action: str, actor: str = "operator") -> None:
-    """Persist one manual action event."""
-    ContadoresEvent.add(
-        lead_id=lead_id,
-        event_type="manual_action",
-        actor=actor,
-        summary=f"Manual action `{action}` executed.",
-        payload={"action": action},
-    )
-
-
 def queue_manual_message_for_lead(
     *,
     lead: ContadoresLead,
@@ -1180,18 +1133,6 @@ def queue_manual_message_for_lead(
         automation_paused=True,
         automation_paused_reason="manual_message",
     )
-    ContadoresEvent.add(
-        lead_id=lead.id,
-        event_type="manual_send_queued",
-        actor="operator",
-        summary="Manual outbound message queued. Automation paused.",
-        payload={
-            "message_id": row.id,
-            "media_type": clean_media_type,
-            "media_path": media_path,
-            "media_filename": media_filename,
-        },
-    )
     return [row]
 
 
@@ -1220,7 +1161,6 @@ def run_quick_action_for_lead(
             automation_paused=True,
             automation_paused_reason="manual_booked",
         )
-        queue_manual_action_event(lead.id, "mark-booked")
         return updated or lead, []
     elif normalized_action == "send-loom":
         queued_rows = send_loom_sequence(lead=lead, config=config, assigned_by="operator")
@@ -1239,13 +1179,6 @@ def run_quick_action_for_lead(
             lead.id,
             manual_reply_handled_at=now_utc(),
         )
-        ContadoresEvent.add(
-            lead_id=lead.id,
-            event_type="manual_reply_marked_answered",
-            actor="operator",
-            summary="Operator marked the current manual reply as already answered.",
-            payload={"action": normalized_action},
-        )
         return updated or lead, []
     elif normalized_action == "close":
         updated = ContadoresLead.update_flow_state(
@@ -1254,7 +1187,6 @@ def run_quick_action_for_lead(
             closed_at=now_utc(),
             stage_before_closed=resolve_stage_before_closing(lead),
         )
-        queue_manual_action_event(lead.id, normalized_action)
         return updated or lead, []
     elif normalized_action == "reopen":
         updated = ContadoresLead.update_flow_state(
@@ -1263,7 +1195,6 @@ def run_quick_action_for_lead(
             clear_closed_at=True,
             clear_stage_before_closed=True,
         )
-        queue_manual_action_event(lead.id, normalized_action)
         return updated or lead, []
     elif normalized_action == "archive":
         updated = ContadoresLead.update_flow_state(
@@ -1271,7 +1202,6 @@ def run_quick_action_for_lead(
             stage=ContadoresLeadStage.ARCHIVED,
             archived_at=now_utc(),
         )
-        queue_manual_action_event(lead.id, normalized_action)
         return updated or lead, []
     elif normalized_action == "unarchive":
         updated = ContadoresLead.update_flow_state(
@@ -1279,7 +1209,6 @@ def run_quick_action_for_lead(
             stage=ContadoresLeadStage.AWAITING_INITIAL_REPLY,
             clear_archived_at=True,
         )
-        queue_manual_action_event(lead.id, normalized_action)
         return updated or lead, []
     else:
         raise HTTPException(status_code=404, detail="Unknown quick action")
@@ -1291,7 +1220,6 @@ def run_quick_action_for_lead(
             automation_paused=True,
             automation_paused_reason=f"manual_{normalized_action}",
         )
-    queue_manual_action_event(lead.id, normalized_action)
     return ContadoresLead.get_by_id(lead.id) or lead, queued_rows
 
 
@@ -1506,18 +1434,6 @@ class ContadoresMessageResponse(BaseModel):
     created_at: str
 
 
-class ContadoresEventResponse(BaseModel):
-    """Serialized Contadores event."""
-
-    id: int
-    lead_id: str | None = None
-    event_type: str
-    actor: str | None = None
-    summary: str
-    payload: dict[str, Any] = Field(default_factory=dict)
-    created_at: str
-
-
 class ContadoresLeadListResponse(BaseModel):
     """List endpoint payload."""
 
@@ -1533,7 +1449,6 @@ class ContadoresLeadDetailResponse(BaseModel):
     lead: ContadoresLeadSummary
     config: ContadoresConfigResponse
     messages: list[ContadoresMessageResponse] = Field(default_factory=list)
-    events: list[ContadoresEventResponse] = Field(default_factory=list)
 
 
 class ImportContadoresLeadRow(BaseModel):
@@ -1742,17 +1657,6 @@ class ContadoresWhatsAppInboundResponse(BaseModel):
     reason: str | None = None
 
 
-def serialize_whatsapp_referral(referral: WhatsAppReferralContext | None) -> dict[str, str]:
-    """Return a compact event payload for Meta CTWA referral metadata."""
-    if referral is None:
-        return {}
-    return {
-        key: str(value).strip()
-        for key, value in referral.model_dump().items()
-        if str(value or "").strip()
-    }
-
-
 def get_referral_source_id(referral: WhatsAppReferralContext | None) -> str:
     """Return the configured source id from a CTWA referral."""
     return str(getattr(referral, "source_id", "") or "").strip()
@@ -1883,11 +1787,8 @@ def record_whatsapp_inbound_for_lead(
     *,
     lead: ContadoresLead,
     command: ContadoresWhatsAppInboundCommand,
-    event_type: str = "whatsapp_inbound_received",
-    event_summary: str = "Inbound WhatsApp received for Contadores lead.",
-    event_payload: dict[str, Any] | None = None,
 ) -> tuple[ContadoresLead, ContadoresMessage]:
-    """Persist one inbound WhatsApp message and its audit event."""
+    """Persist one inbound WhatsApp message."""
     row = ContadoresMessage.add(
         lead_id=lead.id,
         from_me=False,
@@ -1900,21 +1801,6 @@ def record_whatsapp_inbound_for_lead(
         media_filename=command.media_filename,
         media_sha256=command.media_sha256,
         media_id=command.media_id,
-    )
-    payload = {
-        "message_id": row.id,
-        "in_reply_to": command.in_reply_to,
-        **(event_payload or {}),
-    }
-    profile_name = normalize_whatsapp_profile_name(command.profile_name)
-    if profile_name:
-        payload["profile_name"] = profile_name
-    ContadoresEvent.add(
-        lead_id=lead.id,
-        event_type=event_type,
-        actor="bot",
-        summary=event_summary,
-        payload=payload,
     )
     return ContadoresLead.get_by_id(lead.id) or lead, row
 
@@ -2036,22 +1922,8 @@ async def import_contadores_leads(
         lead_ids.append(lead.id)
         if existing is None:
             imported += 1
-            ContadoresEvent.add(
-                lead_id=lead.id,
-                event_type="sheet_import_created",
-                actor="bot",
-                summary="Lead imported from spreadsheet.",
-                payload={"external_lead_id": external_lead_id, "funnel_id": funnel_id},
-            )
         else:
             updated += 1
-            ContadoresEvent.add(
-                lead_id=lead.id,
-                event_type="sheet_import_updated",
-                actor="bot",
-                summary="Lead refreshed from spreadsheet.",
-                payload={"external_lead_id": external_lead_id, "funnel_id": funnel_id},
-            )
 
     ContadoresConfig.mark_sheet_sync(
         status="ok",
@@ -2176,14 +2048,13 @@ async def list_contadores_leads(
 
 @contadores_router.get("/leads/{lead_id}", response_model=ContadoresLeadDetailResponse)
 async def get_contadores_lead_detail(lead_id: str) -> ContadoresLeadDetailResponse:
-    """Return detail timeline for one lead."""
+    """Return the lead detail and message timeline."""
     lead = ContadoresLead.get_by_id(lead_id)
     if lead is None:
         raise HTTPException(status_code=404, detail="Lead not found")
     config = get_effective_funnel_config(lead.funnel_id)
     assignments_by_lead = group_strategy_assignments_by_lead(lead.funnel_id)
     messages = [build_message_response(item) for item in ContadoresMessage.list_by_lead(lead_id)]
-    events = [build_event_response(item) for item in ContadoresEvent.list_by_lead(lead_id)]
     return ContadoresLeadDetailResponse(
         lead=build_lead_summary(
             lead,
@@ -2192,7 +2063,6 @@ async def get_contadores_lead_detail(lead_id: str) -> ContadoresLeadDetailRespon
         ),
         config=build_config_response(config),
         messages=messages,
-        events=events,
     )
 
 
@@ -2218,15 +2088,13 @@ async def get_contadores_media_by_path(media_path_token: str) -> FileResponse:
 
 @contadores_router.delete("/leads/{lead_id}", response_model=DeleteContadoresLeadResponse)
 async def delete_contadores_lead(lead_id: str) -> DeleteContadoresLeadResponse:
-    """Delete one Contadores lead together with its messages and events."""
+    """Delete one Contadores lead together with its messages."""
     with Session(engine) as session:
         lead = session.get(ContadoresLead, lead_id)
         if lead is None:
             raise HTTPException(status_code=404, detail="Lead not found")
         for message in session.exec(select(ContadoresMessage).where(ContadoresMessage.lead_id == lead_id)).all():
             session.delete(message)
-        for event in session.exec(select(ContadoresEvent).where(ContadoresEvent.lead_id == lead_id)).all():
-            session.delete(event)
         session.delete(lead)
         session.commit()
     return DeleteContadoresLeadResponse(status="deleted", lead_id=lead_id)
@@ -2298,13 +2166,6 @@ async def update_contadores_lead_tags(
     if updated is None:
         raise HTTPException(status_code=404, detail="Lead not found")
     config = get_effective_funnel_config(updated.funnel_id)
-    ContadoresEvent.add(
-        lead_id=updated.id,
-        event_type="lead_tags_updated",
-        actor="operator",
-        summary="Operator updated lead tags.",
-        payload={"tags": updated.tags},
-    )
     return build_lead_summary(updated, config=config)
 
 
@@ -2328,13 +2189,6 @@ async def move_contadores_lead(
     if updated is None:
         raise HTTPException(status_code=404, detail="Lead not found")
     config = get_effective_funnel_config(updated.funnel_id)
-    ContadoresEvent.add(
-        lead_id=updated.id,
-        event_type="lead_moved_to_funnel",
-        actor="operator",
-        summary=f"Lead moved to {target_funnel.label}.",
-        payload={"funnel_id": target_funnel.id, "stage": target_stage.value},
-    )
     return build_lead_summary(updated, config=config)
 
 
@@ -2386,13 +2240,6 @@ async def run_contadores_bulk_action(
                 if updated is None:
                     raise HTTPException(status_code=404, detail="Lead not found")
                 queued_rows = []
-                ContadoresEvent.add(
-                    lead_id=updated.id,
-                    event_type="lead_tags_updated",
-                    actor="operator",
-                    summary="Operator updated lead tags in bulk.",
-                    payload={"tags": updated.tags},
-                )
             elif normalized_action == "custom":
                 queued_rows = queue_manual_message_for_lead(lead=lead, text=command.text or "")
                 updated = ContadoresLead.get_by_id(lead.id) or lead
@@ -2414,19 +2261,6 @@ async def run_contadores_bulk_action(
 
         item_message_ids = [row.id or 0 for row in queued_rows]
         queued_message_ids.extend(item_message_ids)
-        if normalized_action == "send-manual-ping":
-            ContadoresEvent.add(
-                lead_id=updated.id,
-                event_type="bulk_manual_ping_confirmed",
-                actor="operator",
-                summary="Confirmed bulk Manual ping action applied.",
-                payload={
-                    "bulk_action_id": bulk_action_id,
-                    "action": normalized_action,
-                    "selected_count": len(clean_lead_ids),
-                    "queued_message_ids": item_message_ids,
-                },
-            )
         results.append(
             ContadoresBulkActionItem(
                 lead_id=lead_id,
@@ -2482,13 +2316,6 @@ async def resume_contadores_automation(lead_id: str) -> ContadoresQuickActionRes
         lead.id,
         stage=target_stage,
         automation_paused=False,
-    )
-    ContadoresEvent.add(
-        lead_id=lead.id,
-        event_type="automation_resumed",
-        actor="operator",
-        summary=f"Operator resumed automated flow (stage -> {target_stage.value}).",
-        payload={"stage": target_stage.value},
     )
     return ContadoresQuickActionResponse(
         lead=build_lead_summary(updated or lead, config=config),
@@ -2596,25 +2423,6 @@ async def record_contadores_message_delivery_failure(
     )
     if updated is None:
         raise HTTPException(status_code=404, detail="Contadores message not found")
-    ContadoresEvent.add(
-        lead_id=updated.lead_id,
-        event_type="outbound_delivery_failed",
-        actor="system",
-        summary=(
-            f"WhatsApp send failed for message #{updated.id}. "
-            f"Attempt {updated.delivery_attempts}/{command.max_attempts}."
-        ),
-        payload={
-            "message_id": updated.id,
-            "delivery_status": updated.delivery_status.value,
-            "delivery_attempts": updated.delivery_attempts,
-            "max_attempts": command.max_attempts,
-            "retry_delay_seconds": command.retry_delay_seconds,
-            "error": updated.last_delivery_error,
-            "raw_error": command.error,
-            "error_code": command.error_code,
-        },
-    )
     return build_message_response(updated)
 
 
@@ -2624,17 +2432,6 @@ async def acknowledge_contadores_message_delivery_error(message_id: int) -> Cont
     updated = ContadoresMessage.acknowledge_delivery_error(message_id=message_id)
     if updated is None:
         raise HTTPException(status_code=404, detail="Contadores message not found")
-    ContadoresEvent.add(
-        lead_id=updated.lead_id,
-        event_type="outbound_delivery_error_acknowledged",
-        actor="operator",
-        summary=f"Operator acknowledged WhatsApp delivery error for message #{updated.id}.",
-        payload={
-            "message_id": updated.id,
-            "delivery_status": updated.delivery_status.value,
-            "delivery_error_acknowledged_at": format_timestamp_seconds(updated.delivery_error_acknowledged_at),
-        },
-    )
     return build_message_response(updated)
 
 
@@ -2668,26 +2465,6 @@ async def set_contadores_message_delivery_by_external_id(
         )
         if updated is None:
             raise HTTPException(status_code=404, detail="Outbound Contadores message not found for external_id")
-        ContadoresEvent.add(
-            lead_id=updated.lead_id,
-            event_type="outbound_delivery_failed",
-            actor="system",
-            summary=(
-                f"WhatsApp provider reported failure for message #{updated.id}. "
-                f"Attempt {updated.delivery_attempts}/{CONTADORES_DELIVERY_MAX_ATTEMPTS}."
-            ),
-            payload={
-                "message_id": updated.id,
-                "external_id": command.external_id,
-                "delivery_status": updated.delivery_status.value,
-                "delivery_attempts": updated.delivery_attempts,
-                "max_attempts": CONTADORES_DELIVERY_MAX_ATTEMPTS,
-                "retry_delay_seconds": CONTADORES_DELIVERY_RETRY_DELAY_SECONDS,
-                "error": updated.last_delivery_error,
-                "raw_error": command.error,
-                "error_code": command.error_code,
-            },
-        )
         return build_message_response(updated)
     updated = ContadoresMessage.update_delivery_status(
         message_id=row.id,
@@ -2708,7 +2485,6 @@ async def register_contadores_whatsapp_inbound(
     command: ContadoresWhatsAppInboundCommand,
 ) -> ContadoresWhatsAppInboundResponse:
     """Route one raw WhatsApp inbound event to a Contadores lead safely."""
-    referral_payload = serialize_whatsapp_referral(command.referral)
     contadores_reply_matches, contadores_reply_ambiguous = list_contadores_matches_by_replied_message(
         command.in_reply_to
     )
@@ -2720,8 +2496,6 @@ async def register_contadores_whatsapp_inbound(
         )
 
     contadores_matches = contadores_reply_matches
-    matched_funnel_id: str | None = None
-    matched_prefilled_route: str | None = None
 
     if not contadores_matches:
         source_id = get_referral_source_id(command.referral)
@@ -2743,13 +2517,12 @@ async def register_contadores_whatsapp_inbound(
                     status="ignored",
                     route="ambiguous",
                     reason="ambiguous_funnel_phone_match",
-                )
+            )
             if funnel_matches:
                 contadores_matches = funnel_matches
-                matched_funnel_id = funnel.id
             else:
                 try:
-                    lead, created = upsert_ctwa_lead_from_inbound(
+                    lead, _ = upsert_ctwa_lead_from_inbound(
                         funnel_id=funnel.id,
                         command=command,
                     )
@@ -2762,9 +2535,6 @@ async def register_contadores_whatsapp_inbound(
                 refreshed_lead, _ = record_whatsapp_inbound_for_lead(
                     lead=lead,
                     command=command,
-                    event_type="ctwa_inbound_created" if created else "ctwa_inbound_refreshed",
-                    event_summary="Inbound WhatsApp received from configured Click-to-WhatsApp ad.",
-                    event_payload={"referral": referral_payload, "funnel_id": funnel.id},
                 )
                 return ContadoresWhatsAppInboundResponse(
                     status="processed",
@@ -2775,7 +2545,7 @@ async def register_contadores_whatsapp_inbound(
     if not contadores_matches:
         prefilled_route = resolve_prefilled_whatsapp_route(command.text)
         if prefilled_route is not None:
-            prefilled_funnel_id, route_name = prefilled_route
+            prefilled_funnel_id, _ = prefilled_route
             funnel = get_funnel(prefilled_funnel_id)
             if funnel is not None:
                 funnel_matches, funnel_ambiguous = list_contadores_matches_by_phone(
@@ -2787,14 +2557,12 @@ async def register_contadores_whatsapp_inbound(
                         status="ignored",
                         route="ambiguous",
                         reason="ambiguous_prefilled_phone_match",
-                    )
+                )
                 if funnel_matches:
                     contadores_matches = funnel_matches
-                    matched_funnel_id = funnel.id
-                    matched_prefilled_route = route_name
                 else:
                     try:
-                        lead, created = upsert_ctwa_lead_from_inbound(
+                        lead, _ = upsert_ctwa_lead_from_inbound(
                             funnel_id=funnel.id,
                             command=command,
                         )
@@ -2804,23 +2572,9 @@ async def register_contadores_whatsapp_inbound(
                             route="none",
                             reason="invalid_phone",
                         )
-                    event_payload = {
-                        "funnel_id": funnel.id,
-                        "prefilled_message_route": route_name,
-                    }
-                    if referral_payload:
-                        event_payload["referral"] = referral_payload
-                    event_type = (
-                        "prefilled_whatsapp_inbound_created"
-                        if created
-                        else "prefilled_whatsapp_inbound_refreshed"
-                    )
                     refreshed_lead, _ = record_whatsapp_inbound_for_lead(
                         lead=lead,
                         command=command,
-                        event_type=event_type,
-                        event_summary="Inbound WhatsApp matched an approved prefilled message route.",
-                        event_payload=event_payload,
                     )
                     return ContadoresWhatsAppInboundResponse(
                         status="processed",
@@ -2843,21 +2597,9 @@ async def register_contadores_whatsapp_inbound(
             lead=contadores_matches[0],
             command=command,
         )
-        inbound_event_payload = {"referral": referral_payload} if referral_payload else None
-        if matched_funnel_id is not None:
-            inbound_event_payload = {
-                **(inbound_event_payload or {}),
-                "funnel_id": matched_funnel_id,
-            }
-        if matched_prefilled_route is not None:
-            inbound_event_payload = {
-                **(inbound_event_payload or {}),
-                "prefilled_message_route": matched_prefilled_route,
-            }
         refreshed_lead, row = record_whatsapp_inbound_for_lead(
             lead=lead,
             command=command,
-            event_payload=inbound_event_payload,
         )
         if derive_effective_lead_stage(refreshed_lead) == ContadoresLeadStage.CLOSED:
             return ContadoresWhatsAppInboundResponse(
@@ -2876,13 +2618,6 @@ async def register_contadores_whatsapp_inbound(
                 automation_paused_reason="post_calendly_inbound",
             )
             refreshed_lead = updated or refreshed_lead
-            ContadoresEvent.add(
-                lead_id=lead.id,
-                event_type="post_calendly_inbound_handoff",
-                actor="bot",
-                summary="Lead replied after Calendly sequence. Human follow-up required.",
-                payload={"message_id": row.id, "in_reply_to": command.in_reply_to},
-            )
         return ContadoresWhatsAppInboundResponse(
             status="processed",
             route=refreshed_lead.funnel_id,
@@ -2890,7 +2625,7 @@ async def register_contadores_whatsapp_inbound(
         )
 
     try:
-        lead, created = upsert_general_inbox_lead_from_inbound(command=command)
+        lead, _ = upsert_general_inbox_lead_from_inbound(command=command)
     except ValueError:
         return ContadoresWhatsAppInboundResponse(
             status="ignored",
@@ -2900,9 +2635,6 @@ async def register_contadores_whatsapp_inbound(
     refreshed_lead, _ = record_whatsapp_inbound_for_lead(
         lead=lead,
         command=command,
-        event_type="general_inbox_inbound_created" if created else "general_inbox_inbound_received",
-        event_summary="Inbound WhatsApp saved to the general inbox.",
-        event_payload={"referral": referral_payload} if referral_payload else None,
     )
     return ContadoresWhatsAppInboundResponse(
         status="processed",
@@ -3025,17 +2757,6 @@ async def run_contadores_automation_tick(
             last_classification_label=label,
             last_classification_reason=result.reasoning,
         )
-        ContadoresEvent.add(
-            lead_id=lead.id,
-            event_type="post_loom_classified",
-            actor="system",
-            summary=f"Post-Loom replies classified as `{label}`.",
-            payload={
-                "label": label,
-                "reasoning": result.reasoning,
-                "reply_batch": batch_text,
-            },
-        )
         lead = updated or lead
         if label == "wants_to_proceed":
             send_calendly_sequence(lead=lead, config=config)
@@ -3046,13 +2767,6 @@ async def run_contadores_automation_tick(
         ContadoresLead.update_flow_state(
             lead.id,
             stage=ContadoresLeadStage.NEEDS_HUMAN,
-        )
-        ContadoresEvent.add(
-            lead_id=lead.id,
-            event_type="needs_human_handoff",
-            actor="system",
-            summary="Automation paused and handoff to human operator is required.",
-            payload={"reasoning": result.reasoning},
         )
         classified_needs_human += 1
 
@@ -3109,12 +2823,6 @@ async def mark_contadores_alerted(
         raise HTTPException(status_code=404, detail="Lead not found")
     config = get_effective_funnel_config(updated.funnel_id)
     ContadoresConfig.mark_alert_sent(sent_at=command.sent_at or now_utc())
-    ContadoresEvent.add(
-        lead_id=lead_id,
-        event_type="needs_human_alert_sent",
-        actor="bot",
-        summary="Needs-human alert email sent.",
-    )
     return build_lead_summary(updated, config=config)
 
 
@@ -3134,12 +2842,6 @@ async def mark_contadores_booked(
     if updated is None:
         raise HTTPException(status_code=404, detail="Lead not found")
     config = get_effective_funnel_config(updated.funnel_id)
-    ContadoresEvent.add(
-        lead_id=lead_id,
-        event_type="manual_booked",
-        actor="operator",
-        summary="Lead marked as booked manually.",
-    )
     return build_lead_summary(updated, config=config)
 
 
@@ -3158,19 +2860,5 @@ async def register_contadores_calendly_event(
             stage=ContadoresLeadStage.BOOKED,
             booked_at=command.occurred_at or now_utc(),
         )
-        ContadoresEvent.add(
-            lead_id=lead.id,
-            event_type="calendly_booked",
-            actor="bot",
-            summary="Calendly webhook marked lead as booked.",
-            payload={"event_type": command.event_type},
-        )
         return build_lead_summary(updated or lead, config=config)
-    ContadoresEvent.add(
-        lead_id=lead.id,
-        event_type="calendly_event",
-        actor="bot",
-        summary="Calendly webhook received non-booking event.",
-        payload={"event_type": command.event_type},
-    )
     return build_lead_summary(lead, config=config)

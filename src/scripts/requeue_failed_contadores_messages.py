@@ -8,7 +8,6 @@ import argparse
 from sqlmodel import Session, select
 
 from backend.database import (
-    ContadoresEvent,
     ContadoresLead,
     ContadoresLeadStage,
     ContadoresMessage,
@@ -52,17 +51,6 @@ def requeue_failed_messages(*, dry_run: bool, opener_only: bool, reset_attempts:
         )
         if row is None:
             continue
-        ContadoresEvent.add(
-            lead_id=row.lead_id,
-            event_type="outbound_delivery_requeued",
-            actor="system",
-            summary=f"Requeued failed WhatsApp message #{row.id}.",
-            payload={
-                "message_id": row.id,
-                "sequence_step": row.sequence_step,
-                "reset_attempts": reset_attempts,
-            },
-        )
         requeued += 1
     return requeued
 

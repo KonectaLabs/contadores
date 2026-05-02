@@ -21,7 +21,6 @@ from pydantic import BaseModel, Field
 import backend.database as database_module
 from backend.codex_utils import CodexSkill, run_codex_with_context
 from backend.database import (
-    ContadoresEvent,
     ContadoresLead,
     ContadoresMessage,
     WorkstationClient,
@@ -614,13 +613,6 @@ async def run_create_professional_photo_job(
         job.completed_at = current_job_timestamp()
         return
 
-    ContadoresEvent.add(
-        lead_id=client.lead_id,
-        event_type="workstation_professional_photo_created",
-        actor="operator",
-        summary="Generated a Workstation professional photo.",
-        payload={"client_id": client.id, "version": version.version, "image_path": version.image_path},
-    )
     job.status = "completed"
     job.result = version
     job.completed_at = current_job_timestamp()
@@ -792,13 +784,6 @@ async def create_workstation_client_from_lead(lead_id: str) -> WorkstationClient
             automation_paused=True,
             automation_paused_reason="manual_workstation_conversion",
         )
-        ContadoresEvent.add(
-            lead_id=lead.id,
-            event_type="workstation_client_created",
-            actor="operator",
-            summary="Lead converted into a paid Workstation client.",
-            payload={"client_id": client.id, "folder_name": client.folder_name},
-        )
     fresh_client = WorkstationClient.get_by_id(client.id) or client
     return build_client_detail(fresh_client)
 
@@ -873,13 +858,6 @@ async def create_workstation_professional_photo(
         assets=assets,
         context=command.context,
     )
-    ContadoresEvent.add(
-        lead_id=client.lead_id,
-        event_type="workstation_professional_photo_created",
-        actor="operator",
-        summary="Generated a Workstation professional photo.",
-        payload={"client_id": client.id, "version": version.version, "image_path": version.image_path},
-    )
     return version
 
 
@@ -901,18 +879,6 @@ async def edit_workstation_professional_photo(
         assets=assets,
         user_prompt=command.prompt,
     )
-    ContadoresEvent.add(
-        lead_id=client.lead_id,
-        event_type="workstation_professional_photo_edited",
-        actor="operator",
-        summary="Generated an edited Workstation professional photo.",
-        payload={
-            "client_id": client.id,
-            "base_version": command.base_version,
-            "version": version.version,
-            "image_path": version.image_path,
-        },
-    )
     return version
 
 
@@ -925,13 +891,6 @@ async def update_workstation_notes(
     updated = WorkstationClient.update_notes(client_id, notes=command.notes)
     if updated is None:
         raise HTTPException(status_code=404, detail="Workstation client not found")
-    ContadoresEvent.add(
-        lead_id=updated.lead_id,
-        event_type="workstation_notes_updated",
-        actor="operator",
-        summary="Operator updated Workstation notes.",
-        payload={"client_id": updated.id},
-    )
     return build_client_detail(updated)
 
 

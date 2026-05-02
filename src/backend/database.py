@@ -701,13 +701,6 @@ def _default_contadores_alert_emails_json() -> str:
     return json.dumps(emails)
 
 
-def serialize_json_payload(payload: dict[str, Any] | list[Any] | None) -> str:
-    """Serialize optional payloads to stable JSON text."""
-    if payload is None:
-        return "{}"
-    return json.dumps(payload, ensure_ascii=False, default=str)
-
-
 def normalize_contadores_tag(value: str | None) -> str:
     """Normalize one operator tag while preserving readable wording."""
     return " ".join(str(value or "").split())
@@ -1901,76 +1894,6 @@ class ContadoresMessage(SQLModel, table=True):
             session.refresh(row)
             session.expunge(row)
             return row
-
-
-class ContadoresEvent(SQLModel, table=True):
-    """Operational timeline events for Contadores observability."""
-
-    __tablename__ = "contadores_events"
-
-    id: Optional[int] = Field(default=None, primary_key=True)
-    funnel_id: str = Field(default="contadores", index=True)
-    lead_id: str | None = Field(default=None, foreign_key="contadores_leads.id", index=True)
-    event_type: str = Field(default="", index=True)
-    actor: str | None = Field(default=None)
-    summary: str = Field(default="")
-    payload_json: str = Field(default="{}")
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
-
-    @classmethod
-    def add(
-        cls,
-        *,
-        event_type: str,
-        summary: str,
-        lead_id: str | None = None,
-        funnel_id: str | None = None,
-        actor: str | None = None,
-        payload: dict[str, Any] | list[Any] | None = None,
-        created_at: datetime | None = None,
-    ) -> "ContadoresEvent":
-        """Persist one observability event."""
-        with Session(engine) as session:
-            now = created_at or datetime.now(timezone.utc)
-            resolved_funnel_id = (funnel_id or "").strip() or "contadores"
-            if lead_id:
-                lead = session.get(ContadoresLead, lead_id)
-                if lead:
-                    resolved_funnel_id = lead.funnel_id or resolved_funnel_id
-            row = cls(
-                funnel_id=resolved_funnel_id,
-                lead_id=lead_id,
-                event_type=(event_type or "").strip(),
-                actor=(actor or "").strip() or None,
-                summary=summary.strip(),
-                payload_json=serialize_json_payload(payload),
-                created_at=now,
-            )
-            session.add(row)
-            if lead_id:
-                lead = session.get(ContadoresLead, lead_id)
-                if lead:
-                    lead.updated_at = now
-                    session.add(lead)
-            session.commit()
-            session.refresh(row)
-            session.expunge(row)
-            return row
-
-    @classmethod
-    def list_by_lead(cls, lead_id: str, *, limit: int = 500) -> list["ContadoresEvent"]:
-        """List recent events for one lead in reverse chronological order."""
-        with Session(engine) as session:
-            statement = (
-                select(cls)
-                .where(cls.lead_id == lead_id)
-                .order_by(cls.created_at.desc(), cls.id.desc())
-                .limit(limit)
-            )
-            rows = list(session.exec(statement).all())
-            for row in rows:
-                session.expunge(row)
-            return rows
 
 
 class WorkstationClientStatus(str, Enum):
@@ -3954,6 +3877,7 @@ def init_db() -> None:
     """Create all persistence tables."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     SQLModel.metadata.create_all(engine)
+    drop_legacy_contadores_events_table()
     ensure_company_tags_column()
     ensure_company_normalized_source_url_column()
     ensure_contact_email_provider_columns()
@@ -3966,6 +3890,16 @@ def init_db() -> None:
     ensure_contadores_message_delivery_columns()
     ensure_contadores_config_strategy_weights_column()
     logger.info(f"Database initialized at {DATABASE_URL}")
+
+
+def drop_legacy_contadores_events_table() -> None:
+    """Remove the retired event timeline table from existing databases."""
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        if "contadores_events" not in inspector.get_table_names():
+            return
+        connection.exec_driver_sql("DROP TABLE contadores_events")
+        logger.info("Dropped legacy contadores_events table.")
 
 
 def ensure_contadores_funnel_columns() -> None:
@@ -3982,17 +3916,6 @@ def ensure_contadores_funnel_columns() -> None:
                 logger.info("Added missing contadores_leads.funnel_id column.")
             connection.exec_driver_sql(
                 "CREATE INDEX IF NOT EXISTS ix_contadores_leads_funnel_id ON contadores_leads (funnel_id)"
-            )
-
-        if "contadores_events" in table_names:
-            event_columns = {column["name"] for column in inspector.get_columns("contadores_events")}
-            if "funnel_id" not in event_columns:
-                connection.exec_driver_sql(
-                    "ALTER TABLE contadores_events ADD COLUMN funnel_id TEXT NOT NULL DEFAULT 'contadores'"
-                )
-                logger.info("Added missing contadores_events.funnel_id column.")
-            connection.exec_driver_sql(
-                "CREATE INDEX IF NOT EXISTS ix_contadores_events_funnel_id ON contadores_events (funnel_id)"
             )
 
 

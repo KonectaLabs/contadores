@@ -174,16 +174,6 @@ export interface MessageItem {
   created_at: string;
 }
 
-export interface EventItem {
-  id: number;
-  lead_id: string | null;
-  event_type: string;
-  actor: string | null;
-  summary: string;
-  payload: Record<string, unknown>;
-  created_at: string;
-}
-
 export interface LeadListResponse {
   metrics: ContadoresMetrics;
   config: ContadoresConfig;
@@ -195,7 +185,6 @@ export interface LeadDetailResponse {
   lead: LeadSummary;
   config: ContadoresConfig;
   messages: MessageItem[];
-  events: EventItem[];
 }
 
 export interface QuickActionResponse {

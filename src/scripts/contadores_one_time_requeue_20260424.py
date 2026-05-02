@@ -9,7 +9,6 @@ from sqlmodel import Session, select
 
 from backend.contadores_strategies import LOOM_MP4_PATH, LOOM_STEP
 from backend.database import (
-    ContadoresEvent,
     ContadoresLead,
     ContadoresLeadStage,
     ContadoresMessage,
@@ -47,13 +46,6 @@ def queue_outbound(
         sequence_step=sequence_step,
         media_type=media_type,
         media_path=media_path,
-    )
-    ContadoresEvent.add(
-        lead_id=lead_id,
-        event_type="outbound_queued",
-        actor="system",
-        summary=f"Queued one-time recovery step `{sequence_step}`.",
-        payload={"message_id": row.id, "sequence_step": sequence_step},
     )
     return row
 

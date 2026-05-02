@@ -47,6 +47,21 @@ def configure_contadores_db(monkeypatch, tmp_path) -> None:
     SQLModel.metadata.create_all(engine)
 
 
+def test_drop_legacy_contadores_events_table(monkeypatch, tmp_path) -> None:
+    """Existing event timeline tables should be removed during database setup."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    with database_module.engine.begin() as connection:
+        connection.exec_driver_sql("CREATE TABLE contadores_events (id INTEGER PRIMARY KEY, summary TEXT)")
+
+    with database_module.engine.connect() as connection:
+        assert "contadores_events" in database_module.inspect(connection).get_table_names()
+
+    database_module.drop_legacy_contadores_events_table()
+
+    with database_module.engine.connect() as connection:
+        assert "contadores_events" not in database_module.inspect(connection).get_table_names()
+
+
 def force_loom_strategy(monkeypatch, strategy_id: str = "loom_mp4") -> None:
     """Force one Loom strategy in automation tests."""
     strategy = get_contadores_strategy("loom", strategy_id)
@@ -1116,7 +1131,7 @@ def test_inbound_whatsapp_profile_name_fills_missing_lead_name(monkeypatch, tmp_
     assert response.json()["lead_id"] == lead.id
     assert detail.status_code == 200
     assert detail.json()["lead"]["full_name"] == "Ana WhatsApp"
-    assert detail.json()["events"][0]["payload"]["profile_name"] == "Ana WhatsApp"
+    assert detail.json()["messages"][0]["text"] == "Hola, soy Ana."
 
 
 def test_inbound_whatsapp_profile_name_does_not_replace_existing_lead_name(monkeypatch, tmp_path) -> None:
@@ -1143,7 +1158,7 @@ def test_inbound_whatsapp_profile_name_does_not_replace_existing_lead_name(monke
     assert response.json()["lead_id"] == lead.id
     assert detail.status_code == 200
     assert detail.json()["lead"]["full_name"] == "Nombre de Sheet"
-    assert detail.json()["events"][0]["payload"]["profile_name"] == "Nombre WhatsApp"
+    assert detail.json()["messages"][0]["text"] == "Hola."
 
 
 def test_abogados_ctwa_referral_creates_lead_and_reaches_loom(monkeypatch, tmp_path) -> None:
@@ -1244,13 +1259,7 @@ def test_abogados_ctwa_referral_creates_lead_and_reaches_loom(monkeypatch, tmp_p
 
     assert detail.status_code == 200
     assert detail.json()["lead"]["stage"] == "awaiting_video_reply"
-    ctwa_events = [
-        event for event in detail.json()["events"]
-        if event["event_type"] == "ctwa_inbound_created"
-    ]
-    assert len(ctwa_events) == 1
-    assert ctwa_events[0]["payload"]["profile_name"] == "Rocio WhatsApp"
-    assert ctwa_events[0]["payload"]["referral"]["source_id"] == "120244283740930010"
+    assert detail.json()["messages"][0]["text"] == "Hola, quiero mas info"
 
     assert pending.status_code == 200
     assert [item["sequence_step"] for item in pending.json()["messages"]] == ["loom_intro", "loom_video"]
@@ -1288,15 +1297,6 @@ def test_abogados_prefilled_whatsapp_message_routes_without_referral(monkeypatch
     assert lead.first_reply_received_at is not None
 
     assert detail.status_code == 200
-    prefilled_events = [
-        event for event in detail.json()["events"]
-        if event["event_type"] == "prefilled_whatsapp_inbound_created"
-    ]
-    assert len(prefilled_events) == 1
-    assert (
-        prefilled_events[0]["payload"]["prefilled_message_route"]
-        == "abogados_prefilled_proposal"
-    )
     assert detail.json()["messages"][0]["external_id"] == "wamid.prefilled.abogados.1"
     assert general_list.status_code == 200
     assert general_list.json()["leads"] == []
@@ -1330,7 +1330,6 @@ def test_unmatched_whatsapp_inbound_creates_general_inbox_lead(monkeypatch, tmp_
     assert detail.json()["lead"]["automation_paused"] is True
     assert detail.json()["lead"]["tags"] == ["whatsapp"]
     assert detail.json()["messages"][0]["external_id"] == "wamid.general.1"
-    assert detail.json()["events"][0]["payload"]["profile_name"] == "Camila WhatsApp"
     assert general_list.status_code == 200
     assert [item["id"] for item in general_list.json()["leads"]] == [lead_id]
     assert tick.status_code == 200
@@ -1583,7 +1582,6 @@ def test_contadores_post_calendly_inbound_returns_to_needs_human(monkeypatch, tm
     assert detail.json()["lead"]["automation_paused_reason"] == "post_calendly_inbound"
     assert detail.json()["lead"]["last_classification_label"] == "needs_human"
     assert detail.json()["lead"]["last_classification_reason"] == "Inbound reply received after Calendly sequence."
-    assert any(event["event_type"] == "post_calendly_inbound_handoff" for event in detail.json()["events"])
 
     assert alerts.status_code == 200
     assert [item["lead_id"] for item in alerts.json()["items"]] == [lead.id]
@@ -1755,10 +1753,6 @@ def test_contadores_manual_reply_can_be_marked_answered(monkeypatch, tmp_path) -
 
     assert detail_after.status_code == 200
     assert detail_after.json()["lead"]["manual_reply_status"] == "answered"
-    assert any(
-        event["event_type"] == "manual_reply_marked_answered"
-        for event in detail_after.json()["events"]
-    )
     assert alerts_after.status_code == 200
     assert alerts_after.json()["items"] == []
 
@@ -2179,8 +2173,8 @@ def test_contadores_leads_filter_by_prior_loom_strategy_inside_calendly(monkeypa
     assert payload["leads"][0]["strategy_assignments"][0]["strategy_id"] == "loom_mp4"
 
 
-def test_contadores_delete_lead_removes_timeline(monkeypatch, tmp_path) -> None:
-    """Deleting a Contadores lead should remove the lead and its stored timeline."""
+def test_contadores_delete_lead_removes_messages(monkeypatch, tmp_path) -> None:
+    """Deleting a Contadores lead should remove the lead and its stored messages."""
     configure_contadores_db(monkeypatch, tmp_path)
     lead = ContadoresLead.upsert(
         external_lead_id="sheet-row-7",
