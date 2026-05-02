@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -36,6 +37,8 @@ from backend.endpoints.contadores import (
 WAVE_ID = "crm_followup_wave_20260502"
 DEFAULT_PREVIEW_PATH = Path("data/reports/crm-followup-wave-2026-05-02-preview.csv")
 DEFAULT_LEDGER_PATH = Path("data/contadores/crm-followup-wave-2026-05-02-ledger.json")
+VENEZUELA_MOBILE_PREFIXES = ("412", "414", "416", "424", "426")
+NON_DIGITS_RE = re.compile(r"\D+")
 
 CLOSE_CALL_TEXT = (
     "Hola {name}, le gustaria agendar una reunion corta para conocernos y sacarse "
@@ -379,9 +382,25 @@ def format_copy(template: str, lead: ContadoresLead) -> str:
     return template.format(name=name).replace("Hola ,", "Hola,")
 
 
+def phone_digits(value: str | None) -> str:
+    """Return only digits from a phone-like value."""
+    return NON_DIGITS_RE.sub("", value or "")
+
+
 def is_venezuelan_lead(lead: ContadoresLead) -> bool:
     """Return True for the leads the campaign must never contact."""
-    return (lead.normalized_phone or lead.phone or "").strip().startswith("58")
+    normalized_digits = phone_digits(lead.normalized_phone)
+    if normalized_digits.startswith("58"):
+        return True
+
+    raw_digits = phone_digits(lead.phone)
+    if raw_digits.startswith("58"):
+        return True
+    if len(raw_digits) == 11 and raw_digits.startswith(("0412", "0414", "0416", "0424", "0426")):
+        return True
+    if len(raw_digits) == 10 and raw_digits.startswith(VENEZUELA_MOBILE_PREFIXES):
+        return True
+    return False
 
 
 def blocked_reason(lead: ContadoresLead) -> str | None:
