@@ -3,6 +3,12 @@
 Use this prompt for the recurring Codex automation that checks and continues
 CRM conversations.
 
+Runtime note: a standalone Codex cron can run in a sandbox that blocks outbound
+SSH before authentication. If that happens, the run must stop without touching
+CRM state. For live production operation, prefer a thread heartbeat attached to
+a session that has working SSH access, or another runtime that can reach
+`root@149.50.136.121`.
+
 ```text
 Run the hourly Contadores/Abogados CRM follow-up.
 
@@ -22,6 +28,10 @@ Goal: get qualified Contadores and Abogados leads into short sales calls. Do not
 Operate against the real server, not localhost:
 ssh root@149.50.136.121
 cd /root/projects/contadores
+
+If SSH fails with "Operation not permitted" before authentication, stop the run,
+report that the automation runtime is blocked, and do not inspect localhost,
+send messages, mutate the database, or create a send ledger.
 
 Every run:
 1. Inspect current CRM state from data/database.sqlite and recent bot/backend logs.
@@ -43,4 +53,3 @@ In the final run summary, include:
 - Any system errors found/fixed.
 - Anything intentionally skipped and why.
 ```
-

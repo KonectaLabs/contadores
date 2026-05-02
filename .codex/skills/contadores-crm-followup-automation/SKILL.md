@@ -22,6 +22,10 @@ Also read these skills when relevant:
 
 - Operate against the real server for live CRM actions:
   `root@149.50.136.121:/root/projects/contadores`.
+- If a standalone Codex cron reports `Operation not permitted` before SSH
+  authentication, treat the run as blocked by the automation sandbox. Do not use
+  localhost as fallback. Pause that cron and use a thread heartbeat or another
+  runtime with real production SSH access.
 - Exclude Venezuelans completely. Block `+58`, normalized `58...`, and local
   Venezuelan mobile forms like `0412...`, `0414...`, `0416...`, `0424...`,
   `0426...`.
@@ -64,4 +68,3 @@ Also read these skills when relevant:
   for the action buckets, copy rules, and next-message sequences.
 - Read [references/automation-prompt.md](references/automation-prompt.md) when
   creating or updating the hourly Codex automation.
-
