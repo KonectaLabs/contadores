@@ -311,6 +311,64 @@ def test_contadores_delivery_failure_acknowledgement_clears_lead_alert(monkeypat
     assert detail.json()["messages"][0]["delivery_error_acknowledged_at"] is not None
 
 
+def test_contadores_followup_snapshot_is_read_only_and_segments_leads(monkeypatch, tmp_path) -> None:
+    """Follow-up snapshot should expose state without queuing new messages."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("INTERNAL_API_TOKEN", "test-internal-token")
+    ContadoresConfig.update(enabled=True)
+    warm = ContadoresLead.upsert(
+        external_lead_id="sheet-row-snapshot-warm",
+        phone="+5491111111120",
+        full_name="Warm Lead",
+    )
+    ContadoresLead.update_flow_state(
+        warm.id,
+        stage=ContadoresLeadStage.NEEDS_HUMAN,
+        automation_paused=True,
+    )
+    ContadoresMessage.add(
+        lead_id=warm.id,
+        from_me=False,
+        text="Que presupuesto tienen?",
+        created_at=now_utc() - timedelta(minutes=3),
+    )
+
+    venezuelan = ContadoresLead.upsert(
+        external_lead_id="sheet-row-snapshot-ve",
+        phone="0412-7174588",
+        full_name="Venezuela Lead",
+    )
+    ContadoresMessage.add(
+        lead_id=venezuelan.id,
+        from_me=True,
+        text="Hola",
+        delivery_status=MessageDeliveryStatus.FAILED,
+        sequence_step="opener",
+    )
+
+    with TestClient(app) as client:
+        unauthorized = client.get("/api/contadores/followup/snapshot")
+        response = client.get(
+            "/api/contadores/followup/snapshot",
+            headers={"X-Internal-Token": "test-internal-token"},
+        )
+
+    assert unauthorized.status_code == 401
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["counts_by_bucket"]["needs_answer_now"] == 1
+    assert payload["counts_by_bucket"]["close_call"] == 1
+    assert payload["counts_by_exclusion_reason"]["venezuela"] == 1
+    by_id = {item["id"]: item for item in payload["leads"]}
+    assert by_id[warm.id]["suggested_buckets"] == ["needs_answer_now", "close_call"]
+    assert by_id[warm.id]["latest_inbound"]["text"] == "Que presupuesto tienen?"
+    assert by_id[venezuelan.id]["excluded"] is True
+    assert by_id[venezuelan.id]["suggested_buckets"] == []
+
+    assert len(ContadoresMessage.list_by_lead(warm.id)) == 1
+    assert len(ContadoresMessage.list_by_lead(venezuelan.id)) == 1
+
+
 def test_contadores_provider_failed_status_requeues_before_final_failure(monkeypatch, tmp_path) -> None:
     """Meta failed webhooks should use the same retry budget as send exceptions."""
     configure_contadores_db(monkeypatch, tmp_path)

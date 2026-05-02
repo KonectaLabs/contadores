@@ -9,16 +9,18 @@ import os
 import re
 import uuid
 import unicodedata
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
 from backend.calendly import normalize_calendly_url
 from backend.ai.contadores_post_loom_classifier import PostLoomReplyClassifierProgram
+from backend.auth import INTERNAL_API_TOKEN_HEADER, has_valid_internal_api_token
 from backend.contadores_strategies import (
     LOOM_STEP,
     choose_contadores_strategy as choose_default_contadores_strategy,
@@ -65,6 +67,8 @@ FORM_LEAD_TAG = "form"
 WHATSAPP_GENERAL_TAG = "whatsapp"
 WHATSAPP_FUNNEL_TAG = "whatsapp_funnel"
 BULK_SET_TAGS_ACTION = "set-tags"
+VENEZUELA_MOBILE_PREFIXES = ("412", "414", "416", "424", "426")
+PHONE_DIGITS_RE = re.compile(r"\D+")
 
 WHATSAPP_DELIVERY_ERROR_BY_CODE = {
     130429: "WhatsApp throughput limit was reached. Retry later.",
@@ -111,6 +115,30 @@ def format_timestamp_seconds(value: datetime | None) -> str | None:
         return None
     dt = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def require_internal_api_token(request: Request) -> None:
+    """Require the machine-token header for automation-only endpoints."""
+    if not has_valid_internal_api_token(request.headers.get(INTERNAL_API_TOKEN_HEADER)):
+        raise HTTPException(status_code=401, detail="Internal authentication required.")
+
+
+def phone_digits(value: str | None) -> str:
+    """Return only digits from a phone-like value."""
+    return PHONE_DIGITS_RE.sub("", value or "")
+
+
+def is_likely_venezuelan_phone(*values: str | None) -> bool:
+    """Return True for country-coded or local Venezuelan mobile numbers."""
+    for value in values:
+        digits = phone_digits(value)
+        if digits.startswith("58"):
+            return True
+        if len(digits) == 11 and digits.startswith(("0412", "0414", "0416", "0424", "0426")):
+            return True
+        if len(digits) == 10 and digits.startswith(VENEZUELA_MOBILE_PREFIXES):
+            return True
+    return False
 
 
 def now_utc() -> datetime:
@@ -791,6 +819,143 @@ def build_message_response(message: ContadoresMessage) -> "ContadoresMessageResp
     )
 
 
+def build_followup_message_snapshot(message: ContadoresMessage) -> ContadoresFollowupMessageSnapshot:
+    """Serialize one message for automation snapshot consumers."""
+    formatted_error = (
+        format_whatsapp_delivery_error(message.last_delivery_error)
+        if message.last_delivery_error
+        else None
+    )
+    return ContadoresFollowupMessageSnapshot(
+        id=message.id or 0,
+        from_me=message.from_me,
+        text=message.text,
+        delivery_status=message.delivery_status.value,
+        delivery_attempts=message.delivery_attempts,
+        sequence_step=message.sequence_step,
+        created_at=format_timestamp_seconds(message.created_at) or "",
+        dispatch_after=format_timestamp_seconds(message.dispatch_after) or "",
+        last_delivery_error=formatted_error,
+        last_delivery_error_code=parse_delivery_error_code(message.last_delivery_error),
+        delivery_error_acknowledged_at=format_timestamp_seconds(message.delivery_error_acknowledged_at),
+    )
+
+
+def build_followup_exclusion_reasons(
+    lead: ContadoresLead,
+    *,
+    workstation_client: WorkstationClient | None,
+    latest_outbound: ContadoresMessage | None,
+) -> list[str]:
+    """Return hard-stop reasons for CRM follow-up automation."""
+    reasons: list[str] = []
+    if is_likely_venezuelan_phone(lead.phone, lead.normalized_phone):
+        reasons.append("venezuela")
+    if workstation_client is not None:
+        reasons.append("workstation_client")
+    if derive_effective_lead_stage(lead) in {
+        ContadoresLeadStage.CLOSED,
+        ContadoresLeadStage.BOOKED,
+        ContadoresLeadStage.ARCHIVED,
+    }:
+        reasons.append("closed_booked_or_archived")
+    if latest_outbound and parse_delivery_error_code(latest_outbound.last_delivery_error) == 131050:
+        reasons.append("marketing_opt_out")
+    return reasons
+
+
+def build_followup_suggested_buckets(
+    lead: ContadoresLead,
+    *,
+    latest_outbound: ContadoresMessage | None,
+    exclusion_reasons: list[str],
+) -> list[str]:
+    """Return deterministic buckets for an automation to inspect."""
+    if exclusion_reasons:
+        return []
+
+    buckets: list[str] = []
+    effective_stage = derive_effective_lead_stage(lead)
+    latest_error_code = (
+        parse_delivery_error_code(latest_outbound.last_delivery_error)
+        if latest_outbound
+        else None
+    )
+    if (
+        latest_outbound
+        and latest_outbound.from_me
+        and latest_outbound.delivery_status == MessageDeliveryStatus.FAILED
+        and latest_outbound.delivery_error_acknowledged_at is None
+    ):
+        if latest_error_code in {130472, 131026, 131049, 131050}:
+            buckets.append("provider_failure_review")
+        else:
+            buckets.append("repair_delivery")
+
+    if derive_manual_reply_status(lead) == "needs_reply":
+        buckets.append("needs_answer_now")
+    if effective_stage == ContadoresLeadStage.NEEDS_HUMAN and lead.last_inbound_at is not None:
+        buckets.append("close_call")
+    if effective_stage == ContadoresLeadStage.AWAITING_VIDEO_REPLY:
+        buckets.append("retomar_video")
+    if effective_stage == ContadoresLeadStage.AWAITING_INITIAL_REPLY and lead.opener_sent_at is not None:
+        buckets.append("opener_followup")
+    return list(dict.fromkeys(buckets))
+
+
+def build_followup_lead_snapshot(
+    lead: ContadoresLead,
+    *,
+    messages_per_lead: int,
+) -> ContadoresFollowupLeadSnapshot:
+    """Build one read-only lead snapshot for external automation."""
+    messages = ContadoresMessage.list_by_lead(lead.id)
+    recent_messages = messages[-messages_per_lead:]
+    latest_inbound = next((message for message in reversed(messages) if not message.from_me), None)
+    latest_outbound = next((message for message in reversed(messages) if message.from_me), None)
+    workstation_client = WorkstationClient.get_by_lead_id(lead.id)
+    exclusion_reasons = build_followup_exclusion_reasons(
+        lead,
+        workstation_client=workstation_client,
+        latest_outbound=latest_outbound,
+    )
+    suggested_buckets = build_followup_suggested_buckets(
+        lead,
+        latest_outbound=latest_outbound,
+        exclusion_reasons=exclusion_reasons,
+    )
+    effective_stage = derive_effective_lead_stage(lead)
+    return ContadoresFollowupLeadSnapshot(
+        id=lead.id,
+        funnel_id=lead.funnel_id,
+        full_name=lead.full_name,
+        phone=lead.phone,
+        normalized_phone=lead.normalized_phone,
+        platform=lead.platform,
+        tags=lead.tags,
+        stage=effective_stage.value,
+        raw_stage=lead.stage.value,
+        manual_reply_status=derive_manual_reply_status(lead),
+        last_inbound_at=format_timestamp_seconds(lead.last_inbound_at),
+        last_outbound_at=format_timestamp_seconds(lead.last_outbound_at),
+        opener_sent_at=format_timestamp_seconds(lead.opener_sent_at),
+        loom_sent_at=format_timestamp_seconds(lead.loom_sent_at),
+        video_check_sent_at=format_timestamp_seconds(lead.video_check_sent_at),
+        calendly_sent_at=format_timestamp_seconds(lead.calendly_sent_at),
+        booked_at=format_timestamp_seconds(lead.booked_at),
+        closed_at=format_timestamp_seconds(lead.closed_at),
+        archived_at=format_timestamp_seconds(lead.archived_at),
+        automation_paused=bool(lead.automation_paused),
+        workstation_client_id=workstation_client.id if workstation_client else None,
+        excluded=bool(exclusion_reasons),
+        exclusion_reasons=exclusion_reasons,
+        suggested_buckets=suggested_buckets,
+        latest_inbound=build_followup_message_snapshot(latest_inbound) if latest_inbound else None,
+        latest_outbound=build_followup_message_snapshot(latest_outbound) if latest_outbound else None,
+        recent_messages=[build_followup_message_snapshot(message) for message in recent_messages],
+    )
+
+
 def build_message_media_url(message: ContadoresMessage) -> str | None:
     """Return the protected API URL for stored message media."""
     media_path = (message.media_path or "").strip()
@@ -1451,6 +1616,65 @@ class ContadoresLeadDetailResponse(BaseModel):
     messages: list[ContadoresMessageResponse] = Field(default_factory=list)
 
 
+class ContadoresFollowupMessageSnapshot(BaseModel):
+    """Small message view for external CRM automation analysis."""
+
+    id: int
+    from_me: bool
+    text: str
+    delivery_status: str
+    delivery_attempts: int = 0
+    sequence_step: str | None = None
+    created_at: str
+    dispatch_after: str
+    last_delivery_error: str | None = None
+    last_delivery_error_code: int | None = None
+    delivery_error_acknowledged_at: str | None = None
+
+
+class ContadoresFollowupLeadSnapshot(BaseModel):
+    """One lead plus the fields an automation needs to decide next action."""
+
+    id: str
+    funnel_id: str
+    full_name: str | None = None
+    phone: str
+    normalized_phone: str
+    platform: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    stage: str
+    raw_stage: str
+    manual_reply_status: str | None = None
+    last_inbound_at: str | None = None
+    last_outbound_at: str | None = None
+    opener_sent_at: str | None = None
+    loom_sent_at: str | None = None
+    video_check_sent_at: str | None = None
+    calendly_sent_at: str | None = None
+    booked_at: str | None = None
+    closed_at: str | None = None
+    archived_at: str | None = None
+    automation_paused: bool = False
+    workstation_client_id: str | None = None
+    excluded: bool = False
+    exclusion_reasons: list[str] = Field(default_factory=list)
+    suggested_buckets: list[str] = Field(default_factory=list)
+    latest_inbound: ContadoresFollowupMessageSnapshot | None = None
+    latest_outbound: ContadoresFollowupMessageSnapshot | None = None
+    recent_messages: list[ContadoresFollowupMessageSnapshot] = Field(default_factory=list)
+
+
+class ContadoresFollowupSnapshotResponse(BaseModel):
+    """Read-only CRM snapshot for automation runners that cannot SSH."""
+
+    generated_at: str
+    funnel_ids: list[str] = Field(default_factory=list)
+    leads: list[ContadoresFollowupLeadSnapshot] = Field(default_factory=list)
+    counts_by_bucket: dict[str, int] = Field(default_factory=dict)
+    counts_by_exclusion_reason: dict[str, int] = Field(default_factory=dict)
+    failed_delivery_codes: dict[str, int] = Field(default_factory=dict)
+
+
 class ImportContadoresLeadRow(BaseModel):
     """One sheet row import payload."""
 
@@ -1949,6 +2173,49 @@ async def get_contadores_strategy_stats(
 async def get_manual_attention_counts() -> ManualAttentionCountsResponse:
     """Return the number of chats that need an operator answer per funnel."""
     return ManualAttentionCountsResponse(counts=build_manual_attention_counts())
+
+
+@contadores_router.get("/followup/snapshot", response_model=ContadoresFollowupSnapshotResponse)
+async def get_followup_snapshot(
+    request: Request,
+    limit: int = Query(default=500, ge=1, le=1000),
+    messages_per_lead: int = Query(default=8, ge=1, le=30),
+    funnel_id: str | None = Query(default=None),
+) -> ContadoresFollowupSnapshotResponse:
+    """Return a read-only CRM state snapshot for external automation."""
+    require_internal_api_token(request)
+    clean_funnel_id = (funnel_id or "").strip() or None
+    leads = ContadoresLead.list_recent(
+        limit=limit,
+        funnel_id=clean_funnel_id,
+        include_archived=True,
+    )
+    if clean_funnel_id is None:
+        leads = [lead for lead in leads if lead.funnel_id in {"contadores", ABOGADOS_FUNNEL_ID}]
+    snapshots = [
+        build_followup_lead_snapshot(lead, messages_per_lead=messages_per_lead)
+        for lead in leads
+    ]
+
+    bucket_counts: Counter[str] = Counter()
+    exclusion_counts: Counter[str] = Counter()
+    failed_code_counts: Counter[str] = Counter()
+    for snapshot in snapshots:
+        bucket_counts.update(snapshot.suggested_buckets)
+        exclusion_counts.update(snapshot.exclusion_reasons)
+        latest_outbound = snapshot.latest_outbound
+        if latest_outbound and latest_outbound.delivery_status == MessageDeliveryStatus.FAILED.value:
+            code = str(latest_outbound.last_delivery_error_code or "unknown")
+            failed_code_counts[code] += 1
+
+    return ContadoresFollowupSnapshotResponse(
+        generated_at=format_timestamp_seconds(now_utc()) or "",
+        funnel_ids=sorted({snapshot.funnel_id for snapshot in snapshots}),
+        leads=snapshots,
+        counts_by_bucket=dict(sorted(bucket_counts.items())),
+        counts_by_exclusion_reason=dict(sorted(exclusion_counts.items())),
+        failed_delivery_codes=dict(sorted(failed_code_counts.items())),
+    )
 
 
 @contadores_router.get("/leads", response_model=ContadoresLeadListResponse)

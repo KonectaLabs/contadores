@@ -111,6 +111,18 @@ Verificar API de Contadores:
 curl http://127.0.0.1:8000/api/contadores/config
 ```
 
+Snapshot read-only para automations de follow-up:
+
+```bash
+curl -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
+  "https://<production-host>/api/contadores/followup/snapshot?limit=1000&messages_per_lead=12"
+```
+
+Este endpoint no manda mensajes ni muta la base. Expone leads recientes de
+`contadores` y `abogados`, ultimos mensajes, estado de delivery, exclusiones
+fuertes y buckets sugeridos para que una automation pueda analizar el CRM sin
+depender de SSH.
+
 Verificar API de funnels:
 
 ```bash

@@ -22,10 +22,13 @@ Also read these skills when relevant:
 
 - Operate against the real server for live CRM actions:
   `root@149.50.136.121:/root/projects/contadores`.
+- For read-only hourly analysis, prefer the production snapshot endpoint over
+  SSH: `GET /api/contadores/followup/snapshot`. Send `X-Internal-Token` with
+  `INTERNAL_API_TOKEN`.
 - If a standalone Codex cron reports `Operation not permitted` before SSH
-  authentication, treat the run as blocked by the automation sandbox. Do not use
-  localhost as fallback. Pause that cron and use a thread heartbeat or another
-  runtime with real production SSH access.
+  authentication, treat SSH as unavailable in that runtime. Do not use localhost
+  as fallback. Use the snapshot endpoint for read-only state, and stop before
+  live actions unless an approved production action endpoint exists.
 - Exclude Venezuelans completely. Block `+58`, normalized `58...`, and local
   Venezuelan mobile forms like `0412...`, `0414...`, `0416...`, `0424...`,
   `0426...`.
@@ -47,7 +50,9 @@ Also read these skills when relevant:
 
 ## Operating Loop
 
-1. Read recent CRM state from the server database and logs.
+1. Read recent CRM state from the production snapshot endpoint. Use SSH/database
+   access only when debugging server internals or when an approved live action
+   still has no endpoint.
 2. Segment leads using the buckets in
    [references/buckets-copies-sequences.md](references/buckets-copies-sequences.md).
 3. Build a dry-run plan before sending: lead id, funnel, bucket, chosen copy or
