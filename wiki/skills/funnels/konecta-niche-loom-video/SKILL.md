@@ -1,6 +1,6 @@
 ---
 name: konecta-niche-loom-video
-description: Build the one-minute niche sales video assets for Konecta funnels: PPTX deck, speaker script, actor handoff, and captioned MP4 workflow.
+description: "Build the one-minute niche sales video assets for Konecta funnels: PPTX deck, speaker script, actor handoff, and captioned MP4 workflow."
 ---
 
 # Konecta Niche Loom Video
