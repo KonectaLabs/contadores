@@ -114,8 +114,9 @@ curl http://127.0.0.1:8000/api/contadores/config
 Snapshot read-only para automations de follow-up:
 
 ```bash
-curl -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
-  "https://<production-host>/api/contadores/followup/snapshot?limit=1000&messages_per_lead=12"
+curl -H "Host: contadores.fgoiriz.com" \
+  -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
+  "http://149.50.136.121/api/contadores/followup/snapshot?limit=1000&messages_per_lead=12"
 ```
 
 Este endpoint no manda mensajes ni muta la base. Expone leads recientes de

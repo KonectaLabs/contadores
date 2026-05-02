@@ -27,7 +27,8 @@ Goal: get qualified Contadores and Abogados leads into short sales calls. Do not
 Operate against the real server, not localhost.
 
 First read state through the production snapshot endpoint:
-GET https://<production-host>/api/contadores/followup/snapshot?limit=1000&messages_per_lead=12
+GET http://149.50.136.121/api/contadores/followup/snapshot?limit=1000&messages_per_lead=12
+Header: Host: contadores.fgoiriz.com
 Header: X-Internal-Token: <INTERNAL_API_TOKEN>
 
 Use SSH only for server debugging, deploy verification, or live actions that do
