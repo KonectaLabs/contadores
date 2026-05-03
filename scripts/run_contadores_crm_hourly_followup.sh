@@ -21,6 +21,7 @@ LOCK_PARENT="$ROOT_DIR/data/locks"
 LOCK_DIR="$LOCK_PARENT/contadores-crm-hourly-followup.lock"
 LOG_FILE="$REPORT_DIR/contadores-crm-followup-$(date -u +%Y%m%dT%H%M%SZ).log"
 LAST_MESSAGE_FILE="$REPORT_DIR/contadores-crm-followup-latest.md"
+HISTORY_FILE="$REPORT_DIR/contadores-crm-followup-history.md"
 PROMPT_FILE="$ROOT_DIR/.codex/skills/contadores-crm-followup-automation/references/automation-prompt.md"
 RUNNER_STATUS_SYNC_SCRIPT="$ROOT_DIR/scripts/sync_contadores_crm_runner_status.py"
 RUNNER_DASHBOARD_SCRIPT="$ROOT_DIR/scripts/render_contadores_crm_runner_dashboard.py"
@@ -68,6 +69,7 @@ fi
 
 sync_runner_status() {
   local status="$1"
+  append_runner_history "$status"
   if [ -x "$RUNNER_DASHBOARD_SCRIPT" ]; then
     python3 "$RUNNER_DASHBOARD_SCRIPT" \
       --root "$ROOT_DIR" \
@@ -80,6 +82,30 @@ sync_runner_status() {
       --status "$status" \
       --active-log "$LOG_FILE" || true
   fi
+}
+
+append_runner_history() {
+  local status="$1"
+  if [ "$status" = "running" ]; then
+    return
+  fi
+  local marker="<!-- runner-log:$LOG_FILE:$status -->"
+  if [ -f "$HISTORY_FILE" ] && grep -Fq "$marker" "$HISTORY_FILE"; then
+    return
+  fi
+  {
+    if [ -s "$HISTORY_FILE" ]; then
+      printf '\n\n'
+    fi
+    printf '%s\n\n' "$marker"
+    printf '## %s - %s\n\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$status"
+    if [ -s "$LAST_MESSAGE_FILE" ]; then
+      cat "$LAST_MESSAGE_FILE"
+    else
+      printf 'No final summary was written for this run.\n'
+    fi
+    printf '\n'
+  } >> "$HISTORY_FILE"
 }
 
 if [ -z "${INTERNAL_API_TOKEN:-}" ]; then

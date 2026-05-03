@@ -427,6 +427,8 @@ def test_contadores_followup_runner_status_reads_local_artifacts(monkeypatch, tm
     assert payload["running"] is True
     assert payload["started_at"] == "2026-05-03T01:00:00Z"
     assert payload["latest_summary"] == "Messages sent: none"
+    assert payload["history_markdown"] == ""
+    assert payload["history_updated_at"] is None
     assert payload["latest_log_tail"] == "line 2\nline 3"
     assert payload["launchd_err_tail"] == "stderr tail"
     assert payload["logs"][0]["name"] == "contadores-crm-followup-20260503T010000Z.log"
@@ -448,13 +450,29 @@ def test_contadores_followup_runner_status_reads_local_artifacts(monkeypatch, tm
                 "launchd_err_tail": "synced stderr",
             },
         )
+        synced_again = client.post(
+            "/api/contadores/followup/runner/status",
+            headers={"X-Internal-Token": "test-internal-token"},
+            json={
+                "status": "completed",
+                "generated_at": "2026-05-03T01:10:00Z",
+                "latest_summary": "Synced summary",
+                "latest_log_tail": "synced tail",
+            },
+        )
 
     assert unauthorized.status_code == 401
     assert synced.status_code == 200
+    assert synced_again.status_code == 200
     synced_payload = synced.json()
     assert synced_payload["latest_summary"] == "Synced summary"
+    assert synced_payload["history_updated_at"] is not None
+    assert synced_payload["history_markdown"].count("Synced summary") == 1
     assert "synced tail" in synced_payload["latest_log_tail"]
     assert synced_payload["launchd_out_tail"] == "synced stdout"
+
+    history_text = (reports_dir / "contadores-crm-followup-history.md").read_text(encoding="utf-8")
+    assert history_text.count("Synced summary") == 1
 
 
 def test_contadores_followup_internal_apis_send_and_update_leads(monkeypatch, tmp_path) -> None:

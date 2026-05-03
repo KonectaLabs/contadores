@@ -188,9 +188,13 @@ open data/reports/contadores-crm-followup-dashboard.html
 
   El HTML se regenera en cada corrida del LaunchAgent y lee directamente
   `launchctl`, `data/reports/`, `data/locks/` y los logs locales de la Mac.
+  La pantalla muestra el ultimo run y el historial acumulado como Markdown
+  renderizado, una timeline de corridas y un panel para copiar un prompt o
+  comando `codex exec` con el contexto del run.
 - Vista visual remota: entrar al backoffice y abrir la seccion `Runner`. La UI lee
-  `GET /api/contadores/followup/runner/status` y muestra estado del lock,
-  ultimo resumen, logs timestamped y stdout/stderr del LaunchAgent. Esta ruta
+  `GET /api/contadores/followup/runner/status` y muestra el ultimo resumen,
+  el historial acumulado y una timeline. Los logs/stdout quedan colapsados
+  como detalles tecnicos. Esta ruta
   queda protegida por sesion o `X-Internal-Token`; no es publica.
 - El LaunchAgent local tambien sincroniza su ultimo estado al server real con
   `POST /api/contadores/followup/runner/status`, usando `INTERNAL_API_TOKEN`.

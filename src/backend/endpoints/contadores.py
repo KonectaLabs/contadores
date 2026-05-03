@@ -1221,6 +1221,7 @@ def build_followup_runner_status(
     reports_dir = DATA_DIR / "reports"
     lock_dir = DATA_DIR / "locks" / "contadores-crm-hourly-followup.lock"
     latest_summary_path = reports_dir / "contadores-crm-followup-latest.md"
+    history_path = reports_dir / "contadores-crm-followup-history.md"
     launchd_out_path = reports_dir / "launchd-contadores-crm-followup.out.log"
     launchd_err_path = reports_dir / "launchd-contadores-crm-followup.err.log"
 
@@ -1246,12 +1247,47 @@ def build_followup_runner_status(
         lock_age_seconds=lock_age_seconds,
         latest_summary=read_text_file(latest_summary_path),
         latest_summary_updated_at=format_file_mtime(latest_summary_path),
+        history_markdown=read_text_file(history_path),
+        history_updated_at=format_file_mtime(history_path),
         latest_log_path=str(latest_log_path) if latest_log_path else None,
         latest_log_tail=read_text_tail(latest_log_path, log_tail_lines) if latest_log_path else "",
         launchd_out_tail=read_text_tail(launchd_out_path, log_tail_lines),
         launchd_err_tail=read_text_tail(launchd_err_path, log_tail_lines),
         logs=logs,
     )
+
+
+def append_followup_runner_history(
+    *,
+    reports_dir: Path,
+    status: str,
+    summary: str,
+    occurred_at: str,
+    source: str,
+) -> None:
+    """Append one human-readable runner note if it has not been recorded yet."""
+    if status not in {"completed", "failed"}:
+        return
+    clean_summary = summary.strip()
+    if not clean_summary:
+        return
+    marker = f"<!-- runner-history:{source}:{occurred_at}:{status} -->"
+    history_path = reports_dir / "contadores-crm-followup-history.md"
+    existing = read_text_file(history_path)
+    if marker in existing:
+        return
+    entry = "\n\n".join(
+        [
+            marker,
+            f"## {occurred_at} - {status}",
+            clean_summary,
+        ]
+    )
+    with history_path.open("a", encoding="utf-8") as handle:
+        if existing.strip():
+            handle.write("\n\n")
+        handle.write(entry)
+        handle.write("\n")
 
 
 def write_followup_runner_status_sync(command: ContadoresRunnerStatusSyncCommand) -> None:
@@ -1275,6 +1311,13 @@ def write_followup_runner_status_sync(command: ContadoresRunnerStatusSyncCommand
     )
 
     (reports_dir / "contadores-crm-followup-latest.md").write_text(summary, encoding="utf-8")
+    append_followup_runner_history(
+        reports_dir=reports_dir,
+        status=command.status,
+        summary=summary,
+        occurred_at=command.generated_at or received_at,
+        source=command.source,
+    )
     (reports_dir / f"contadores-crm-followup-remote-{timestamp}.log").write_text(log_text, encoding="utf-8")
     (reports_dir / "launchd-contadores-crm-followup.out.log").write_text(
         command.launchd_out_tail,
@@ -2076,6 +2119,8 @@ class ContadoresRunnerStatusResponse(BaseModel):
     lock_age_seconds: int | None = None
     latest_summary: str = ""
     latest_summary_updated_at: str | None = None
+    history_markdown: str = ""
+    history_updated_at: str | None = None
     latest_log_path: str | None = None
     latest_log_tail: str = ""
     launchd_out_tail: str = ""

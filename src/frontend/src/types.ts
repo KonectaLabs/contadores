@@ -102,6 +102,8 @@ export interface RunnerStatusResponse {
   lock_age_seconds: number | null;
   latest_summary: string;
   latest_summary_updated_at: string | null;
+  history_markdown: string;
+  history_updated_at: string | null;
   latest_log_path: string | null;
   latest_log_tail: string;
   launchd_out_tail: string;

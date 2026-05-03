@@ -233,14 +233,21 @@ The real local Mac dashboard is
 with `scripts/render_contadores_crm_runner_dashboard.py`, then open it with
 `open data/reports/contadores-crm-followup-dashboard.html`. The runner refreshes
 that HTML on every `running`, `failed`, and `completed` status update. It reads
-the local LaunchAgent, local lock, local logs, and latest local summary.
+the local LaunchAgent, local lock, local logs, latest local summary, and
+`data/reports/contadores-crm-followup-history.md`. The dashboard should stay
+human-first: render Markdown, show latest run plus accumulated notes, show a
+timeline of recent runs, and keep stdout/log tails behind technical details.
+It also provides a Codex handoff prompt/command that includes the latest run and
+history so Facu can ask follow-up questions or request a corrected next action.
 
 The visual Runner tab in the backoffice reads
 `GET /api/contadores/followup/runner/status`. The local LaunchAgent also syncs
 its latest summary/log tail back to production through
 `POST /api/contadores/followup/runner/status` via
 `scripts/sync_contadores_crm_runner_status.py`, using `INTERNAL_API_TOKEN`.
-That lets the deployed backoffice show the latest local runner result.
+That lets the deployed backoffice show the latest local runner result. Keep the
+Runner tab human-first too: latest Markdown, accumulated Markdown history, and
+timeline up front; technical tails collapsed.
 
 Avoid editing or reinstalling the runner while it is executing. The stable copy
 protects the active shell process, but changing scheduler files mid-run makes

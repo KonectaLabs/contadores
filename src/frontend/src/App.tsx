@@ -16,6 +16,7 @@ import {
   WarningCircle,
   X,
 } from "@phosphor-icons/react";
+import { marked } from "marked";
 import { apiFetch } from "./api";
 import { compactNumber, humanize, lastInteractionAt, relativeTime, shortDate } from "./format";
 import type {
@@ -1502,79 +1503,198 @@ function RunnerStatusView({
   onRefresh: () => void;
 }) {
   const logs = status?.logs ?? [];
-  const latestSummaryUpdated = status?.latest_summary_updated_at
-    ? `${relativeTime(status.latest_summary_updated_at)} · ${status.latest_summary_updated_at}`
-    : "No summary";
+  const [codexRequest, setCodexRequest] = useState("");
+  const [copyStatus, setCopyStatus] = useState("Arma un prompt nuevo con el ultimo run y el historial.");
+  const latestSummaryUpdated = status?.latest_summary_updated_at ? relativeTime(status.latest_summary_updated_at) : "No run yet";
+  const latestSummaryMarkdown = status?.latest_summary || "No run summary has been written yet.";
+  const historyMarkdown = status?.history_markdown || latestSummaryMarkdown;
+  const codexPrompt = buildRunnerCodexPrompt({
+    request: codexRequest,
+    latestSummary: latestSummaryMarkdown,
+    historyMarkdown,
+  });
+
+  async function copyRunnerText(value: string, label: string) {
+    await copyTextToClipboard(value);
+    setCopyStatus(`${label} copiado.`);
+  }
 
   return (
     <div className="ct-surface runner-surface">
-      <section className="runner-status-grid" aria-label="Runner status">
-        <RunnerMetric label="State" value={status?.running ? "Running" : "Idle"} tone={status?.running ? "ok" : "muted"} />
-        <RunnerMetric label="PID" value={status?.pid ? String(status.pid) : "-"} />
-        <RunnerMetric label="Started" value={status?.started_at ? `${relativeTime(status.started_at)} · ${status.started_at}` : "-"} />
-        <RunnerMetric label="Latest summary" value={latestSummaryUpdated} />
+      <section className="runner-hero" aria-label="Runner overview">
+        <div>
+          <span className={`runner-live-dot ${status?.running ? "running" : ""}`} />
+          <p>{status?.running ? "Running now" : `Last run ${latestSummaryUpdated}`}</p>
+          <h2>Follow-up automation notes</h2>
+        </div>
+        <button type="button" className="ct-icon-btn" onClick={onRefresh} disabled={loading}>
+          {loading ? <SpinnerGap size={14} weight="bold" /> : null}
+          Refresh
+        </button>
       </section>
 
-      <div className="runner-workspace">
+      <div className="runner-main-grid">
         <section className="workstation-panel runner-summary-panel">
           <div className="workstation-panel-head">
             <div>
-              <span>Latest result</span>
-              <strong>{status?.generated_at ? `Checked ${relativeTime(status.generated_at)}` : "Waiting for runner data"}</strong>
+              <span>Last run</span>
+              <strong>{status?.latest_summary_updated_at ? status.latest_summary_updated_at : "Waiting for runner data"}</strong>
             </div>
-            <button type="button" className="ct-icon-btn" onClick={onRefresh} disabled={loading}>
-              {loading ? <SpinnerGap size={14} weight="bold" /> : null}
-              Refresh
-            </button>
           </div>
-          <pre className="runner-pre runner-summary-pre">{status?.latest_summary || "No run summary has been written yet."}</pre>
+          <MarkdownBlock markdown={latestSummaryMarkdown} className="runner-last-markdown" />
         </section>
 
-        <aside className="workstation-panel runner-logs-panel">
+        <aside className="workstation-panel runner-timeline-panel">
           <div className="workstation-panel-head">
             <div>
-              <span>Recent logs</span>
-              <strong>{logs.length ? `${logs.length} files` : "No logs"}</strong>
+              <span>Timeline</span>
+              <strong>{logs.length ? `${logs.length} recent runs` : "No runs yet"}</strong>
             </div>
           </div>
-          <div className="runner-log-list">
+          <ol className="runner-timeline">
             {logs.length ? logs.map((log) => (
-              <div className="runner-log-row" key={log.path}>
-                <strong>{log.name}</strong>
-                <span>{log.modified_at ? relativeTime(log.modified_at) : "-"} · {formatBytes(log.size_bytes)}</span>
-                <code>{log.path}</code>
-              </div>
+              <li key={log.path}>
+                <span className="runner-timeline-dot" />
+                <div>
+                  <strong>{log.modified_at ? relativeTime(log.modified_at) : "-"}</strong>
+                  <span>{log.modified_at || "-"} · {formatBytes(log.size_bytes)}</span>
+                  <code>{log.name}</code>
+                </div>
+              </li>
             )) : (
-              <p className="runner-empty">No timestamped runner logs yet.</p>
+              <li><span className="runner-timeline-dot" /><div><strong>No runs yet</strong><span>-</span></div></li>
             )}
-          </div>
+          </ol>
         </aside>
       </div>
 
-      <section className="runner-tail-grid" aria-label="Runner log tails">
-        <RunnerTail title="Latest run tail" text={status?.latest_log_tail || ""} />
-        <RunnerTail title="LaunchAgent stdout" text={status?.launchd_out_tail || ""} />
-        <RunnerTail title="LaunchAgent stderr" text={status?.launchd_err_tail || ""} />
+      <section className="workstation-panel runner-history-panel">
+        <div className="workstation-panel-head">
+          <div>
+            <span>Accumulated notes</span>
+            <strong>Historial human-readable</strong>
+          </div>
+        </div>
+        <MarkdownBlock markdown={historyMarkdown} className="runner-history-markdown" />
       </section>
+
+      <section className="workstation-panel runner-codex-panel">
+        <div className="workstation-panel-head">
+          <div>
+            <span>Ask Codex</span>
+            <strong>Usar esta corrida como contexto</strong>
+          </div>
+        </div>
+        <textarea
+          className="runner-question"
+          value={codexRequest}
+          onChange={(event) => setCodexRequest(event.target.value)}
+          placeholder="Ej: Ese mensaje esta mal, corregilo. O: ahora preguntale si puede hacer una llamada."
+        />
+        <div className="runner-actions">
+          <button
+            type="button"
+            className="ct-btn ct-btn-primary"
+            onClick={() => copyRunnerText(codexPrompt, "Prompt").catch(() => setCopyStatus("No pude copiar el prompt automaticamente."))}
+          >
+            Copiar prompt
+          </button>
+          <button
+            type="button"
+            className="ct-btn ct-btn-ghost"
+            onClick={() => copyRunnerText(buildRunnerCodexCommand(codexPrompt), "Comando").catch(() => setCopyStatus("No pude copiar el comando automaticamente."))}
+          >
+            Copiar codex exec
+          </button>
+        </div>
+        <p className="runner-copy-status">{copyStatus}</p>
+      </section>
+
+      <details className="runner-technical">
+        <summary>Technical details</summary>
+        <div className="runner-tail-grid" aria-label="Runner log tails">
+          <RunnerTail title="Latest run tail" text={status?.latest_log_tail || ""} />
+          <RunnerTail title="LaunchAgent stdout" text={status?.launchd_out_tail || ""} />
+          <RunnerTail title="LaunchAgent stderr" text={status?.launchd_err_tail || ""} />
+        </div>
+      </details>
     </div>
   );
 }
 
-function RunnerMetric({
-  label,
-  value,
-  tone = "neutral",
-}: {
-  label: string;
-  value: string;
-  tone?: "neutral" | "ok" | "muted";
-}) {
+function MarkdownBlock({ markdown, className = "" }: { markdown: string; className?: string }) {
+  const html = useMemo(() => {
+    const escapedMarkdown = escapeMarkdownHtml(neutralizeMarkdownImages(markdown || ""));
+    return marked.parse(escapedMarkdown, { async: false, breaks: true }) as string;
+  }, [markdown]);
+
   return (
-    <div className="runner-metric" data-tone={tone}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
+    <div
+      className={`runner-markdown ${className}`}
+      dangerouslySetInnerHTML={{ __html: html || "<p>No notes yet.</p>" }}
+    />
   );
+}
+
+function neutralizeMarkdownImages(value: string): string {
+  return value
+    .replace(/!\[([^\]]*)\]\(([^)]*)\)/g, "[$1]($2)")
+    .replace(/!\[([^\]]*)\]/g, "$1");
+}
+
+function escapeMarkdownHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+async function copyTextToClipboard(value: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand("copy");
+  document.body.removeChild(textarea);
+  if (!copied) {
+    throw new Error("clipboard unavailable");
+  }
+}
+
+function buildRunnerCodexPrompt({
+  request,
+  latestSummary,
+  historyMarkdown,
+}: {
+  request: string;
+  latestSummary: string;
+  historyMarkdown: string;
+}): string {
+  return [
+    "In /Users/fgoiriz/private/repos/contadores, read .codex/skills/contadores-crm-followup-automation/SKILL.md first.",
+    "Use the CRM follow-up run context below and answer or act on my request.",
+    "Do not send live messages unless my request explicitly asks you to and the skill allows it.",
+    "",
+    "## My request",
+    request.trim() || "(write the request here)",
+    "",
+    "## Latest run",
+    latestSummary,
+    "",
+    "## Accumulated run notes",
+    historyMarkdown,
+  ].join("\n");
+}
+
+function buildRunnerCodexCommand(prompt: string): string {
+  return `cat <<'CODEX_PROMPT' | codex exec -C /Users/fgoiriz/private/repos/contadores -m gpt-5.5 --dangerously-bypass-approvals-and-sandbox -\n${prompt}\nCODEX_PROMPT`;
 }
 
 function RunnerTail({ title, text }: { title: string; text: string }) {

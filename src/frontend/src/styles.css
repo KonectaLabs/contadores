@@ -2319,47 +2319,50 @@ body {
 }
 
 #contadoresView .runner-surface {
-  grid-template-rows: auto minmax(0, 1fr) minmax(220px, 0.7fr);
+  grid-template-rows: auto auto auto auto;
+  overflow: auto;
 }
 
-#contadoresView .runner-status-grid {
+#contadoresView .runner-hero {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-}
-
-#contadoresView .runner-metric {
-  display: grid;
-  gap: 7px;
-  min-width: 0;
-  padding: 14px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  padding: 18px;
   border: 1px solid var(--ct-line);
   border-radius: var(--ct-radius);
   background: var(--ct-surface);
 }
 
-#contadoresView .runner-metric span {
+#contadoresView .runner-hero p {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 6px;
   color: var(--ct-ink-muted);
-  font: 700 10px/1 var(--font-mono);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font: 700 12px/1 var(--font-mono);
 }
 
-#contadoresView .runner-metric strong {
-  overflow-wrap: anywhere;
+#contadoresView .runner-hero h2 {
+  margin: 0;
   color: var(--ct-ink);
-  font: 700 14px/1.35 var(--font-mono);
+  font: 700 24px/1.12 var(--font-sans);
 }
 
-#contadoresView .runner-metric[data-tone="ok"] strong {
-  color: var(--ct-success);
+#contadoresView .runner-live-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--ct-ink-soft);
 }
 
-#contadoresView .runner-metric[data-tone="muted"] strong {
-  color: var(--ct-ink-muted);
+#contadoresView .runner-live-dot.running {
+  background: var(--ct-success);
+  box-shadow: 0 0 0 5px var(--ct-success-bg);
 }
 
-#contadoresView .runner-workspace {
+#contadoresView .runner-main-grid {
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 1.5fr) minmax(280px, 0.8fr);
@@ -2367,11 +2370,158 @@ body {
 }
 
 #contadoresView .runner-summary-panel,
-#contadoresView .runner-logs-panel,
+#contadoresView .runner-timeline-panel,
+#contadoresView .runner-history-panel,
+#contadoresView .runner-codex-panel {
+  min-height: 0;
+  overflow: hidden;
+  margin: 0;
+}
+
 #contadoresView .runner-tail-panel {
   min-height: 0;
   overflow: hidden;
   margin: 0;
+}
+
+#contadoresView .runner-markdown {
+  max-width: 920px;
+  color: var(--ct-ink);
+  font: 500 14px/1.58 var(--font-sans);
+}
+
+#contadoresView .runner-markdown h1,
+#contadoresView .runner-markdown h2,
+#contadoresView .runner-markdown h3 {
+  margin: 18px 0 8px;
+  color: var(--ct-ink);
+  line-height: 1.16;
+  letter-spacing: 0;
+}
+
+#contadoresView .runner-markdown h1 {
+  font-size: 24px;
+}
+
+#contadoresView .runner-markdown h2 {
+  padding-top: 12px;
+  border-top: 1px solid var(--ct-line-soft);
+  font-size: 19px;
+}
+
+#contadoresView .runner-markdown h3 {
+  font-size: 16px;
+}
+
+#contadoresView .runner-markdown p {
+  margin: 8px 0;
+}
+
+#contadoresView .runner-markdown ul {
+  margin: 8px 0 14px;
+  padding-left: 22px;
+}
+
+#contadoresView .runner-markdown li {
+  margin: 5px 0;
+}
+
+#contadoresView .runner-markdown code {
+  padding: 1px 5px;
+  border-radius: var(--ct-radius-sm);
+  background: var(--ct-surface-2);
+  color: var(--ct-ink);
+  font: 500 12px/1.4 var(--font-mono);
+}
+
+#contadoresView .runner-last-markdown {
+  max-height: 620px;
+  overflow: auto;
+  padding-right: 8px;
+}
+
+#contadoresView .runner-history-markdown {
+  max-height: 720px;
+  overflow: auto;
+  padding-right: 8px;
+}
+
+#contadoresView .runner-timeline {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+#contadoresView .runner-timeline li {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 10px;
+  padding-bottom: 18px;
+}
+
+#contadoresView .runner-timeline-dot {
+  width: 9px;
+  height: 9px;
+  margin-top: 7px;
+  border-radius: 999px;
+  background: var(--ct-accent);
+  box-shadow: 0 0 0 5px var(--ct-accent-soft);
+}
+
+#contadoresView .runner-timeline strong,
+#contadoresView .runner-timeline span,
+#contadoresView .runner-timeline code {
+  display: block;
+}
+
+#contadoresView .runner-timeline strong {
+  color: var(--ct-ink);
+  font: 700 14px/1.2 var(--font-sans);
+}
+
+#contadoresView .runner-timeline span,
+#contadoresView .runner-timeline code {
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+  color: var(--ct-ink-muted);
+  font: 500 12px/1.35 var(--font-mono);
+}
+
+#contadoresView .runner-question {
+  width: 100%;
+  min-height: 132px;
+  resize: vertical;
+  padding: 12px;
+  border: 1px solid var(--ct-line);
+  border-radius: var(--ct-radius);
+  background: var(--ct-surface-2);
+  color: var(--ct-ink);
+  font: 500 14px/1.45 var(--font-sans);
+}
+
+#contadoresView .runner-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+#contadoresView .runner-copy-status {
+  margin: 9px 0 0;
+  color: var(--ct-ink-muted);
+  font: 500 12px/1.35 var(--font-sans);
+}
+
+#contadoresView .runner-technical {
+  margin-top: 2px;
+}
+
+#contadoresView .runner-technical summary {
+  cursor: pointer;
+  color: var(--ct-ink-muted);
+  font: 700 12px/1 var(--font-sans);
 }
 
 #contadoresView .runner-pre {
@@ -4506,13 +4656,9 @@ body {
     grid-template-columns: 1fr;
   }
 
-  #contadoresView .runner-workspace,
+  #contadoresView .runner-main-grid,
   #contadoresView .runner-tail-grid {
     grid-template-columns: 1fr;
-  }
-
-  #contadoresView .runner-status-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   #contadoresView .workstation-grid,
@@ -4564,7 +4710,7 @@ body {
     padding: 16px 16px 24px;
   }
 
-  #contadoresView .runner-status-grid {
+  #contadoresView .runner-hero {
     grid-template-columns: 1fr;
   }
 
