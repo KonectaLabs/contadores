@@ -6,6 +6,16 @@ export HOME="/Users/fgoiriz"
 export CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
+if [ "${CONTADORES_CRM_RUNNER_STABLE_COPY:-}" != "1" ]; then
+  mkdir -p "$ROOT_DIR/data/tmp"
+  stable_runner="$(mktemp "$ROOT_DIR/data/tmp/contadores-crm-runner.XXXXXX.sh")"
+  cp "$0" "$stable_runner"
+  chmod +x "$stable_runner"
+  export CONTADORES_CRM_RUNNER_STABLE_COPY=1
+  export CONTADORES_CRM_RUNNER_TEMP="$stable_runner"
+  exec "$stable_runner" "$@"
+fi
+
 REPORT_DIR="$ROOT_DIR/data/reports"
 LOCK_PARENT="$ROOT_DIR/data/locks"
 LOCK_DIR="$LOCK_PARENT/contadores-crm-hourly-followup.lock"
@@ -28,8 +38,15 @@ if [ -d "$LOCK_DIR" ]; then
   rm -rf "$LOCK_DIR"
 fi
 
+cleanup() {
+  rm -rf "$LOCK_DIR"
+  if [ -n "${CONTADORES_CRM_RUNNER_TEMP:-}" ]; then
+    rm -f "$CONTADORES_CRM_RUNNER_TEMP"
+  fi
+}
+
 mkdir "$LOCK_DIR"
-trap 'rm -rf "$LOCK_DIR"' EXIT
+trap cleanup EXIT
 printf '%s\n' "$$" > "$LOCK_DIR/pid"
 date -u +%Y-%m-%dT%H:%M:%SZ > "$LOCK_DIR/started_at"
 

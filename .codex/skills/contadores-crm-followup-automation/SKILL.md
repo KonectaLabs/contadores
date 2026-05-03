@@ -178,11 +178,13 @@ the production snapshot endpoint, extracts the prompt from
 `references/automation-prompt.md`, runs `codex exec` in a new session, writes
 timestamped logs under `data/reports/`, writes the latest final summary to
 `data/reports/contadores-crm-followup-latest.md`, and uses a lock under
-`data/locks/` so hourly runs do not overlap.
+`data/locks/` so hourly runs do not overlap. At startup it copies itself to
+`data/tmp/` and executes the copy, so a repo edit during a long run cannot
+change the already-running shell script.
 
-Do not edit the runner while it is executing. Bash can read scripts
-incrementally, so changing the file mid-run can create a one-off parse error in
-that active process even when the final file is valid.
+Avoid editing or reinstalling the runner while it is executing. The stable copy
+protects the active shell process, but changing scheduler files mid-run makes
+logs and verification harder to reason about.
 
 ## References
 
