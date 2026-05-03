@@ -3527,6 +3527,13 @@ body {
   gap: 8px;
 }
 
+#contadoresView .ct-lead-copy-status {
+  flex: 1 0 100%;
+  color: var(--ct-accent-strong);
+  font: 600 11px/1.2 var(--font-mono);
+  text-align: right;
+}
+
 #contadoresView .ct-paused-banner {
   flex: 0 0 auto;
   display: flex;
@@ -5207,6 +5214,11 @@ body {
     width: 100%;
     min-width: 0;
     padding-inline: 10px;
+  }
+
+  #contadoresView .ct-lead-copy-status {
+    grid-column: 1 / -1;
+    text-align: left;
   }
 
   #contadoresView .ct-move-panel {

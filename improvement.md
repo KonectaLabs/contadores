@@ -55,6 +55,14 @@
 - Added responsive copy-status styling in `src/frontend/src/styles.css`.
 - Next: run frontend build, inspect diff, then commit/push/deploy if clean.
 
+### 2026-05-03 19:05 - Final
+
+- Status: implemented locally.
+- Validation:
+  - `npm run build` passed in `src/frontend`.
+  - Local backend render check passed with `AUTH_DISABLE=true`; the CRM detail header shows `Copy context` for a selected lead.
+- Notes: local backend without `AUTH_DISABLE=true` still requires `auth.toml`; this is existing local auth behavior.
+
 ## 2026-05-03 18:59 - Codex runtime readiness
 
 - Status: local validation passed; preparing commit, push, deploy, and server verification.

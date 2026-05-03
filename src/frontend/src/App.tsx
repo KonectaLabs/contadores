@@ -217,6 +217,7 @@ export function App() {
   const [runnerStatus, setRunnerStatus] = useState<RunnerStatusResponse | null>(null);
   const [runnerLoading, setRunnerLoading] = useState(false);
   const [acknowledgingDeliveryErrorIds, setAcknowledgingDeliveryErrorIds] = useState<number[]>([]);
+  const [leadContextCopyStatus, setLeadContextCopyStatus] = useState("");
   const detailRequestId = useRef(0);
   const debouncedQuery = useDebouncedValue(query, 250);
   const debouncedWorkstationQuery = useDebouncedValue(workstationQuery, 250);
@@ -451,6 +452,10 @@ export function App() {
   }, [isContadoresFunnel, loadDetail, selectedLeadId]);
 
   useEffect(() => {
+    setLeadContextCopyStatus("");
+  }, [selectedLeadId]);
+
+  useEffect(() => {
     loadWorkstation().catch((reason) => {
       setError(reason instanceof Error ? reason.message : "Could not load Workstation.");
     });
@@ -543,6 +548,30 @@ export function App() {
       setError(reason instanceof Error ? reason.message : "Could not refresh funnels.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function copySelectedLeadContext() {
+    if (!selectedLead) {
+      return;
+    }
+
+    const text = buildLeadContextText({
+      lead: selectedLead,
+      funnel: selectedFunnel,
+      messages: selectedLeadDetail?.messages ?? [],
+      inboxMode: isInboxFunnel,
+    });
+
+    try {
+      await copyTextToClipboard(text);
+      setLeadContextCopyStatus("Lead context copied.");
+      window.setTimeout(() => {
+        setLeadContextCopyStatus((current) => current === "Lead context copied." ? "" : current);
+      }, 2200);
+    } catch {
+      setLeadContextCopyStatus("");
+      setError("Could not copy lead context.");
     }
   }
 
@@ -1379,7 +1408,9 @@ export function App() {
               onToggleClosed={() => runAction(selectedLead?.stage === "closed" ? "reopen" : "close")}
               onDelete={deleteLead}
               onConvert={convertLeadToWorkstation}
+              onCopyContext={copySelectedLeadContext}
               onOpenWorkstation={openWorkstationClient}
+              copyStatus={leadContextCopyStatus}
               inboxMode={isInboxFunnel}
             />
 
@@ -3030,7 +3061,9 @@ function LeadDetailHeader({
   onToggleClosed,
   onDelete,
   onConvert,
+  onCopyContext,
   onOpenWorkstation,
+  copyStatus,
 }: {
   lead: LeadSummary | null;
   actionBusy: string | null;
@@ -3041,7 +3074,9 @@ function LeadDetailHeader({
   onToggleClosed: () => void;
   onDelete: () => void;
   onConvert: () => void;
+  onCopyContext: () => void | Promise<void>;
   onOpenWorkstation: (clientId: string) => void | Promise<void>;
+  copyStatus: string;
 }) {
   const closed = lead?.stage === "closed";
   const booked = lead?.stage === "booked";
@@ -3067,6 +3102,10 @@ function LeadDetailHeader({
       </div>
       <div className="ct-detail-head-actions">
         <button type="button" className="ct-btn ct-btn-primary" disabled={!lead || closed || Boolean(actionBusy)} onClick={onOpenSend}>Send message...</button>
+        <button type="button" className="ct-btn ct-btn-ghost" disabled={!lead} onClick={onCopyContext}>
+          <Copy size={15} weight="bold" />
+          Copy context
+        </button>
         {converted && lead?.workstation_client_id ? (
           <button
             type="button"
@@ -3098,6 +3137,7 @@ function LeadDetailHeader({
           {closed ? "Reopen lead" : "Close lead"}
         </button>
         <button type="button" className="ct-btn ct-btn-ghost btn-destructive" disabled={!lead || Boolean(actionBusy)} onClick={onDelete}>Delete chat</button>
+        {copyStatus ? <span className="ct-lead-copy-status" aria-live="polite">{copyStatus}</span> : null}
       </div>
     </header>
   );
@@ -4106,6 +4146,62 @@ function leadPreview(lead: LeadSummary): string {
     return "Booked through Calendly or manually marked.";
   }
   return truncate(`${lead.platform || "-"} · ${lead.email || lead.phone || "-"}`, 120);
+}
+
+function buildLeadContextText({
+  lead,
+  funnel,
+  messages,
+  inboxMode,
+}: {
+  lead: LeadSummary;
+  funnel: FunnelDefinition | null;
+  messages: MessageItem[];
+  inboxMode: boolean;
+}): string {
+  const lastActivity = lastInteractionAt(lead);
+  const whatsappWindow = customMessageBlockReason(lead) || "Custom WhatsApp window is open.";
+  const latestMessages = messages.slice(-5).map(formatLeadContextMessage);
+  const funnelLabel = funnel ? `${funnel.label} (${funnel.id})` : lead.funnel_id;
+  const status = inboxMode ? "Inbox" : formatStageLabel(lead.stage);
+
+  const lines = [
+    `Lead: ${lead.full_name || lead.phone || lead.external_lead_id || lead.id}`,
+    `Funnel: ${funnelLabel}`,
+    `Status: ${status}`,
+    `Manual reply: ${humanize(lead.manual_reply_status || "")}`,
+    `WhatsApp window: ${whatsappWindow}`,
+    `Phone: ${lead.phone || "-"}`,
+    `Normalized phone: ${lead.normalized_phone || "-"}`,
+    `Email: ${lead.email || "-"}`,
+    `Platform: ${lead.platform || "-"}`,
+    `External lead ID: ${lead.external_lead_id || "-"}`,
+    `Tags: ${lead.tags.length ? lead.tags.join(", ") : "-"}`,
+    `Calendly: ${lead.calendly_url || "-"}`,
+    `Last activity: ${relativeTime(lastActivity)} (${shortDate(lastActivity)})`,
+    `Automation: ${lead.automation_paused ? `Paused (${humanize(lead.automation_paused_reason || "")})` : "Active"}`,
+    `Workstation: ${lead.workstation_client_id || "-"}`,
+  ];
+
+  if (lead.latest_outbound_error) {
+    lines.push(`Latest delivery error: ${lead.latest_outbound_error}`);
+  }
+
+  lines.push("", "Recent messages:");
+  if (latestMessages.length) {
+    lines.push(...latestMessages);
+  } else {
+    lines.push("- No messages loaded yet.");
+  }
+
+  return lines.join("\n");
+}
+
+function formatLeadContextMessage(message: MessageItem): string {
+  const sender = message.from_me ? "Operator" : "Lead";
+  const status = humanize(message.delivery_status);
+  const text = message.text?.trim() || message.media_caption?.trim() || `[${humanize(message.media_type || "media")}]`;
+  return `- ${shortDate(message.created_at)} ${sender} (${status}): ${truncate(text, 220)}`;
 }
 
 function PhoneCountryFlag({ phone }: { phone: string | null | undefined }) {
