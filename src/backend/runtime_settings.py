@@ -67,6 +67,8 @@ class RuntimeSettings:
         issues: list[str] = []
         if not self.sheet_url:
             issues.append("CONTADORES_SHEET_URL is empty.")
+        if not self.sheet_gid:
+            issues.append("CONTADORES_SHEET_GID is empty.")
         return issues
 
     def public_dict(self) -> dict[str, object]:
@@ -76,7 +78,7 @@ class RuntimeSettings:
             "enabled": self.enabled,
             "ready": not issues,
             "readiness_issues": issues,
-            "sheet_configured": bool(self.sheet_url),
+            "sheet_configured": bool(self.sheet_url and self.sheet_gid),
             "sheet_gid": self.sheet_gid,
             "sheet_poll_seconds": self.sheet_poll_seconds,
             "loom_url_configured": bool(self.loom_url),

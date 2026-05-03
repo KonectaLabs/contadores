@@ -57,7 +57,7 @@
 
 ## 2026-05-03 18:59 - Codex runtime readiness
 
-- Status: in progress.
+- Status: local validation passed; preparing commit, push, deploy, and server verification.
 - Improvement: make `/api/runtime` and `/health` report not-ready when `CONTADORES_SHEET_GID` is missing, matching the documented required lead source config.
 - Planned files:
   - `src/backend/runtime_settings.py`

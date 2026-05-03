@@ -34,6 +34,9 @@ protected media endpoint for CRM review.
 - Calendly fijo del producto: `https://calendly.com/facundogoiriz/crecimiento`
 - `FUNNELS_CONFIG_PATH=data/funnels.json`
 
+`/api/runtime` should report `ready=true` only after both `CONTADORES_SHEET_URL`
+and `CONTADORES_SHEET_GID` are present.
+
 ## Safe release sequence
 
 `ALWAYS_DEPLOY`: a product change is not finished at local build, local tests,

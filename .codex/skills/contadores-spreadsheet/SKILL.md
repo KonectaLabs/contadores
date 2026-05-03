@@ -47,6 +47,9 @@ Preferred keys:
 - `CONTADORES_SHEET_URL`
 - `CONTADORES_SHEET_GID`
 
+Both keys are required for `/api/runtime` to report `ready=true` for the
+built-in Contadores funnel.
+
 Backward-compatible aliases that still work in the reader script:
 
 - `GOOGLE_SHEET_URL`

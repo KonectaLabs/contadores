@@ -66,6 +66,8 @@ uv run python src/scripts/requeue_failed_contadores_messages.py
 - `main` is the operational branch.
 - If something is meant to run on the server, it should be committed on `main`.
 - `docker-compose.yml` should read `.env`.
+- `/api/runtime` should report `ready=true` only when both
+  `CONTADORES_SHEET_URL` and `CONTADORES_SHEET_GID` are configured.
 - While the project uses SQLite, keep the backend at one Uvicorn worker. SQLite
   lives in the persistent `data/` volume and the bot also writes to it, so extra
   backend workers can create avoidable `database is locked` failures.

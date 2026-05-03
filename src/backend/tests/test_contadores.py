@@ -132,6 +132,7 @@ def test_runtime_endpoint_reports_sheet_readiness(monkeypatch, tmp_path) -> None
     """Runtime status should expose non-secret sheet readiness."""
     configure_contadores_db(monkeypatch, tmp_path)
     monkeypatch.setenv("CONTADORES_SHEET_URL", "https://docs.google.com/spreadsheets/d/example")
+    monkeypatch.setenv("CONTADORES_SHEET_GID", "0")
     monkeypatch.setenv("CONTADORES_LOOM_URL", "https://www.loom.com/share/example")
     monkeypatch.setenv("CONTADORES_CALENDLY_BASE_URL", "https://calendly.com/facundogoiriz/crecimiento")
 
@@ -141,7 +142,28 @@ def test_runtime_endpoint_reports_sheet_readiness(monkeypatch, tmp_path) -> None
     assert response.status_code == 200
     payload = response.json()
     assert payload["sheet_configured"] is True
+    assert payload["sheet_gid"] == "0"
     assert payload["ready"] is True
+
+
+def test_runtime_endpoint_requires_sheet_gid(monkeypatch, tmp_path) -> None:
+    """Runtime readiness should fail when the sheet gid is missing."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("CONTADORES_SHEET_URL", "https://docs.google.com/spreadsheets/d/example")
+    monkeypatch.delenv("CONTADORES_SHEET_GID", raising=False)
+    monkeypatch.delenv("GOOGLE_SHEET_GID", raising=False)
+
+    with TestClient(app) as client:
+        runtime_response = client.get("/api/runtime")
+        health_response = client.get("/health")
+
+    assert runtime_response.status_code == 200
+    payload = runtime_response.json()
+    assert payload["sheet_configured"] is False
+    assert payload["ready"] is False
+    assert payload["readiness_issues"] == ["CONTADORES_SHEET_GID is empty."]
+    assert health_response.status_code == 200
+    assert health_response.json()["ready"] is False
 
 
 def test_contadores_import_skips_invalid_phone_rows(monkeypatch, tmp_path) -> None:

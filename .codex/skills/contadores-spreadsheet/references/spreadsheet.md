@@ -9,6 +9,9 @@
 - Backward-compatible alias: `GOOGLE_SHEET_GID`
 - Reader script: [`src/tools/read_google_sheet.py`](/Users/fgoiriz/private/repos/contadores/src/tools/read_google_sheet.py)
 
+`/api/runtime` reports `ready=true` only when both the sheet URL and sheet GID
+are configured for the built-in Contadores funnel.
+
 For new niche funnels, spreadsheet config belongs in the funnel definition file:
 
 - `FUNNELS_CONFIG_PATH`, usually `data/funnels.json`

@@ -62,7 +62,8 @@ Variables mínimas:
 - `CONTADORES_SHEET_GID=...`
 
 `docker-compose.yml` lee `.env` y `/api/runtime` muestra readiness sin exponer
-secretos.
+secretos. El runtime queda `ready=false` hasta que la URL y el GID de la sheet
+esten configurados.
 
 ## Desarrollo local
 
