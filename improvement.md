@@ -99,7 +99,7 @@
 
 ## 2026-05-03 18:59 - Codex backend/API lane
 
-- Status: validation passed in clean worktree; preparing push/deploy.
+- Status: deployed and verified on the real server.
 - Improvement: extend the existing CRM lead search so it also matches stored
   WhatsApp/message text, letting operators find a lead by phrases from the chat.
 - Planned files:
@@ -115,9 +115,15 @@
   `uv run --with pytest pytest src/backend/tests/test_contadores.py::test_contadores_lead_search_matches_message_text`
   passed, and `uv run --with pytest pytest src/backend/tests` passed with 98
   tests.
-- Note: the original shared workspace still has unrelated in-progress changes
-  from parallel lanes; the commit for this lane is being prepared from a clean
-  temporary worktree.
+- Final: pushed code commit `146dc43` to `main`; the deployed server later
+  advanced to `dc0174d` and then newer verification commits, all containing
+  `146dc43`.
+- Production verification: authenticated `/api/runtime` returned `ready=true`,
+  `sheet_configured=true`, `sheet_gid="0"`, and no readiness issues;
+  authenticated `/api/funnels` returned `contadores`, `abogados`, and
+  `general`; a read-only authenticated lead search using a phrase from an
+  inbound WhatsApp message, absent from lead fields, returned the expected lead
+  with HTTP 200.
 
 ## 2026-05-03 19:03 - Codex API client lane
 
