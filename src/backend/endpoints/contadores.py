@@ -3261,6 +3261,13 @@ async def run_contadores_automation_tick(
             continue
         if lead.automation_paused:
             continue
+        exclusion_reasons = build_followup_exclusion_reasons(
+            lead,
+            workstation_client=WorkstationClient.get_by_lead_id(lead.id),
+            latest_outbound=ContadoresMessage.get_latest_outbound_message(lead.id),
+        )
+        if exclusion_reasons:
+            continue
 
         if (
             lead.stage == ContadoresLeadStage.AWAITING_INITIAL_REPLY

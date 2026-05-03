@@ -1065,6 +1065,49 @@ def test_contadores_automation_tick_sends_24h_opener_followup_without_changing_s
     ]
 
 
+def test_contadores_automation_tick_skips_hard_excluded_followups(monkeypatch, tmp_path) -> None:
+    """Automated follow-ups must not queue messages for hard-excluded leads."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    ContadoresConfig.update(enabled=True)
+    opener_sent_at = now_utc() - timedelta(hours=25)
+
+    venezuelan = ContadoresLead.upsert(
+        external_lead_id="sheet-row-opener-followup-ve",
+        phone="0412-7174588",
+        full_name="Venezuela Followup",
+    )
+    workstation = ContadoresLead.upsert(
+        external_lead_id="sheet-row-opener-followup-workstation",
+        phone="+5491222000001",
+        full_name="Workstation Followup",
+    )
+    eligible = ContadoresLead.upsert(
+        external_lead_id="sheet-row-opener-followup-eligible",
+        phone="+5491222000002",
+        full_name="Eligible Followup",
+    )
+    WorkstationClient.create_for_lead(workstation)
+
+    for lead in [venezuelan, workstation, eligible]:
+        ContadoresLead.update_flow_state(
+            lead.id,
+            stage=ContadoresLeadStage.AWAITING_INITIAL_REPLY,
+            opener_sent_at=opener_sent_at,
+        )
+
+    with TestClient(app) as client:
+        tick = client.post("/api/contadores/automation/tick")
+        pending = client.get("/api/contadores/messages/pending-delivery")
+
+    assert tick.status_code == 200
+    assert pending.status_code == 200
+    messages = pending.json()["messages"]
+    assert [item["lead_id"] for item in messages] == [eligible.id]
+    assert [item["sequence_step"] for item in messages] == ["opener_followup_24h"]
+    assert ContadoresMessage.list_by_lead(venezuelan.id) == []
+    assert ContadoresMessage.list_by_lead(workstation.id) == []
+
+
 def test_contadores_automation_tick_classifies_affirmative_reply_and_sends_calendly(monkeypatch, tmp_path) -> None:
     """A clear affirmative post-Loom reply should advance straight to Calendly."""
     configure_contadores_db(monkeypatch, tmp_path)
