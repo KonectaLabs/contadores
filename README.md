@@ -179,7 +179,16 @@ ls -lt data/reports/contadores-crm-followup-*.log | head
 cat data/reports/contadores-crm-followup-latest.md
 ```
 
-- Vista visual: entrar al backoffice y abrir la seccion `Runner`. La UI lee
+- Vista visual local real de la Mac:
+
+```bash
+scripts/render_contadores_crm_runner_dashboard.py
+open data/reports/contadores-crm-followup-dashboard.html
+```
+
+  El HTML se regenera en cada corrida del LaunchAgent y lee directamente
+  `launchctl`, `data/reports/`, `data/locks/` y los logs locales de la Mac.
+- Vista visual remota: entrar al backoffice y abrir la seccion `Runner`. La UI lee
   `GET /api/contadores/followup/runner/status` y muestra estado del lock,
   ultimo resumen, logs timestamped y stdout/stderr del LaunchAgent. Esta ruta
   queda protegida por sesion o `X-Internal-Token`; no es publica.

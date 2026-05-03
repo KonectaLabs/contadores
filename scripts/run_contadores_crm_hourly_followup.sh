@@ -23,6 +23,7 @@ LOG_FILE="$REPORT_DIR/contadores-crm-followup-$(date -u +%Y%m%dT%H%M%SZ).log"
 LAST_MESSAGE_FILE="$REPORT_DIR/contadores-crm-followup-latest.md"
 PROMPT_FILE="$ROOT_DIR/.codex/skills/contadores-crm-followup-automation/references/automation-prompt.md"
 RUNNER_STATUS_SYNC_SCRIPT="$ROOT_DIR/scripts/sync_contadores_crm_runner_status.py"
+RUNNER_DASHBOARD_SCRIPT="$ROOT_DIR/scripts/render_contadores_crm_runner_dashboard.py"
 
 SNAPSHOT_URL="http://149.50.136.121/api/contadores/followup/snapshot?limit=1&messages_per_lead=1"
 
@@ -67,6 +68,12 @@ fi
 
 sync_runner_status() {
   local status="$1"
+  if [ -x "$RUNNER_DASHBOARD_SCRIPT" ]; then
+    python3 "$RUNNER_DASHBOARD_SCRIPT" \
+      --root "$ROOT_DIR" \
+      --status "$status" \
+      --active-log "$LOG_FILE" || true
+  fi
   if [ -x "$RUNNER_STATUS_SYNC_SCRIPT" ]; then
     python3 "$RUNNER_STATUS_SYNC_SCRIPT" \
       --root "$ROOT_DIR" \

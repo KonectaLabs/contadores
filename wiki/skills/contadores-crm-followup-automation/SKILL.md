@@ -228,6 +228,13 @@ timestamped logs under `data/reports/`, writes the latest final summary to
 `data/tmp/` and executes the copy, so a repo edit during a long run cannot
 change the already-running shell script.
 
+The real local Mac dashboard is
+`data/reports/contadores-crm-followup-dashboard.html`. Generate or refresh it
+with `scripts/render_contadores_crm_runner_dashboard.py`, then open it with
+`open data/reports/contadores-crm-followup-dashboard.html`. The runner refreshes
+that HTML on every `running`, `failed`, and `completed` status update. It reads
+the local LaunchAgent, local lock, local logs, and latest local summary.
+
 The visual Runner tab in the backoffice reads
 `GET /api/contadores/followup/runner/status`. The local LaunchAgent also syncs
 its latest summary/log tail back to production through
