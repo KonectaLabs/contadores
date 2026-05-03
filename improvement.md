@@ -115,7 +115,8 @@
 
 ## 2026-05-03 19:10 - Codex auth logout lane
 
-- Status: in progress.
+- Status: abandoned before code because another auth logout lane already owns
+  `src/backend/auth.py` and `src/backend/tests/test_auth.py`.
 - Improvement: make logout revoke the current signed session server-side, so a
   copied/stale `contadores_session` token cannot keep using the CRM until its
   normal expiry.
@@ -126,6 +127,20 @@
 - Guardrail: no edits to frontend files, Contadores runtime/API files, bot
   files, funnel config, sheet ingestion helpers, Docker/deploy scripts, media,
   or persisted `data/`.
+
+## 2026-05-03 19:15 - Codex API cache safety lane
+
+- Status: in progress.
+- Improvement: add `Cache-Control: no-store` to backend `/api/*` responses so
+  browser/proxy cache does not reuse stale or sensitive CRM API payloads.
+- Planned files:
+  - `src/backend/main.py`
+  - `src/backend/tests/test_system_cache_headers.py`
+  - `improvement.md`
+- Guardrail: no edits to dirty frontend files, auth/session files, Contadores
+  lead/runtime files, bot files, public image generation files, Workstation
+  transcript files, funnel config, sheet ingestion helpers, Docker/deploy
+  scripts, media, or persisted `data/`.
 
 ## 2026-05-03 19:01 - Codex bot worker lane
 

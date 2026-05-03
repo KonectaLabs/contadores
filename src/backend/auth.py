@@ -237,6 +237,7 @@ class PrimitiveAuthManager:
         self._signing_key = b""
         self._session_duration = timedelta(hours=24)
         self._cookie_secure = False
+        self._revoked_sessions: dict[str, datetime] = {}
         self._lock = Lock()
 
     @property
@@ -263,6 +264,7 @@ class PrimitiveAuthManager:
                 self._signing_key = b""
                 self._cookie_secure = False
                 self._session_duration = timedelta(hours=24)
+                self._revoked_sessions = {}
             return
 
         auth_path = Path(
@@ -279,6 +281,7 @@ class PrimitiveAuthManager:
             self._signing_key = signing_key
             self._session_duration = timedelta(hours=session_hours)
             self._cookie_secure = cookie_secure
+            self._revoked_sessions = {}
 
     def authenticate(self, user: str, password: str) -> str | None:
         """Validate credentials and return normalized user on success."""
@@ -300,6 +303,7 @@ class PrimitiveAuthManager:
         payload = {
             "u": normalized_user,
             "e": int(expires_at.timestamp()),
+            "sid": secrets.token_urlsafe(16),
         }
         return self._encode_signed_token(payload, signing_key)
 
@@ -307,9 +311,12 @@ class PrimitiveAuthManager:
         """Resolve signed session token to user, returning None for invalid/expired sessions."""
         if not session_token:
             return None
+        now = self._utc_now()
         with self._lock:
             accounts = dict(self._accounts)
             signing_key = self._signing_key
+        if self._is_session_revoked(session_token, now):
+            return None
         payload = self._decode_signed_token(session_token, signing_key)
         if not payload:
             return None
@@ -317,15 +324,47 @@ class PrimitiveAuthManager:
         expires_at = self._coerce_expiry(payload.get("e"))
         if not user or not expires_at:
             return None
-        if expires_at <= self._utc_now():
+        if expires_at <= now:
             return None
         if user not in accounts:
             return None
         return user
 
     def revoke_session(self, session_token: str | None) -> None:
-        """Stateless sessions are revoked by deleting the cookie client-side."""
-        return None
+        """Reject one valid session token for the rest of its lifetime."""
+        if not session_token:
+            return
+        now = self._utc_now()
+        with self._lock:
+            signing_key = self._signing_key
+
+        payload = self._decode_signed_token(session_token, signing_key)
+        if not payload:
+            return
+
+        expires_at = self._coerce_expiry(payload.get("e"))
+        if not expires_at or expires_at <= now:
+            return
+
+        with self._lock:
+            self._prune_revoked_sessions(now)
+            self._revoked_sessions[session_token] = expires_at
+
+    def _is_session_revoked(self, session_token: str, now: datetime) -> bool:
+        """Return True when logout already revoked this exact token."""
+        with self._lock:
+            self._prune_revoked_sessions(now)
+            return session_token in self._revoked_sessions
+
+    def _prune_revoked_sessions(self, now: datetime) -> None:
+        """Drop expired revocation entries. Caller must hold the lock."""
+        expired_tokens = [
+            token
+            for token, expires_at in self._revoked_sessions.items()
+            if expires_at <= now
+        ]
+        for token in expired_tokens:
+            self._revoked_sessions.pop(token, None)
 
     @staticmethod
     def _utc_now() -> datetime:
