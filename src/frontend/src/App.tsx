@@ -1,16 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ClipboardEvent, DragEvent, FormEvent, ReactNode } from "react";
 import {
+  ArrowsClockwise,
   ArrowSquareOut,
+  BellRinging,
   Camera,
   CaretDown,
+  ChatCircleText,
   Check,
+  CheckCircle,
+  ClockCountdown,
   Copy,
   CurrencyDollar,
   DownloadSimple,
   FolderOpen,
+  ListChecks,
   NotePencil,
+  PaperPlaneTilt,
+  Pulse,
+  Robot,
   SpinnerGap,
+  TrendUp,
   Trash,
   UploadSimple,
   WarningCircle,
@@ -1526,6 +1536,15 @@ function RunnerStatusView({
   const latestSummaryMarkdown = status?.latest_summary || "No run summary has been written yet.";
   const historyMarkdown = status?.history_markdown || latestSummaryMarkdown;
   const deltaMarkdown = delta?.markdown || "No structured delta has been written yet. The next run will create one.";
+  const runnerMode = status?.running
+    ? "running"
+    : deltaMetrics.needs_action > 0
+      ? "danger"
+      : deltaMetrics.new_replies + deltaMetrics.delivery_changes + deltaMetrics.due_next_steps > 0
+        ? "watch"
+        : "clean";
+  const runnerModeLabel = runnerMode === "running" ? "Running" : runnerMode === "danger" ? "Review" : runnerMode === "watch" ? "Watch" : "Clean";
+  const visibleEvents = allEvents.slice(0, 12);
   const codexPrompt = buildRunnerCodexPrompt({
     request: codexRequest,
     deltaMarkdown,
@@ -1539,35 +1558,53 @@ function RunnerStatusView({
   }
 
   return (
-    <div className="ct-surface runner-surface">
-      <section className="runner-hero" aria-label="Runner overview">
-        <div>
-          <span className={`runner-live-dot ${status?.running ? "running" : ""}`} />
-          <p>{status?.running ? "Running now" : `Last run ${latestSummaryUpdated}`}</p>
-          <h2>What changed since the previous run</h2>
-          <span className="runner-hero-sub">
-            {hasBaseline
-              ? `${delta?.previous_generated_at || "previous"} -> ${delta?.current_generated_at || "current"}`
-              : "No previous structured snapshot yet. This run establishes the baseline."}
-          </span>
+    <div className="ct-surface runner-surface" data-runner-mode={runnerMode}>
+      <section className="runner-hero" aria-label="Runner status">
+        <div className="runner-status-symbol" aria-hidden="true">
+          {runnerMode === "running" ? (
+            <Pulse size={42} weight="fill" />
+          ) : runnerMode === "danger" ? (
+            <WarningCircle size={42} weight="fill" />
+          ) : runnerMode === "watch" ? (
+            <BellRinging size={42} weight="fill" />
+          ) : (
+            <CheckCircle size={42} weight="fill" />
+          )}
         </div>
-        <button type="button" className="ct-icon-btn" onClick={onRefresh} disabled={loading}>
-          {loading ? <SpinnerGap size={14} weight="bold" /> : null}
-          Refresh
+        <div className="runner-status-copy">
+          <span>{latestSummaryUpdated}</span>
+          <strong>{runnerModeLabel}</strong>
+          <small>
+            {hasBaseline ? `${shortRunnerTime(delta?.previous_generated_at)} -> ${shortRunnerTime(delta?.current_generated_at)}` : "baseline"}
+          </small>
+        </div>
+        <div className="runner-status-sparks" aria-label="Recent run timeline">
+          {logs.slice(0, 8).map((log, index) => (
+            <span
+              key={log.path}
+              className="runner-spark"
+              data-hot={index === 0}
+              title={`${log.modified_at ? relativeTime(log.modified_at) : "-"} · ${formatBytes(log.size_bytes)}`}
+            />
+          ))}
+          {!logs.length ? <span className="runner-spark" /> : null}
+        </div>
+        <button type="button" className="runner-refresh-button" onClick={onRefresh} disabled={loading} aria-label="Refresh runner">
+          {loading ? <SpinnerGap size={18} weight="bold" /> : <ArrowsClockwise size={18} weight="bold" />}
         </button>
       </section>
 
       <section className="runner-command-center" aria-label="Runner command center">
-        <RunnerSignal label="Needs action" value={deltaMetrics.needs_action} tone={deltaMetrics.needs_action > 0 ? "danger" : "ok"} />
-        <RunnerSignal label="New replies" value={deltaMetrics.new_replies} tone={deltaMetrics.new_replies > 0 ? "hot" : "neutral"} />
-        <RunnerSignal label="Delivery changes" value={deltaMetrics.delivery_changes} tone={deltaMetrics.delivery_changes > 0 ? "warn" : "neutral"} />
-        <RunnerSignal label="New outbound" value={deltaMetrics.new_outbound} tone="neutral" />
-        <RunnerSignal label="Due next steps" value={deltaMetrics.due_next_steps} tone={deltaMetrics.due_next_steps > 0 ? "hot" : "neutral"} />
+        <RunnerSignal icon={<WarningCircle size={30} weight="fill" />} label="Action" value={deltaMetrics.needs_action} tone={deltaMetrics.needs_action > 0 ? "danger" : "ok"} />
+        <RunnerSignal icon={<ChatCircleText size={30} weight="fill" />} label="Replies" value={deltaMetrics.new_replies} tone={deltaMetrics.new_replies > 0 ? "blue" : "neutral"} />
+        <RunnerSignal icon={<ClockCountdown size={30} weight="fill" />} label="Due" value={deltaMetrics.due_next_steps} tone={deltaMetrics.due_next_steps > 0 ? "warn" : "neutral"} />
+        <RunnerSignal icon={<PaperPlaneTilt size={30} weight="fill" />} label="Sent" value={deltaMetrics.new_outbound} tone={deltaMetrics.new_outbound > 0 ? "green" : "neutral"} />
+        <RunnerSignal icon={<Pulse size={30} weight="fill" />} label="Delivery" value={deltaMetrics.delivery_changes} tone={deltaMetrics.delivery_changes > 0 ? "violet" : "neutral"} />
       </section>
 
       <section className="runner-layout">
         <div className="runner-priority-column">
-          <RunnerPanel eyebrow="Now" title="Requires attention" meta={`${attentionEvents.length} changed leads`}>
+          <RunnerPanel eyebrow={<ListChecks size={18} weight="fill" />} title="Action queue" meta={`${attentionEvents.length}`}>
             {attentionEvents.length ? (
               <div className="runner-event-stack">
                 {attentionEvents.slice(0, 8).map((event) => (
@@ -1576,32 +1613,32 @@ function RunnerStatusView({
               </div>
             ) : (
               <RunnerEmpty
-                title={hasBaseline ? "No new urgent change" : "Waiting for the first comparable run"}
-                text={hasBaseline ? "The automation did not find new replies, booking intent, provider changes, or state changes that need immediate human action." : "After the next hourly run, this panel will show the delta against this baseline."}
+                tone="clean"
+                icon={<CheckCircle size={44} weight="fill" />}
+                title={hasBaseline ? "Clean" : "Baseline"}
+                text={hasBaseline ? "0" : "1"}
               />
             )}
           </RunnerPanel>
 
-          <RunnerPanel eyebrow="Delta" title="Count changes" meta="Buckets, delivery, exclusions">
-            <RunnerDeltaTable
-              bucketDeltas={delta?.bucket_deltas ?? []}
-              failureDeltas={delta?.failure_deltas ?? []}
-              exclusionDeltas={delta?.exclusion_deltas ?? []}
-            />
+          <RunnerPanel eyebrow={<TrendUp size={18} weight="fill" />} title="Delta stream" meta={`${visibleEvents.length}`}>
+            <div className="runner-visual-feed">
+              {visibleEvents.length ? visibleEvents.map((event) => (
+                <RunnerCompactEvent event={event} key={`${event.kind}:${event.lead_id}:${event.occurred_at || ""}`} />
+              )) : (
+                <RunnerEmpty tone="quiet" icon={<Pulse size={38} weight="fill" />} title="Stable" text="0" />
+              )}
+            </div>
           </RunnerPanel>
         </div>
 
         <aside className="runner-side-column">
-          <RunnerPanel eyebrow="Last run" title="Automation answer" meta={status?.latest_summary_updated_at || "Waiting"}>
-            <MarkdownBlock markdown={latestSummaryMarkdown} className="runner-last-markdown" />
-          </RunnerPanel>
-
-          <RunnerPanel eyebrow="Ask Codex" title="Work from this run" meta="Prompt handoff">
+          <RunnerPanel eyebrow={<Robot size={18} weight="fill" />} title="Codex" meta="">
             <textarea
               className="runner-question"
               value={codexRequest}
               onChange={(event) => setCodexRequest(event.target.value)}
-              placeholder="Ej: Ese mensaje esta mal, corregilo. O: ahora preguntale si puede hacer una llamada."
+              placeholder="Que hago con Daniel?"
             />
             <div className="runner-actions">
               <button
@@ -1609,58 +1646,59 @@ function RunnerStatusView({
                 className="ct-btn ct-btn-primary"
                 onClick={() => copyRunnerText(codexPrompt, "Prompt").catch(() => setCopyStatus("No pude copiar el prompt automaticamente."))}
               >
-                Copiar prompt
+                Prompt
               </button>
               <button
                 type="button"
                 className="ct-btn ct-btn-ghost"
                 onClick={() => copyRunnerText(buildRunnerCodexCommand(codexPrompt), "Comando").catch(() => setCopyStatus("No pude copiar el comando automaticamente."))}
               >
-                Copiar codex exec
+                Exec
               </button>
             </div>
             <p className="runner-copy-status">{copyStatus}</p>
           </RunnerPanel>
+
+          <RunnerPanel eyebrow={<ClockCountdown size={18} weight="fill" />} title="Runs" meta={`${logs.length}`}>
+            <ol className="runner-timeline">
+              {logs.length ? logs.slice(0, 8).map((log, index) => (
+                <li key={log.path} data-current={index === 0}>
+                  <span className="runner-timeline-dot" />
+                  <div>
+                    <strong>{log.modified_at ? relativeTime(log.modified_at) : "-"}</strong>
+                    <span>{formatBytes(log.size_bytes)}</span>
+                  </div>
+                </li>
+              )) : (
+                <li><span className="runner-timeline-dot" /><div><strong>-</strong><span>0</span></div></li>
+              )}
+            </ol>
+          </RunnerPanel>
         </aside>
-      </section>
-
-      <section className="runner-secondary-grid">
-        <RunnerPanel eyebrow="Activity" title="Changed in this comparison" meta={`${allEvents.length} events`}>
-          <div className="runner-compact-feed">
-            {allEvents.length ? allEvents.slice(0, 14).map((event) => (
-              <RunnerCompactEvent event={event} key={`${event.kind}:${event.lead_id}:${event.occurred_at || ""}`} />
-            )) : (
-              <RunnerEmpty title="No tracked event changed" text="No new inbound, outbound, state, delivery, exclusion, or due-bucket change was detected." />
-            )}
-          </div>
-        </RunnerPanel>
-
-        <RunnerPanel eyebrow="Timeline" title="Recent runs" meta={`${logs.length} files`}>
-          <ol className="runner-timeline">
-            {logs.length ? logs.map((log) => (
-              <li key={log.path}>
-                <span className="runner-timeline-dot" />
-                <div>
-                  <strong>{log.modified_at ? relativeTime(log.modified_at) : "-"}</strong>
-                  <span>{log.modified_at || "-"} · {formatBytes(log.size_bytes)}</span>
-                  <code>{log.name}</code>
-                </div>
-              </li>
-            )) : (
-              <li><span className="runner-timeline-dot" /><div><strong>No runs yet</strong><span>-</span></div></li>
-            )}
-          </ol>
-        </RunnerPanel>
       </section>
 
       <div className="runner-disclosure-row">
         <details className="runner-history-details">
-          <summary>Historial acumulado</summary>
+          <summary>Last run</summary>
+          <MarkdownBlock markdown={latestSummaryMarkdown} className="runner-last-markdown" />
+        </details>
+
+        <details className="runner-history-details">
+          <summary>Counts</summary>
+          <RunnerDeltaTable
+            bucketDeltas={delta?.bucket_deltas ?? []}
+            failureDeltas={delta?.failure_deltas ?? []}
+            exclusionDeltas={delta?.exclusion_deltas ?? []}
+          />
+        </details>
+
+        <details className="runner-history-details">
+          <summary>History</summary>
           <MarkdownBlock markdown={historyMarkdown} className="runner-history-markdown" />
         </details>
 
         <details className="runner-technical">
-          <summary>Technical details</summary>
+          <summary>Tech</summary>
           <div className="runner-tail-grid" aria-label="Runner log tails">
             <RunnerTail title="Latest run tail" text={status?.latest_log_tail || ""} />
             <RunnerTail title="LaunchAgent stdout" text={status?.launchd_out_tail || ""} />
@@ -1673,16 +1711,19 @@ function RunnerStatusView({
 }
 
 function RunnerSignal({
+  icon,
   label,
   value,
   tone,
 }: {
+  icon: ReactNode;
   label: string;
   value: number;
-  tone: "danger" | "warn" | "hot" | "ok" | "neutral";
+  tone: "danger" | "warn" | "blue" | "green" | "violet" | "ok" | "neutral";
 }) {
   return (
-    <div className="runner-signal" data-tone={tone}>
+    <div className="runner-signal" data-tone={tone} aria-label={`${label}: ${value}`}>
+      <div className="runner-signal-icon" aria-hidden="true">{icon}</div>
       <span>{label}</span>
       <strong>{compactNumber(value)}</strong>
     </div>
@@ -1695,7 +1736,7 @@ function RunnerPanel({
   meta,
   children,
 }: {
-  eyebrow: string;
+  eyebrow: ReactNode;
   title: string;
   meta: string;
   children: ReactNode;
@@ -1707,7 +1748,7 @@ function RunnerPanel({
           <span>{eyebrow}</span>
           <strong>{title}</strong>
         </div>
-        <em>{meta}</em>
+        {meta ? <em>{meta}</em> : null}
       </div>
       {children}
     </section>
@@ -1717,12 +1758,12 @@ function RunnerPanel({
 function RunnerEventCard({ event }: { event: RunnerDeltaEvent }) {
   return (
     <article className="runner-event-card" data-severity={event.severity}>
+      <div className="runner-event-icon" aria-hidden="true">{runnerKindIcon(event.kind)}</div>
       <div className="runner-event-topline">
         <span>{formatRunnerKind(event.kind)}</span>
         <time>{event.occurred_at ? relativeTime(event.occurred_at) : "changed"}</time>
       </div>
       <h3>{event.full_name || event.phone || "Unknown lead"}</h3>
-      <p>{event.detail}</p>
       <div className="runner-event-action">{event.suggested_action}</div>
     </article>
   );
@@ -1731,10 +1772,10 @@ function RunnerEventCard({ event }: { event: RunnerDeltaEvent }) {
 function RunnerCompactEvent({ event }: { event: RunnerDeltaEvent }) {
   return (
     <div className="runner-compact-event" data-severity={event.severity}>
-      <span>{formatRunnerKind(event.kind)}</span>
+      <span className="runner-compact-icon" aria-hidden="true">{runnerKindIcon(event.kind)}</span>
       <div>
-        <strong>{event.title}</strong>
-        <p>{event.suggested_action}</p>
+        <strong>{event.full_name || event.title}</strong>
+        <p>{formatRunnerKind(event.kind)}</p>
       </div>
       <time>{event.occurred_at ? relativeTime(event.occurred_at) : "-"}</time>
     </div>
@@ -1757,7 +1798,7 @@ function RunnerDeltaTable({
   ].slice(0, 14);
 
   if (!rows.length) {
-    return <RunnerEmpty title="Counts are stable" text="Buckets, provider errors, and exclusions did not move since the previous comparable snapshot." />;
+    return <RunnerEmpty tone="quiet" icon={<CheckCircle size={34} weight="fill" />} title="Stable" text="0" />;
   }
 
   return (
@@ -1774,9 +1815,10 @@ function RunnerDeltaTable({
   );
 }
 
-function RunnerEmpty({ title, text }: { title: string; text: string }) {
+function RunnerEmpty({ tone, icon, title, text }: { tone: "clean" | "quiet"; icon: ReactNode; title: string; text: string }) {
   return (
-    <div className="runner-empty-state">
+    <div className="runner-empty-state" data-tone={tone}>
+      <div aria-hidden="true">{icon}</div>
       <strong>{title}</strong>
       <p>{text}</p>
     </div>
@@ -1795,6 +1837,42 @@ function formatRunnerKind(value: string): string {
     new_lead: "New lead",
   };
   return labels[value] ?? humanize(value);
+}
+
+function runnerKindIcon(value: string): ReactNode {
+  if (value === "booking_time_provided" || value === "due_next_step") {
+    return <ClockCountdown size={18} weight="fill" />;
+  }
+  if (value === "new_reply") {
+    return <ChatCircleText size={18} weight="fill" />;
+  }
+  if (value === "delivery_changed") {
+    return <Pulse size={18} weight="fill" />;
+  }
+  if (value === "outbound_sent") {
+    return <PaperPlaneTilt size={18} weight="fill" />;
+  }
+  if (value === "state_changed") {
+    return <ListChecks size={18} weight="fill" />;
+  }
+  if (value === "new_exclusion") {
+    return <WarningCircle size={18} weight="fill" />;
+  }
+  return <TrendUp size={18} weight="fill" />;
+}
+
+function shortRunnerTime(value: string | null | undefined): string {
+  if (!value) {
+    return "-";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return new Intl.DateTimeFormat("en", {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
 }
 
 function MarkdownBlock({ markdown, className = "" }: { markdown: string; className?: string }) {

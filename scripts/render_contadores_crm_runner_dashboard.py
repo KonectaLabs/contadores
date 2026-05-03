@@ -168,6 +168,14 @@ def esc(value: object) -> str:
     return html.escape("" if value is None else str(value), quote=True)
 
 
+def metric_int(metrics: dict[object, object], key: str) -> int:
+    """Read one integer metric without trusting the JSON shape."""
+    try:
+        return int(metrics.get(key, 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def pre_block(title: str, text: str) -> str:
     """Render a titled pre block."""
     return f"""
@@ -199,17 +207,17 @@ def render_dashboard(root: Path, status: str, active_log: Path | None, output: P
 
     timeline_items = "\n".join(
         f"""
-        <li>
-          <div class="dot"></div>
-          <div>
+        <li class="timeline-item">
+          <span class="timeline-dot"></span>
+          <div class="timeline-meta">
             <strong>{esc(relative_time(log_path))}</strong>
             <span>{esc(file_mtime(log_path))}</span>
-            <code>{esc(log_path.name)} · {esc(file_size(log_path))}</code>
+            <code>{esc(log_path.name)} / {esc(file_size(log_path))}</code>
           </div>
         </li>
         """
         for log_path in recent_logs
-    ) or '<li><div class="dot"></div><div><strong>No runs yet</strong><span>-</span></div></li>'
+    ) or '<li class="timeline-item"><span class="timeline-dot is-muted"></span><div class="timeline-meta"><strong>No runs</strong><span>-</span></div></li>'
 
     generated_at = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
     pid = parse_pid(lock_dir / "pid") if lock_dir.exists() else None
@@ -221,29 +229,67 @@ def render_dashboard(root: Path, status: str, active_log: Path | None, output: P
         "history_markdown": history_markdown,
     }
     context_json = json.dumps(prompt_context, ensure_ascii=False).replace("</", "<\\/")
+    needs_action = metric_int(delta_metrics, "needs_action")
+    new_replies = metric_int(delta_metrics, "new_replies")
+    delivery_changes = metric_int(delta_metrics, "delivery_changes")
+    new_outbound = metric_int(delta_metrics, "new_outbound")
+    due_next_steps = metric_int(delta_metrics, "due_next_steps")
+    status_tone = {
+        "running": "live",
+        "completed": "ok",
+        "idle": "idle",
+        "failed": "danger",
+        "stale lock": "danger",
+    }.get(local_status, "idle")
+    status_icon = {
+        "running": "RUN",
+        "completed": "OK",
+        "idle": "IDLE",
+        "failed": "!",
+        "stale lock": "LOCK",
+    }.get(local_status, "AUTO")
     signal_rows = [
-        ("Needs action", delta_metrics.get("needs_action", 0), "danger" if int(delta_metrics.get("needs_action", 0) or 0) else "ok"),
-        ("New replies", delta_metrics.get("new_replies", 0), "hot" if int(delta_metrics.get("new_replies", 0) or 0) else "neutral"),
-        ("Delivery changes", delta_metrics.get("delivery_changes", 0), "warn" if int(delta_metrics.get("delivery_changes", 0) or 0) else "neutral"),
-        ("New outbound", delta_metrics.get("new_outbound", 0), "neutral"),
-        ("Due next steps", delta_metrics.get("due_next_steps", 0), "hot" if int(delta_metrics.get("due_next_steps", 0) or 0) else "neutral"),
+        ("!", "Action", needs_action, "danger" if needs_action else "ok"),
+        ("@", "Replies", new_replies, "hot" if new_replies else "neutral"),
+        ("+/-", "Delivery", delivery_changes, "warn" if delivery_changes else "neutral"),
+        (">", "Outbound", new_outbound, "neutral"),
+        ("...", "Due", due_next_steps, "hot" if due_next_steps else "neutral"),
     ]
     signals_html = "\n".join(
-        f'<div class="signal" data-tone="{esc(tone)}"><span>{esc(label)}</span><strong>{esc(value)}</strong></div>'
-        for label, value, tone in signal_rows
-    )
-    attention_html = "\n".join(
         f"""
-        <article class="event">
+        <article class="signal" data-tone="{esc(tone)}">
+          <span class="signal-icon">{esc(icon)}</span>
+          <span class="signal-label">{esc(label)}</span>
+          <strong>{esc(value)}</strong>
+        </article>
+        """
+        for icon, label, value, tone in signal_rows
+    )
+    attention_event_dicts = [event for event in attention_events[:8] if isinstance(event, dict)]
+    attention_cards = "\n".join(
+        f"""
+        <article class="attention-card">
           <span>{esc(event.get("kind", "change"))}</span>
           <strong>{esc(event.get("full_name") or event.get("phone") or "Unknown lead")}</strong>
           <p>{esc(event.get("detail", ""))}</p>
           <em>{esc(event.get("suggested_action", ""))}</em>
         </article>
         """
-        for event in attention_events[:8]
-        if isinstance(event, dict)
-    ) or '<div class="empty"><strong>No urgent change</strong><p>No new high-priority CRM change since the previous comparable run.</p></div>'
+        for event in attention_event_dicts
+    )
+    attention_html = (
+        f"""
+        <section class="attention-strip" aria-label="Attention">
+          <div class="strip-head">
+            <span class="panel-kicker">Attention</span>
+            <strong>{len(attention_event_dicts)} card(s)</strong>
+          </div>
+          <div class="attention-grid">{attention_cards}</div>
+        </section>
+        """
+        if attention_cards
+        else ""
+    )
 
     html_text = f"""<!doctype html>
 <html lang="en">
@@ -256,17 +302,22 @@ def render_dashboard(root: Path, status: str, active_log: Path | None, output: P
   <style>
     :root {{
       color-scheme: light;
-      --bg: #f5f7f6;
+      --bg: #f4f5f2;
       --surface: #ffffff;
-      --surface-2: #f8faf9;
-      --line: #dfe5e2;
-      --ink: #1f2423;
-      --muted: #65706d;
-      --soft: #8a9491;
-      --accent: #0f766e;
-      --accent-soft: #e5f4f1;
-      --danger: #a33b3b;
-      --shadow: 0 20px 50px rgba(31, 36, 35, 0.08);
+      --surface-2: #f8f8f5;
+      --line: #dde1da;
+      --ink: #202321;
+      --muted: #66706a;
+      --soft: #909891;
+      --accent: #147d71;
+      --accent-soft: #def2ee;
+      --danger: #b33a3a;
+      --danger-soft: #ffe8e6;
+      --warn: #9d6726;
+      --warn-soft: #fff0d9;
+      --hot: #315d9a;
+      --hot-soft: #e5efff;
+      --shadow: 0 14px 34px rgba(32, 35, 33, 0.07);
     }}
     * {{ box-sizing: border-box; }}
     body {{
@@ -275,42 +326,58 @@ def render_dashboard(root: Path, status: str, active_log: Path | None, output: P
       color: var(--ink);
       font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }}
-    main {{ max-width: 1320px; margin: 0 auto; padding: 28px; }}
-    header {{ display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 18px; }}
-    h1 {{ margin: 0; font-size: 26px; line-height: 1.08; letter-spacing: 0; }}
-    .sub {{ margin: 6px 0 0; color: var(--muted); font-size: 13px; }}
-    .badge {{
-      display: inline-flex; align-items: center; min-height: 32px; padding: 0 12px;
+    main {{ max-width: 1260px; margin: 0 auto; padding: 24px; }}
+    header {{ display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-bottom: 14px; }}
+    h1 {{ margin: 0; font-size: 24px; line-height: 1.08; letter-spacing: 0; }}
+    .topline {{ display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; color: var(--muted); font-size: 12px; }}
+    .status-stack {{ display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }}
+    .badge, .mini-chip {{
+      display: inline-flex; align-items: center; gap: 7px; min-height: 32px; padding: 0 10px;
       border-radius: 8px; background: var(--surface); border: 1px solid var(--line);
-      color: var(--accent); font: 800 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+      color: var(--muted); font: 800 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
     }}
-    .badge[data-status="failed"], .badge[data-status="stale lock"] {{ color: var(--danger); }}
-    .badge[data-status="idle"] {{ color: var(--muted); }}
-    .overview {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 14px; }}
-    .signals {{ display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }}
+    .badge::before {{
+      content: attr(data-icon);
+      display: inline-grid; place-items: center; min-width: 22px; height: 22px; padding: 0 4px;
+      border-radius: 6px; background: var(--surface-2); color: currentColor;
+    }}
+    .badge[data-tone="live"], .badge[data-tone="ok"] {{ color: var(--accent); }}
+    .badge[data-tone="danger"] {{ color: var(--danger); }}
+    .signals {{ display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin-bottom: 12px; }}
     .signal {{
-      min-height: 76px; display: grid; align-content: center; gap: 8px; padding: 14px; border: 1px solid var(--line);
-      border-radius: 8px; background: var(--surface);
+      position: relative; min-height: 112px; display: grid; grid-template-rows: auto 1fr auto;
+      gap: 6px; padding: 14px; border: 1px solid var(--line); border-radius: 8px;
+      background: var(--surface); box-shadow: var(--shadow); overflow: hidden;
     }}
-    .signal span {{ color: var(--muted); font: 800 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; text-transform: uppercase; }}
-    .signal strong {{ display: block; color: var(--ink); font: 800 24px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }}
-    .signal[data-tone="danger"] {{ border-color: rgba(163, 59, 59, .32); background: #fff7f7; }}
+    .signal::after {{
+      content: ""; position: absolute; inset: auto 12px 10px 12px; height: 5px; border-radius: 99px; background: var(--line);
+    }}
+    .signal-icon {{
+      display: inline-grid; place-items: center; width: 32px; height: 32px; border-radius: 8px;
+      background: var(--surface-2); color: var(--muted); font: 900 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+    }}
+    .signal-label {{ color: var(--muted); font: 800 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; text-transform: uppercase; }}
+    .signal strong {{ color: var(--ink); font: 900 34px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }}
+    .signal[data-tone="danger"] {{ border-color: rgba(179, 58, 58, .28); background: var(--danger-soft); }}
+    .signal[data-tone="danger"]::after, .signal[data-tone="danger"] .signal-icon {{ background: var(--danger); color: #fff; }}
     .signal[data-tone="danger"] strong {{ color: var(--danger); }}
-    .signal[data-tone="warn"] {{ border-color: rgba(167, 100, 43, .32); background: #fff8ed; }}
-    .signal[data-tone="hot"] {{ border-color: rgba(15, 118, 110, .22); background: var(--accent-soft); }}
+    .signal[data-tone="warn"] {{ border-color: rgba(157, 103, 38, .28); background: var(--warn-soft); }}
+    .signal[data-tone="warn"]::after, .signal[data-tone="warn"] .signal-icon {{ background: var(--warn); color: #fff; }}
+    .signal[data-tone="hot"] {{ border-color: rgba(49, 93, 154, .24); background: var(--hot-soft); }}
+    .signal[data-tone="hot"]::after, .signal[data-tone="hot"] .signal-icon {{ background: var(--hot); color: #fff; }}
+    .signal[data-tone="ok"]::after, .signal[data-tone="ok"] .signal-icon {{ background: var(--accent); color: #fff; }}
     .signal[data-tone="ok"] strong {{ color: var(--accent); }}
-    .metric, .panel {{
+    .panel, .attention-strip {{
       background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px;
       box-shadow: var(--shadow);
     }}
-    .metric span, .panel-kicker {{
+    .panel-kicker {{
       display: block; color: var(--muted); font: 800 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
       letter-spacing: .08em; text-transform: uppercase;
     }}
-    .metric strong {{ display: block; margin-top: 8px; overflow-wrap: anywhere; font-size: 16px; line-height: 1.25; }}
-    .workspace {{ display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(330px, .75fr); gap: 14px; align-items: start; }}
-    .panel-head {{ display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 12px; }}
-    .panel-head strong {{ display: block; margin-top: 4px; font-size: 18px; line-height: 1.2; }}
+    .workspace {{ display: grid; grid-template-columns: minmax(0, .9fr) minmax(360px, 1.1fr); gap: 12px; align-items: start; }}
+    .panel-head, .strip-head {{ display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; }}
+    .panel-head strong, .strip-head strong {{ display: block; margin-top: 4px; font-size: 17px; line-height: 1.2; }}
     .markdown {{ color: var(--ink); }}
     .markdown h1, .markdown h2, .markdown h3 {{ margin: 18px 0 8px; line-height: 1.16; letter-spacing: 0; }}
     .markdown h1 {{ font-size: 24px; }}
@@ -323,21 +390,23 @@ def render_dashboard(root: Path, status: str, active_log: Path | None, output: P
       padding: 1px 5px; border-radius: 5px; background: var(--surface-2);
       color: #3c4643; font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
     }}
-    .last-run {{ max-height: 640px; overflow: auto; padding-right: 8px; }}
-    .delta-grid {{ display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(360px, .8fr); gap: 14px; margin-bottom: 14px; align-items: start; }}
-    .event {{ display: grid; gap: 7px; padding: 12px; border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 8px; background: var(--surface-2); }}
-    .event span {{ color: var(--muted); font: 800 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; text-transform: uppercase; }}
-    .event strong {{ font-size: 16px; }}
-    .event p, .event em, .empty p {{ margin: 0; color: var(--muted); font-style: normal; }}
-    .event em {{ padding: 8px 9px; border-radius: 6px; background: var(--surface); color: var(--ink); font-weight: 650; }}
-    .empty {{ padding: 16px; border: 1px dashed var(--line); border-radius: 8px; background: var(--surface-2); }}
-    .history {{ margin-top: 14px; }}
-    .history .markdown {{ max-height: 760px; overflow: auto; padding-right: 8px; }}
-    .timeline {{ display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }}
-    .timeline li {{ display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 10px; padding: 0 0 18px; }}
-    .dot {{ width: 9px; height: 9px; margin-top: 7px; border-radius: 99px; background: var(--accent); box-shadow: 0 0 0 5px var(--accent-soft); }}
-    .timeline strong {{ display: block; font-size: 14px; }}
-    .timeline span, .timeline code {{ display: block; margin-top: 3px; color: var(--muted); overflow-wrap: anywhere; font-size: 12px; }}
+    .details-stack {{ display: grid; gap: 10px; }}
+    .details-stack details {{ margin: 0; }}
+    .details-stack .markdown {{ max-height: 560px; overflow: auto; padding: 10px 4px 0 0; }}
+    .attention-strip {{ margin-bottom: 12px; border-color: rgba(179, 58, 58, .22); }}
+    .attention-grid {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }}
+    .attention-card {{ display: grid; gap: 7px; padding: 12px; border: 1px solid rgba(179, 58, 58, .22); border-left: 5px solid var(--danger); border-radius: 8px; background: var(--danger-soft); }}
+    .attention-card span {{ color: var(--danger); font: 800 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; text-transform: uppercase; }}
+    .attention-card strong {{ font-size: 16px; }}
+    .attention-card p, .attention-card em {{ margin: 0; color: var(--muted); font-style: normal; }}
+    .attention-card em {{ padding: 8px 9px; border-radius: 6px; background: var(--surface); color: var(--ink); font-weight: 650; }}
+    .timeline {{ position: relative; display: grid; gap: 0; margin: 0; padding: 2px 0 0; list-style: none; }}
+    .timeline::before {{ content: ""; position: absolute; top: 10px; bottom: 14px; left: 7px; width: 2px; background: var(--line); }}
+    .timeline-item {{ position: relative; display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 10px; padding: 0 0 18px; }}
+    .timeline-dot {{ z-index: 1; width: 12px; height: 12px; margin-top: 6px; border: 2px solid var(--surface); border-radius: 99px; background: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }}
+    .timeline-dot.is-muted {{ background: var(--soft); box-shadow: 0 0 0 4px var(--surface-2); }}
+    .timeline-meta strong {{ display: block; font-size: 14px; }}
+    .timeline-meta span, .timeline-meta code {{ display: block; margin-top: 3px; color: var(--muted); overflow-wrap: anywhere; font-size: 12px; }}
     textarea {{
       width: 100%; min-height: 132px; resize: vertical; padding: 12px;
       border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2);
@@ -350,96 +419,86 @@ def render_dashboard(root: Path, status: str, active_log: Path | None, output: P
     }}
     button.primary {{ border-color: var(--accent); background: var(--accent); color: #fff; }}
     .hint {{ margin: 9px 0 0; color: var(--muted); font-size: 12px; }}
-    details {{ margin-top: 14px; }}
-    summary {{ cursor: pointer; color: var(--muted); font-weight: 750; }}
+    details {{ margin-top: 12px; }}
+    summary {{ cursor: pointer; color: var(--ink); font-weight: 750; }}
     pre {{
       margin: 10px 0 0; max-height: 360px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
       background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 12px;
       font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
     }}
-    @media (max-width: 920px) {{ main {{ padding: 18px; }} .overview, .signals, .workspace, .delta-grid {{ grid-template-columns: 1fr; }} }}
+    @media (max-width: 920px) {{ main {{ padding: 18px; }} header {{ align-items: flex-start; flex-direction: column; }} .status-stack {{ justify-content: flex-start; }} .signals, .workspace, .attention-grid {{ grid-template-columns: 1fr; }} }}
   </style>
 </head>
 <body>
   <main>
     <header>
       <div>
-        <h1>CRM follow-up runs</h1>
-        <p class="sub">Vista local de la Mac. Renderiza las notas de la automation y se actualiza cada 60 segundos.</p>
+        <h1>CRM runner</h1>
+        <div class="topline">
+          <span>{esc(generated_at)}</span>
+          <span>/</span>
+          <span>60s refresh</span>
+        </div>
       </div>
-      <span class="badge" data-status="{esc(local_status)}">{esc(local_status)}</span>
+      <div class="status-stack" aria-label="Runner status">
+        <span class="badge" data-tone="{esc(status_tone)}" data-icon="{esc(status_icon)}">{esc(local_status)}</span>
+        <span class="mini-chip">pid {esc(pid or "-")}</span>
+        <span class="mini-chip">start {esc(started_at)}</span>
+      </div>
     </header>
 
     <section class="signals" aria-label="What changed">
       {signals_html}
     </section>
 
-    <section class="delta-grid">
-      <article class="panel">
-        <div class="panel-head">
-          <div>
-            <span class="panel-kicker">Now</span>
-            <strong>Requires attention</strong>
-          </div>
-        </div>
-        {attention_html}
-      </article>
-      <article class="panel">
-        <div class="panel-head">
-          <div>
-            <span class="panel-kicker">Delta</span>
-            <strong>Structured comparison</strong>
-          </div>
-        </div>
-        <div id="deltaMarkdown" class="markdown last-run"></div>
-      </article>
-    </section>
+    {attention_html}
 
     <section class="workspace">
-      <article class="panel">
-        <div class="panel-head">
-          <div>
-            <span class="panel-kicker">Last run</span>
-            <strong>Resumen final</strong>
-          </div>
-        </div>
-        <div id="latestMarkdown" class="markdown last-run"></div>
-      </article>
-
       <aside class="panel">
         <div class="panel-head">
           <div>
             <span class="panel-kicker">Timeline</span>
-            <strong>Corridas recientes</strong>
+            <strong>Runs</strong>
           </div>
         </div>
         <ol class="timeline">{timeline_items}</ol>
       </aside>
-    </section>
 
-    <section class="panel history">
-      <div class="panel-head">
-        <div>
-          <span class="panel-kicker">Accumulated notes</span>
-          <strong>Historial human-readable</strong>
+      <article class="panel details-stack">
+        <div class="panel-head">
+          <div>
+            <span class="panel-kicker">Notes</span>
+            <strong>Details</strong>
+          </div>
         </div>
-      </div>
-      <div id="historyMarkdown" class="markdown"></div>
+        <details>
+          <summary>Delta</summary>
+          <div id="deltaMarkdown" class="markdown"></div>
+        </details>
+        <details>
+          <summary>Last run</summary>
+          <div id="latestMarkdown" class="markdown"></div>
+        </details>
+        <details>
+          <summary>History</summary>
+          <div id="historyMarkdown" class="markdown"></div>
+        </details>
+      </article>
     </section>
 
-    <section class="panel history">
+    <section class="panel">
       <div class="panel-head">
         <div>
           <span class="panel-kicker">Ask Codex</span>
-          <strong>Usar el resultado de esta corrida como contexto</strong>
+          <strong>Context prompt</strong>
         </div>
       </div>
-      <textarea id="codexRequest" placeholder="Ej: Ese mensaje a Daniel esta mal, corregilo y decime que harias ahora. O: mandale a X una pregunta para coordinar llamada."></textarea>
+      <textarea id="codexRequest" placeholder="Ej: Revisa el caso de Daniel y decime el proximo paso."></textarea>
       <div class="actions">
         <button class="primary" type="button" id="copyPrompt">Copiar prompt</button>
         <button type="button" id="copyCommand">Copiar comando codex exec</button>
       </div>
-      <p class="hint" id="copyStatus">Esto arma un prompt nuevo con el delta, el last run y el historial. Lo pegas en Codex o corres el comando copiado en Terminal.</p>
+      <p class="hint" id="copyStatus">Listo para copiar.</p>
     </section>
 
     <details>
