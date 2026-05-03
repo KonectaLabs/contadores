@@ -9,9 +9,9 @@ Use this skill for CRM follow-up work across the `contadores` and `abogados`
 funnels. The business goal is not "send more messages"; the goal is to get
 qualified leads into short sales calls so Facu can close them.
 
-This skill is the source of truth for the hourly automation. The Codex
-automation prompt should only say to read this skill and run it; do not
-duplicate the runbook inside the automation prompt.
+This skill is the source of truth for the hourly automation. The runner prompt
+should only say to read this skill and run it; do not duplicate the runbook
+inside the scheduled job prompt.
 
 Also read these skills when relevant:
 
@@ -28,6 +28,12 @@ Also read these skills when relevant:
   `root@149.50.136.121:/root/projects/contadores`.
 - Load `INTERNAL_API_TOKEN` from the environment or local `.env`. Never print it
   in logs or summaries.
+- The active hourly runner is the local macOS LaunchAgent
+  `com.konecta.contadores.crm-followup`. It starts a fresh `codex exec`
+  session each hour, so runs do not depend on this chat thread.
+- The previous Codex App cron is paused because that runtime can fail to reach
+  production HTTP/SSH even when this machine can. Do not treat that as a server
+  outage unless the local runner or direct shell checks also fail.
 - For read-only hourly analysis, prefer the production snapshot endpoint over
   SSH. Fetch all Contadores/Abogados chats, not only attention-needed chats:
   `GET http://149.50.136.121/api/contadores/followup/snapshot?limit=20000&messages_per_lead=12`.
@@ -146,6 +152,38 @@ Final summary must include:
 - System errors found/fixed.
 - Anything intentionally skipped and why.
 
+## Local LaunchAgent Runner
+
+Install or refresh the hourly runner from the repo:
+
+```bash
+scripts/install_contadores_crm_launchd.sh
+```
+
+Inspect its status:
+
+```bash
+launchctl print gui/$(id -u)/com.konecta.contadores.crm-followup
+```
+
+Run it immediately:
+
+```bash
+launchctl kickstart -k gui/$(id -u)/com.konecta.contadores.crm-followup
+```
+
+The runner script is
+`scripts/run_contadores_crm_hourly_followup.sh`. It loads `.env`, preflights
+the production snapshot endpoint, extracts the prompt from
+`references/automation-prompt.md`, runs `codex exec` in a new session, writes
+timestamped logs under `data/reports/`, writes the latest final summary to
+`data/reports/contadores-crm-followup-latest.md`, and uses a lock under
+`data/locks/` so hourly runs do not overlap.
+
+Do not edit the runner while it is executing. Bash can read scripts
+incrementally, so changing the file mid-run can create a one-off parse error in
+that active process even when the final file is valid.
+
 ## References
 
 - Read [references/wave-2026-05-02.md](references/wave-2026-05-02.md) for the
@@ -154,4 +192,4 @@ Final summary must include:
 - Read [references/buckets-copies-sequences.md](references/buckets-copies-sequences.md)
   for the action buckets, copy rules, and next-message sequences.
 - Read [references/automation-prompt.md](references/automation-prompt.md) when
-  creating or updating the hourly Codex automation.
+  creating or updating the hourly runner prompt.

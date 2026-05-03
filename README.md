@@ -143,6 +143,42 @@ Acciones internas para automations de follow-up:
 - `PATCH /api/contadores/followup/leads/{lead_id}` cambia stage,
   clasificacion, tags o estado manual. No envia WhatsApp.
 
+Runner horario de follow-up:
+
+- El seguimiento horario activo corre como LaunchAgent local en la Mac, no como
+  cron de Codex App. El cron de Codex App quedo pausado porque ese runtime puede
+  no tener red hacia `149.50.136.121`, aunque esta maquina si la tenga.
+- Cada hora se crea una ejecucion nueva de `codex exec`, lee
+  `.codex/skills/contadores-crm-followup-automation/SKILL.md`, consulta la API
+  de produccion y opera solo mediante endpoints internos aprobados o SSH al
+  server real cuando hace falta debug.
+- Requiere `INTERNAL_API_TOKEN` en `.env` local o en el entorno. El runner carga
+  `.env`, pero nunca imprime el token.
+- Instalar o actualizar el LaunchAgent:
+
+```bash
+scripts/install_contadores_crm_launchd.sh
+```
+
+- Ver estado:
+
+```bash
+launchctl print gui/$(id -u)/com.konecta.contadores.crm-followup
+```
+
+- Correrlo ahora:
+
+```bash
+launchctl kickstart -k gui/$(id -u)/com.konecta.contadores.crm-followup
+```
+
+- Logs y ultimo resumen:
+
+```bash
+ls -lt data/reports/contadores-crm-followup-*.log | head
+cat data/reports/contadores-crm-followup-latest.md
+```
+
 Verificar API de funnels:
 
 ```bash
