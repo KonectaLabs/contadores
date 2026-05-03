@@ -62,10 +62,15 @@
 
 ### 2026-05-03 19:05 - Final
 
-- Status: implemented locally.
+- Status: deployed and verified on the real server.
 - Validation:
   - `npm run build` passed in `src/frontend`.
   - Local backend render check passed with `AUTH_DISABLE=true`; the CRM detail header shows `Copy context` for a selected lead.
+  - Production deploy completed after commit `dc0174d`.
+  - Production `/health` returned `ready=true`.
+  - Authenticated production `/api/runtime` returned `ready=true` with no readiness issues.
+  - Production `/api/funnels` returned `contadores`, `abogados`, and `general`.
+  - Production frontend bundle contains the `Copy context` action.
 - Notes: local backend without `AUTH_DISABLE=true` still requires `auth.toml`; this is existing local auth behavior.
 
 ## 2026-05-03 18:59 - Codex runtime readiness
