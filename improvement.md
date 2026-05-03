@@ -346,3 +346,5 @@
   - `improvement.md`
 - Guardrail: no edits to `src/frontend/src/App.tsx`, `src/frontend/src/styles.css`, `src/frontend/src/api.ts`, `src/frontend/src/format.ts`, Contadores runtime/search files, bot worker files, public image generation files, deploy scripts, media, or persisted `data/`.
 - During: added transcript media fallback logic and focused tests for media-only Workstation messages; next step is running that test file.
+- Validation: `uv run pytest src/backend/tests/test_workstation.py` passed with 2 tests; `uv run pytest src/backend/tests/test_contadores.py -k workstation` passed with 5 tests.
+- Status: local validation passed; preparing commit, push, deploy, and server verification.

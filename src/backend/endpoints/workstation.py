@@ -110,6 +110,30 @@ def get_required_lead(lead_id: str) -> ContadoresLead:
     return lead
 
 
+def message_content_for_transcript(message: ContadoresMessage) -> str:
+    """Return readable transcript content for text and media messages."""
+    clean_text = (message.text or "").strip()
+    if clean_text:
+        return clean_text
+
+    media_parts = [
+        getattr(message, "media_caption", None),
+        getattr(message, "media_filename", None),
+        getattr(message, "media_path", None),
+    ]
+    clean_media_parts = [
+        str(part).strip()
+        for part in media_parts
+        if str(part or "").strip()
+    ]
+    if clean_media_parts:
+        return " | ".join(clean_media_parts)
+
+    if getattr(message, "media_type", None):
+        return "(media sin texto)"
+    return "(sin texto)"
+
+
 def build_conversation_text(lead: ContadoresLead, messages: list[ContadoresMessage]) -> str:
     """Build one plain-text transcript for Codex context."""
     title = lead.full_name or lead.phone or lead.normalized_phone or "Lead"
@@ -125,7 +149,8 @@ def build_conversation_text(lead: ContadoresLead, messages: list[ContadoresMessa
         author = "Operador/Bot" if message.from_me else "Cliente"
         timestamp = format_timestamp_seconds(message.created_at) or ""
         media = f" [{message.media_type}]" if message.media_type else ""
-        lines.append(f"[{timestamp}] {author}{media}: {message.text}")
+        content = message_content_for_transcript(message)
+        lines.append(f"[{timestamp}] {author}{media}: {content}")
     return "\n".join(lines).strip() + "\n"
 
 
