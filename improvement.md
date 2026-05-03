@@ -19,7 +19,8 @@
 
 ## 2026-05-03 19:08 - Codex auth logout lane
 
-- Status: in progress.
+- Status: local validation passed; preparing commit, push, deploy, and server
+  verification.
 - Improvement: make logout revoke the current signed session token server-side
   for the rest of its lifetime, instead of relying only on deleting the browser
   cookie.
@@ -30,6 +31,13 @@
 - Guardrail: no edits to frontend files, Contadores lead APIs, runtime
   readiness files, bot worker files, public image generation, funnel config,
   sheet ingestion helpers, Docker/deploy scripts, or persisted `data/`.
+- During: implemented in-memory session-token revocation in
+  `src/backend/auth.py` and added focused tests in
+  `src/backend/tests/test_auth.py`.
+- During: added a random signed session id so consecutive logins do not reuse
+  the same token when created within the same second.
+- Validation: `uv run pytest src/backend/tests/test_auth.py` passed with 2
+  tests. `npm run build` in `src/frontend` passed.
 
 ## 2026-05-03 18:59 - Codex
 
@@ -121,7 +129,8 @@
 
 ## 2026-05-03 19:01 - Codex bot worker lane
 
-- Status: in progress.
+- Status: local validation passed; preparing commit, push, deploy, and server
+  verification.
 - Improvement: make the bot worker dispatch path more resilient by keeping
   pending WhatsApp delivery dispatch independent from the active funnel list and
   by reusing one `/api/funnels` read per loop cycle.
@@ -136,6 +145,9 @@
   cycle and `run_worker_iteration` still dispatches pending messages when the
   provided funnel list is empty. Added `src/bot/tests/test_worker_loop.py` to
   lock this behavior.
+- Validation: `uv run --project src/bot --with pytest pytest src/bot/tests`
+  passed with 49 tests. Focused rerun of `test_worker_loop.py` and
+  `test_contadores_flow.py` passed with 12 tests.
 
 ## 2026-05-03 19:04 - Codex frontend format lane
 
@@ -154,7 +166,7 @@
 
 ## 2026-05-03 19:06 - Codex frontend API client lane
 
-- Status: in progress.
+- Status: abandoned before code.
 - Improvement: make the frontend API client more resilient for operators by
   retrying rate-limit responses with `Retry-After`, accepting empty successful
   responses, and surfacing plain-text/non-JSON error bodies cleanly instead of
@@ -166,6 +178,25 @@
   `src/frontend/src/styles.css`, `src/frontend/src/format.ts`, backend/API
   endpoint files, bot worker files, funnel runtime config, sheet ingestion
   helpers, deploy scripts, or persisted `data/`.
+- During: stopped before editing because `src/frontend/src/api.ts` already had
+  uncommitted changes from another worker.
+
+## 2026-05-03 19:09 - Codex browser shell lane
+
+- Status: local validation passed; preparing commit, push, deploy, and server
+  verification.
+- Improvement: improve the app's browser shell metadata so mobile and desktop
+  browsers get the correct CRM name, description, color scheme, and theme color
+  before the React app loads.
+- Planned files:
+  - `src/frontend/index.html`
+  - `improvement.md`
+- Guardrail: no edits to dirty frontend source files, backend/API files, bot
+  worker files, docs/rollout changes, funnel runtime config, sheet ingestion
+  helpers, deploy scripts, or persisted `data/`.
+- During: added `application-name`, `description`, `theme-color`, and
+  `color-scheme` metadata in `src/frontend/index.html`.
+- Validation: `npm run build` passed in `src/frontend`.
 
 ## 2026-05-03 19:00 - Codex date clarity lane
 
@@ -283,6 +314,7 @@
   the frontend build.
 - During: added `RootErrorBoundary` in `src/frontend/src/main.tsx` with a
   reloadable fallback for unexpected render crashes.
+- During: `npm run build` passed in `src/frontend`.
 
 ## 2026-05-03 19:00 - Codex date clarity lane stop
 
@@ -298,3 +330,4 @@
   - `src/backend/tests/test_workstation.py`
   - `improvement.md`
 - Guardrail: no edits to `src/frontend/src/App.tsx`, `src/frontend/src/styles.css`, `src/frontend/src/api.ts`, `src/frontend/src/format.ts`, Contadores runtime/search files, bot worker files, public image generation files, deploy scripts, media, or persisted `data/`.
+- During: added transcript media fallback logic and focused tests for media-only Workstation messages; next step is running that test file.

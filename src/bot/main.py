@@ -119,13 +119,12 @@ async def run_worker_iteration(
     backend_client: httpx.AsyncClient,
     email_provider: AgentMailProvider,
     whatsapp_provider: WhatsAppProvider,
+    funnels: list[Any] | None = None,
 ) -> None:
     """Advance automation, send alerts, and dispatch pending WhatsApp messages."""
-    funnels = await fetch_funnels(backend_client)
-    if not funnels:
-        return
+    current_funnels = funnels if funnels is not None else await fetch_funnels(backend_client)
 
-    for funnel in funnels:
+    for funnel in current_funnels:
         if not funnel.enabled:
             continue
         if funnel.kind == "inbox":
@@ -178,15 +177,17 @@ async def run_worker_loop(
     try:
         while True:
             try:
+                funnels = await fetch_funnels(backend_client)
                 await run_worker_iteration(
                     backend_client=backend_client,
                     email_provider=email_provider,
                     whatsapp_provider=whatsapp_provider,
+                    funnels=funnels,
                 )
                 note_backend_recovered(logger, LOG_STATE)
 
                 now = asyncio.get_running_loop().time()
-                for funnel in await fetch_funnels(backend_client):
+                for funnel in funnels:
                     if not funnel.enabled:
                         continue
                     if funnel.kind == "inbox":
