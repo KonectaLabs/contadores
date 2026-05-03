@@ -589,6 +589,41 @@ def lead_matches_tag_filter(lead: ContadoresLead, tag: str | None) -> bool:
     return any(item.casefold() == tag_key for item in lead.tags)
 
 
+def normalize_lead_search_text(value: str | None) -> str:
+    """Normalize text for the CRM lead search box."""
+    return " ".join((value or "").casefold().split())
+
+
+def lead_matches_search_query(lead: ContadoresLead, query: str | None) -> bool:
+    """Return True when one lead or its chat transcript matches the query."""
+    clean_query = normalize_lead_search_text(query)
+    if not clean_query:
+        return True
+
+    lead_text = normalize_lead_search_text(
+        " ".join(
+            [
+                lead.external_lead_id,
+                lead.phone,
+                lead.normalized_phone,
+                lead.full_name or "",
+                lead.email or "",
+                lead.platform or "",
+                lead.lead_status or "",
+                " ".join(lead.tags),
+            ]
+        )
+    )
+    if clean_query in lead_text:
+        return True
+
+    for message in ContadoresMessage.list_by_lead(lead.id):
+        if clean_query in normalize_lead_search_text(message.text):
+            return True
+
+    return False
+
+
 def build_tag_options(leads: list[ContadoresLead]) -> list[str]:
     """Return every tag used by a group of leads."""
     by_key: dict[str, str] = {}
@@ -2975,24 +3010,11 @@ async def list_contadores_leads(
     assignments_by_lead = group_strategy_assignments_by_lead(funnel_id)
     metric_leads: list[ContadoresLead] = []
     visible_leads: list[ContadoresLead] = []
-    query_value = (query or "").strip().lower()
+    query_value = normalize_lead_search_text(query)
 
     for lead in base_leads:
-        if query_value:
-            haystack = " ".join(
-                [
-                    lead.external_lead_id,
-                    lead.phone,
-                    lead.normalized_phone,
-                    lead.full_name or "",
-                    lead.email or "",
-                    lead.platform or "",
-                    lead.lead_status or "",
-                    " ".join(lead.tags),
-                ]
-            ).lower()
-            if query_value not in haystack:
-                continue
+        if not lead_matches_search_query(lead, query_value):
+            continue
         if not lead_matches_tag_filter(lead, tag):
             continue
         if not lead_matches_strategy_filter(

@@ -75,7 +75,7 @@
 
 ## 2026-05-03 18:59 - Codex backend/API lane
 
-- Status: validation passed locally.
+- Status: validation passed in clean worktree; preparing push/deploy.
 - Improvement: extend the existing CRM lead search so it also matches stored
   WhatsApp/message text, letting operators find a lead by phrases from the chat.
 - Planned files:
@@ -87,13 +87,13 @@
   ingestion, Docker/deploy scripts, or persisted `data/`.
 - During: added a readable backend helper that searches lead fields first and
   then the stored chat timeline for the existing lead-list `query` parameter.
-- Validation: `uv run pytest src/backend/tests/test_contadores.py::test_contadores_lead_search_matches_message_text`
-  passed, and `uv run pytest src/backend/tests/test_contadores.py
-  src/backend/tests/test_funnels.py src/backend/tests/test_codex_utils.py
-  src/backend/tests/test_contadores_post_loom_classifier.py` passed with 85
+- Validation: in the clean `origin/main` worktree,
+  `uv run --with pytest pytest src/backend/tests/test_contadores.py::test_contadores_lead_search_matches_message_text`
+  passed, and `uv run --with pytest pytest src/backend/tests` passed with 98
   tests.
-- Note: full `uv run pytest src/backend/tests` currently has unrelated failures
-  in the concurrently edited `test_public_image_generation.py` lane.
+- Note: the original shared workspace still has unrelated in-progress changes
+  from parallel lanes; the commit for this lane is being prepared from a clean
+  temporary worktree.
 
 ## 2026-05-03 19:03 - Codex API client lane
 

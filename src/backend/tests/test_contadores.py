@@ -199,6 +199,39 @@ def test_contadores_import_skips_invalid_phone_rows(monkeypatch, tmp_path) -> No
     assert ContadoresLead.get_by_external_lead_id("sheet-valid-phone") is not None
 
 
+def test_contadores_lead_search_matches_message_text(monkeypatch, tmp_path) -> None:
+    """The CRM search box should find leads by text from the chat timeline."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    matching = ContadoresLead.upsert(
+        external_lead_id="sheet-row-message-search",
+        phone="+5491111111180",
+        full_name="Message Search Lead",
+    )
+    other = ContadoresLead.upsert(
+        external_lead_id="sheet-row-message-other",
+        phone="+5491111111181",
+        full_name="Other Lead",
+    )
+    ContadoresMessage.add(
+        lead_id=matching.id,
+        from_me=False,
+        text="Me pasas el presupuesto especial para mayo?",
+    )
+    ContadoresMessage.add(
+        lead_id=other.id,
+        from_me=False,
+        text="Quiero coordinar una llamada.",
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/api/contadores/leads?query=presupuesto especial&funnel_id=contadores")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["metrics"]["total"] == 1
+    assert [item["id"] for item in payload["leads"]] == [matching.id]
+
+
 def test_contadores_pending_delivery_keeps_full_mp4_sequence(monkeypatch, tmp_path) -> None:
     """Loom intro and WhatsApp MP4 must both remain visible to the bot outbox."""
     configure_contadores_db(monkeypatch, tmp_path)
