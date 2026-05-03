@@ -27,6 +27,7 @@ const readableLabels: Record<string, string> = {
   needs_human_handoff: "Manual handoff",
   needs_reply: "Needs reply",
   opener: "First message",
+  post_loom_service_recap: "Service recap",
   queued: "Queued",
   read: "Read",
   sent: "Sent",

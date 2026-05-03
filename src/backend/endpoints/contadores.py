@@ -21,7 +21,10 @@ from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
 from backend.calendly import normalize_calendly_url
-from backend.ai.contadores_post_loom_classifier import PostLoomReplyClassifierProgram
+from backend.ai.contadores_post_loom_classifier import (
+    PostLoomReplyClassifierProgram,
+    PostLoomServiceRecapProgram,
+)
 from backend.auth import INTERNAL_API_TOKEN_HEADER, has_valid_internal_api_token
 from backend.contadores_strategies import (
     LOOM_STEP,
@@ -70,6 +73,8 @@ FORM_LEAD_TAG = "form"
 WHATSAPP_GENERAL_TAG = "whatsapp"
 WHATSAPP_FUNNEL_TAG = "whatsapp_funnel"
 BULK_SET_TAGS_ACTION = "set-tags"
+POST_LOOM_SERVICE_RECAP_SEQUENCE_STEP = "post_loom_service_recap"
+WATCHED_VIDEO_CONFIRMATION_LABEL = "watched_video_confirmation"
 VENEZUELA_MOBILE_PREFIXES = ("412", "414", "416", "424", "426")
 PHONE_DIGITS_RE = re.compile(r"\D+")
 
@@ -326,7 +331,7 @@ def build_classifier_context() -> str:
     return (
         "Ya se enviaron: opener, explicación breve, video/propuesta y eventualmente la pregunta "
         "'¿conseguiste ver el video?'. Clasificá si la persona claramente quiere avanzar "
-        "al siguiente paso o si necesita intervención humana."
+        "al siguiente paso, si solamente confirma que vio el video, o si necesita intervención humana."
     )
 
 
@@ -1661,6 +1666,31 @@ def send_calendly_sequence(*, lead: ContadoresLead, config: ContadoresConfig) ->
     return [intro, calendly_url]
 
 
+async def send_post_loom_service_recap(
+    *,
+    lead: ContadoresLead,
+    reply_batch: str,
+    generator: PostLoomServiceRecapProgram,
+) -> list[ContadoresMessage]:
+    """Generate and queue the recap sent after a simple watched-video confirmation."""
+    funnel = resolve_funnel(lead.funnel_id)
+    result = await generator.aforward(
+        funnel_id=funnel.id,
+        funnel_label=funnel.label,
+        phone=lead.phone,
+        reply_batch=reply_batch,
+    )
+    text = result.message_text.strip()
+    if not text:
+        return []
+    row = enqueue_lead_outbound(
+        lead=lead,
+        text=text,
+        sequence_step=POST_LOOM_SERVICE_RECAP_SEQUENCE_STEP,
+    )
+    return [row]
+
+
 def send_calendly_link_only(*, lead: ContadoresLead, config: ContadoresConfig) -> list[ContadoresMessage]:
     """Queue only the configured Calendly URL and mark the milestone."""
     calendly_url = enqueue_lead_outbound(
@@ -1689,18 +1719,33 @@ def keep_manual_handoff_after_calendly_send(lead_id: str, *, sent_at: datetime) 
     )
 
 
-def get_reply_batch_since_loom(lead_id: str, *, loom_sent_at: datetime | None) -> list[ContadoresMessage]:
-    """Return inbound messages received after the Loom sequence started."""
-    if loom_sent_at is None:
+def get_reply_batch_since(lead_id: str, *, start_at: datetime | None) -> list[ContadoresMessage]:
+    """Return inbound messages received after a flow timestamp."""
+    if start_at is None:
         return []
-    resolved_loom_sent_at = ensure_utc_datetime(loom_sent_at)
-    if resolved_loom_sent_at is None:
+    resolved_start_at = ensure_utc_datetime(start_at)
+    if resolved_start_at is None:
         return []
     return [
         row
         for row in ContadoresMessage.list_by_lead(lead_id)
-        if not row.from_me and ensure_utc_datetime(row.created_at) >= resolved_loom_sent_at
+        if not row.from_me and ensure_utc_datetime(row.created_at) >= resolved_start_at
     ]
+
+
+def get_post_loom_reply_window_start(lead: ContadoresLead) -> datetime | None:
+    """Return the timestamp after which inbound replies should be classified."""
+    loom_sent_at = ensure_utc_datetime(lead.loom_sent_at)
+    if loom_sent_at is None:
+        return None
+    classification_completed_at = ensure_utc_datetime(lead.classification_completed_at)
+    if (
+        lead.last_classification_label == WATCHED_VIDEO_CONFIRMATION_LABEL
+        and classification_completed_at is not None
+        and classification_completed_at > loom_sent_at
+    ):
+        return classification_completed_at
+    return loom_sent_at
 
 
 def has_quiet_window(*, last_message_at: datetime | None, quiet_seconds: int, now: datetime) -> bool:
@@ -2554,6 +2599,7 @@ class ContadoresAutomationTickResponse(BaseModel):
     loom_sent: int = 0
     video_checks_sent: int = 0
     classified_wants_to_proceed: int = 0
+    video_confirmation_recaps_sent: int = 0
     classified_needs_human: int = 0
     calendly_sent: int = 0
 
@@ -3587,11 +3633,13 @@ async def run_contadores_automation_tick(
 
     leads = ContadoresLead.list_recent(limit=1000, funnel_id=funnel_id, include_archived=False)
     classifier = PostLoomReplyClassifierProgram()
+    service_recap_generator = PostLoomServiceRecapProgram()
     now = now_utc()
     opener_sent = 0
     loom_sent = 0
     video_checks_sent = 0
     classified_wants_to_proceed = 0
+    video_confirmation_recaps_sent = 0
     classified_needs_human = 0
     calendly_sent = 0
 
@@ -3649,23 +3697,25 @@ async def run_contadores_automation_tick(
         if lead.stage != ContadoresLeadStage.AWAITING_VIDEO_REPLY or lead.loom_sent_at is None:
             continue
 
-        replies_since_loom = get_reply_batch_since_loom(lead.id, loom_sent_at=lead.loom_sent_at)
-        last_reply_at = ensure_utc_datetime(replies_since_loom[-1].created_at) if replies_since_loom else None
+        reply_window_start = get_post_loom_reply_window_start(lead)
+        replies_in_window = get_reply_batch_since(lead.id, start_at=reply_window_start)
+        last_reply_at = ensure_utc_datetime(replies_in_window[-1].created_at) if replies_in_window else None
         loom_sent_at = ensure_utc_datetime(lead.loom_sent_at)
         if loom_sent_at is None:
             continue
         reached_min_wait = now >= loom_sent_at + timedelta(seconds=config.post_loom_min_seconds)
 
         if (
-            not replies_since_loom
+            not replies_in_window
             and reached_min_wait
             and lead.video_check_sent_at is None
+            and lead.last_classification_label != WATCHED_VIDEO_CONFIRMATION_LABEL
         ):
             send_video_check(lead=lead)
             video_checks_sent += 1
             continue
 
-        if not replies_since_loom or not reached_min_wait:
+        if not replies_in_window or not reached_min_wait:
             continue
 
         if not has_quiet_window(
@@ -3677,12 +3727,13 @@ async def run_contadores_automation_tick(
 
         batch_text = "\n".join(
             f"- {item.text.strip()}"
-            for item in replies_since_loom
+            for item in replies_in_window
             if item.text.strip()
         ).strip()
         if not batch_text:
             continue
 
+        previous_classification_label = lead.last_classification_label
         result = await classifier.aforward(
             loom_context=build_classifier_context(),
             reply_batch=batch_text,
@@ -3701,6 +3752,19 @@ async def run_contadores_automation_tick(
             calendly_sent += 1
             continue
 
+        if (
+            label == WATCHED_VIDEO_CONFIRMATION_LABEL
+            and previous_classification_label != WATCHED_VIDEO_CONFIRMATION_LABEL
+        ):
+            queued_rows = await send_post_loom_service_recap(
+                lead=lead,
+                reply_batch=batch_text,
+                generator=service_recap_generator,
+            )
+            if queued_rows:
+                video_confirmation_recaps_sent += 1
+                continue
+
         ContadoresLead.update_flow_state(
             lead.id,
             stage=ContadoresLeadStage.NEEDS_HUMAN,
@@ -3713,6 +3777,7 @@ async def run_contadores_automation_tick(
         loom_sent=loom_sent,
         video_checks_sent=video_checks_sent,
         classified_wants_to_proceed=classified_wants_to_proceed,
+        video_confirmation_recaps_sent=video_confirmation_recaps_sent,
         classified_needs_human=classified_needs_human,
         calendly_sent=calendly_sent,
     )

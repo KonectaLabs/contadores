@@ -52,6 +52,48 @@ If there is no reply 10 minutes after the Loom send:
 
 `¿conseguiste ver el video?`
 
+## Post-video service recap
+
+After the lead replies post-Loom and the quiet window passes, DSPy classifies
+the reply batch. The classifier can return:
+
+- `wants_to_proceed`
+- `watched_video_confirmation`
+- `needs_human`
+
+When it returns `watched_video_confirmation`, the automation sends one generated
+WhatsApp message with `sequence_step=post_loom_service_recap` and keeps the lead
+in `awaiting_video_reply`. This label is only for a plain confirmation that the
+lead watched the video, with no question, objection, scheduling date, or clear
+request to proceed.
+
+The recap generator receives:
+
+- funnel id;
+- funnel label;
+- lead phone number;
+- post-Loom reply batch.
+
+It must adapt the niche from the funnel and the country from the phone number
+when the country code is clear. The message should restate the service in text:
+Konecta helps the lead get more potential client inquiries directly to WhatsApp,
+using a modern professional website and tailored ad campaigns. It ends by asking
+what day this week works for a short call. It must not include the Calendly URL.
+
+Example shape for an Abogados lead with a Bolivia number:
+
+```text
+Perfecto.
+
+Nosotros lo que hacemos es ayudarle a conseguir mas consultas de potenciales clientes en Bolivia, directo a su WhatsApp.
+
+Para eso le armamos una pagina web moderna y profesional, y ademas campanas publicitarias enfocadas en personas de Bolivia que puedan necesitar sus servicios legales.
+
+La idea es que usted tenga una presencia mucho mas fuerte y que le lleguen oportunidades reales de clientes, sin tener que estar buscando manualmente.
+
+Para avanzar, lo mejor seria una llamada corta donde le explicamos como se aplicaria a su caso. Que dia le queda mejor esta semana?
+```
+
 ## Manual ping template
 
 Operator-triggered only:

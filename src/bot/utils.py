@@ -160,6 +160,7 @@ class ContadoresAutomationTickResponse(BaseModel):
     loom_sent: int = 0
     video_checks_sent: int = 0
     classified_wants_to_proceed: int = 0
+    video_confirmation_recaps_sent: int = 0
     classified_needs_human: int = 0
     calendly_sent: int = 0
 

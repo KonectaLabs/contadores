@@ -1271,6 +1271,94 @@ def test_contadores_automation_tick_classifies_affirmative_reply_and_sends_calen
     )
 
 
+def test_contadores_automation_tick_recaps_service_after_simple_video_confirmation(monkeypatch, tmp_path) -> None:
+    """A plain watched-video confirmation should restate the service before asking for a call date."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    ContadoresConfig.update(
+        enabled=True,
+        post_loom_min_seconds=300,
+        post_loom_quiet_seconds=30,
+    )
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-video-confirmation",
+        phone="+59175432222",
+        full_name="Video Confirmation",
+        funnel_id="abogados",
+    )
+    loom_sent_at = now_utc() - timedelta(minutes=11)
+    ContadoresLead.update_flow_state(
+        lead.id,
+        stage=ContadoresLeadStage.AWAITING_VIDEO_REPLY,
+        opener_sent_at=loom_sent_at - timedelta(minutes=1),
+        first_reply_received_at=loom_sent_at - timedelta(minutes=1),
+        loom_sent_at=loom_sent_at,
+        last_inbound_at=now_utc() - timedelta(seconds=45),
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=False,
+        text="Si",
+        created_at=now_utc() - timedelta(seconds=45),
+    )
+
+    class FakeClassifier:
+        async def aforward(self, *, loom_context: str, reply_batch: str):
+            assert "solamente confirma" in loom_context.lower()
+            assert reply_batch == "- Si"
+            return SimpleNamespace(
+                label="watched_video_confirmation",
+                reasoning="Solo confirmo que vio el video.",
+            )
+
+    class FakeServiceRecapGenerator:
+        async def aforward(self, *, funnel_id: str, funnel_label: str, phone: str, reply_batch: str):
+            assert funnel_id == "abogados"
+            assert funnel_label == "Abogados"
+            assert phone == "+59175432222"
+            assert reply_batch == "- Si"
+            return SimpleNamespace(
+                message_text=(
+                    "Perfecto.\n\n"
+                    "Nosotros lo que hacemos es ayudarle a conseguir mas consultas de potenciales "
+                    "clientes en Bolivia, directo a su WhatsApp.\n\n"
+                    "Para eso le armamos una pagina web moderna y profesional, y ademas campanas "
+                    "publicitarias enfocadas en personas de Bolivia que puedan necesitar sus servicios legales.\n\n"
+                    "Para avanzar, que dia le queda mejor esta semana?"
+                )
+            )
+
+    monkeypatch.setattr(contadores_endpoints, "PostLoomReplyClassifierProgram", FakeClassifier)
+    monkeypatch.setattr(contadores_endpoints, "PostLoomServiceRecapProgram", FakeServiceRecapGenerator)
+
+    with TestClient(app) as client:
+        create_funnel = client.post("/api/funnels", json=build_abogados_test_funnel())
+        first_tick = client.post("/api/contadores/automation/tick", params={"funnel_id": "abogados"})
+        detail = client.get(f"/api/contadores/leads/{lead.id}")
+        pending_after_first_tick = client.get("/api/contadores/messages/pending-delivery")
+        second_tick = client.post("/api/contadores/automation/tick", params={"funnel_id": "abogados"})
+        pending_after_second_tick = client.get("/api/contadores/messages/pending-delivery")
+
+    assert create_funnel.status_code == 200
+    assert first_tick.status_code == 200
+    assert first_tick.json()["video_confirmation_recaps_sent"] == 1
+    assert first_tick.json()["calendly_sent"] == 0
+    assert detail.status_code == 200
+    assert detail.json()["lead"]["stage"] == "awaiting_video_reply"
+    assert detail.json()["lead"]["last_classification_label"] == "watched_video_confirmation"
+    assert pending_after_first_tick.status_code == 200
+    first_messages = pending_after_first_tick.json()["messages"]
+    assert [item["sequence_step"] for item in first_messages] == ["post_loom_service_recap"]
+    assert "Bolivia" in first_messages[0]["text"]
+    assert "directo a su WhatsApp" in first_messages[0]["text"]
+
+    assert second_tick.status_code == 200
+    assert second_tick.json()["video_confirmation_recaps_sent"] == 0
+    assert pending_after_second_tick.status_code == 200
+    assert [item["sequence_step"] for item in pending_after_second_tick.json()["messages"]] == [
+        "post_loom_service_recap"
+    ]
+
+
 def test_contadores_reply_after_24h_followup_still_advances_to_loom(monkeypatch, tmp_path) -> None:
     """A reply after the 24-hour reminder should use the usual next stage and Loom copy."""
     configure_contadores_db(monkeypatch, tmp_path)

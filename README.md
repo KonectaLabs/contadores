@@ -44,6 +44,7 @@ Cada funnel contiene:
 - IDs de anuncios Click-to-WhatsApp (`whatsapp_referral_source_ids`);
 - texto del video;
 - estrategia WhatsApp MP4 (`loom_mp4`);
+- clasificacion DSPy post-video y recap automatico para confirmaciones simples;
 - `kind=campaign|inbox`, donde `inbox` no corre fases ni automatizacion;
 - Calendly;
 - acciones manuales de Calendly: con mensaje previo o solo link;
@@ -251,6 +252,21 @@ Tags:
 - Los creados desde WhatsApp sin funnel matcheado reciben el tag `whatsapp`.
 - La UI muestra tags en el detalle como solo lectura; para cambiarlos hay que seleccionar leads y usar la accion batch `Set tags`.
 - El filtro por tag se combina con las fases, busqueda y estrategia.
+
+Respuesta post-video:
+
+- Luego del Loom/video y de la ventana de silencio, DSPy clasifica las
+  respuestas como `wants_to_proceed`, `watched_video_confirmation` o
+  `needs_human`.
+- `watched_video_confirmation` es solo para respuestas que confirman que vio el
+  video, como `Si` o `lo vi`, sin pregunta, objecion, fecha ni pedido claro de
+  avanzar.
+- En ese caso el backend genera con DSPy un unico mensaje
+  `post_loom_service_recap`: vuelve a explicar el servicio en texto, adaptando
+  el nicho desde el funnel y el pais desde el telefono cuando el codigo es
+  claro, y pide un dia para llamada. No envia Calendly todavia.
+- Despues del recap el lead queda en `awaiting_video_reply`; nuevas respuestas
+  se analizan desde ese punto para evitar repetir el mismo recap.
 
 Acciones manuales de Calendly:
 

@@ -26,9 +26,21 @@ override the built-in Contadores definition.
 7. If there is still no reply, send `¿conseguiste ver el video?`
 8. Once there are 30 seconds of silence after the post-Loom replies, classify:
    - `wants_to_proceed`
+   - `watched_video_confirmation`
    - `needs_human`
-9. If `wants_to_proceed`, send the Calendly text and then the Calendly URL.
-10. If `needs_human`, stop automation and alert the operators.
+9. If `watched_video_confirmation`, generate a one-message service recap with
+   DSPy and keep the lead waiting for the next reply.
+   - This label is only for replies that simply confirm the lead saw the video,
+     such as "Si" / "lo vi", with no question, objection, date, or clear intent
+     to proceed.
+   - The generated recap receives the lead phone number and funnel id/label, so
+     it can adapt country and niche (`contadores`, `abogados`, `mecanicos`,
+     general business, etc.).
+   - The recap should restate that Konecta helps them get more potential client
+     inquiries directly to WhatsApp, through a modern professional website and
+     tailored ad campaigns, then ask what day this week works for a short call.
+10. If `wants_to_proceed`, send the Calendly text and then the Calendly URL.
+11. If `needs_human`, stop automation and alert the operators.
 
 ## Manual-only template
 

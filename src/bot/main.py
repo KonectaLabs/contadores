@@ -141,6 +141,7 @@ async def run_worker_iteration(
                 "loom_sent",
                 "video_checks_sent",
                 "classified_wants_to_proceed",
+                "video_confirmation_recaps_sent",
                 "classified_needs_human",
                 "calendly_sent",
             ]

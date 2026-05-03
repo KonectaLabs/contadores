@@ -5,7 +5,8 @@ description: >-
   Konecta Labs. Use when implementing, reviewing, or updating the bot flow that
   sends message 1, waits for any inbound reply, waits 30 seconds, sends message
   2 and message 3 (WhatsApp MP4), waits, then sends the video check and
-  Calendly handoff when classification says the lead wants to proceed.
+  either recaps the service after a simple watched-video confirmation or sends
+  the Calendly handoff when classification says the lead wants to proceed.
 ---
 
 # Secuencia WhatsApp de contadores
@@ -25,17 +26,24 @@ description: >-
 6. Enviar enseguida el mensaje 3 como WhatsApp MP4.
 7. Esperar la ventana configurada.
 8. Enviar el video check si no hubo respuesta.
-9. Si la clasificacion dice `wants_to_proceed`, enviar Calendly.
+9. Clasificar las respuestas post-video con DSPy:
+   `wants_to_proceed`, `watched_video_confirmation`, o `needs_human`.
+10. Si la clasificacion dice `watched_video_confirmation`, generar con DSPy un
+    recap del servicio adaptado al funnel y al pais inferido por telefono.
+11. Si la clasificacion dice `wants_to_proceed`, enviar Calendly.
+12. Si la clasificacion dice `needs_human`, pausar y pasar a Manual.
 
 ## Reglas de contenido
 
 - El mensaje 2 no lleva link.
 - El mensaje 3 debe ser el MP4 configurado, no un link de Loom.
 - El mensaje 4 no lleva link.
-- El mensaje 5 debe ser solo `https://calendly.com/facundogoiriz/crecimiento`.
+- El recap post-video no lleva Calendly.
+- El mensaje de link Calendly debe ser solo `https://calendly.com/facundogoiriz/crecimiento`.
 - No mezclar el texto del mensaje 2 con el MP4.
-- No mezclar el texto del mensaje 4 con el link del Calendly.
-- El trigger es mecánico: cualquier respuesta sirve; no hace falta clasificar intención.
+- No mezclar el texto previo de Calendly con el link del Calendly.
+- El trigger inicial hacia Loom es mecanico: cualquier respuesta al opener
+  sirve; la clasificacion DSPy aplica despues del video.
 - Todo envio fallido debe persistir error en `contadores_messages`, reintentarse
   hasta `CONTADORES_DELIVERY_MAX_ATTEMPTS`, y quedar visible en el CRM con alerta
   roja cuando se agotan los intentos. Si el operador marca el error como visto,
@@ -78,17 +86,60 @@ WhatsApp MP4 desde loom_mp4.media_path
 
 ### Mensaje 4
 
-Enviar `3` minutos después del mensaje 3.
+Enviar después de la espera post-Loom solo si no hubo respuesta.
+
+```text
+conseguiste ver el video?
+```
+
+### Recap post-video
+
+Enviar solo cuando la clasificacion DSPy devuelve
+`watched_video_confirmation`: el lead apenas confirmo que vio el video, sin
+pregunta, objecion, fecha ni pedido claro de avanzar.
+
+El backend debe generar este mensaje con DSPy, no con regex ni match por texto.
+Inputs obligatorios del generador:
+
+- `funnel_id`;
+- `funnel_label`;
+- telefono del lead;
+- batch de respuestas post-Loom.
+
+El mensaje debe explicar nuevamente que Konecta ayuda a conseguir mas consultas
+de potenciales clientes directo al WhatsApp, mediante pagina web moderna y
+campanas publicitarias a medida. Debe adaptar el nicho segun el funnel
+(`contadores`, `abogados`, `mecanicos`, negocio general, etc.) y adaptar el
+pais si el codigo telefonico es claro. Cierra preguntando que dia de esta
+semana le queda mejor para una llamada corta.
+
+Ejemplo de forma:
+
+```text
+Perfecto.
+
+Nosotros lo que hacemos es ayudarle a conseguir mas consultas de potenciales clientes en Bolivia, directo a su WhatsApp.
+
+Para eso le armamos una pagina web moderna y profesional, y ademas campanas publicitarias enfocadas en personas de Bolivia que puedan necesitar sus servicios legales.
+
+La idea es que usted tenga una presencia mucho mas fuerte y que le lleguen oportunidades reales de clientes, sin tener que estar buscando manualmente.
+
+Para avanzar, lo mejor seria una llamada corta donde le explicamos como se aplicaria a su caso. Que dia le queda mejor esta semana?
+```
+
+### Calendly intro
+
+Enviar cuando la clasificacion dice `wants_to_proceed`.
 
 ```text
 Esperamos que haya quedado todo claro luego de ver el video.
-Para avanzar, el único paso que falta de tu lado es elegir un horario en el calendario y venir a la llamada con las dudas que te hayan quedado y un medio de pago listo para coordinar el pago de los USD 300.
-Elige el horario que mejor te quede:
+Para avanzar, el unico paso que falta de tu lado es elegir un horario en el calendario.
+Elegi el horario que mejor te quede:
 ```
 
-### Mensaje 5
+### Calendly link
 
-Enviar inmediatamente después del mensaje 4.
+Enviar inmediatamente despues del Calendly intro.
 
 ```text
 https://calendly.com/facundogoiriz/crecimiento
@@ -97,7 +148,9 @@ https://calendly.com/facundogoiriz/crecimiento
 ## Notas de implementación
 
 - Usar el Calendly fijo compartido por todos los funnels.
-- Guardar la secuencia como cinco mensajes separados.
+- Guardar la secuencia como mensajes separados. El recap post-video usa
+  `sequence_step=post_loom_service_recap` y deja el lead en
+  `awaiting_video_reply`.
 - Para Click-to-WhatsApp, rutear por `referral.source_id` contra `whatsapp_referral_source_ids`. No agregar ruteo amplio por texto editable.
 - Excepcion aprobada: si el texto normalizado es `Hola! Quiero mas informacion de su propuesta para abogados!`, rutear a `abogados`.
 - Si el inbound no matchea reply/referral/frase aprobada, guardarlo en el buzon `general`.
