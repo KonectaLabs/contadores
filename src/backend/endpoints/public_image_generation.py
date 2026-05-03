@@ -13,6 +13,7 @@ from pathlib import Path
 from threading import Lock
 
 import base64
+import binascii
 import httpx
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -31,6 +32,7 @@ MAX_IMAGE_COUNT = 8
 MAX_IMAGE_BYTES = 12 * 1024 * 1024
 UPLOAD_CHUNK_SIZE = 1024 * 1024
 OUTPUT_FILENAME = "generated-image.png"
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 OPENAI_IMAGE_FALLBACK_MODEL = os.getenv("OPENAI_IMAGE_FALLBACK_MODEL", "gpt-image-1.5")
 OPENAI_IMAGE_FALLBACK_SIZE = os.getenv("OPENAI_IMAGE_FALLBACK_SIZE", "1024x1024")
 OPENAI_IMAGE_FALLBACK_QUALITY = os.getenv("OPENAI_IMAGE_FALLBACK_QUALITY", "medium")
@@ -59,6 +61,21 @@ def safe_upload_filename(index: int, filename: str | None) -> str:
         if character.isalnum() or character == "."
     )[:12]
     return f"{index:02d}-{stem or 'image'}{suffix or '.png'}"
+
+
+def output_is_png(path: Path) -> bool:
+    """Return True when a generated file looks like a PNG image."""
+    if not path.exists() or path.stat().st_size <= len(PNG_SIGNATURE):
+        return False
+    with path.open("rb") as image_file:
+        return image_file.read(len(PNG_SIGNATURE)) == PNG_SIGNATURE
+
+
+def require_png_output(path: Path, *, provider: str) -> None:
+    """Raise a clear error when a provider leaves a broken PNG output."""
+    if output_is_png(path):
+        return
+    raise RuntimeError(f"{provider} did not create a valid PNG image.")
 
 
 async def save_image_uploads(job_dir: Path, images: list[UploadFile]) -> list[Path]:
@@ -162,8 +179,7 @@ Rules:
     except RuntimeError as error:
         raise RuntimeError(str(error)) from error
 
-    if not output_path.exists() or output_path.stat().st_size == 0:
-        raise RuntimeError("Codex did not create the expected output image.")
+    require_png_output(output_path, provider="Codex")
 
     return {
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -214,9 +230,14 @@ def run_openai_image_fallback_sync(
             detail="OpenAI image fallback did not return image data.",
         )
 
-    output_path.write_bytes(base64.b64decode(image_base64))
-    if not output_path.exists() or output_path.stat().st_size == 0:
-        raise HTTPException(status_code=502, detail="OpenAI image fallback wrote an empty image.")
+    try:
+        output_path.write_bytes(base64.b64decode(image_base64, validate=True))
+    except (binascii.Error, ValueError) as error:
+        raise HTTPException(status_code=502, detail="OpenAI image fallback returned invalid image data.") from error
+    try:
+        require_png_output(output_path, provider="OpenAI image fallback")
+    except RuntimeError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
 
     return {
         "created_at": datetime.now(timezone.utc).isoformat(),

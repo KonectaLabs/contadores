@@ -12,6 +12,8 @@ import backend.database as database_module
 import backend.endpoints.public_image_generation as public_image_generation
 from backend.main import app
 
+PNG_BYTES = b"\x89PNG\r\n\x1a\nfake-png"
+
 
 def test_public_image_generation_returns_codex_output(monkeypatch, tmp_path) -> None:
     """The public endpoint should save inputs, run Codex, and return the generated image."""
@@ -22,7 +24,7 @@ def test_public_image_generation_returns_codex_output(monkeypatch, tmp_path) -> 
     def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
         output_marker = "Required output path:\n"
         output_path = Path(prompt.split(output_marker, 1)[1].splitlines()[0].strip())
-        output_path.write_bytes(b"generated-png")
+        output_path.write_bytes(PNG_BYTES)
         calls.append({"prompt": prompt, **kwargs})
         return SimpleNamespace(
             final_response=f"created {output_path}",
@@ -45,7 +47,7 @@ def test_public_image_generation_returns_codex_output(monkeypatch, tmp_path) -> 
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("image/png")
-    assert response.content == b"generated-png"
+    assert response.content == PNG_BYTES
     assert len(calls) == 1
     assert len(calls[0]["local_images"]) == 2
     assert "Hacer una imagen editorial" in calls[0]["prompt"]
@@ -64,7 +66,7 @@ def test_public_image_generation_is_not_blocked_by_cookie_auth(monkeypatch, tmp_
     def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
         output_marker = "Required output path:\n"
         output_path = Path(prompt.split(output_marker, 1)[1].splitlines()[0].strip())
-        output_path.write_bytes(b"public-output")
+        output_path.write_bytes(PNG_BYTES)
         return SimpleNamespace(
             final_response=f"created {output_path}",
             items_count=1,
@@ -82,7 +84,7 @@ def test_public_image_generation_is_not_blocked_by_cookie_auth(monkeypatch, tmp_
         protected_response = client.get("/api/runtime")
 
     assert public_response.status_code == 200
-    assert public_response.content == b"public-output"
+    assert public_response.content == PNG_BYTES
     assert protected_response.status_code == 401
 
 
@@ -98,7 +100,7 @@ def test_public_image_generation_falls_back_to_openai_generation(monkeypatch, tm
 
     def fake_call_openai_image_generation(*, api_key: str, prompt: str) -> dict[str, object]:
         calls.append({"api_key": api_key, "prompt": prompt, "type": "generation"})
-        return {"data": [{"b64_json": base64.b64encode(b"fallback-png").decode("ascii")}]}
+        return {"data": [{"b64_json": base64.b64encode(PNG_BYTES).decode("ascii")}]}
 
     monkeypatch.setattr(public_image_generation, "run_codex_with_context", fake_run_codex_with_context)
     monkeypatch.setattr(public_image_generation, "call_openai_image_generation", fake_call_openai_image_generation)
@@ -110,7 +112,7 @@ def test_public_image_generation_falls_back_to_openai_generation(monkeypatch, tm
         )
 
     assert response.status_code == 200
-    assert response.content == b"fallback-png"
+    assert response.content == PNG_BYTES
     assert calls == [{"api_key": "sk-test", "prompt": "Generar una imagen fallback", "type": "generation"}]
 
 
@@ -138,7 +140,7 @@ def test_public_image_generation_falls_back_to_openai_edit_with_images(monkeypat
                 "input_names": [path.name for path in input_paths],
             }
         )
-        return {"data": [{"b64_json": base64.b64encode(b"fallback-edit-png").decode("ascii")}]}
+        return {"data": [{"b64_json": base64.b64encode(PNG_BYTES).decode("ascii")}]}
 
     monkeypatch.setattr(public_image_generation, "run_codex_with_context", fake_run_codex_with_context)
     monkeypatch.setattr(public_image_generation, "call_openai_image_edit", fake_call_openai_image_edit)
@@ -154,7 +156,7 @@ def test_public_image_generation_falls_back_to_openai_edit_with_images(monkeypat
         )
 
     assert response.status_code == 200
-    assert response.content == b"fallback-edit-png"
+    assert response.content == PNG_BYTES
     assert calls[0]["api_key"] == "sk-test"
     assert calls[0]["prompt"] == "Editar con referencias"
     assert calls[0]["input_count"] == 2
@@ -175,7 +177,7 @@ def test_public_image_generation_limits_openai_fallback_calls(monkeypatch, tmp_p
     def fake_call_openai_image_generation(*, api_key: str, prompt: str) -> dict[str, object]:
         nonlocal api_call_count
         api_call_count += 1
-        return {"data": [{"b64_json": base64.b64encode(b"fallback-png").decode("ascii")}]}
+        return {"data": [{"b64_json": base64.b64encode(PNG_BYTES).decode("ascii")}]}
 
     monkeypatch.setattr(public_image_generation, "run_codex_with_context", fake_run_codex_with_context)
     monkeypatch.setattr(public_image_generation, "call_openai_image_generation", fake_call_openai_image_generation)
@@ -193,3 +195,67 @@ def test_public_image_generation_limits_openai_fallback_calls(monkeypatch, tmp_p
     assert responses[10].status_code == 429
     assert "fallback limit reached" in responses[10].json()["detail"].lower()
     assert api_call_count == public_image_generation.OPENAI_IMAGE_FALLBACK_LIMIT
+
+
+def test_public_image_generation_falls_back_when_codex_writes_non_png(monkeypatch, tmp_path) -> None:
+    """Codex output must be a valid PNG before the endpoint returns it."""
+    data_dir = tmp_path / "data"
+    monkeypatch.setattr(database_module, "DATA_DIR", data_dir)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    calls: list[str] = []
+
+    def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
+        del kwargs
+        output_marker = "Required output path:\n"
+        output_path = Path(prompt.split(output_marker, 1)[1].splitlines()[0].strip())
+        output_path.write_bytes(b"not-a-png")
+        return SimpleNamespace(
+            final_response=f"created {output_path}",
+            items_count=1,
+            model="fake-model",
+            effort="medium",
+        )
+
+    def fake_call_openai_image_generation(*, api_key: str, prompt: str) -> dict[str, object]:
+        calls.append(f"{api_key}:{prompt}")
+        return {"data": [{"b64_json": base64.b64encode(PNG_BYTES).decode("ascii")}]}
+
+    monkeypatch.setattr(public_image_generation, "run_codex_with_context", fake_run_codex_with_context)
+    monkeypatch.setattr(public_image_generation, "call_openai_image_generation", fake_call_openai_image_generation)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/public/image-generation",
+            data={"prompt": "Necesito una imagen real"},
+        )
+
+    assert response.status_code == 200
+    assert response.content == PNG_BYTES
+    assert calls == ["sk-test:Necesito una imagen real"]
+
+
+def test_public_image_generation_rejects_invalid_openai_fallback_image(monkeypatch, tmp_path) -> None:
+    """The fallback should not return non-image bytes as a successful generation."""
+    data_dir = tmp_path / "data"
+    monkeypatch.setattr(database_module, "DATA_DIR", data_dir)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
+        del prompt, kwargs
+        raise RuntimeError("codex unavailable")
+
+    def fake_call_openai_image_generation(*, api_key: str, prompt: str) -> dict[str, object]:
+        del api_key, prompt
+        return {"data": [{"b64_json": base64.b64encode(b"not-a-png").decode("ascii")}]}
+
+    monkeypatch.setattr(public_image_generation, "run_codex_with_context", fake_run_codex_with_context)
+    monkeypatch.setattr(public_image_generation, "call_openai_image_generation", fake_call_openai_image_generation)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/public/image-generation",
+            data={"prompt": "Fallback invalido"},
+        )
+
+    assert response.status_code == 502
+    assert "valid PNG" in response.json()["detail"]
