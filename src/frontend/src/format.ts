@@ -15,22 +15,45 @@ const readableLabels: Record<string, string> = {
   automation_paused: "Automation paused",
   booked: "Booked",
   calendly: "Calendly",
+  calendly_intro: "Calendly intro",
+  calendly_link: "Calendly link",
   calendly_sent: "Calendly sent",
+  calendly_url: "Calendly link",
   closed: "Closed",
   delivered: "Delivered",
   failed: "Failed",
+  form: "Form",
+  general_inbox: "General inbox",
   initial: "First message",
   loom: "Loom",
+  loom_intro: "Loom intro",
+  loom_mp4: "WhatsApp video",
+  loom_video: "Loom video",
+  manual_booked: "Marked booked manually",
+  manual_calendly_send: "Manual Calendly send",
+  manual_message: "Manual message",
+  manual_ping_template: "Manual ping template",
   manual_review: "Manual review",
+  manual_send_loom: "Manual Loom send",
+  manual_send_manual_ping: "Manual ping",
+  manual_send_opener: "Manual opener send",
+  manual_send_video_check: "Manual video check",
   needs_human: "Manual",
   needs_human_alert_sent: "Manual alert sent",
   needs_human_handoff: "Manual handoff",
   needs_reply: "Needs reply",
   opener: "First message",
+  opener_followup_24h: "24h opener follow-up",
+  opener_followup_24h_template_retry_20260424: "24h opener follow-up retry",
+  post_calendly_inbound: "Reply after Calendly",
   queued: "Queued",
   read: "Read",
   sent: "Sent",
   video_check: "Video check",
+  whatsapp: "WhatsApp",
+  whatsapp_ctwa: "Click-to-WhatsApp",
+  whatsapp_funnel: "WhatsApp funnel",
+  whatsapp_general: "General WhatsApp",
 };
 
 export function stageLabel(stage: LeadStage | string | null | undefined): string {
@@ -44,7 +67,7 @@ export function humanize(value: string | null | undefined): string {
   if (!value) {
     return "-";
   }
-  const normalized = value.trim().toLowerCase();
+  const normalized = value.trim().toLowerCase().replace(/-+/g, "_");
   if (readableLabels[normalized]) {
     return readableLabels[normalized];
   }
@@ -63,11 +86,17 @@ export function shortDate(value: string | null | undefined): string {
   if (Number.isNaN(date.getTime())) {
     return value;
   }
-  return new Intl.DateTimeFormat("en", {
+  const options: Intl.DateTimeFormatOptions = {
     month: "short",
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
+  };
+  if (date.getFullYear() !== new Date().getFullYear()) {
+    options.year = "numeric";
+  }
+  return new Intl.DateTimeFormat("en", {
+    ...options,
   }).format(date);
 }
 
