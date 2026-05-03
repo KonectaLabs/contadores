@@ -17,6 +17,13 @@ Also read these skills when relevant:
 
 - `contadores-bot-sequence`: current WhatsApp sequence, manual ping, Loom,
   Calendly, and human handoff rules.
+- `konecta-frankie-video-offer`: Frankie-style offer framing for stronger
+  follow-ups that show a concrete outcome instead of just "checking in".
+- `konecta-niche-loom-video` and `konecta-funnel-raw-memory` when the follow-up
+  depends on the Loom/video sales arc or raw funnel memory.
+- `abogados/skills/abogados-funnel-offer/SKILL.md` and
+  `abogados/skills/abogados-loom-video/SKILL.md` when writing Abogados-specific
+  proactive follow-up or video-demo copy.
 - `contadores-rollout`: server-first deploy and verification rules.
 - `contadores-spreadsheet`: sheet/lead-source rules when intake or lead source
   state matters.
@@ -67,6 +74,14 @@ Also read these skills when relevant:
   closed. Custom manual copy is only valid inside the open window.
 - Send at most one intentional follow-up per lead per automation run, unless the
   built-in bot sequence itself sends its paired Loom intro/video messages.
+- Do not only wait for replies. Each run should also inspect leads that already
+  received our last message and decide whether a stronger, non-duplicative
+  follow-up would increase conversion. This is only allowed when the delivery
+  status is clean, the 24-hour custom window is open for custom copy/media, and
+  the lead is warm enough to justify it.
+- Stronger follow-up should use Frankie-style outcome framing: show that we
+  thought about how this would work for the lead's actual practice/studio, lead
+  with the concrete result they want, and then ask for a short call time.
 
 ## Production API Contract
 
@@ -135,13 +150,17 @@ For each hourly run:
 2. Fetch the JSON snapshot and, when useful for tabular reasoning, the CSV
    snapshot.
 3. Find leads with new inbound messages, unresolved Needs answer/Manual state,
-   failed outbound delivery, or a clearly due next step.
+   failed outbound delivery, a clearly due next step, or a warm conversation
+   where our last delivered outbound could be strengthened with a proactive
+   value follow-up.
 4. Apply hard exclusions before any send.
 5. Check delivery status before interpreting silence. If our last outbound
    failed, classify as delivery repair/provider failure, not no-reply.
-6. Segment eligible leads into the buckets from the reference file.
+6. Segment eligible leads into the buckets from the reference file, including
+   proactive/value-follow-up buckets for already-touched leads.
 7. Choose the exact approved copy/template. Ask for a day/time for a 15-minute
-   call on warm/close leads.
+   call on warm/close leads. For proactive value follow-up, use the Frankie
+   notes: outcome first, concrete implementation thought, then one next step.
 8. Send at most one intentional outbound per lead in this run. Do not resend a
    similar follow-up if one was sent recently.
 9. If the action is ambiguous, do not guess; report it for human handling.
@@ -151,6 +170,8 @@ For each hourly run:
 Final summary must include:
 
 - Messages sent, grouped by bucket and copy/template.
+- Proactive follow-up candidates reviewed, sent, and skipped, with the exact
+  reason for each skip.
 - Leads closest to converting and the exact next human action.
 - New replies that arrived and what happened next.
 - Delivery failures grouped by Meta code.

@@ -51,6 +51,93 @@ Preferred copy:
 
 If they answer positively after this, move to `close_call`.
 
+### `proactive_value_followup`
+
+Use when the lead is warm, already received our last outbound, has not replied
+yet, and a stronger message would add real selling value instead of just
+repeating "seguimos?". This is for leads that are already close enough that a
+specific implementation thought can make the offer clearer.
+
+Eligibility:
+
+- latest outbound is `sent` or `delivered`, not failed;
+- custom 24-hour WhatsApp window is open;
+- lead is not closed/booked/archived, Venezuelan, Workstation, opt-out, or
+  provider-blocked;
+- no similar value follow-up or video-demo follow-up was sent recently;
+- lead previously showed intent, asked for info/price, watched/accepted video,
+  or is in `close_call`/`retomar_video` with a clean delivered last outbound.
+
+Do not use this bucket for cold leads who never replied, leads whose last
+outbound failed, or leads who just received a message moments ago.
+
+Frankie framing:
+
+- Do not say only "queria hacer seguimiento".
+- Do not lead with "marketing", "IA", "web", "ads", "CRM", or generic "mas
+  leads". Those are mechanisms, not the offer.
+- Lead with a concrete outcome: more qualified WhatsApp inquiries, cases that
+  leave honorarios, pymes looking for a contador, an ordered inquiry flow.
+- Anchor the message to one buyer and one valuable opportunity. For abogados,
+  prefer "sucesion con inmueble", "despido con telegrama", "amparo urgente", or
+  "accidente con documentacion" when context supports it. For contadores,
+  prefer pymes, monthly clients, and business owners looking for an accountant.
+- Make it feel thought-through for that lead: "estaba pensando en como
+  implementarlo para tu estudio".
+- If price comes up, frame value received before the call ask: "USD 300, y por
+  eso recibis pagina, campanas y el flujo para que las consultas entren
+  ordenadas a tu WhatsApp."
+- End with one call objective: ask what day/time works for 15 minutes.
+
+Abogados copy:
+
+`Hola {name}, estaba pensando en como se podria implementar para tu estudio. La idea no es solo hacer una pagina: es que te lleguen consultas de casos que dejan honorarios, como sucesiones, despidos o amparos, directo a tu WhatsApp y con datos mas ordenados. Si queres lo vemos 15 min, que dia y horario podes?`
+
+Contadores copy:
+
+`Hola {name}, estaba pensando en como se podria implementar para tu estudio. La idea no es solo hacer una pagina: es que cuando una pyme busque contador en tu ciudad, la consulta llegue a tu WhatsApp mas ordenada y con mas intencion. Si queres lo vemos 15 min, que dia y horario podes?`
+
+Generic copy when the funnel is unclear:
+
+`Hola {name}, estaba pensando en como se podria implementar esto para vos. La idea no es solo hacer una pagina, sino armar un flujo para que las consultas correctas lleguen a tu WhatsApp mas ordenadas. Si queres lo vemos 15 min, que dia y horario podes?`
+
+### `page_demo_video`
+
+Use when a warm lead is inside the 24-hour custom window and sending the
+available video/demo would make the offer more concrete. This is not a blast.
+Choose carefully.
+
+Good candidates:
+
+- asked "como funciona?", "no entiendo", "mandame info", "me interesa", or
+  similar;
+- has not already received the same Loom/video-demo recently;
+- would benefit from seeing how the page + WhatsApp flow looks in practice;
+- has a clean latest outbound delivery status and an open 24-hour window.
+
+Action:
+
+- Prefer the existing `send-loom`/configured video action when that is the
+  correct video for the funnel and it has not already been sent.
+- Before sending a video, inspect the funnel config/snapshot and available media
+  paths. The relevant source assets include the Abogados 60s video/deck under
+  `abogados/media/presentations/loom-video-vender-a-abogados/` and the
+  Contadores page/campaign/WhatsApp video/deck under
+  `media/presentations/loom-video-vender-a-contadores/`.
+- If a separate page-demo video file is available but the production action API
+  cannot send that media safely, do not invent a path. Report the lead and the
+  exact video/media action needed for human handling or a server-side script.
+- Pair the video with one short Frankie-style context message only if the send
+  path supports it and the 24-hour window is open.
+
+Abogados video context:
+
+`Te mando este video porque muestra como se podria ver tu pagina de abogado y el flujo para que las consultas lleguen a tu WhatsApp. Miralo y si tiene sentido, decime que dia y horario podes y lo vemos 15 min.`
+
+Contadores video context:
+
+`Te mando este video porque muestra como se podria ver tu pagina de contador y el flujo para que las consultas de pymes lleguen a tu WhatsApp. Miralo y si tiene sentido, decime que dia y horario podes y lo vemos 15 min.`
+
 ### `manual_ping_template`
 
 Use only when the WhatsApp 24-hour custom window is closed and the lead is still
@@ -100,12 +187,36 @@ Match Facu's WhatsApp style:
 - Do not sound corporate.
 - Do not over-explain in the first message.
 - The objective is to get a reply or a call time.
+- Strong follow-ups should sound like Facu actually thought about the lead's
+  case, not like a generic reminder.
+- Use Frankie notes when writing value follow-up: outcome first, one concrete
+  example, mechanism second, one next action.
+- For leads who watched or received the video, continue the same arc as the
+  Loom: outcome, pain in plain language, short mechanism, value/investment, and
+  how to start.
+
+## Video And Offer References
+
+Use these references before choosing a proactive value or page-demo video send:
+
+- Frankie offer method:
+  `.codex/skills/konecta-frankie-video-offer/SKILL.md`
+- Contadores sequence/video behavior:
+  `.codex/skills/contadores-bot-sequence/SKILL.md`
+- Contadores 60s page/campaign/WhatsApp framing:
+  `media/presentations/loom-video-vender-a-contadores/Loom Script 60s.html`
+- Abogados offer framing:
+  `abogados/skills/abogados-funnel-offer/SKILL.md`
+- Abogados 60s video framing:
+  `abogados/skills/abogados-loom-video/SKILL.md`
+  and `abogados/media/presentations/loom-video-vender-a-abogados/Loom-Script-60s.txt`
 
 ## Hourly Sequence Rules
 
 The hourly automation should not blast the whole CRM every hour. It should
 continue conversations that changed since the last run or have a clearly due
-next step.
+next step. It should also review warm leads that already received a delivered
+message and decide if a stronger proactive follow-up is useful.
 
 ### Positive reply after opener
 
@@ -123,6 +234,19 @@ If the lead watched/accepted the video or asks how to continue:
 
 - Send `close_call` copy if inside the 24-hour window.
 - If outside the window, use `manual_ping_template` first and wait for reply.
+
+### Already messaged warm lead
+
+If the lead is warm but did not answer our last delivered outbound:
+
+- Check whether the last message was just a generic ping or a weak close.
+- If the 24-hour custom window is still open and the lead has enough context,
+  consider `proactive_value_followup` instead of passively waiting.
+- If the lead likely needs to see the offer, consider `page_demo_video`.
+- Do not send if the last outbound was very recent, if the same idea was already
+  sent, or if the lead is not meaningfully warmer than a cold opener.
+- Always record in the summary whether the lead was sent, skipped as too soon,
+  skipped as duplicate, or skipped because the window was closed.
 
 ### Price or budget objection
 
@@ -177,4 +301,3 @@ If the lead rejects the offer or asks not to be contacted:
 - Grep bot/backend logs for `Traceback`, `ERROR`, `database is locked`,
   `template`, auth failures, and `131047`.
 - Confirm Workstation and Venezuelan exclusions.
-
