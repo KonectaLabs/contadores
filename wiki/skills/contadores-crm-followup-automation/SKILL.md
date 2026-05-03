@@ -68,6 +68,17 @@ Also read these skills when relevant:
   not "the lead did not answer".
 - Respect Meta/provider failures. Do not blindly requeue opt-out, invalid,
   undeliverable, or ecosystem-blocked numbers after retry budget is exhausted.
+- If a lead answers with a concrete day/time for a call, treat it as urgent
+  booking intent before every other bucket. Do not send another generic
+  follow-up. If the lead's email and requested slot are clear, try to book the
+  call in Facu's Calendly only through a real available Calendly/API/browser
+  capability. If the system does not currently support actual Calendly booking,
+  immediately mark the lead `needs_human` with
+  `classification_label="booking_time_provided"`, pause automation with
+  `automation_paused_reason="booking_time_provided"`, and make sure the
+  existing alert email path notifies Facu. If email is missing, ask for the
+  email in WhatsApp when the send path is allowed, and still surface the
+  scheduling handoff in the final summary. This is not optional.
 - For close/warm leads, prefer asking for a day and time for a 15-minute call.
   Do not rely only on Calendly.
 - Use approved templates when the 24-hour WhatsApp customer-service window is
@@ -158,17 +169,20 @@ For each hourly run:
 4. Apply hard exclusions before any send.
 5. Check delivery status before interpreting silence. If our last outbound
    failed, classify as delivery repair/provider failure, not no-reply.
-6. Segment eligible leads into the buckets from the reference file, including
+6. Detect `booking_time_provided` before ordinary manual/close buckets. If a
+   lead gave a slot, either book it with a real supported Calendly path or
+   escalate it as an urgent scheduling handoff through the CRM alert path.
+7. Segment eligible leads into the buckets from the reference file, including
    proactive/value-follow-up buckets for already-touched leads.
-7. Choose the exact approved copy/template. Ask for a day/time for a 15-minute
+8. Choose the exact approved copy/template. Ask for a day/time for a 15-minute
    call on warm/close leads. For proactive value follow-up, use the Frankie
    notes: outcome first, concrete implementation thought, then one next step.
    If the 24-hour custom window is closed, send an approved reopening template
    first and wait for the lead to reply before sending custom value copy/media.
-8. Send at most one intentional outbound per lead in this run. Do not resend a
+9. Send at most one intentional outbound per lead in this run. Do not resend a
    similar follow-up if one was sent recently.
-9. If the action is ambiguous, do not guess; report it for human handling.
-10. After any live action, verify message statuses, retries, provider error
+10. If the action is ambiguous, do not guess; report it for human handling.
+11. After any live action, verify message statuses, retries, provider error
     codes, recent inbound replies, container health, and logs when available.
 
 Final summary must include:
@@ -177,6 +191,8 @@ Final summary must include:
 - Proactive follow-up candidates reviewed, sent, and skipped, with the exact
   reason for each skip.
 - Leads closest to converting and the exact next human action.
+- Urgent booking handoffs: lead, requested day/time, email status, whether
+  Calendly was booked, and whether Facu was alerted.
 - New replies that arrived and what happened next.
 - Delivery failures grouped by Meta code.
 - System errors found/fixed.

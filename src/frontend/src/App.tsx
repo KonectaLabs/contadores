@@ -31,6 +31,7 @@ import type {
   ManualAttentionCountsResponse,
   MessageItem,
   QuickActionResponse,
+  RunnerStatusResponse,
   RuntimeSettings,
   StrategyStatsItem,
   StrategyStatsResponse,
@@ -50,7 +51,7 @@ const DASHBOARD_STAGE_STORAGE_KEY = "contadores.dashboard.stageFilter";
 const DASHBOARD_SECTION_STORAGE_KEY = "contadores.dashboard.activeSection";
 
 type StageFilterValue = LeadStage | "all" | "manual_attention";
-type ActiveSection = "crm" | "workstation";
+type ActiveSection = "crm" | "workstation" | "runner";
 
 const stageFilters: Array<{
   value: StageFilterValue;
@@ -96,7 +97,8 @@ function readStoredStageFilter(): StageFilterValue {
 }
 
 function readStoredActiveSection(): ActiveSection {
-  return readStoredValue(DASHBOARD_SECTION_STORAGE_KEY) === "workstation" ? "workstation" : "crm";
+  const value = readStoredValue(DASHBOARD_SECTION_STORAGE_KEY);
+  return value === "workstation" || value === "runner" ? value : "crm";
 }
 
 const moveStageOptions: Array<{ value: LeadStage; label: string }> = [
@@ -200,6 +202,8 @@ export function App() {
   const [professionalPhotoEditPrompts, setProfessionalPhotoEditPrompts] = useState<Record<string, string>>({});
   const [professionalPhotoJob, setProfessionalPhotoJob] = useState<WorkstationProfessionalPhotoJobResponse | null>(null);
   const [workstationLoading, setWorkstationLoading] = useState(false);
+  const [runnerStatus, setRunnerStatus] = useState<RunnerStatusResponse | null>(null);
+  const [runnerLoading, setRunnerLoading] = useState(false);
   const [acknowledgingDeliveryErrorIds, setAcknowledgingDeliveryErrorIds] = useState<number[]>([]);
   const detailRequestId = useRef(0);
   const debouncedQuery = useDebouncedValue(query, 250);
@@ -329,6 +333,13 @@ export function App() {
     });
   }, [debouncedWorkstationQuery, selectedFunnelId]);
 
+  const loadRunnerStatus = useCallback(async () => {
+    const payload = await apiFetch<RunnerStatusResponse>(
+      "/api/contadores/followup/runner/status?log_tail_lines=160&log_limit=12",
+    );
+    setRunnerStatus(payload);
+  }, []);
+
   const loadDetail = useCallback(async (leadId: string) => {
     const requestId = detailRequestId.current + 1;
     detailRequestId.current = requestId;
@@ -403,13 +414,17 @@ export function App() {
   useEffect(() => {
     const timer = window.setInterval(() => {
       if (document.visibilityState === "visible") {
-        loadDashboard().catch((reason) => {
+        const loaders = [loadDashboard()];
+        if (activeSection === "runner") {
+          loaders.push(loadRunnerStatus());
+        }
+        Promise.all(loaders).catch((reason) => {
           setError(reason instanceof Error ? reason.message : "Automatic refresh failed.");
         });
       }
     }, REFRESH_MS);
     return () => window.clearInterval(timer);
-  }, [loadDashboard]);
+  }, [activeSection, loadDashboard, loadRunnerStatus]);
 
   useEffect(() => {
     if (!selectedLeadId || !isContadoresFunnel) {
@@ -428,6 +443,28 @@ export function App() {
       setError(reason instanceof Error ? reason.message : "Could not load Workstation.");
     });
   }, [loadWorkstation]);
+
+  useEffect(() => {
+    if (activeSection !== "runner") {
+      return;
+    }
+    let cancelled = false;
+    setRunnerLoading(true);
+    loadRunnerStatus()
+      .catch((reason) => {
+        if (!cancelled) {
+          setError(reason instanceof Error ? reason.message : "Could not load the runner.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setRunnerLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSection, loadRunnerStatus]);
 
   useEffect(() => {
     if (!selectedWorkstationClientId) {
@@ -483,6 +520,7 @@ export function App() {
     try {
       await loadDashboard();
       await loadWorkstation();
+      await loadRunnerStatus();
       if (selectedLeadId && isContadoresFunnel) {
         await loadDetail(selectedLeadId);
       }
@@ -1011,7 +1049,13 @@ export function App() {
   const workstationTitle = selectedFunnel
     ? `Workstation · ${selectedFunnel.label}`
     : "Workstation";
-  const syncStatus = activeSection === "workstation"
+  const syncStatus = activeSection === "runner"
+    ? runnerStatus?.running
+      ? `Running${runnerStatus.pid ? ` · pid ${runnerStatus.pid}` : ""}`
+      : runnerStatus?.latest_summary_updated_at
+        ? `Idle · ${relativeTime(runnerStatus.latest_summary_updated_at)}`
+        : "Runner idle"
+    : activeSection === "workstation"
     ? `${workstationClients.length} converted ${workstationClients.length === 1 ? "client" : "clients"}`
     : config?.last_sheet_sync_status
     ? `${config.last_sheet_sync_status} · ${config.last_sheet_sync_at ? relativeTime(config.last_sheet_sync_at) : "never"}`
@@ -1025,7 +1069,9 @@ export function App() {
         <div className="ct-topbar-brand">
           <span className="ct-brand-mark" aria-hidden="true">{monogram(selectedFunnel?.label || "Funnels")}</span>
           <div className="ct-brand-copy">
-            <p className="ct-brand-word">{activeSection === "workstation" ? workstationTitle : selectedFunnel?.label || "Funnels"}</p>
+            <p className="ct-brand-word">
+              {activeSection === "runner" ? "Runner" : activeSection === "workstation" ? workstationTitle : selectedFunnel?.label || "Funnels"}
+            </p>
             <span className={`ct-sync-badge ${config?.last_sheet_sync_status === "ok" ? "has-unread" : ""}`}>{syncStatus}</span>
           </div>
         </div>
@@ -1048,6 +1094,13 @@ export function App() {
             onClick={() => setActiveSection("workstation")}
           >
             Workstation
+          </button>
+          <button
+            type="button"
+            className={activeSection === "runner" ? "active" : ""}
+            onClick={() => setActiveSection("runner")}
+          >
+            Runner
           </button>
         </nav>
 
@@ -1090,7 +1143,7 @@ export function App() {
               autoComplete="off"
             />
           </label>
-          ) : (
+          ) : activeSection === "workstation" ? (
           <label className="ct-search">
             <span className="ct-search-icon" aria-hidden="true" />
             <input
@@ -1101,8 +1154,10 @@ export function App() {
               autoComplete="off"
             />
           </label>
-          )}
-          <button type="button" className="ct-icon-btn" onClick={openEditFunnel} disabled={!selectedFunnel}>Funnel</button>
+          ) : null}
+          {activeSection !== "runner" ? (
+            <button type="button" className="ct-icon-btn" onClick={openEditFunnel} disabled={!selectedFunnel}>Funnel</button>
+          ) : null}
           {activeSection === "crm" && isContadoresFunnel ? (
             <button type="button" className="ct-icon-btn" onClick={() => setShowConfig(true)}>Runtime</button>
           ) : null}
@@ -1117,7 +1172,18 @@ export function App() {
         </div>
       ) : null}
 
-      {activeSection === "workstation" ? (
+      {activeSection === "runner" ? (
+        <RunnerStatusView
+          status={runnerStatus}
+          loading={runnerLoading}
+          onRefresh={() => {
+            setRunnerLoading(true);
+            loadRunnerStatus()
+              .catch((reason) => setError(reason instanceof Error ? reason.message : "Could not refresh the runner."))
+              .finally(() => setRunnerLoading(false));
+          }}
+        />
+      ) : activeSection === "workstation" ? (
         <WorkstationView
           clients={workstationClients}
           detail={workstationDetail}
@@ -1422,6 +1488,105 @@ export function App() {
           onSubmit={submitBulkSendModal}
         />
       ) : null}
+    </section>
+  );
+}
+
+function RunnerStatusView({
+  status,
+  loading,
+  onRefresh,
+}: {
+  status: RunnerStatusResponse | null;
+  loading: boolean;
+  onRefresh: () => void;
+}) {
+  const logs = status?.logs ?? [];
+  const latestSummaryUpdated = status?.latest_summary_updated_at
+    ? `${relativeTime(status.latest_summary_updated_at)} · ${status.latest_summary_updated_at}`
+    : "No summary";
+
+  return (
+    <div className="ct-surface runner-surface">
+      <section className="runner-status-grid" aria-label="Runner status">
+        <RunnerMetric label="State" value={status?.running ? "Running" : "Idle"} tone={status?.running ? "ok" : "muted"} />
+        <RunnerMetric label="PID" value={status?.pid ? String(status.pid) : "-"} />
+        <RunnerMetric label="Started" value={status?.started_at ? `${relativeTime(status.started_at)} · ${status.started_at}` : "-"} />
+        <RunnerMetric label="Latest summary" value={latestSummaryUpdated} />
+      </section>
+
+      <div className="runner-workspace">
+        <section className="workstation-panel runner-summary-panel">
+          <div className="workstation-panel-head">
+            <div>
+              <span>Latest result</span>
+              <strong>{status?.generated_at ? `Checked ${relativeTime(status.generated_at)}` : "Waiting for runner data"}</strong>
+            </div>
+            <button type="button" className="ct-icon-btn" onClick={onRefresh} disabled={loading}>
+              {loading ? <SpinnerGap size={14} weight="bold" /> : null}
+              Refresh
+            </button>
+          </div>
+          <pre className="runner-pre runner-summary-pre">{status?.latest_summary || "No run summary has been written yet."}</pre>
+        </section>
+
+        <aside className="workstation-panel runner-logs-panel">
+          <div className="workstation-panel-head">
+            <div>
+              <span>Recent logs</span>
+              <strong>{logs.length ? `${logs.length} files` : "No logs"}</strong>
+            </div>
+          </div>
+          <div className="runner-log-list">
+            {logs.length ? logs.map((log) => (
+              <div className="runner-log-row" key={log.path}>
+                <strong>{log.name}</strong>
+                <span>{log.modified_at ? relativeTime(log.modified_at) : "-"} · {formatBytes(log.size_bytes)}</span>
+                <code>{log.path}</code>
+              </div>
+            )) : (
+              <p className="runner-empty">No timestamped runner logs yet.</p>
+            )}
+          </div>
+        </aside>
+      </div>
+
+      <section className="runner-tail-grid" aria-label="Runner log tails">
+        <RunnerTail title="Latest run tail" text={status?.latest_log_tail || ""} />
+        <RunnerTail title="LaunchAgent stdout" text={status?.launchd_out_tail || ""} />
+        <RunnerTail title="LaunchAgent stderr" text={status?.launchd_err_tail || ""} />
+      </section>
+    </div>
+  );
+}
+
+function RunnerMetric({
+  label,
+  value,
+  tone = "neutral",
+}: {
+  label: string;
+  value: string;
+  tone?: "neutral" | "ok" | "muted";
+}) {
+  return (
+    <div className="runner-metric" data-tone={tone}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function RunnerTail({ title, text }: { title: string; text: string }) {
+  return (
+    <section className="workstation-panel runner-tail-panel">
+      <div className="workstation-panel-head">
+        <div>
+          <span>Log tail</span>
+          <strong>{title}</strong>
+        </div>
+      </div>
+      <pre className="runner-pre">{text || "No lines yet."}</pre>
     </section>
   );
 }

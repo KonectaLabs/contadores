@@ -320,6 +320,7 @@ def test_contadores_followup_snapshot_is_read_only_and_segments_leads(monkeypatc
         external_lead_id="sheet-row-snapshot-warm",
         phone="+5491111111120",
         full_name="Warm Lead",
+        email="warm@example.com",
     )
     ContadoresLead.update_flow_state(
         warm.id,
@@ -331,6 +332,24 @@ def test_contadores_followup_snapshot_is_read_only_and_segments_leads(monkeypatc
         from_me=False,
         text="Que presupuesto tienen?",
         created_at=now_utc() - timedelta(minutes=3),
+    )
+
+    booking = ContadoresLead.upsert(
+        external_lead_id="sheet-row-snapshot-booking",
+        phone="+5491111111121",
+        full_name="Booking Lead",
+        email="booking@example.com",
+    )
+    ContadoresLead.update_flow_state(
+        booking.id,
+        stage=ContadoresLeadStage.NEEDS_HUMAN,
+        automation_paused=True,
+    )
+    ContadoresMessage.add(
+        lead_id=booking.id,
+        from_me=False,
+        text="Manana a las 15 hs puedo. Mi mail es booking@example.com",
+        created_at=now_utc() - timedelta(minutes=2),
     )
 
     venezuelan = ContadoresLead.upsert(
@@ -360,20 +379,56 @@ def test_contadores_followup_snapshot_is_read_only_and_segments_leads(monkeypatc
     assert unauthorized.status_code == 401
     assert response.status_code == 200
     assert csv_response.status_code == 200
-    assert "lead_id,funnel_id" in csv_response.text
+    assert "lead_id,funnel_id,full_name,email" in csv_response.text
     assert warm.id in csv_response.text
     payload = response.json()
-    assert payload["counts_by_bucket"]["needs_answer_now"] == 1
-    assert payload["counts_by_bucket"]["close_call"] == 1
+    assert payload["counts_by_bucket"]["booking_time_provided"] == 1
+    assert payload["counts_by_bucket"]["needs_answer_now"] == 2
+    assert payload["counts_by_bucket"]["close_call"] == 2
     assert payload["counts_by_exclusion_reason"]["venezuela"] == 1
     by_id = {item["id"]: item for item in payload["leads"]}
+    assert by_id[warm.id]["email"] == "warm@example.com"
     assert by_id[warm.id]["suggested_buckets"] == ["needs_answer_now", "close_call"]
     assert by_id[warm.id]["latest_inbound"]["text"] == "Que presupuesto tienen?"
+    assert by_id[booking.id]["suggested_buckets"] == ["booking_time_provided", "needs_answer_now", "close_call"]
     assert by_id[venezuelan.id]["excluded"] is True
     assert by_id[venezuelan.id]["suggested_buckets"] == []
 
     assert len(ContadoresMessage.list_by_lead(warm.id)) == 1
+    assert len(ContadoresMessage.list_by_lead(booking.id)) == 1
     assert len(ContadoresMessage.list_by_lead(venezuelan.id)) == 1
+
+
+def test_contadores_followup_runner_status_reads_local_artifacts(monkeypatch, tmp_path) -> None:
+    """Runner status should expose local launchd artifacts without mutation."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    data_dir = tmp_path / "data"
+    reports_dir = data_dir / "reports"
+    lock_dir = data_dir / "locks" / "contadores-crm-hourly-followup.lock"
+    reports_dir.mkdir(parents=True)
+    lock_dir.mkdir(parents=True)
+    monkeypatch.setattr(contadores_endpoints, "DATA_DIR", data_dir)
+
+    (lock_dir / "pid").write_text("999999999", encoding="utf-8")
+    (lock_dir / "started_at").write_text("2026-05-03T01:00:00Z", encoding="utf-8")
+    (reports_dir / "contadores-crm-followup-latest.md").write_text("Messages sent: none", encoding="utf-8")
+    (reports_dir / "contadores-crm-followup-20260503T010000Z.log").write_text(
+        "line 1\nline 2\nline 3\n",
+        encoding="utf-8",
+    )
+    (reports_dir / "launchd-contadores-crm-followup.err.log").write_text("stderr tail\n", encoding="utf-8")
+
+    with TestClient(app) as client:
+        response = client.get("/api/contadores/followup/runner/status?log_tail_lines=2")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["running"] is True
+    assert payload["started_at"] == "2026-05-03T01:00:00Z"
+    assert payload["latest_summary"] == "Messages sent: none"
+    assert payload["latest_log_tail"] == "line 2\nline 3"
+    assert payload["launchd_err_tail"] == "stderr tail"
+    assert payload["logs"][0]["name"] == "contadores-crm-followup-20260503T010000Z.log"
 
 
 def test_contadores_followup_internal_apis_send_and_update_leads(monkeypatch, tmp_path) -> None:

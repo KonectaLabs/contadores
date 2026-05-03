@@ -17,6 +17,44 @@ Do not send to:
 
 ## Action Buckets
 
+### `booking_time_provided`
+
+Use before every other bucket when the latest inbound gives a concrete day,
+time, availability window, or email for coordinating a call. This is a
+conversion moment, not a generic manual reply.
+
+Action:
+
+- If the day/time and email are both clear, first try to book the call in
+  Facu's Calendly through a real available Calendly/API/browser capability.
+- Current code only supports sending Calendly links and reconciling Calendly
+  webhooks; it does not create bookings from a free-text day/time. If no real
+  booking path is available, do not pretend the meeting is booked. Escalate
+  immediately through the CRM:
+  `PATCH /api/contadores/followup/leads/{lead_id}` with
+  `stage="needs_human"`,
+  `classification_label="booking_time_provided"`,
+  `manual_reply_status="needs_reply"`,
+  `automation_paused=true`,
+  `automation_paused_reason="booking_time_provided"`, and a
+  `classification_reason` that includes the requested day/time, timezone if
+  known, email status, and the latest chat excerpt.
+- This must trigger the existing needs-human alert email path to Facu. In the
+  final summary, call it an urgent scheduling handoff and include exactly what
+  Facu has to calendar.
+- If the slot is clear but the email is missing and WhatsApp sending is allowed,
+  ask for the email once. Still keep the lead in this bucket until the calendar
+  handoff is resolved.
+- If the date/time is ambiguous, ask one clarifying question and report it.
+
+Email missing copy:
+
+`Perfecto {name}. Que email queres que use para mandarte la invitacion?`
+
+Ambiguous time copy:
+
+`Perfecto {name}. Me decis el dia, horario y tu zona horaria asi lo dejamos coordinado?`
+
 ### `needs_answer_now`
 
 Use when `last_inbound_at` is newer than `last_outbound_at`, or the CRM shows

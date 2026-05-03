@@ -144,6 +144,13 @@ def is_likely_venezuelan_phone(*values: str | None) -> bool:
     return False
 
 
+def normalize_followup_text(value: str | None) -> str:
+    """Normalize short lead text for follow-up heuristics."""
+    decomposed = unicodedata.normalize("NFKD", value or "")
+    plain_text = "".join(char for char in decomposed if not unicodedata.combining(char))
+    return " ".join(plain_text.casefold().split())
+
+
 def now_utc() -> datetime:
     """Return current UTC timestamp."""
     return datetime.now(timezone.utc)
@@ -867,9 +874,43 @@ def build_followup_exclusion_reasons(
     return reasons
 
 
+def inbound_suggests_booking_time(message: ContadoresMessage | None) -> bool:
+    """Return True when an inbound looks like a concrete call-time reply."""
+    if message is None or message.from_me:
+        return False
+    text = normalize_followup_text(message.text)
+    if not text:
+        return False
+    day_words = {
+        "hoy",
+        "manana",
+        "pasado",
+        "lunes",
+        "martes",
+        "miercoles",
+        "jueves",
+        "viernes",
+        "sabado",
+        "domingo",
+    }
+    has_day = any(re.search(rf"\b{day}\b", text) for day in day_words)
+    has_date = bool(re.search(r"\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b", text))
+    has_time = bool(
+        re.search(r"\b(?:a las\s*)?\d{1,2}(?::\d{2})?\s*(?:hs?|hrs?|am|pm)\b", text)
+        or re.search(r"\ba las\s+\d{1,2}(?::\d{2})?\b", text)
+    )
+    has_call_word = any(
+        word in text
+        for word in ("llamada", "reunion", "reunir", "agendar", "agenda", "coordinar", "meet", "zoom")
+    )
+    has_email = bool(re.search(r"\b[^@\s]+@[^@\s]+\.[^@\s]+\b", text))
+    return (has_time and (has_day or has_date or has_call_word)) or (has_email and has_call_word)
+
+
 def build_followup_suggested_buckets(
     lead: ContadoresLead,
     *,
+    latest_inbound: ContadoresMessage | None,
     latest_outbound: ContadoresMessage | None,
     exclusion_reasons: list[str],
 ) -> list[str]:
@@ -895,6 +936,8 @@ def build_followup_suggested_buckets(
         else:
             buckets.append("repair_delivery")
 
+    if inbound_suggests_booking_time(latest_inbound):
+        buckets.append("booking_time_provided")
     if derive_manual_reply_status(lead) == "needs_reply":
         buckets.append("needs_answer_now")
     if effective_stage == ContadoresLeadStage.NEEDS_HUMAN and lead.last_inbound_at is not None:
@@ -924,6 +967,7 @@ def build_followup_lead_snapshot(
     )
     suggested_buckets = build_followup_suggested_buckets(
         lead,
+        latest_inbound=latest_inbound,
         latest_outbound=latest_outbound,
         exclusion_reasons=exclusion_reasons,
     )
@@ -932,6 +976,7 @@ def build_followup_lead_snapshot(
         id=lead.id,
         funnel_id=lead.funnel_id,
         full_name=lead.full_name,
+        email=lead.email,
         phone=lead.phone,
         normalized_phone=lead.normalized_phone,
         platform=lead.platform,
@@ -1016,6 +1061,7 @@ def build_followup_snapshot_csv(snapshots: list[ContadoresFollowupLeadSnapshot])
         "lead_id",
         "funnel_id",
         "full_name",
+        "email",
         "phone",
         "normalized_phone",
         "platform",
@@ -1056,6 +1102,7 @@ def build_followup_snapshot_csv(snapshots: list[ContadoresFollowupLeadSnapshot])
                 "lead_id": snapshot.id,
                 "funnel_id": snapshot.funnel_id,
                 "full_name": snapshot.full_name or "",
+                "email": snapshot.email or "",
                 "phone": snapshot.phone,
                 "normalized_phone": snapshot.normalized_phone,
                 "platform": snapshot.platform or "",
@@ -1085,6 +1132,126 @@ def build_followup_snapshot_csv(snapshots: list[ContadoresFollowupLeadSnapshot])
             }
         )
     return output.getvalue()
+
+
+def format_file_mtime(path: Path) -> str | None:
+    """Return an ISO-ish UTC timestamp for a file mtime."""
+    try:
+        modified_at = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+    except OSError:
+        return None
+    return format_timestamp_seconds(modified_at)
+
+
+def read_text_file(path: Path) -> str:
+    """Read a text file for operator-facing diagnostics."""
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def read_text_tail(path: Path, max_lines: int) -> str:
+    """Return the last lines of a text file without failing if it is absent."""
+    text = read_text_file(path)
+    if not text:
+        return ""
+    lines = text.splitlines()
+    return "\n".join(lines[-max_lines:])
+
+
+def parse_runner_pid(lock_dir: Path) -> int | None:
+    """Read the runner pid from the lock directory."""
+    raw_pid = read_text_file(lock_dir / "pid").strip()
+    if not raw_pid:
+        return None
+    try:
+        pid = int(raw_pid)
+    except ValueError:
+        return None
+    return pid if pid > 0 else None
+
+
+def process_is_visible(pid: int | None) -> bool:
+    """Return True when the current host can see a running process."""
+    if pid is None:
+        return False
+    try:
+        os.kill(pid, 0)
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def build_runner_log_item(path: Path) -> ContadoresRunnerLogItem:
+    """Serialize one runner log file."""
+    try:
+        size_bytes = path.stat().st_size
+    except OSError:
+        size_bytes = 0
+    return ContadoresRunnerLogItem(
+        name=path.name,
+        path=str(path),
+        size_bytes=size_bytes,
+        modified_at=format_file_mtime(path),
+    )
+
+
+def list_followup_runner_logs(limit: int) -> list[ContadoresRunnerLogItem]:
+    """List recent timestamped CRM follow-up runner logs."""
+    reports_dir = DATA_DIR / "reports"
+    if not reports_dir.exists():
+        return []
+    log_paths = sorted(
+        reports_dir.glob("contadores-crm-followup-*.log"),
+        key=lambda path: path.stat().st_mtime if path.exists() else 0,
+        reverse=True,
+    )
+    return [build_runner_log_item(path) for path in log_paths[:limit]]
+
+
+def build_followup_runner_status(
+    *,
+    log_tail_lines: int = 120,
+    log_limit: int = 12,
+) -> ContadoresRunnerStatusResponse:
+    """Build a read-only status snapshot from local runner artifacts."""
+    reports_dir = DATA_DIR / "reports"
+    lock_dir = DATA_DIR / "locks" / "contadores-crm-hourly-followup.lock"
+    latest_summary_path = reports_dir / "contadores-crm-followup-latest.md"
+    launchd_out_path = reports_dir / "launchd-contadores-crm-followup.out.log"
+    launchd_err_path = reports_dir / "launchd-contadores-crm-followup.err.log"
+
+    pid = parse_runner_pid(lock_dir) if lock_dir.exists() else None
+    lock_age_seconds: int | None = None
+    if lock_dir.exists():
+        try:
+            lock_age_seconds = max(0, int(now_utc().timestamp() - lock_dir.stat().st_mtime))
+        except OSError:
+            lock_age_seconds = None
+    running = lock_dir.exists() and (
+        process_is_visible(pid) or lock_age_seconds is None or lock_age_seconds < 21600
+    )
+
+    logs = list_followup_runner_logs(limit=log_limit)
+    latest_log_path = Path(logs[0].path) if logs else None
+
+    return ContadoresRunnerStatusResponse(
+        generated_at=format_timestamp_seconds(now_utc()) or "",
+        running=running,
+        pid=pid,
+        started_at=read_text_file(lock_dir / "started_at").strip() or None,
+        lock_age_seconds=lock_age_seconds,
+        latest_summary=read_text_file(latest_summary_path),
+        latest_summary_updated_at=format_file_mtime(latest_summary_path),
+        latest_log_path=str(latest_log_path) if latest_log_path else None,
+        latest_log_tail=read_text_tail(latest_log_path, log_tail_lines) if latest_log_path else "",
+        launchd_out_tail=read_text_tail(launchd_out_path, log_tail_lines),
+        launchd_err_tail=read_text_tail(launchd_err_path, log_tail_lines),
+        logs=logs,
+    )
 
 
 def normalize_message_for_dedupe(text: str) -> str:
@@ -1814,6 +1981,7 @@ class ContadoresFollowupLeadSnapshot(BaseModel):
     id: str
     funnel_id: str
     full_name: str | None = None
+    email: str | None = None
     phone: str
     normalized_phone: str
     platform: str | None = None
@@ -1849,6 +2017,32 @@ class ContadoresFollowupSnapshotResponse(BaseModel):
     counts_by_bucket: dict[str, int] = Field(default_factory=dict)
     counts_by_exclusion_reason: dict[str, int] = Field(default_factory=dict)
     failed_delivery_codes: dict[str, int] = Field(default_factory=dict)
+
+
+class ContadoresRunnerLogItem(BaseModel):
+    """One CRM follow-up runner log file."""
+
+    name: str
+    path: str
+    size_bytes: int
+    modified_at: str | None = None
+
+
+class ContadoresRunnerStatusResponse(BaseModel):
+    """Read-only status for the local CRM follow-up runner artifacts."""
+
+    generated_at: str
+    running: bool = False
+    pid: int | None = None
+    started_at: str | None = None
+    lock_age_seconds: int | None = None
+    latest_summary: str = ""
+    latest_summary_updated_at: str | None = None
+    latest_log_path: str | None = None
+    latest_log_tail: str = ""
+    launchd_out_tail: str = ""
+    launchd_err_tail: str = ""
+    logs: list[ContadoresRunnerLogItem] = Field(default_factory=list)
 
 
 class ContadoresFollowupSendMessageCommand(BaseModel):
@@ -2414,6 +2608,18 @@ async def get_followup_snapshot_csv(
         content=build_followup_snapshot_csv(snapshot.leads),
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": 'attachment; filename="contadores-followup-snapshot.csv"'},
+    )
+
+
+@contadores_router.get("/followup/runner/status", response_model=ContadoresRunnerStatusResponse)
+async def get_followup_runner_status(
+    log_tail_lines: int = Query(default=120, ge=1, le=500),
+    log_limit: int = Query(default=12, ge=1, le=50),
+) -> ContadoresRunnerStatusResponse:
+    """Return local CRM follow-up runner logs and lock status."""
+    return build_followup_runner_status(
+        log_tail_lines=log_tail_lines,
+        log_limit=log_limit,
     )
 
 

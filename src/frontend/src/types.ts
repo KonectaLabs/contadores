@@ -87,6 +87,28 @@ export interface ContadoresConfig {
   last_alert_at: string | null;
 }
 
+export interface RunnerLogItem {
+  name: string;
+  path: string;
+  size_bytes: number;
+  modified_at: string | null;
+}
+
+export interface RunnerStatusResponse {
+  generated_at: string;
+  running: boolean;
+  pid: number | null;
+  started_at: string | null;
+  lock_age_seconds: number | null;
+  latest_summary: string;
+  latest_summary_updated_at: string | null;
+  latest_log_path: string | null;
+  latest_log_tail: string;
+  launchd_out_tail: string;
+  launchd_err_tail: string;
+  logs: RunnerLogItem[];
+}
+
 export interface ContadoresMetrics {
   total: number;
   awaiting_initial_reply: number;

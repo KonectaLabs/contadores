@@ -179,6 +179,11 @@ ls -lt data/reports/contadores-crm-followup-*.log | head
 cat data/reports/contadores-crm-followup-latest.md
 ```
 
+- Vista visual: entrar al backoffice y abrir la seccion `Runner`. La UI lee
+  `GET /api/contadores/followup/runner/status` y muestra estado del lock,
+  ultimo resumen, logs timestamped y stdout/stderr del LaunchAgent. Esta ruta
+  queda protegida por sesion o `X-Internal-Token`; no es publica.
+
 Verificar API de funnels:
 
 ```bash
@@ -234,6 +239,11 @@ Acciones manuales de Calendly:
 - `Calendly link only` encola solo el link de Calendly.
 - El link de Calendly es siempre `https://calendly.com/facundogoiriz/crecimiento`, para Contadores, Abogados y cualquier otro funnel.
 - Ambas acciones registran `calendly_sent_at` y mantienen el lead en Manual. La automatizacion sigue usando siempre texto previo + link y puede dejar el lead fuera de Manual.
+- Si un lead responde con dia y horario concreto para una llamada, la
+  automation debe intentar reservarlo solo si existe una via real de booking de
+  Calendly. Hoy el codigo no crea eventos de Calendly desde texto libre; en ese
+  caso marca `booking_time_provided`, pausa el lead en `needs_human` y dispara
+  la alerta urgente por email para que Facu lo agende.
 
 Vista Manual del backoffice:
 
