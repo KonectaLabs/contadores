@@ -28,11 +28,15 @@ override the built-in Contadores definition.
    - `wants_to_proceed`
    - `watched_video_confirmation`
    - `needs_human`
-9. If `watched_video_confirmation`, generate a one-message service recap with
-   DSPy and keep the lead waiting for the next reply.
+9. If `watched_video_confirmation`, generate a one-message service recap inside
+   the same Loom stage and keep the lead waiting for the next reply.
    - This label is only for replies that simply confirm the lead saw the video,
      such as "Si" / "lo vi", with no question, objection, date, or clear intent
      to proceed.
+   - This label is an internal LLM decision only. Do not persist it as a new CRM
+     stage or expose it as a separate pipeline step.
+   - Queue the recap as `sequence_step=loom_intro` so it remains part of the
+     existing Loom/video stage.
    - The generated recap receives the lead phone number and funnel id/label, so
      it can adapt country and niche (`contadores`, `abogados`, `mecanicos`,
      general business, etc.).

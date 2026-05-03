@@ -288,8 +288,8 @@ If the lead says yes, asks for information, or otherwise accepts the opener:
 If the lead watched/accepted the video or asks how to continue:
 
 - If the latest lead reply is only a simple watched-video confirmation, let the
-  built-in bot send `post_loom_service_recap`; do not manually duplicate that
-  recap in the same run.
+  built-in bot send the recap inside `loom_intro`; do not manually duplicate
+  that recap in the same run.
 - Send `close_call` copy if inside the 24-hour window.
 - If outside the window, use `manual_ping_template` first and wait for reply.
 

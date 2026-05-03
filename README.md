@@ -260,13 +260,14 @@ Respuesta post-video:
   `needs_human`.
 - `watched_video_confirmation` es solo para respuestas que confirman que vio el
   video, como `Si` o `lo vi`, sin pregunta, objecion, fecha ni pedido claro de
-  avanzar.
-- En ese caso el backend genera con DSPy un unico mensaje
-  `post_loom_service_recap`: vuelve a explicar el servicio en texto, adaptando
-  el nicho desde el funnel y el pais desde el telefono cuando el codigo es
-  claro, y pide un dia para llamada. No envia Calendly todavia.
-- Despues del recap el lead queda en `awaiting_video_reply`; nuevas respuestas
-  se analizan desde ese punto para evitar repetir el mismo recap.
+  avanzar. Es una decision interna del LLM, no una fase nueva del CRM.
+- En ese caso el backend genera con DSPy un unico mensaje dentro del mismo paso
+  `loom_intro`: vuelve a explicar el servicio en texto, adaptando el nicho
+  desde el funnel y el pais desde el telefono cuando el codigo es claro, y pide
+  un dia para llamada. No envia Calendly todavia.
+- Despues del recap el lead sigue en `awaiting_video_reply`; nuevas respuestas
+  se analizan desde ese punto para decidir si corresponde avanzar o pasar a
+  atencion humana.
 
 Acciones manuales de Calendly:
 

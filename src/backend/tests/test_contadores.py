@@ -1344,10 +1344,10 @@ def test_contadores_automation_tick_recaps_service_after_simple_video_confirmati
     assert first_tick.json()["calendly_sent"] == 0
     assert detail.status_code == 200
     assert detail.json()["lead"]["stage"] == "awaiting_video_reply"
-    assert detail.json()["lead"]["last_classification_label"] == "watched_video_confirmation"
+    assert detail.json()["lead"]["last_classification_label"] is None
     assert pending_after_first_tick.status_code == 200
     first_messages = pending_after_first_tick.json()["messages"]
-    assert [item["sequence_step"] for item in first_messages] == ["post_loom_service_recap"]
+    assert [item["sequence_step"] for item in first_messages] == ["loom_intro"]
     assert "Bolivia" in first_messages[0]["text"]
     assert "directo a su WhatsApp" in first_messages[0]["text"]
 
@@ -1355,7 +1355,7 @@ def test_contadores_automation_tick_recaps_service_after_simple_video_confirmati
     assert second_tick.json()["video_confirmation_recaps_sent"] == 0
     assert pending_after_second_tick.status_code == 200
     assert [item["sequence_step"] for item in pending_after_second_tick.json()["messages"]] == [
-        "post_loom_service_recap"
+        "loom_intro"
     ]
 
 

@@ -62,10 +62,11 @@ the reply batch. The classifier can return:
 - `needs_human`
 
 When it returns `watched_video_confirmation`, the automation sends one generated
-WhatsApp message with `sequence_step=post_loom_service_recap` and keeps the lead
-in `awaiting_video_reply`. This label is only for a plain confirmation that the
-lead watched the video, with no question, objection, scheduling date, or clear
-request to proceed.
+WhatsApp message with `sequence_step=loom_intro` and keeps the lead in
+`awaiting_video_reply`. This is not a new CRM stage or visible pipeline step; it
+is a subaction inside the existing Loom/video stage. The label is only an
+internal LLM decision for a plain confirmation that the lead watched the video,
+with no question, objection, scheduling date, or clear request to proceed.
 
 The recap generator receives:
 

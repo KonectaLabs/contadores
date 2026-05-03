@@ -73,7 +73,7 @@ FORM_LEAD_TAG = "form"
 WHATSAPP_GENERAL_TAG = "whatsapp"
 WHATSAPP_FUNNEL_TAG = "whatsapp_funnel"
 BULK_SET_TAGS_ACTION = "set-tags"
-POST_LOOM_SERVICE_RECAP_SEQUENCE_STEP = "post_loom_service_recap"
+LOOM_RECAP_SEQUENCE_STEP = "loom_intro"
 WATCHED_VIDEO_CONFIRMATION_LABEL = "watched_video_confirmation"
 VENEZUELA_MOBILE_PREFIXES = ("412", "414", "416", "424", "426")
 PHONE_DIGITS_RE = re.compile(r"\D+")
@@ -1686,7 +1686,7 @@ async def send_post_loom_service_recap(
     row = enqueue_lead_outbound(
         lead=lead,
         text=text,
-        sequence_step=POST_LOOM_SERVICE_RECAP_SEQUENCE_STEP,
+        sequence_step=LOOM_RECAP_SEQUENCE_STEP,
     )
     return [row]
 
@@ -1738,14 +1738,29 @@ def get_post_loom_reply_window_start(lead: ContadoresLead) -> datetime | None:
     loom_sent_at = ensure_utc_datetime(lead.loom_sent_at)
     if loom_sent_at is None:
         return None
-    classification_completed_at = ensure_utc_datetime(lead.classification_completed_at)
-    if (
-        lead.last_classification_label == WATCHED_VIDEO_CONFIRMATION_LABEL
-        and classification_completed_at is not None
-        and classification_completed_at > loom_sent_at
-    ):
-        return classification_completed_at
+    latest_recap = get_latest_loom_recap_message(lead)
+    if latest_recap is not None:
+        recap_sent_at = ensure_utc_datetime(latest_recap.created_at)
+        if recap_sent_at is not None and recap_sent_at > loom_sent_at:
+            return recap_sent_at
     return loom_sent_at
+
+
+def get_latest_loom_recap_message(lead: ContadoresLead) -> ContadoresMessage | None:
+    """Return the latest service recap sent inside the Loom stage."""
+    loom_sent_at = ensure_utc_datetime(lead.loom_sent_at)
+    if loom_sent_at is None:
+        return None
+    recaps = [
+        row
+        for row in ContadoresMessage.list_by_lead(lead.id)
+        if (
+            row.from_me
+            and row.sequence_step == LOOM_RECAP_SEQUENCE_STEP
+            and (ensure_utc_datetime(row.created_at) or loom_sent_at) > loom_sent_at
+        )
+    ]
+    return recaps[-1] if recaps else None
 
 
 def has_quiet_window(*, last_message_at: datetime | None, quiet_seconds: int, now: datetime) -> bool:
@@ -3709,7 +3724,7 @@ async def run_contadores_automation_tick(
             not replies_in_window
             and reached_min_wait
             and lead.video_check_sent_at is None
-            and lead.last_classification_label != WATCHED_VIDEO_CONFIRMATION_LABEL
+            and get_latest_loom_recap_message(lead) is None
         ):
             send_video_check(lead=lead)
             video_checks_sent += 1
@@ -3733,12 +3748,31 @@ async def run_contadores_automation_tick(
         if not batch_text:
             continue
 
-        previous_classification_label = lead.last_classification_label
         result = await classifier.aforward(
             loom_context=build_classifier_context(),
             reply_batch=batch_text,
         )
         label = result.label
+
+        if label == WATCHED_VIDEO_CONFIRMATION_LABEL and get_latest_loom_recap_message(lead) is None:
+            queued_rows = await send_post_loom_service_recap(
+                lead=lead,
+                reply_batch=batch_text,
+                generator=service_recap_generator,
+            )
+            if queued_rows:
+                ContadoresLead.update_flow_state(
+                    lead.id,
+                    classification_completed_at=now,
+                    last_classification_reason=result.reasoning,
+                )
+                video_confirmation_recaps_sent += 1
+                continue
+
+        if label == WATCHED_VIDEO_CONFIRMATION_LABEL:
+            label = "needs_human"
+            result.reasoning = "La respuesta posterior al recap sigue siendo ambigua y requiere cierre humano."
+
         updated = ContadoresLead.update_flow_state(
             lead.id,
             classification_completed_at=now,
@@ -3751,19 +3785,6 @@ async def run_contadores_automation_tick(
             classified_wants_to_proceed += 1
             calendly_sent += 1
             continue
-
-        if (
-            label == WATCHED_VIDEO_CONFIRMATION_LABEL
-            and previous_classification_label != WATCHED_VIDEO_CONFIRMATION_LABEL
-        ):
-            queued_rows = await send_post_loom_service_recap(
-                lead=lead,
-                reply_batch=batch_text,
-                generator=service_recap_generator,
-            )
-            if queued_rows:
-                video_confirmation_recaps_sent += 1
-                continue
 
         ContadoresLead.update_flow_state(
             lead.id,

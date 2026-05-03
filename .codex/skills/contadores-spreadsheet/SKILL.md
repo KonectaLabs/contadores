@@ -126,7 +126,7 @@ Treat the spreadsheet as the source of truth for:
 - whether the lead was already contacted;
 - which message sequence the lead is in;
 - which step was already sent;
-- whether the post-video DSPy path sent `post_loom_service_recap` after a
+- whether the post-video DSPy path sent the recap inside `loom_intro` after a
   simple watched-video confirmation;
 - when the next action should happen;
 - whether automation should stop and hand off to a human.

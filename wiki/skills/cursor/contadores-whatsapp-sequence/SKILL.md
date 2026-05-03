@@ -29,7 +29,8 @@ description: >-
 9. Clasificar las respuestas post-video con DSPy:
    `wants_to_proceed`, `watched_video_confirmation`, o `needs_human`.
 10. Si la clasificacion dice `watched_video_confirmation`, generar con DSPy un
-    recap del servicio adaptado al funnel y al pais inferido por telefono.
+    recap del servicio adaptado al funnel y al pais inferido por telefono,
+    encolado dentro del mismo paso `loom_intro`.
 11. Si la clasificacion dice `wants_to_proceed`, enviar Calendly.
 12. Si la clasificacion dice `needs_human`, pausar y pasar a Manual.
 
@@ -98,6 +99,9 @@ Enviar solo cuando la clasificacion DSPy devuelve
 `watched_video_confirmation`: el lead apenas confirmo que vio el video, sin
 pregunta, objecion, fecha ni pedido claro de avanzar.
 
+Esa clasificacion es interna del LLM. No crear una fase nueva del CRM ni
+mostrarla como pipeline separado; el lead sigue en `awaiting_video_reply`.
+
 El backend debe generar este mensaje con DSPy, no con regex ni match por texto.
 Inputs obligatorios del generador:
 
@@ -148,9 +152,8 @@ https://calendly.com/facundogoiriz/crecimiento
 ## Notas de implementación
 
 - Usar el Calendly fijo compartido por todos los funnels.
-- Guardar la secuencia como mensajes separados. El recap post-video usa
-  `sequence_step=post_loom_service_recap` y deja el lead en
-  `awaiting_video_reply`.
+- Guardar la secuencia como mensajes separados. El recap post-video usa el
+  `sequence_step=loom_intro` existente y deja el lead en `awaiting_video_reply`.
 - Para Click-to-WhatsApp, rutear por `referral.source_id` contra `whatsapp_referral_source_ids`. No agregar ruteo amplio por texto editable.
 - Excepcion aprobada: si el texto normalizado es `Hola! Quiero mas informacion de su propuesta para abogados!`, rutear a `abogados`.
 - Si el inbound no matchea reply/referral/frase aprobada, guardarlo en el buzon `general`.
