@@ -31,6 +31,11 @@ Also read these skills when relevant:
 - The active hourly runner is the local macOS LaunchAgent
   `com.konecta.contadores.crm-followup`. It starts a fresh `codex exec`
   session each hour, so runs do not depend on this chat thread.
+- When `CONTADORES_CRM_FOLLOWUP_RUNNER=1`, you are already inside the active
+  scheduled runner. The lock at `CONTADORES_CRM_FOLLOWUP_LOCK_DIR` and the
+  running LaunchAgent process are expected and belong to this run. Do not treat
+  them as a duplicate or stale automation; the wrapper owns overlap protection.
+  Proceed with the production snapshot/API workflow.
 - The previous Codex App cron is paused because that runtime can fail to reach
   production HTTP/SSH even when this machine can. Do not treat that as a server
   outage unless the local runner or direct shell checks also fail.

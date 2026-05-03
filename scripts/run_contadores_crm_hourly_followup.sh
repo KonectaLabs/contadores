@@ -92,6 +92,10 @@ curl -fsS \
 
 echo "preflight_snapshot=ok"
 
+export CONTADORES_CRM_FOLLOWUP_RUNNER=1
+export CONTADORES_CRM_FOLLOWUP_LOCK_DIR="$LOCK_DIR"
+export CONTADORES_CRM_FOLLOWUP_LOG_FILE="$LOG_FILE"
+
 codex exec \
   -C "$ROOT_DIR" \
   -m gpt-5.5 \
