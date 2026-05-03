@@ -19,8 +19,7 @@
 
 ## 2026-05-03 19:08 - Codex auth logout lane
 
-- Status: local validation passed; preparing commit, push, deploy, and server
-  verification.
+- Status: deployed.
 - Improvement: make logout revoke the current signed session token server-side
   for the rest of its lifetime, instead of relying only on deleting the browser
   cookie.
@@ -38,6 +37,12 @@
   the same token when created within the same second.
 - Validation: `uv run pytest src/backend/tests/test_auth.py` passed with 2
   tests. `npm run build` in `src/frontend` passed.
+- Final: committed as `eeaba32` (`Revoke auth sessions on logout`), pushed to
+  `main`, included in the deployed server history, and verified after deploy.
+  Production checks passed: `/health` ready, authenticated `/api/runtime`
+  ready, authenticated `/api/funnels` returned `contadores`, `abogados`, and
+  `general`, and a production auth smoke returned 200 before logout and 401
+  for the same session after logout.
 
 ## 2026-05-03 18:59 - Codex
 
@@ -144,8 +149,7 @@
 
 ## 2026-05-03 19:15 - Codex API cache safety lane
 
-- Status: local validation passed; preparing commit, push, deploy, and server
-  verification.
+- Status: deployed and verified on the server.
 - Improvement: add `Cache-Control: no-store` to backend `/api/*` responses so
   browser/proxy cache does not reuse stale or sensitive CRM API payloads.
 - Planned files:
@@ -160,6 +164,11 @@
   `Cache-Control: no-store` only on `/api/*` responses.
 - Validation: `uv run pytest src/backend/tests/test_system_cache_headers.py`
   passed with 2 tests.
+- Final: committed and pushed as `e6f8343` (`Prevent API response caching`).
+  Deployed on the real server; the server is now on newer `main` commit
+  `4708d1e`, which includes this commit. Verified `/api/runtime` returned
+  `ready=true` with `Cache-Control: no-store`, `/api/funnels` returned 3
+  funnels with `Cache-Control: no-store`, and Traefik `/health` returned 200.
 
 ## 2026-05-03 19:01 - Codex bot worker lane
 
@@ -228,8 +237,7 @@
 
 ## 2026-05-03 19:09 - Codex browser shell lane
 
-- Status: local validation passed; preparing commit, push, deploy, and server
-  verification.
+- Status: deployed and verified on the server.
 - Improvement: improve the app's browser shell metadata so mobile and desktop
   browsers get the correct CRM name, description, color scheme, and theme color
   before the React app loads.
@@ -242,6 +250,12 @@
 - During: added `application-name`, `description`, `theme-color`, and
   `color-scheme` metadata in `src/frontend/index.html`.
 - Validation: `npm run build` passed in `src/frontend`.
+- Final: committed as `75f9013` (`Improve CRM browser shell metadata`), pushed
+  to `main`, deployed on the real server, and verified from the backend
+  container. Production checks passed: `/health` ready, authenticated
+  `/api/runtime` ready with no readiness issues, authenticated `/api/funnels`
+  returned 3 funnels, and the served authenticated HTML contains all four new
+  metadata tags.
 
 ## 2026-05-03 19:00 - Codex date clarity lane
 
@@ -255,7 +269,7 @@
 
 ## 2026-05-03 19:02 - Codex public image generation validation
 
-- Status: in progress.
+- Status: deployed and verified on the server; see the 19:07 update below.
 - Improvement: make `/api/public/image-generation` reject or fall back from
   empty/non-PNG generated output instead of returning a broken file as
   `image/png`.
@@ -270,7 +284,7 @@
 
 ## 2026-05-03 19:02 - Codex frontend API resilience lane
 
-- Status: validation passed locally.
+- Status: deployed and verified on the real server.
 - Improvement: add a client-side request timeout to the shared frontend API
   helper so a stalled backend request fails with a clear operator-facing error
   instead of leaving the CRM loading forever.
@@ -286,9 +300,11 @@
   empty responses; kept those changes and added per-attempt request timeout on
   top of the current file.
 - Validation: `npm run build` in `src/frontend` passed.
-- Final: this lane is ready to commit; only the timeout portion of `api.ts`
-  should be considered owned by this lane because other API-client changes were
-  already present concurrently.
+- Final: committed as `1df7cc5` (`Improve frontend API request resilience`),
+  pushed to `main`, included in the deployed server history, and verified after
+  deploy. Production checks passed: `/health` ready, authenticated
+  `/api/runtime` ready with no readiness issues, and authenticated
+  `/api/funnels` returned the configured funnels.
 
 ## 2026-05-03 19:06 - Codex frontend label polish lane
 
@@ -334,7 +350,7 @@
 
 ## 2026-05-03 19:07 - Codex public image generation validation update
 
-- Status: validation passed locally.
+- Status: deployed and verified on the server.
 - Files touched for this lane:
   - `src/backend/endpoints/public_image_generation.py`
   - `src/backend/tests/test_public_image_generation.py`
@@ -345,12 +361,15 @@
   broken image.
 - Validation: `uv run pytest src/backend/tests/test_public_image_generation.py`
   passed with 7 tests.
-- Next: staging only the public image generation validation files and this
-  coordination log, then committing/pushing from `main` before server deploy.
+- Final: committed as `a92cb6c` (`Validate public image generation output`),
+  pushed to `main`, included in deployed server history, and verified after
+  deploy. Production checks passed: `/health` returned `ready=true`,
+  authenticated `/api/runtime` returned `ready=True` with no issues, and
+  authenticated `/api/funnels` returned 3 funnels.
 
 ## 2026-05-03 19:07 - Codex root error boundary lane
 
-- Status: in progress.
+- Status: deployed and verified on the server.
 - Improvement: add a root React error boundary so an unexpected CRM render
   failure shows a clear reloadable fallback instead of a blank app shell.
 - Planned files:
@@ -365,6 +384,12 @@
 - During: added `RootErrorBoundary` in `src/frontend/src/main.tsx` with a
   reloadable fallback for unexpected render crashes.
 - During: `npm run build` passed in `src/frontend`.
+- Final: committed as `74c1a74` (`Add CRM root error boundary`), pushed to
+  `main`, included in deployed server history, and verified after deploy.
+  Production checks passed through Traefik: authenticated `/api/runtime`
+  returned `ready=true`, authenticated `/api/funnels` returned 200, `/`
+  redirects to `/login`, and the deployed frontend bundle contains
+  `CRM could not load`.
 
 ## 2026-05-03 19:00 - Codex date clarity lane stop
 
@@ -382,4 +407,5 @@
 - Guardrail: no edits to `src/frontend/src/App.tsx`, `src/frontend/src/styles.css`, `src/frontend/src/api.ts`, `src/frontend/src/format.ts`, Contadores runtime/search files, bot worker files, public image generation files, deploy scripts, media, or persisted `data/`.
 - During: added transcript media fallback logic and focused tests for media-only Workstation messages; next step is running that test file.
 - Validation: `uv run pytest src/backend/tests/test_workstation.py` passed with 2 tests; `uv run pytest src/backend/tests/test_contadores.py -k workstation` passed with 5 tests.
-- Status: local validation passed; preparing commit, push, deploy, and server verification.
+- Status: deployed and verified on the server.
+- Final: committed as `7fa7b26` (`Improve Workstation media transcripts`), pushed to `main`, included in deployed server history, and verified after deploy. Production checks passed: authenticated `/api/runtime` returned `ready=true`, authenticated `/api/funnels` returned `contadores`, `abogados`, and `general`, and both backend and bot containers are running.
