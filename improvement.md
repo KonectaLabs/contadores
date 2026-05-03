@@ -130,7 +130,8 @@
 
 ## 2026-05-03 19:15 - Codex API cache safety lane
 
-- Status: in progress.
+- Status: local validation passed; preparing commit, push, deploy, and server
+  verification.
 - Improvement: add `Cache-Control: no-store` to backend `/api/*` responses so
   browser/proxy cache does not reuse stale or sensitive CRM API payloads.
 - Planned files:
@@ -141,6 +142,10 @@
   lead/runtime files, bot files, public image generation files, Workstation
   transcript files, funnel config, sheet ingestion helpers, Docker/deploy
   scripts, media, or persisted `data/`.
+- During: added a small backend middleware in `src/backend/main.py` that sets
+  `Cache-Control: no-store` only on `/api/*` responses.
+- Validation: `uv run pytest src/backend/tests/test_system_cache_headers.py`
+  passed with 2 tests.
 
 ## 2026-05-03 19:01 - Codex bot worker lane
 

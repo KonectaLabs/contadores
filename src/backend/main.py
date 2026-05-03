@@ -179,6 +179,15 @@ async def enforce_primitive_auth(request: Request, call_next):
     return await call_next(request)
 
 
+@app.middleware("http")
+async def prevent_api_response_caching(request: Request, call_next):
+    """Keep CRM API responses out of browser and proxy caches."""
+    response = await call_next(request)
+    if request.url.path.startswith("/api/"):
+        response.headers.setdefault("Cache-Control", "no-store")
+    return response
+
+
 @app.get("/health", tags=["system"])
 async def health() -> dict[str, object]:
     """Health check endpoint."""
