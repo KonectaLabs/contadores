@@ -275,7 +275,7 @@
 
 ## 2026-05-03 19:06 - Codex frontend label polish lane
 
-- Status: in progress.
+- Status: deployed.
 - Improvement: make raw CRM labels easier for operators to scan by expanding
   common pause reasons, WhatsApp sequence steps, platforms, and tags in the
   shared formatter.
@@ -292,6 +292,11 @@
 - Validation: `npm run build` passed in `src/frontend`.
 - Status: local validation passed; preparing commit, push, deploy, and server
   verification.
+- Final: committed as `b83ed78` (`Improve CRM label readability`), pushed to
+  `main`, included in the deployed server history, and verified after deploy.
+  Production checks passed: `/health` ready, `/api/runtime` ready with no
+  readiness issues, and `/api/funnels` returned `contadores`, `abogados`, and
+  `general`.
 
 ## 2026-05-03 19:05 - Codex timestamp readability lane
 
