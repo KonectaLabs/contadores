@@ -9,6 +9,10 @@ Use this skill for CRM follow-up work across the `contadores` and `abogados`
 funnels. The business goal is not "send more messages"; the goal is to get
 qualified leads into short sales calls so Facu can close them.
 
+This skill is the source of truth for the hourly automation. The Codex
+automation prompt should only say to read this skill and run it; do not
+duplicate the runbook inside the automation prompt.
+
 Also read these skills when relevant:
 
 - `contadores-bot-sequence`: current WhatsApp sequence, manual ping, Loom,
@@ -22,13 +26,18 @@ Also read these skills when relevant:
 
 - Operate against the real server for live CRM actions:
   `root@149.50.136.121:/root/projects/contadores`.
+- Load `INTERNAL_API_TOKEN` from the environment or local `.env`. Never print it
+  in logs or summaries.
 - For read-only hourly analysis, prefer the production snapshot endpoint over
-  SSH: `GET /api/contadores/followup/snapshot`. Send `X-Internal-Token` with
-  `INTERNAL_API_TOKEN`.
+  SSH. Fetch all Contadores/Abogados chats, not only attention-needed chats:
+  `GET http://149.50.136.121/api/contadores/followup/snapshot?limit=20000&messages_per_lead=12`.
+  Send `Host: contadores.fgoiriz.com` and `X-Internal-Token`.
+- For spreadsheet-style analysis, use
+  `GET http://149.50.136.121/api/contadores/followup/snapshot.csv?limit=20000&messages_per_lead=12`
+  with the same headers.
 - If a standalone Codex cron reports `Operation not permitted` before SSH
   authentication, treat SSH as unavailable in that runtime. Do not use localhost
-  as fallback. Use the snapshot endpoint for read-only state, and stop before
-  live actions unless an approved production action endpoint exists.
+  as fallback. Use the production HTTP APIs for CRM state and approved actions.
 - Exclude Venezuelans completely. Block `+58`, normalized `58...`, and local
   Venezuelan mobile forms like `0412...`, `0414...`, `0416...`, `0424...`,
   `0426...`.
@@ -48,21 +57,94 @@ Also read these skills when relevant:
 - Send at most one intentional follow-up per lead per automation run, unless the
   built-in bot sequence itself sends its paired Loom intro/video messages.
 
+## Production API Contract
+
+Every request below must include:
+
+- `Host: contadores.fgoiriz.com`
+- `X-Internal-Token: <INTERNAL_API_TOKEN>`
+
+Read current CRM state:
+
+```text
+GET http://149.50.136.121/api/contadores/followup/snapshot?limit=20000&messages_per_lead=12
+GET http://149.50.136.121/api/contadores/followup/snapshot.csv?limit=20000&messages_per_lead=12
+```
+
+Queue one custom message inside the open WhatsApp 24-hour window:
+
+```text
+POST http://149.50.136.121/api/contadores/followup/leads/{lead_id}/messages
+{"text":"...", "dedupe_hours":24}
+```
+
+Run an existing CRM action:
+
+```text
+POST http://149.50.136.121/api/contadores/followup/leads/{lead_id}/actions
+{"action":"send-manual-ping"}
+```
+
+Allowed action values are the existing quick actions, including
+`send-manual-ping`, `send-opener`, `send-loom`, `send-video-check`,
+`send-calendly`, `send-calendly-link`, `mark-booked`, `mark-answered`, `close`,
+`reopen`, `archive`, and `unarchive`.
+
+Update one lead's classification/stage:
+
+```text
+PATCH http://149.50.136.121/api/contadores/followup/leads/{lead_id}
+{"stage":"needs_human", "classification_label":"needs_human", "classification_reason":"...", "manual_reply_status":"answered"}
+```
+
+Use `PATCH` for classification/stage/tag updates, not for sending messages.
+Use the send/action endpoints for outbound WhatsApp.
+
 ## Operating Loop
 
 1. Read recent CRM state from the production snapshot endpoint. Use SSH/database
-   access only when debugging server internals or when an approved live action
-   still has no endpoint.
+   access only when debugging server internals.
 2. Segment leads using the buckets in
    [references/buckets-copies-sequences.md](references/buckets-copies-sequences.md).
 3. Build a dry-run plan before sending: lead id, funnel, bucket, chosen copy or
    template, reason, and skip reason.
-4. Execute live only for clear, eligible actions. Use existing backend helpers
-   or one small script with constants, preview output, and a ledger.
+4. Execute live only for clear, eligible actions through the production APIs.
+   The queued message rows are the ledger; include queued ids in the summary.
 5. Verify after sending: message statuses, retry state, provider errors, recent
    inbound replies, container health, and bot/backend logs.
 6. Report what was sent, what failed, what is waiting, what needs human action,
    and which leads are closest to converting.
+
+## Hourly Run Prompt
+
+For each hourly run:
+
+1. Read this skill, then read
+   [references/buckets-copies-sequences.md](references/buckets-copies-sequences.md).
+2. Fetch the JSON snapshot and, when useful for tabular reasoning, the CSV
+   snapshot.
+3. Find leads with new inbound messages, unresolved Needs answer/Manual state,
+   failed outbound delivery, or a clearly due next step.
+4. Apply hard exclusions before any send.
+5. Check delivery status before interpreting silence. If our last outbound
+   failed, classify as delivery repair/provider failure, not no-reply.
+6. Segment eligible leads into the buckets from the reference file.
+7. Choose the exact approved copy/template. Ask for a day/time for a 15-minute
+   call on warm/close leads.
+8. Send at most one intentional outbound per lead in this run. Do not resend a
+   similar follow-up if one was sent recently.
+9. If the action is ambiguous, do not guess; report it for human handling.
+10. After any live action, verify message statuses, retries, provider error
+    codes, recent inbound replies, container health, and logs when available.
+
+Final summary must include:
+
+- Messages sent, grouped by bucket and copy/template.
+- Leads closest to converting and the exact next human action.
+- New replies that arrived and what happened next.
+- Delivery failures grouped by Meta code.
+- System errors found/fixed.
+- Anything intentionally skipped and why.
 
 ## References
 

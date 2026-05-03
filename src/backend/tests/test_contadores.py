@@ -352,9 +352,16 @@ def test_contadores_followup_snapshot_is_read_only_and_segments_leads(monkeypatc
             "/api/contadores/followup/snapshot",
             headers={"X-Internal-Token": "test-internal-token"},
         )
+        csv_response = client.get(
+            "/api/contadores/followup/snapshot.csv",
+            headers={"X-Internal-Token": "test-internal-token"},
+        )
 
     assert unauthorized.status_code == 401
     assert response.status_code == 200
+    assert csv_response.status_code == 200
+    assert "lead_id,funnel_id" in csv_response.text
+    assert warm.id in csv_response.text
     payload = response.json()
     assert payload["counts_by_bucket"]["needs_answer_now"] == 1
     assert payload["counts_by_bucket"]["close_call"] == 1
@@ -367,6 +374,65 @@ def test_contadores_followup_snapshot_is_read_only_and_segments_leads(monkeypatc
 
     assert len(ContadoresMessage.list_by_lead(warm.id)) == 1
     assert len(ContadoresMessage.list_by_lead(venezuelan.id)) == 1
+
+
+def test_contadores_followup_internal_apis_send_and_update_leads(monkeypatch, tmp_path) -> None:
+    """Automation endpoints should require token and reuse CRM send/state guards."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("INTERNAL_API_TOKEN", "test-internal-token")
+    ContadoresConfig.update(enabled=True)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-followup-api",
+        phone="+5491111111130",
+        full_name="API Lead",
+    )
+    add_recent_inbound(lead.id, text="Me interesa, que precio tiene?")
+
+    with TestClient(app) as client:
+        unauthorized = client.post(
+            f"/api/contadores/followup/leads/{lead.id}/messages",
+            json={"text": "La inversion es de 300 USD."},
+        )
+        sent = client.post(
+            f"/api/contadores/followup/leads/{lead.id}/messages",
+            headers={"X-Internal-Token": "test-internal-token"},
+            json={"text": "La inversion es de 300 USD."},
+        )
+        duplicate = client.post(
+            f"/api/contadores/followup/leads/{lead.id}/messages",
+            headers={"X-Internal-Token": "test-internal-token"},
+            json={"text": "La inversion es de 300 USD."},
+        )
+        updated = client.patch(
+            f"/api/contadores/followup/leads/{lead.id}",
+            headers={"X-Internal-Token": "test-internal-token"},
+            json={
+                "stage": "needs_human",
+                "classification_label": "needs_human",
+                "classification_reason": "Automation marked for human close.",
+                "manual_reply_status": "answered",
+                "tags": ["automation-reviewed"],
+            },
+        )
+        action = client.post(
+            f"/api/contadores/followup/leads/{lead.id}/actions",
+            headers={"X-Internal-Token": "test-internal-token"},
+            json={"action": "mark-answered"},
+        )
+
+    assert unauthorized.status_code == 401
+    assert sent.status_code == 200
+    assert sent.json()["queued_message_ids"]
+    assert duplicate.status_code == 409
+    assert updated.status_code == 200
+    assert updated.json()["stage"] == "needs_human"
+    refreshed = ContadoresLead.get_by_id(lead.id)
+    assert refreshed is not None
+    assert refreshed.last_classification_label == "needs_human"
+    assert refreshed.last_classification_reason == "Automation marked for human close."
+    assert refreshed.manual_reply_handled_at is not None
+    assert refreshed.tags == ["automation-reviewed"]
+    assert action.status_code == 200
 
 
 def test_contadores_provider_failed_status_requeues_before_final_failure(monkeypatch, tmp_path) -> None:

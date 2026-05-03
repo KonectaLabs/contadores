@@ -116,13 +116,32 @@ Snapshot read-only para automations de follow-up:
 ```bash
 curl -H "Host: contadores.fgoiriz.com" \
   -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
-  "http://149.50.136.121/api/contadores/followup/snapshot?limit=1000&messages_per_lead=12"
+  "http://149.50.136.121/api/contadores/followup/snapshot?limit=20000&messages_per_lead=12"
 ```
 
-Este endpoint no manda mensajes ni muta la base. Expone leads recientes de
-`contadores` y `abogados`, ultimos mensajes, estado de delivery, exclusiones
-fuertes y buckets sugeridos para que una automation pueda analizar el CRM sin
-depender de SSH.
+Export CSV del mismo snapshot:
+
+```bash
+curl -H "Host: contadores.fgoiriz.com" \
+  -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
+  "http://149.50.136.121/api/contadores/followup/snapshot.csv?limit=20000&messages_per_lead=12"
+```
+
+Estos endpoints de snapshot no mandan mensajes ni mutan la base. Exponen todos
+los chats recientes de `contadores` y `abogados`, ultimos mensajes, estado de
+delivery, exclusiones fuertes y buckets sugeridos para que una automation pueda
+analizar el CRM sin depender de SSH. Usar `include_all_funnels=true` si se quiere
+incluir tambien inboxes/funnels fuera de Contadores y Abogados.
+
+Acciones internas para automations de follow-up:
+
+- `POST /api/contadores/followup/leads/{lead_id}/messages` con
+  `{"text":"...", "dedupe_hours":24}` encola un mensaje manual si la ventana de
+  WhatsApp esta abierta.
+- `POST /api/contadores/followup/leads/{lead_id}/actions` con
+  `{"action":"send-manual-ping"}` corre una accion existente del CRM.
+- `PATCH /api/contadores/followup/leads/{lead_id}` cambia stage,
+  clasificacion, tags o estado manual. No envia WhatsApp.
 
 Verificar API de funnels:
 
