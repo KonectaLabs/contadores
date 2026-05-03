@@ -77,8 +77,10 @@ Also read these skills when relevant:
 - Do not only wait for replies. Each run should also inspect leads that already
   received our last message and decide whether a stronger, non-duplicative
   follow-up would increase conversion. This is only allowed when the delivery
-  status is clean, the 24-hour custom window is open for custom copy/media, and
-  the lead is warm enough to justify it.
+  status is clean and the lead is warm enough to justify it. If the 24-hour
+  custom window is open, use custom copy/media when appropriate. If the window
+  is closed, use an approved template to reopen the conversation first; do not
+  skip a warm lead only because the custom window is closed.
 - Stronger follow-up should use Frankie-style outcome framing: show that we
   thought about how this would work for the lead's actual practice/studio, lead
   with the concrete result they want, and then ask for a short call time.
@@ -161,6 +163,8 @@ For each hourly run:
 7. Choose the exact approved copy/template. Ask for a day/time for a 15-minute
    call on warm/close leads. For proactive value follow-up, use the Frankie
    notes: outcome first, concrete implementation thought, then one next step.
+   If the 24-hour custom window is closed, send an approved reopening template
+   first and wait for the lead to reply before sending custom value copy/media.
 8. Send at most one intentional outbound per lead in this run. Do not resend a
    similar follow-up if one was sent recently.
 9. If the action is ambiguous, do not guess; report it for human handling.

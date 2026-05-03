@@ -61,7 +61,6 @@ specific implementation thought can make the offer clearer.
 Eligibility:
 
 - latest outbound is `sent` or `delivered`, not failed;
-- custom 24-hour WhatsApp window is open;
 - lead is not closed/booked/archived, Venezuelan, Workstation, opt-out, or
   provider-blocked;
 - no similar value follow-up or video-demo follow-up was sent recently;
@@ -70,6 +69,16 @@ Eligibility:
 
 Do not use this bucket for cold leads who never replied, leads whose last
 outbound failed, or leads who just received a message moments ago.
+
+Window rule:
+
+- If the 24-hour custom window is open, send the proactive custom copy when the
+  lead is a good fit.
+- If the 24-hour custom window is closed, do not send raw custom copy. Use an
+  approved reopening template, usually `manual_ping_template`, to get a reply
+  and reopen the conversation. Once they reply, continue with the proactive
+  value copy or video/demo if still appropriate.
+- In the summary, separate "custom proactive sent" from "template reopen sent".
 
 Frankie framing:
 
@@ -103,9 +112,8 @@ Generic copy when the funnel is unclear:
 
 ### `page_demo_video`
 
-Use when a warm lead is inside the 24-hour custom window and sending the
-available video/demo would make the offer more concrete. This is not a blast.
-Choose carefully.
+Use when a warm lead would benefit from seeing the available video/demo because
+it makes the offer more concrete. This is not a blast. Choose carefully.
 
 Good candidates:
 
@@ -113,12 +121,15 @@ Good candidates:
   similar;
 - has not already received the same Loom/video-demo recently;
 - would benefit from seeing how the page + WhatsApp flow looks in practice;
-- has a clean latest outbound delivery status and an open 24-hour window.
+- has a clean latest outbound delivery status.
 
 Action:
 
 - Prefer the existing `send-loom`/configured video action when that is the
   correct video for the funnel and it has not already been sent.
+- If the 24-hour custom window is closed, do not send custom text/media yet.
+  Send an approved reopening template first and wait for the lead's reply before
+  sending the video/demo.
 - Before sending a video, inspect the funnel config/snapshot and available media
   paths. The relevant source assets include the Abogados 60s video/deck under
   `abogados/media/presentations/loom-video-vender-a-abogados/` and the
@@ -140,14 +151,20 @@ Contadores video context:
 
 ### `manual_ping_template`
 
-Use only when the WhatsApp 24-hour custom window is closed and the lead is still
-worth reopening.
+Use when the WhatsApp 24-hour custom window is closed and the lead is still
+worth reopening. This is the approved template path for warm leads where we
+would like to send a stronger custom follow-up or demo video, but cannot yet
+because the window is closed.
 
 Template:
 
 `Hola, queria saber en que situacion quedamos y si queres que retomemos la conversacion`
 
 This must be sent through the existing manual ping quick action/template.
+
+After the lead replies, reassess the conversation. If they are still warm, move
+to `proactive_value_followup`, `page_demo_video`, or `close_call` instead of
+sending another generic ping.
 
 ### `opener_followup`
 
@@ -242,11 +259,14 @@ If the lead is warm but did not answer our last delivered outbound:
 - Check whether the last message was just a generic ping or a weak close.
 - If the 24-hour custom window is still open and the lead has enough context,
   consider `proactive_value_followup` instead of passively waiting.
+- If the 24-hour custom window is closed and the lead is worth another attempt,
+  send an approved reopening template rather than skipping them.
 - If the lead likely needs to see the offer, consider `page_demo_video`.
 - Do not send if the last outbound was very recent, if the same idea was already
   sent, or if the lead is not meaningfully warmer than a cold opener.
 - Always record in the summary whether the lead was sent, skipped as too soon,
-  skipped as duplicate, or skipped because the window was closed.
+  skipped as duplicate, sent a reopen template, or skipped because there is no
+  approved template/action available.
 
 ### Price or budget objection
 
