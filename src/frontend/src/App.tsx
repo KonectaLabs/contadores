@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ClipboardEvent, DragEvent, FormEvent } from "react";
+import type { ClipboardEvent, DragEvent, FormEvent, ReactNode } from "react";
 import {
   ArrowSquareOut,
   Camera,
@@ -32,6 +32,7 @@ import type {
   ManualAttentionCountsResponse,
   MessageItem,
   QuickActionResponse,
+  RunnerDeltaEvent,
   RunnerStatusResponse,
   RuntimeSettings,
   StrategyStatsItem,
@@ -1166,14 +1167,15 @@ export function App() {
         </div>
       </header>
 
-      {error ? (
-        <div className="ct-error" role="alert">
-          <span>{error}</span>
-          <button type="button" className="ct-icon-btn" onClick={() => setError(null)}>Dismiss</button>
-        </div>
-      ) : null}
+      <main className="ct-main-slot">
+        {error ? (
+          <div className="ct-error" role="alert">
+            <span>{error}</span>
+            <button type="button" className="ct-icon-btn" onClick={() => setError(null)}>Dismiss</button>
+          </div>
+        ) : null}
 
-      {activeSection === "runner" ? (
+        {activeSection === "runner" ? (
         <RunnerStatusView
           status={runnerStatus}
           loading={runnerLoading}
@@ -1184,7 +1186,7 @@ export function App() {
               .finally(() => setRunnerLoading(false));
           }}
         />
-      ) : activeSection === "workstation" ? (
+        ) : activeSection === "workstation" ? (
         <WorkstationView
           clients={workstationClients}
           detail={workstationDetail}
@@ -1227,13 +1229,13 @@ export function App() {
           onProfessionalPhotoEditPromptChange={updateProfessionalPhotoEditPrompt}
           onEditProfessionalPhoto={(version) => editProfessionalPhoto(version)}
         />
-      ) : !isContadoresFunnel ? (
+        ) : !isContadoresFunnel ? (
         <FunnelSetupView
           funnel={selectedFunnel}
           configPath={funnelConfigPath}
           onEdit={openEditFunnel}
         />
-      ) : (
+        ) : (
       <div className="ct-surface">
         {!isInboxFunnel ? (
           <section className="ct-pipeline" aria-label="Lead stages">
@@ -1430,7 +1432,8 @@ export function App() {
           </section>
         </div>
       </div>
-      )}
+        )}
+      </main>
 
       {showConfig ? (
         <ConfigDrawer
@@ -1504,12 +1507,28 @@ function RunnerStatusView({
 }) {
   const logs = status?.logs ?? [];
   const [codexRequest, setCodexRequest] = useState("");
-  const [copyStatus, setCopyStatus] = useState("Arma un prompt nuevo con el ultimo run y el historial.");
+  const [copyStatus, setCopyStatus] = useState("Arma un prompt nuevo con el delta, el ultimo run y el historial.");
+  const delta = status?.delta ?? null;
+  const attentionEvents = delta?.attention_events ?? [];
+  const allEvents = delta?.events ?? [];
+  const deltaMetrics = delta?.metrics ?? {
+    total_leads: 0,
+    new_replies: 0,
+    needs_action: 0,
+    new_outbound: 0,
+    delivery_changes: 0,
+    state_changes: 0,
+    due_next_steps: 0,
+    new_exclusions: 0,
+  };
+  const hasBaseline = Boolean(delta?.baseline_available);
   const latestSummaryUpdated = status?.latest_summary_updated_at ? relativeTime(status.latest_summary_updated_at) : "No run yet";
   const latestSummaryMarkdown = status?.latest_summary || "No run summary has been written yet.";
   const historyMarkdown = status?.history_markdown || latestSummaryMarkdown;
+  const deltaMarkdown = delta?.markdown || "No structured delta has been written yet. The next run will create one.";
   const codexPrompt = buildRunnerCodexPrompt({
     request: codexRequest,
+    deltaMarkdown,
     latestSummary: latestSummaryMarkdown,
     historyMarkdown,
   });
@@ -1525,7 +1544,12 @@ function RunnerStatusView({
         <div>
           <span className={`runner-live-dot ${status?.running ? "running" : ""}`} />
           <p>{status?.running ? "Running now" : `Last run ${latestSummaryUpdated}`}</p>
-          <h2>Follow-up automation notes</h2>
+          <h2>What changed since the previous run</h2>
+          <span className="runner-hero-sub">
+            {hasBaseline
+              ? `${delta?.previous_generated_at || "previous"} -> ${delta?.current_generated_at || "current"}`
+              : "No previous structured snapshot yet. This run establishes the baseline."}
+          </span>
         </div>
         <button type="button" className="ct-icon-btn" onClick={onRefresh} disabled={loading}>
           {loading ? <SpinnerGap size={14} weight="bold" /> : null}
@@ -1533,24 +1557,85 @@ function RunnerStatusView({
         </button>
       </section>
 
-      <div className="runner-main-grid">
-        <section className="workstation-panel runner-summary-panel">
-          <div className="workstation-panel-head">
-            <div>
-              <span>Last run</span>
-              <strong>{status?.latest_summary_updated_at ? status.latest_summary_updated_at : "Waiting for runner data"}</strong>
-            </div>
-          </div>
-          <MarkdownBlock markdown={latestSummaryMarkdown} className="runner-last-markdown" />
-        </section>
+      <section className="runner-command-center" aria-label="Runner command center">
+        <RunnerSignal label="Needs action" value={deltaMetrics.needs_action} tone={deltaMetrics.needs_action > 0 ? "danger" : "ok"} />
+        <RunnerSignal label="New replies" value={deltaMetrics.new_replies} tone={deltaMetrics.new_replies > 0 ? "hot" : "neutral"} />
+        <RunnerSignal label="Delivery changes" value={deltaMetrics.delivery_changes} tone={deltaMetrics.delivery_changes > 0 ? "warn" : "neutral"} />
+        <RunnerSignal label="New outbound" value={deltaMetrics.new_outbound} tone="neutral" />
+        <RunnerSignal label="Due next steps" value={deltaMetrics.due_next_steps} tone={deltaMetrics.due_next_steps > 0 ? "hot" : "neutral"} />
+      </section>
 
-        <aside className="workstation-panel runner-timeline-panel">
-          <div className="workstation-panel-head">
-            <div>
-              <span>Timeline</span>
-              <strong>{logs.length ? `${logs.length} recent runs` : "No runs yet"}</strong>
+      <section className="runner-layout">
+        <div className="runner-priority-column">
+          <RunnerPanel eyebrow="Now" title="Requires attention" meta={`${attentionEvents.length} changed leads`}>
+            {attentionEvents.length ? (
+              <div className="runner-event-stack">
+                {attentionEvents.slice(0, 8).map((event) => (
+                  <RunnerEventCard event={event} key={`${event.kind}:${event.lead_id}:${event.occurred_at || ""}`} />
+                ))}
+              </div>
+            ) : (
+              <RunnerEmpty
+                title={hasBaseline ? "No new urgent change" : "Waiting for the first comparable run"}
+                text={hasBaseline ? "The automation did not find new replies, booking intent, provider changes, or state changes that need immediate human action." : "After the next hourly run, this panel will show the delta against this baseline."}
+              />
+            )}
+          </RunnerPanel>
+
+          <RunnerPanel eyebrow="Delta" title="Count changes" meta="Buckets, delivery, exclusions">
+            <RunnerDeltaTable
+              bucketDeltas={delta?.bucket_deltas ?? []}
+              failureDeltas={delta?.failure_deltas ?? []}
+              exclusionDeltas={delta?.exclusion_deltas ?? []}
+            />
+          </RunnerPanel>
+        </div>
+
+        <aside className="runner-side-column">
+          <RunnerPanel eyebrow="Last run" title="Automation answer" meta={status?.latest_summary_updated_at || "Waiting"}>
+            <MarkdownBlock markdown={latestSummaryMarkdown} className="runner-last-markdown" />
+          </RunnerPanel>
+
+          <RunnerPanel eyebrow="Ask Codex" title="Work from this run" meta="Prompt handoff">
+            <textarea
+              className="runner-question"
+              value={codexRequest}
+              onChange={(event) => setCodexRequest(event.target.value)}
+              placeholder="Ej: Ese mensaje esta mal, corregilo. O: ahora preguntale si puede hacer una llamada."
+            />
+            <div className="runner-actions">
+              <button
+                type="button"
+                className="ct-btn ct-btn-primary"
+                onClick={() => copyRunnerText(codexPrompt, "Prompt").catch(() => setCopyStatus("No pude copiar el prompt automaticamente."))}
+              >
+                Copiar prompt
+              </button>
+              <button
+                type="button"
+                className="ct-btn ct-btn-ghost"
+                onClick={() => copyRunnerText(buildRunnerCodexCommand(codexPrompt), "Comando").catch(() => setCopyStatus("No pude copiar el comando automaticamente."))}
+              >
+                Copiar codex exec
+              </button>
             </div>
+            <p className="runner-copy-status">{copyStatus}</p>
+          </RunnerPanel>
+        </aside>
+      </section>
+
+      <section className="runner-secondary-grid">
+        <RunnerPanel eyebrow="Activity" title="Changed in this comparison" meta={`${allEvents.length} events`}>
+          <div className="runner-compact-feed">
+            {allEvents.length ? allEvents.slice(0, 14).map((event) => (
+              <RunnerCompactEvent event={event} key={`${event.kind}:${event.lead_id}:${event.occurred_at || ""}`} />
+            )) : (
+              <RunnerEmpty title="No tracked event changed" text="No new inbound, outbound, state, delivery, exclusion, or due-bucket change was detected." />
+            )}
           </div>
+        </RunnerPanel>
+
+        <RunnerPanel eyebrow="Timeline" title="Recent runs" meta={`${logs.length} files`}>
           <ol className="runner-timeline">
             {logs.length ? logs.map((log) => (
               <li key={log.path}>
@@ -1565,61 +1650,151 @@ function RunnerStatusView({
               <li><span className="runner-timeline-dot" /><div><strong>No runs yet</strong><span>-</span></div></li>
             )}
           </ol>
-        </aside>
+        </RunnerPanel>
+      </section>
+
+      <div className="runner-disclosure-row">
+        <details className="runner-history-details">
+          <summary>Historial acumulado</summary>
+          <MarkdownBlock markdown={historyMarkdown} className="runner-history-markdown" />
+        </details>
+
+        <details className="runner-technical">
+          <summary>Technical details</summary>
+          <div className="runner-tail-grid" aria-label="Runner log tails">
+            <RunnerTail title="Latest run tail" text={status?.latest_log_tail || ""} />
+            <RunnerTail title="LaunchAgent stdout" text={status?.launchd_out_tail || ""} />
+            <RunnerTail title="LaunchAgent stderr" text={status?.launchd_err_tail || ""} />
+          </div>
+        </details>
       </div>
-
-      <section className="workstation-panel runner-history-panel">
-        <div className="workstation-panel-head">
-          <div>
-            <span>Accumulated notes</span>
-            <strong>Historial human-readable</strong>
-          </div>
-        </div>
-        <MarkdownBlock markdown={historyMarkdown} className="runner-history-markdown" />
-      </section>
-
-      <section className="workstation-panel runner-codex-panel">
-        <div className="workstation-panel-head">
-          <div>
-            <span>Ask Codex</span>
-            <strong>Usar esta corrida como contexto</strong>
-          </div>
-        </div>
-        <textarea
-          className="runner-question"
-          value={codexRequest}
-          onChange={(event) => setCodexRequest(event.target.value)}
-          placeholder="Ej: Ese mensaje esta mal, corregilo. O: ahora preguntale si puede hacer una llamada."
-        />
-        <div className="runner-actions">
-          <button
-            type="button"
-            className="ct-btn ct-btn-primary"
-            onClick={() => copyRunnerText(codexPrompt, "Prompt").catch(() => setCopyStatus("No pude copiar el prompt automaticamente."))}
-          >
-            Copiar prompt
-          </button>
-          <button
-            type="button"
-            className="ct-btn ct-btn-ghost"
-            onClick={() => copyRunnerText(buildRunnerCodexCommand(codexPrompt), "Comando").catch(() => setCopyStatus("No pude copiar el comando automaticamente."))}
-          >
-            Copiar codex exec
-          </button>
-        </div>
-        <p className="runner-copy-status">{copyStatus}</p>
-      </section>
-
-      <details className="runner-technical">
-        <summary>Technical details</summary>
-        <div className="runner-tail-grid" aria-label="Runner log tails">
-          <RunnerTail title="Latest run tail" text={status?.latest_log_tail || ""} />
-          <RunnerTail title="LaunchAgent stdout" text={status?.launchd_out_tail || ""} />
-          <RunnerTail title="LaunchAgent stderr" text={status?.launchd_err_tail || ""} />
-        </div>
-      </details>
     </div>
   );
+}
+
+function RunnerSignal({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone: "danger" | "warn" | "hot" | "ok" | "neutral";
+}) {
+  return (
+    <div className="runner-signal" data-tone={tone}>
+      <span>{label}</span>
+      <strong>{compactNumber(value)}</strong>
+    </div>
+  );
+}
+
+function RunnerPanel({
+  eyebrow,
+  title,
+  meta,
+  children,
+}: {
+  eyebrow: string;
+  title: string;
+  meta: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="runner-panel">
+      <div className="runner-panel-head">
+        <div>
+          <span>{eyebrow}</span>
+          <strong>{title}</strong>
+        </div>
+        <em>{meta}</em>
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function RunnerEventCard({ event }: { event: RunnerDeltaEvent }) {
+  return (
+    <article className="runner-event-card" data-severity={event.severity}>
+      <div className="runner-event-topline">
+        <span>{formatRunnerKind(event.kind)}</span>
+        <time>{event.occurred_at ? relativeTime(event.occurred_at) : "changed"}</time>
+      </div>
+      <h3>{event.full_name || event.phone || "Unknown lead"}</h3>
+      <p>{event.detail}</p>
+      <div className="runner-event-action">{event.suggested_action}</div>
+    </article>
+  );
+}
+
+function RunnerCompactEvent({ event }: { event: RunnerDeltaEvent }) {
+  return (
+    <div className="runner-compact-event" data-severity={event.severity}>
+      <span>{formatRunnerKind(event.kind)}</span>
+      <div>
+        <strong>{event.title}</strong>
+        <p>{event.suggested_action}</p>
+      </div>
+      <time>{event.occurred_at ? relativeTime(event.occurred_at) : "-"}</time>
+    </div>
+  );
+}
+
+function RunnerDeltaTable({
+  bucketDeltas,
+  failureDeltas,
+  exclusionDeltas,
+}: {
+  bucketDeltas: Array<{ key: string; previous: number; current: number; delta: number }>;
+  failureDeltas: Array<{ key: string; previous: number; current: number; delta: number }>;
+  exclusionDeltas: Array<{ key: string; previous: number; current: number; delta: number }>;
+}) {
+  const rows = [
+    ...bucketDeltas.map((row) => ({ ...row, group: "Bucket" })),
+    ...failureDeltas.map((row) => ({ ...row, group: "Provider" })),
+    ...exclusionDeltas.map((row) => ({ ...row, group: "Excluded" })),
+  ].slice(0, 14);
+
+  if (!rows.length) {
+    return <RunnerEmpty title="Counts are stable" text="Buckets, provider errors, and exclusions did not move since the previous comparable snapshot." />;
+  }
+
+  return (
+    <div className="runner-delta-table">
+      {rows.map((row) => (
+        <div className="runner-delta-row" key={`${row.group}:${row.key}`}>
+          <span>{row.group}</span>
+          <strong>{humanize(row.key)}</strong>
+          <code>{`${row.previous} -> ${row.current}`}</code>
+          <em data-positive={row.delta > 0}>{row.delta > 0 ? `+${row.delta}` : row.delta}</em>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function RunnerEmpty({ title, text }: { title: string; text: string }) {
+  return (
+    <div className="runner-empty-state">
+      <strong>{title}</strong>
+      <p>{text}</p>
+    </div>
+  );
+}
+
+function formatRunnerKind(value: string): string {
+  const labels: Record<string, string> = {
+    booking_time_provided: "Booking intent",
+    new_reply: "New reply",
+    delivery_changed: "Delivery",
+    state_changed: "State",
+    due_next_step: "Due",
+    outbound_sent: "Outbound",
+    new_exclusion: "Excluded",
+    new_lead: "New lead",
+  };
+  return labels[value] ?? humanize(value);
 }
 
 function MarkdownBlock({ markdown, className = "" }: { markdown: string; className?: string }) {
@@ -1670,10 +1845,12 @@ async function copyTextToClipboard(value: string): Promise<void> {
 
 function buildRunnerCodexPrompt({
   request,
+  deltaMarkdown,
   latestSummary,
   historyMarkdown,
 }: {
   request: string;
+  deltaMarkdown: string;
   latestSummary: string;
   historyMarkdown: string;
 }): string {
@@ -1684,6 +1861,9 @@ function buildRunnerCodexPrompt({
     "",
     "## My request",
     request.trim() || "(write the request here)",
+    "",
+    "## Delta since previous run",
+    deltaMarkdown,
     "",
     "## Latest run",
     latestSummary,

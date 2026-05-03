@@ -141,17 +141,28 @@ Use the send/action endpoints for outbound WhatsApp.
 
 ## Operating Loop
 
-1. Read recent CRM state from the production snapshot endpoint. Use SSH/database
+1. Read previous run state before deciding what to do:
+   `data/reports/contadores-crm-followup-delta-current.md`,
+   `data/reports/contadores-crm-followup-latest.md`,
+   `data/reports/contadores-crm-followup-history.md`, and, when useful,
+   `GET /api/contadores/followup/runner/status`.
+2. Read current CRM state from the production snapshot endpoint. Use SSH/database
    access only when debugging server internals.
-2. Segment leads using the buckets in
+3. Compare current CRM state against the previous run state first. Identify new
+   inbound messages, changed stages/manual statuses, new or changed delivery
+   failures, newly queued/sent messages, newly excluded leads, and leads whose
+   next-step timing became due since the previous run.
+4. Work from that delta before doing any generic follow-up scan. Leads with new
+   events or changed state take priority over broad stale-lead follow-up.
+5. Segment eligible delta leads using the buckets in
    [references/buckets-copies-sequences.md](references/buckets-copies-sequences.md).
-3. Build a dry-run plan before sending: lead id, funnel, bucket, chosen copy or
+6. Build a dry-run plan before sending: lead id, funnel, bucket, chosen copy or
    template, reason, and skip reason.
-4. Execute live only for clear, eligible actions through the production APIs.
+7. Execute live only for clear, eligible actions through the production APIs.
    The queued message rows are the ledger; include queued ids in the summary.
-5. Verify after sending: message statuses, retry state, provider errors, recent
+8. Verify after sending: message statuses, retry state, provider errors, recent
    inbound replies, container health, and bot/backend logs.
-6. Report what was sent, what failed, what is waiting, what needs human action,
+9. Report what was sent, what failed, what is waiting, what needs human action,
    and which leads are closest to converting.
 
 ## Hourly Run Prompt
@@ -160,33 +171,47 @@ For each hourly run:
 
 1. Read this skill, then read
    [references/buckets-copies-sequences.md](references/buckets-copies-sequences.md).
-2. Fetch the JSON snapshot and, when useful for tabular reasoning, the CSV
+2. Read previous run artifacts first:
+   `data/reports/contadores-crm-followup-delta-current.md`,
+   `data/reports/contadores-crm-followup-latest.md`,
+   `data/reports/contadores-crm-followup-history.md`, and, when useful,
+   `GET /api/contadores/followup/runner/status`.
+3. Fetch the current JSON snapshot and, when useful for tabular reasoning, the CSV
    snapshot.
-3. Find leads with new inbound messages, unresolved Needs answer/Manual state,
-   failed outbound delivery, a clearly due next step, or a warm conversation
-   where our last delivered outbound could be strengthened with a proactive
-   value follow-up.
-4. Apply hard exclusions before any send.
-5. Check delivery status before interpreting silence. If our last outbound
+4. Build or read the delta between the previous run and the current state.
+   Prioritize: new inbound messages, stage/manual-status changes,
+   delivery-status changes, new provider errors, messages queued or delivered
+   since the previous run, leads newly entering or leaving exclusion rules, and
+   leads whose next step became due since the previous run.
+5. Work the delta first. Only after all new or changed events are handled should
+   you do a generic follow-up pass for stale but still-eligible leads.
+6. Apply hard exclusions before any send.
+7. Check delivery status before interpreting silence. If our last outbound
    failed, classify as delivery repair/provider failure, not no-reply.
-6. Detect `booking_time_provided` before ordinary manual/close buckets. If a
+8. Detect `booking_time_provided` before ordinary manual/close buckets. If a
    lead gave a slot, either book it with a real supported Calendly path or
    escalate it as an urgent scheduling handoff through the CRM alert path.
-7. Segment eligible leads into the buckets from the reference file, including
+9. Segment eligible leads into the buckets from the reference file, including
    proactive/value-follow-up buckets for already-touched leads.
-8. Choose the exact approved copy/template. Ask for a day/time for a 15-minute
+10. Choose the exact approved copy/template. Ask for a day/time for a 15-minute
    call on warm/close leads. For proactive value follow-up, use the Frankie
    notes: outcome first, concrete implementation thought, then one next step.
    If the 24-hour custom window is closed, send an approved reopening template
    first and wait for the lead to reply before sending custom value copy/media.
-9. Send at most one intentional outbound per lead in this run. Do not resend a
+11. Send at most one intentional outbound per lead in this run. Do not resend a
    similar follow-up if one was sent recently.
-10. If the action is ambiguous, do not guess; report it for human handling.
-11. After any live action, verify message statuses, retries, provider error
+12. If the action is ambiguous, do not guess; report it for human handling.
+13. After any live action, verify message statuses, retries, provider error
     codes, recent inbound replies, container health, and logs when available.
 
 Final summary must include:
 
+- Delta since previous run: new replies, changed stages/manual statuses, new or
+  changed delivery failures, newly queued/sent/delivered messages, new
+  exclusions, and due-next-step changes.
+- What was handled from the delta before generic follow-up.
+- State checkpoint for the next run: the timestamp/source of the current
+  snapshot and any assumptions used when comparing against the previous run.
 - Messages sent, grouped by bucket and copy/template.
 - Proactive follow-up candidates reviewed, sent, and skipped, with the exact
   reason for each skip.
@@ -235,8 +260,9 @@ with `scripts/render_contadores_crm_runner_dashboard.py`, then open it with
 that HTML on every `running`, `failed`, and `completed` status update. It reads
 the local LaunchAgent, local lock, local logs, latest local summary, and
 `data/reports/contadores-crm-followup-history.md`. The dashboard should stay
-human-first: render Markdown, show latest run plus accumulated notes, show a
-timeline of recent runs, and keep stdout/log tails behind technical details.
+human-first and delta-first: show what changed since the previous run, what now
+needs action, latest run Markdown, accumulated notes, and a recent-run timeline.
+Keep stdout/log tails behind technical details.
 It also provides a Codex handoff prompt/command that includes the latest run and
 history so Facu can ask follow-up questions or request a corrected next action.
 
@@ -246,8 +272,9 @@ its latest summary/log tail back to production through
 `POST /api/contadores/followup/runner/status` via
 `scripts/sync_contadores_crm_runner_status.py`, using `INTERNAL_API_TOKEN`.
 That lets the deployed backoffice show the latest local runner result. Keep the
-Runner tab human-first too: latest Markdown, accumulated Markdown history, and
-timeline up front; technical tails collapsed.
+Runner tab human-first too: structured delta and action-needed leads first,
+latest Markdown and timeline second, accumulated Markdown history and technical
+tails collapsed.
 
 Avoid editing or reinstalling the runner while it is executing. The stable copy
 protects the active shell process, but changing scheduler files mid-run makes

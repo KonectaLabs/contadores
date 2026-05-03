@@ -24,6 +24,15 @@ def read_text(path: Path) -> str:
         return ""
 
 
+def read_json(path: Path) -> dict[str, object] | None:
+    """Read a JSON object if it exists."""
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
 def read_tail(path: Path | None, max_lines: int) -> str:
     """Read the last N lines of a text file."""
     if path is None:
@@ -156,7 +165,7 @@ def infer_status(status: str, lock_dir: Path) -> str:
 
 def esc(value: object) -> str:
     """HTML-escape one value."""
-    return html.escape(str(value or ""), quote=True)
+    return html.escape("" if value is None else str(value), quote=True)
 
 
 def pre_block(title: str, text: str) -> str:
@@ -175,15 +184,18 @@ def render_dashboard(root: Path, status: str, active_log: Path | None, output: P
     lock_dir = root / "data" / "locks" / "contadores-crm-hourly-followup.lock"
     reports_dir.mkdir(parents=True, exist_ok=True)
 
-    launchctl_output = run_launchctl()
-    launchctl_summary = parse_launchctl_summary(launchctl_output)
     recent_logs = latest_logs(reports_dir, 10)
     latest_log = active_log if active_log and active_log.exists() else (recent_logs[0] if recent_logs else None)
     local_status = infer_status(status, lock_dir)
     latest_summary_path = reports_dir / "contadores-crm-followup-latest.md"
     history_path = reports_dir / "contadores-crm-followup-history.md"
+    delta_path = reports_dir / "contadores-crm-followup-delta-latest.json"
     latest_summary = read_text(latest_summary_path) or "No final summary yet."
     history_markdown = read_text(history_path) or latest_summary
+    delta = read_json(delta_path) or {}
+    delta_metrics = delta.get("metrics") if isinstance(delta.get("metrics"), dict) else {}
+    attention_events = delta.get("attention_events") if isinstance(delta.get("attention_events"), list) else []
+    delta_markdown = str(delta.get("markdown") or "No structured delta has been written yet.")
 
     timeline_items = "\n".join(
         f"""
@@ -202,13 +214,36 @@ def render_dashboard(root: Path, status: str, active_log: Path | None, output: P
     generated_at = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
     pid = parse_pid(lock_dir / "pid") if lock_dir.exists() else None
     started_at = read_text(lock_dir / "started_at").strip() or "-"
-    latest_label = f"{relative_time(latest_summary_path)} · {file_mtime(latest_summary_path)}"
     prompt_context = {
         "root": str(root),
+        "delta_markdown": delta_markdown,
         "latest_summary": latest_summary,
         "history_markdown": history_markdown,
     }
     context_json = json.dumps(prompt_context, ensure_ascii=False).replace("</", "<\\/")
+    signal_rows = [
+        ("Needs action", delta_metrics.get("needs_action", 0), "danger" if int(delta_metrics.get("needs_action", 0) or 0) else "ok"),
+        ("New replies", delta_metrics.get("new_replies", 0), "hot" if int(delta_metrics.get("new_replies", 0) or 0) else "neutral"),
+        ("Delivery changes", delta_metrics.get("delivery_changes", 0), "warn" if int(delta_metrics.get("delivery_changes", 0) or 0) else "neutral"),
+        ("New outbound", delta_metrics.get("new_outbound", 0), "neutral"),
+        ("Due next steps", delta_metrics.get("due_next_steps", 0), "hot" if int(delta_metrics.get("due_next_steps", 0) or 0) else "neutral"),
+    ]
+    signals_html = "\n".join(
+        f'<div class="signal" data-tone="{esc(tone)}"><span>{esc(label)}</span><strong>{esc(value)}</strong></div>'
+        for label, value, tone in signal_rows
+    )
+    attention_html = "\n".join(
+        f"""
+        <article class="event">
+          <span>{esc(event.get("kind", "change"))}</span>
+          <strong>{esc(event.get("full_name") or event.get("phone") or "Unknown lead")}</strong>
+          <p>{esc(event.get("detail", ""))}</p>
+          <em>{esc(event.get("suggested_action", ""))}</em>
+        </article>
+        """
+        for event in attention_events[:8]
+        if isinstance(event, dict)
+    ) or '<div class="empty"><strong>No urgent change</strong><p>No new high-priority CRM change since the previous comparable run.</p></div>'
 
     html_text = f"""<!doctype html>
 <html lang="en">
@@ -252,6 +287,18 @@ def render_dashboard(root: Path, status: str, active_log: Path | None, output: P
     .badge[data-status="failed"], .badge[data-status="stale lock"] {{ color: var(--danger); }}
     .badge[data-status="idle"] {{ color: var(--muted); }}
     .overview {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 14px; }}
+    .signals {{ display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }}
+    .signal {{
+      min-height: 76px; display: grid; align-content: center; gap: 8px; padding: 14px; border: 1px solid var(--line);
+      border-radius: 8px; background: var(--surface);
+    }}
+    .signal span {{ color: var(--muted); font: 800 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; text-transform: uppercase; }}
+    .signal strong {{ display: block; color: var(--ink); font: 800 24px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }}
+    .signal[data-tone="danger"] {{ border-color: rgba(163, 59, 59, .32); background: #fff7f7; }}
+    .signal[data-tone="danger"] strong {{ color: var(--danger); }}
+    .signal[data-tone="warn"] {{ border-color: rgba(167, 100, 43, .32); background: #fff8ed; }}
+    .signal[data-tone="hot"] {{ border-color: rgba(15, 118, 110, .22); background: var(--accent-soft); }}
+    .signal[data-tone="ok"] strong {{ color: var(--accent); }}
     .metric, .panel {{
       background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px;
       box-shadow: var(--shadow);
@@ -277,6 +324,13 @@ def render_dashboard(root: Path, status: str, active_log: Path | None, output: P
       color: #3c4643; font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
     }}
     .last-run {{ max-height: 640px; overflow: auto; padding-right: 8px; }}
+    .delta-grid {{ display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(360px, .8fr); gap: 14px; margin-bottom: 14px; align-items: start; }}
+    .event {{ display: grid; gap: 7px; padding: 12px; border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 8px; background: var(--surface-2); }}
+    .event span {{ color: var(--muted); font: 800 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; text-transform: uppercase; }}
+    .event strong {{ font-size: 16px; }}
+    .event p, .event em, .empty p {{ margin: 0; color: var(--muted); font-style: normal; }}
+    .event em {{ padding: 8px 9px; border-radius: 6px; background: var(--surface); color: var(--ink); font-weight: 650; }}
+    .empty {{ padding: 16px; border: 1px dashed var(--line); border-radius: 8px; background: var(--surface-2); }}
     .history {{ margin-top: 14px; }}
     .history .markdown {{ max-height: 760px; overflow: auto; padding-right: 8px; }}
     .timeline {{ display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }}
@@ -303,7 +357,7 @@ def render_dashboard(root: Path, status: str, active_log: Path | None, output: P
       background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 12px;
       font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
     }}
-    @media (max-width: 920px) {{ main {{ padding: 18px; }} .overview, .workspace {{ grid-template-columns: 1fr; }} }}
+    @media (max-width: 920px) {{ main {{ padding: 18px; }} .overview, .signals, .workspace, .delta-grid {{ grid-template-columns: 1fr; }} }}
   </style>
 </head>
 <body>
@@ -316,10 +370,29 @@ def render_dashboard(root: Path, status: str, active_log: Path | None, output: P
       <span class="badge" data-status="{esc(local_status)}">{esc(local_status)}</span>
     </header>
 
-    <section class="overview" aria-label="Timeline summary">
-      <div class="metric"><span>Last run</span><strong>{esc(latest_label)}</strong></div>
-      <div class="metric"><span>Previous runs</span><strong>{esc(len(recent_logs))} recent logs</strong></div>
-      <div class="metric"><span>LaunchAgent</span><strong>{esc(launchctl_summary["state"])} · exit {esc(launchctl_summary["last exit code"])}</strong></div>
+    <section class="signals" aria-label="What changed">
+      {signals_html}
+    </section>
+
+    <section class="delta-grid">
+      <article class="panel">
+        <div class="panel-head">
+          <div>
+            <span class="panel-kicker">Now</span>
+            <strong>Requires attention</strong>
+          </div>
+        </div>
+        {attention_html}
+      </article>
+      <article class="panel">
+        <div class="panel-head">
+          <div>
+            <span class="panel-kicker">Delta</span>
+            <strong>Structured comparison</strong>
+          </div>
+        </div>
+        <div id="deltaMarkdown" class="markdown last-run"></div>
+      </article>
     </section>
 
     <section class="workspace">
@@ -366,13 +439,12 @@ def render_dashboard(root: Path, status: str, active_log: Path | None, output: P
         <button class="primary" type="button" id="copyPrompt">Copiar prompt</button>
         <button type="button" id="copyCommand">Copiar comando codex exec</button>
       </div>
-      <p class="hint" id="copyStatus">Esto arma un prompt nuevo con el last run y el historial. Lo pegas en Codex o corres el comando copiado en Terminal.</p>
+      <p class="hint" id="copyStatus">Esto arma un prompt nuevo con el delta, el last run y el historial. Lo pegas en Codex o corres el comando copiado en Terminal.</p>
     </section>
 
     <details>
       <summary>Detalles tecnicos</summary>
       {pre_block("Active/latest runner log", read_tail(latest_log, tail_lines))}
-      {pre_block("launchctl raw state", launchctl_output)}
     </details>
   </main>
 
@@ -412,6 +484,9 @@ def render_dashboard(root: Path, status: str, active_log: Path | None, output: P
         "",
         "## My request",
         request || "(write the request here)",
+        "",
+        "## Delta since previous run",
+        context.delta_markdown || "",
         "",
         "## Latest run",
         context.latest_summary || "",
@@ -463,6 +538,7 @@ def render_dashboard(root: Path, status: str, active_log: Path | None, output: P
     }});
 
     renderMarkdown("latestMarkdown", context.latest_summary);
+    renderMarkdown("deltaMarkdown", context.delta_markdown);
     renderMarkdown("historyMarkdown", context.history_markdown);
   </script>
 </body>

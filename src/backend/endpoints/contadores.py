@@ -1151,6 +1151,15 @@ def read_text_file(path: Path) -> str:
         return ""
 
 
+def read_json_object_file(path: Path) -> dict[str, Any] | None:
+    """Read a JSON object file for operator-facing diagnostics."""
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
 def read_text_tail(path: Path, max_lines: int) -> str:
     """Return the last lines of a text file without failing if it is absent."""
     text = read_text_file(path)
@@ -1222,6 +1231,7 @@ def build_followup_runner_status(
     lock_dir = DATA_DIR / "locks" / "contadores-crm-hourly-followup.lock"
     latest_summary_path = reports_dir / "contadores-crm-followup-latest.md"
     history_path = reports_dir / "contadores-crm-followup-history.md"
+    delta_path = reports_dir / "contadores-crm-followup-delta-latest.json"
     launchd_out_path = reports_dir / "launchd-contadores-crm-followup.out.log"
     launchd_err_path = reports_dir / "launchd-contadores-crm-followup.err.log"
 
@@ -1249,6 +1259,7 @@ def build_followup_runner_status(
         latest_summary_updated_at=format_file_mtime(latest_summary_path),
         history_markdown=read_text_file(history_path),
         history_updated_at=format_file_mtime(history_path),
+        delta=read_json_object_file(delta_path),
         latest_log_path=str(latest_log_path) if latest_log_path else None,
         latest_log_tail=read_text_tail(latest_log_path, log_tail_lines) if latest_log_path else "",
         launchd_out_tail=read_text_tail(launchd_out_path, log_tail_lines),
@@ -1311,6 +1322,16 @@ def write_followup_runner_status_sync(command: ContadoresRunnerStatusSyncCommand
     )
 
     (reports_dir / "contadores-crm-followup-latest.md").write_text(summary, encoding="utf-8")
+    if command.runner_delta is not None:
+        delta_text = json.dumps(command.runner_delta, ensure_ascii=True, indent=2)
+        (reports_dir / "contadores-crm-followup-delta-latest.json").write_text(
+            delta_text,
+            encoding="utf-8",
+        )
+        (reports_dir / f"contadores-crm-followup-delta-remote-{timestamp}.json").write_text(
+            delta_text,
+            encoding="utf-8",
+        )
     append_followup_runner_history(
         reports_dir=reports_dir,
         status=command.status,
@@ -2121,6 +2142,7 @@ class ContadoresRunnerStatusResponse(BaseModel):
     latest_summary_updated_at: str | None = None
     history_markdown: str = ""
     history_updated_at: str | None = None
+    delta: dict[str, Any] | None = None
     latest_log_path: str | None = None
     latest_log_tail: str = ""
     launchd_out_tail: str = ""
@@ -2139,6 +2161,7 @@ class ContadoresRunnerStatusSyncCommand(BaseModel):
     started_at: str | None = None
     lock_age_seconds: int | None = None
     latest_summary: str = ""
+    runner_delta: dict[str, Any] | None = None
     latest_log_tail: str = ""
     launchd_out_tail: str = ""
     launchd_err_tail: str = ""

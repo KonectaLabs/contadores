@@ -32,6 +32,15 @@ def read_tail(path: Path, max_lines: int) -> str:
     return "\n".join(text.splitlines()[-max_lines:])
 
 
+def read_json(path: Path) -> dict[str, object] | None:
+    """Read a JSON object artifact if it exists."""
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
 def parse_pid(path: Path) -> int | None:
     """Read a positive integer pid from a file."""
     raw_value = read_text(path).strip()
@@ -64,6 +73,7 @@ def build_payload(root: Path, status: str, active_log: Path | None, tail_lines: 
     reports_dir = root / "data" / "reports"
     lock_dir = root / "data" / "locks" / "contadores-crm-hourly-followup.lock"
     latest_summary_path = reports_dir / "contadores-crm-followup-latest.md"
+    latest_delta_path = reports_dir / "contadores-crm-followup-delta-latest.json"
     latest_log_path = active_log if active_log and active_log.exists() else latest_timestamped_log(reports_dir)
     return {
         "status": status,
@@ -74,6 +84,7 @@ def build_payload(root: Path, status: str, active_log: Path | None, tail_lines: 
         "started_at": read_text(lock_dir / "started_at").strip() or None,
         "lock_age_seconds": lock_age_seconds(lock_dir),
         "latest_summary": read_text(latest_summary_path),
+        "runner_delta": read_json(latest_delta_path),
         "latest_log_tail": read_tail(latest_log_path, tail_lines) if latest_log_path else "",
         "launchd_out_tail": read_tail(reports_dir / "launchd-contadores-crm-followup.out.log", tail_lines),
         "launchd_err_tail": read_tail(reports_dir / "launchd-contadores-crm-followup.err.log", tail_lines),

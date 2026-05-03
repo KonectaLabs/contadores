@@ -413,6 +413,10 @@ def test_contadores_followup_runner_status_reads_local_artifacts(monkeypatch, tm
     (lock_dir / "pid").write_text("999999999", encoding="utf-8")
     (lock_dir / "started_at").write_text("2026-05-03T01:00:00Z", encoding="utf-8")
     (reports_dir / "contadores-crm-followup-latest.md").write_text("Messages sent: none", encoding="utf-8")
+    (reports_dir / "contadores-crm-followup-delta-latest.json").write_text(
+        '{"metrics":{"new_replies":1,"needs_action":1},"events":[]}',
+        encoding="utf-8",
+    )
     (reports_dir / "contadores-crm-followup-20260503T010000Z.log").write_text(
         "line 1\nline 2\nline 3\n",
         encoding="utf-8",
@@ -427,6 +431,7 @@ def test_contadores_followup_runner_status_reads_local_artifacts(monkeypatch, tm
     assert payload["running"] is True
     assert payload["started_at"] == "2026-05-03T01:00:00Z"
     assert payload["latest_summary"] == "Messages sent: none"
+    assert payload["delta"]["metrics"]["new_replies"] == 1
     assert payload["history_markdown"] == ""
     assert payload["history_updated_at"] is None
     assert payload["latest_log_tail"] == "line 2\nline 3"
@@ -445,6 +450,7 @@ def test_contadores_followup_runner_status_reads_local_artifacts(monkeypatch, tm
                 "status": "completed",
                 "generated_at": "2026-05-03T01:10:00Z",
                 "latest_summary": "Synced summary",
+                "runner_delta": {"metrics": {"new_replies": 2, "needs_action": 1}, "events": []},
                 "latest_log_tail": "synced tail",
                 "launchd_out_tail": "synced stdout",
                 "launchd_err_tail": "synced stderr",
@@ -466,6 +472,7 @@ def test_contadores_followup_runner_status_reads_local_artifacts(monkeypatch, tm
     assert synced_again.status_code == 200
     synced_payload = synced.json()
     assert synced_payload["latest_summary"] == "Synced summary"
+    assert synced_payload["delta"]["metrics"]["new_replies"] == 2
     assert synced_payload["history_updated_at"] is not None
     assert synced_payload["history_markdown"].count("Synced summary") == 1
     assert "synced tail" in synced_payload["latest_log_tail"]

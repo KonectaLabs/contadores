@@ -19,16 +19,29 @@ fi
 REPORT_DIR="$ROOT_DIR/data/reports"
 LOCK_PARENT="$ROOT_DIR/data/locks"
 LOCK_DIR="$LOCK_PARENT/contadores-crm-hourly-followup.lock"
-LOG_FILE="$REPORT_DIR/contadores-crm-followup-$(date -u +%Y%m%dT%H%M%SZ).log"
+RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+LOG_FILE="$REPORT_DIR/contadores-crm-followup-$RUN_ID.log"
 LAST_MESSAGE_FILE="$REPORT_DIR/contadores-crm-followup-latest.md"
 HISTORY_FILE="$REPORT_DIR/contadores-crm-followup-history.md"
+RUN_RECORD_DIR="$REPORT_DIR/contadores-crm-followup-runs"
+LATEST_SNAPSHOT_FILE="$REPORT_DIR/contadores-crm-followup-snapshot-latest.json"
+PREVIOUS_SNAPSHOT_FILE="$REPORT_DIR/contadores-crm-followup-snapshot-previous.json"
+SNAPSHOT_BEFORE_FILE="$RUN_RECORD_DIR/$RUN_ID-before.json"
+SNAPSHOT_AFTER_FILE="$RUN_RECORD_DIR/$RUN_ID-after.json"
+DELTA_CURRENT_FILE="$REPORT_DIR/contadores-crm-followup-delta-current.json"
+DELTA_CURRENT_MARKDOWN_FILE="$REPORT_DIR/contadores-crm-followup-delta-current.md"
+DELTA_LATEST_FILE="$REPORT_DIR/contadores-crm-followup-delta-latest.json"
+DELTA_LATEST_MARKDOWN_FILE="$REPORT_DIR/contadores-crm-followup-delta-latest.md"
+DELTA_RUN_FILE="$RUN_RECORD_DIR/$RUN_ID-delta.json"
+DELTA_RUN_MARKDOWN_FILE="$RUN_RECORD_DIR/$RUN_ID-delta.md"
 PROMPT_FILE="$ROOT_DIR/.codex/skills/contadores-crm-followup-automation/references/automation-prompt.md"
 RUNNER_STATUS_SYNC_SCRIPT="$ROOT_DIR/scripts/sync_contadores_crm_runner_status.py"
 RUNNER_DASHBOARD_SCRIPT="$ROOT_DIR/scripts/render_contadores_crm_runner_dashboard.py"
+RUNNER_DELTA_SCRIPT="$ROOT_DIR/scripts/build_contadores_crm_runner_delta.py"
 
-SNAPSHOT_URL="http://149.50.136.121/api/contadores/followup/snapshot?limit=1&messages_per_lead=1"
+SNAPSHOT_URL="http://149.50.136.121/api/contadores/followup/snapshot?limit=20000&messages_per_lead=12"
 
-mkdir -p "$REPORT_DIR" "$LOCK_PARENT"
+mkdir -p "$REPORT_DIR" "$LOCK_PARENT" "$RUN_RECORD_DIR"
 cd "$ROOT_DIR"
 
 if [ -d "$LOCK_DIR" ]; then
@@ -108,6 +121,44 @@ append_runner_history() {
   } >> "$HISTORY_FILE"
 }
 
+fetch_followup_snapshot() {
+  local output_file="$1"
+  curl -fsS \
+    -H "Host: contadores.fgoiriz.com" \
+    -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
+    "$SNAPSHOT_URL" \
+    -o "$output_file"
+}
+
+build_runner_delta() {
+  local current_snapshot="$1"
+  local status="$2"
+  local output_json="$3"
+  local output_md="$4"
+  if [ ! -x "$RUNNER_DELTA_SCRIPT" ] && [ ! -f "$RUNNER_DELTA_SCRIPT" ]; then
+    return
+  fi
+  local previous_arg=()
+  if [ -s "$LATEST_SNAPSHOT_FILE" ]; then
+    previous_arg=(--previous "$LATEST_SNAPSHOT_FILE")
+  fi
+  python3 "$RUNNER_DELTA_SCRIPT" \
+    "${previous_arg[@]}" \
+    --current "$current_snapshot" \
+    --summary "$LAST_MESSAGE_FILE" \
+    --status "$status" \
+    --output-json "$output_json" \
+    --output-md "$output_md" || true
+}
+
+promote_latest_snapshot() {
+  local current_snapshot="$1"
+  if [ -s "$LATEST_SNAPSHOT_FILE" ]; then
+    cp "$LATEST_SNAPSHOT_FILE" "$PREVIOUS_SNAPSHOT_FILE"
+  fi
+  cp "$current_snapshot" "$LATEST_SNAPSHOT_FILE"
+}
+
 if [ -z "${INTERNAL_API_TOKEN:-}" ]; then
   echo "Blocked: INTERNAL_API_TOKEN is missing from $ROOT_DIR/.env or environment."
   exit 1
@@ -131,20 +182,26 @@ PY
 
 sync_runner_status running
 
-if ! curl -fsS \
-    -H "Host: contadores.fgoiriz.com" \
-    -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
-    "$SNAPSHOT_URL" >/dev/null; then
+if ! fetch_followup_snapshot "$SNAPSHOT_BEFORE_FILE"; then
   echo "preflight_snapshot=failed"
   sync_runner_status failed
   exit 1
 fi
 
 echo "preflight_snapshot=ok"
+build_runner_delta "$SNAPSHOT_BEFORE_FILE" running "$DELTA_CURRENT_FILE" "$DELTA_CURRENT_MARKDOWN_FILE"
+if [ -s "$DELTA_CURRENT_FILE" ]; then
+  cp "$DELTA_CURRENT_FILE" "$DELTA_LATEST_FILE"
+fi
+if [ -s "$DELTA_CURRENT_MARKDOWN_FILE" ]; then
+  cp "$DELTA_CURRENT_MARKDOWN_FILE" "$DELTA_LATEST_MARKDOWN_FILE"
+fi
+sync_runner_status running
 
 export CONTADORES_CRM_FOLLOWUP_RUNNER=1
 export CONTADORES_CRM_FOLLOWUP_LOCK_DIR="$LOCK_DIR"
 export CONTADORES_CRM_FOLLOWUP_LOG_FILE="$LOG_FILE"
+export CONTADORES_CRM_FOLLOWUP_DELTA_FILE="$DELTA_CURRENT_MARKDOWN_FILE"
 
 codex exec \
   -C "$ROOT_DIR" \
@@ -173,10 +230,24 @@ wait "$watchdog_pid" 2>/dev/null || true
 
 if [ "$codex_status" -ne 0 ]; then
   echo "Codex run failed with status $codex_status."
+  if fetch_followup_snapshot "$SNAPSHOT_AFTER_FILE"; then
+    build_runner_delta "$SNAPSHOT_AFTER_FILE" failed "$DELTA_RUN_FILE" "$DELTA_RUN_MARKDOWN_FILE"
+    cp "$DELTA_RUN_FILE" "$DELTA_LATEST_FILE" 2>/dev/null || true
+    cp "$DELTA_RUN_MARKDOWN_FILE" "$DELTA_LATEST_MARKDOWN_FILE" 2>/dev/null || true
+    promote_latest_snapshot "$SNAPSHOT_AFTER_FILE"
+  fi
   sync_runner_status failed
   exit "$codex_status"
 fi
 
 echo "finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo "last_message=$LAST_MESSAGE_FILE"
+if fetch_followup_snapshot "$SNAPSHOT_AFTER_FILE"; then
+  build_runner_delta "$SNAPSHOT_AFTER_FILE" completed "$DELTA_RUN_FILE" "$DELTA_RUN_MARKDOWN_FILE"
+  cp "$DELTA_RUN_FILE" "$DELTA_LATEST_FILE" 2>/dev/null || true
+  cp "$DELTA_RUN_MARKDOWN_FILE" "$DELTA_LATEST_MARKDOWN_FILE" 2>/dev/null || true
+  promote_latest_snapshot "$SNAPSHOT_AFTER_FILE"
+else
+  echo "post_run_snapshot=failed"
+fi
 sync_runner_status completed

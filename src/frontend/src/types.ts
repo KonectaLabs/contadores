@@ -94,6 +94,59 @@ export interface RunnerLogItem {
   modified_at: string | null;
 }
 
+export interface RunnerMetricDelta {
+  key: string;
+  previous: number;
+  current: number;
+  delta: number;
+}
+
+export interface RunnerDeltaEvent {
+  lead_id: string;
+  funnel_id: string;
+  full_name: string | null;
+  phone: string | null;
+  kind: string;
+  severity: "critical" | "high" | "medium" | "low" | "info" | string;
+  title: string;
+  detail: string;
+  suggested_action: string;
+  occurred_at: string | null;
+  stage: string | null;
+  manual_reply_status: string | null;
+  latest_text: string;
+  excluded: boolean;
+  exclusion_reasons: string[];
+}
+
+export interface RunnerDelta {
+  schema_version: number;
+  status: string;
+  source: string;
+  created_at: string;
+  baseline_available: boolean;
+  previous_generated_at: string | null;
+  current_generated_at: string | null;
+  summary_excerpt: string;
+  metrics: {
+    total_leads: number;
+    new_replies: number;
+    needs_action: number;
+    new_outbound: number;
+    delivery_changes: number;
+    state_changes: number;
+    due_next_steps: number;
+    new_exclusions: number;
+  };
+  bucket_deltas: RunnerMetricDelta[];
+  exclusion_deltas: RunnerMetricDelta[];
+  failure_deltas: RunnerMetricDelta[];
+  events: RunnerDeltaEvent[];
+  attention_events: RunnerDeltaEvent[];
+  sent_events: RunnerDeltaEvent[];
+  markdown: string;
+}
+
 export interface RunnerStatusResponse {
   generated_at: string;
   running: boolean;
@@ -104,6 +157,7 @@ export interface RunnerStatusResponse {
   latest_summary_updated_at: string | null;
   history_markdown: string;
   history_updated_at: string | null;
+  delta: RunnerDelta | null;
   latest_log_path: string | null;
   latest_log_tail: string;
   launchd_out_tail: string;
