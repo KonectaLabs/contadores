@@ -43,9 +43,10 @@ acknowledge a failed message from the chat; acknowledged failures keep their
 message-level error but no longer count toward the red lead-row alert.
 Failed WhatsApp provider webhooks should preserve Meta error fields when
 available (`code`, user-facing message, details) and the backend should
-normalize common codes such as `131026` (likely invalid/not-on-WhatsApp
-recipient) and `131047` (24-hour customer service window closed) into useful
-operator-facing explanations.
+normalize common codes such as `130472` (recipient is in a Meta experiment
+group), `131026` (likely invalid/not-on-WhatsApp recipient), and `131047`
+(24-hour customer service window closed) into useful operator-facing
+explanations.
 Historical failed rows can be requeued with:
 
 ```bash

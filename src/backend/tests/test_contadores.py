@@ -604,6 +604,40 @@ def test_contadores_provider_failed_status_requeues_before_final_failure(monkeyp
     assert "Meta code: 131026" in third.json()["last_delivery_error"]
 
 
+def test_contadores_delivery_failure_normalizes_experiment_group_error(monkeypatch, tmp_path) -> None:
+    """Meta experiment-group failures should be readable in the CRM."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    ContadoresConfig.update(enabled=True)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-experiment-group",
+        phone="+5491111111117",
+        full_name="Experiment Lead",
+    )
+    message = ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=True,
+        text="Hola",
+        delivery_status=MessageDeliveryStatus.UNDELIVERED,
+        sequence_step="opener",
+    )
+    raw_error = (
+        "UserIsInExperimentGroup(code=130472, message=\"User's number is part of an experiment\", "
+        "details=\"Failed to send message because this user's phone number is part of an experiment\")"
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            f"/api/contadores/messages/{message.id}/delivery-failure",
+            json={"error": raw_error, "max_attempts": 1, "retry_delay_seconds": 0},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["delivery_status"] == "failed"
+    assert "Meta says the recipient is in an experiment group" in response.json()["last_delivery_error"]
+    assert "not a copy or template issue" in response.json()["last_delivery_error"]
+    assert "Meta code: 130472" in response.json()["last_delivery_error"]
+
+
 def test_contadores_custom_manual_message_requires_open_whatsapp_window(monkeypatch, tmp_path) -> None:
     """Custom/manual WhatsApp should be blocked when the 24-hour window is closed."""
     configure_contadores_db(monkeypatch, tmp_path)

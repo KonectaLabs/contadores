@@ -339,9 +339,10 @@ se reintenta hasta `CONTADORES_DELIVERY_MAX_ATTEMPTS` veces, esperando
 intentos, el mensaje queda en `failed`, el lead se marca con una alerta roja en
 el CRM, y el detalle del chat muestra el error expandible junto al mensaje. Los
 errores de Meta se normalizan antes de mostrarse: por ejemplo, el codigo
-`131026` se muestra como posible numero no registrado en WhatsApp o destinatario
-que no puede recibir mensajes de empresa, y `131047` como ventana de 24 horas
-cerrada. El operador puede tocar el mensaje fallido o el boton `Seen` para
+`130472` se muestra como destinatario bloqueado por un experimento de Meta,
+`131026` como posible numero no registrado en WhatsApp o destinatario que no
+puede recibir mensajes de empresa, y `131047` como ventana de 24 horas cerrada.
+El operador puede tocar el mensaje fallido o el boton `Seen` para
 guardar `delivery_error_acknowledged_at`; desde ese momento el error sigue
 visible en el chat, pero deja de contar para la alerta roja del lead.
 

@@ -79,6 +79,11 @@ VENEZUELA_MOBILE_PREFIXES = ("412", "414", "416", "424", "426")
 PHONE_DIGITS_RE = re.compile(r"\D+")
 
 WHATSAPP_DELIVERY_ERROR_BY_CODE = {
+    130472: (
+        "WhatsApp could not deliver this message because Meta says the recipient "
+        "is in an experiment group. This is a provider/recipient restriction, "
+        "not a copy or template issue; review the lead manually or try another channel."
+    ),
     130429: "WhatsApp throughput limit was reached. Retry later.",
     130497: "This WhatsApp Business Account is restricted from messaging this country.",
     131000: "WhatsApp failed with an unknown provider error.",
