@@ -65,7 +65,7 @@
 
 ## 2026-05-03 18:59 - Codex runtime readiness
 
-- Status: local validation passed; preparing commit, push, deploy, and server verification.
+- Status: deployed and verified on the real server.
 - Improvement: make `/api/runtime` and `/health` report not-ready when `CONTADORES_SHEET_GID` is missing, matching the documented required lead source config.
 - Planned files:
   - `src/backend/runtime_settings.py`
@@ -80,6 +80,12 @@
 - Guardrail: no frontend CRM edits, no funnel JSON behavior changes, no WhatsApp automation changes, no deploy script changes.
 - During: implemented the runtime GID readiness check, updated the focused runtime tests, and documented the requirement in README, `.env.example`, and the local rollout/spreadsheet skills.
 - Validation: `uv run pytest src/backend/tests/test_contadores.py -k runtime` passed with 2 tests.
+
+### 2026-05-03 19:18 - Final
+
+- Pushed code commit `83ef16b` to `main`; the deployed server later advanced to `dc0174d`, which includes this commit.
+- Deployed with `bash deploy_to_server.sh`; backend and bot containers came up healthy.
+- Verified on the real backend: `/health` returned `ready=true`, `/api/runtime` returned `ready=true`, `sheet_configured=true`, `sheet_gid="0"`, and no readiness issues, and `/api/funnels` returned `contadores`, `abogados`, and `general`.
 
 ## 2026-05-03 18:59 - Codex backend/API lane
 
