@@ -228,6 +228,13 @@ timestamped logs under `data/reports/`, writes the latest final summary to
 `data/tmp/` and executes the copy, so a repo edit during a long run cannot
 change the already-running shell script.
 
+The visual Runner tab in the backoffice reads
+`GET /api/contadores/followup/runner/status`. The local LaunchAgent also syncs
+its latest summary/log tail back to production through
+`POST /api/contadores/followup/runner/status` via
+`scripts/sync_contadores_crm_runner_status.py`, using `INTERNAL_API_TOKEN`.
+That lets the deployed backoffice show the latest local runner result.
+
 Avoid editing or reinstalling the runner while it is executing. The stable copy
 protects the active shell process, but changing scheduler files mid-run makes
 logs and verification harder to reason about.

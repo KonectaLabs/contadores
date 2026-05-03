@@ -1254,6 +1254,44 @@ def build_followup_runner_status(
     )
 
 
+def write_followup_runner_status_sync(command: ContadoresRunnerStatusSyncCommand) -> None:
+    """Persist a remote runner status sync under the reports directory."""
+    reports_dir = DATA_DIR / "reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    received_at = format_timestamp_seconds(now_utc()) or ""
+    timestamp = now_utc().strftime("%Y%m%dT%H%M%SZ")
+    summary = command.latest_summary.strip() or f"Runner status: {command.status}"
+    log_text = "\n".join(
+        part
+        for part in [
+            f"source={command.source}",
+            f"status={command.status}",
+            f"generated_at={command.generated_at or '-'}",
+            f"received_at={received_at}",
+            "",
+            command.latest_log_tail.strip(),
+        ]
+        if part
+    )
+
+    (reports_dir / "contadores-crm-followup-latest.md").write_text(summary, encoding="utf-8")
+    (reports_dir / f"contadores-crm-followup-remote-{timestamp}.log").write_text(log_text, encoding="utf-8")
+    (reports_dir / "launchd-contadores-crm-followup.out.log").write_text(
+        command.launchd_out_tail,
+        encoding="utf-8",
+    )
+    (reports_dir / "launchd-contadores-crm-followup.err.log").write_text(
+        command.launchd_err_tail,
+        encoding="utf-8",
+    )
+    sync_payload = command.model_dump()
+    sync_payload["received_at"] = received_at
+    (reports_dir / "contadores-crm-followup-remote-status.json").write_text(
+        json.dumps(sync_payload, ensure_ascii=True, indent=2),
+        encoding="utf-8",
+    )
+
+
 def normalize_message_for_dedupe(text: str) -> str:
     """Normalize outbound text enough to prevent accidental duplicate sends."""
     return " ".join(text.split()).strip()
@@ -2045,6 +2083,22 @@ class ContadoresRunnerStatusResponse(BaseModel):
     logs: list[ContadoresRunnerLogItem] = Field(default_factory=list)
 
 
+class ContadoresRunnerStatusSyncCommand(BaseModel):
+    """Internal command used by the local LaunchAgent to sync runner status."""
+
+    status: str = "completed"
+    source: str = "local_launchd"
+    generated_at: str | None = None
+    running: bool = False
+    pid: int | None = None
+    started_at: str | None = None
+    lock_age_seconds: int | None = None
+    latest_summary: str = ""
+    latest_log_tail: str = ""
+    launchd_out_tail: str = ""
+    launchd_err_tail: str = ""
+
+
 class ContadoresFollowupSendMessageCommand(BaseModel):
     """Internal automation command to queue one manual outbound message."""
 
@@ -2621,6 +2675,17 @@ async def get_followup_runner_status(
         log_tail_lines=log_tail_lines,
         log_limit=log_limit,
     )
+
+
+@contadores_router.post("/followup/runner/status", response_model=ContadoresRunnerStatusResponse)
+async def sync_followup_runner_status(
+    request: Request,
+    command: ContadoresRunnerStatusSyncCommand,
+) -> ContadoresRunnerStatusResponse:
+    """Persist the latest local LaunchAgent run status for the visual dashboard."""
+    require_internal_api_token(request)
+    write_followup_runner_status_sync(command)
+    return build_followup_runner_status()
 
 
 @contadores_router.post("/followup/leads/{lead_id}/messages", response_model=ContadoresQuickActionResponse)

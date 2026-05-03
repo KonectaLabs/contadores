@@ -22,6 +22,7 @@ LOCK_DIR="$LOCK_PARENT/contadores-crm-hourly-followup.lock"
 LOG_FILE="$REPORT_DIR/contadores-crm-followup-$(date -u +%Y%m%dT%H%M%SZ).log"
 LAST_MESSAGE_FILE="$REPORT_DIR/contadores-crm-followup-latest.md"
 PROMPT_FILE="$ROOT_DIR/.codex/skills/contadores-crm-followup-automation/references/automation-prompt.md"
+RUNNER_STATUS_SYNC_SCRIPT="$ROOT_DIR/scripts/sync_contadores_crm_runner_status.py"
 
 SNAPSHOT_URL="http://149.50.136.121/api/contadores/followup/snapshot?limit=1&messages_per_lead=1"
 
@@ -64,6 +65,16 @@ if [ -f "$ROOT_DIR/.env" ]; then
   set +a
 fi
 
+sync_runner_status() {
+  local status="$1"
+  if [ -x "$RUNNER_STATUS_SYNC_SCRIPT" ]; then
+    python3 "$RUNNER_STATUS_SYNC_SCRIPT" \
+      --root "$ROOT_DIR" \
+      --status "$status" \
+      --active-log "$LOG_FILE" || true
+  fi
+}
+
 if [ -z "${INTERNAL_API_TOKEN:-}" ]; then
   echo "Blocked: INTERNAL_API_TOKEN is missing from $ROOT_DIR/.env or environment."
   exit 1
@@ -85,10 +96,16 @@ print(text[start:end].strip())
 PY
 )"
 
-curl -fsS \
-  -H "Host: contadores.fgoiriz.com" \
-  -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
-  "$SNAPSHOT_URL" >/dev/null
+sync_runner_status running
+
+if ! curl -fsS \
+    -H "Host: contadores.fgoiriz.com" \
+    -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
+    "$SNAPSHOT_URL" >/dev/null; then
+  echo "preflight_snapshot=failed"
+  sync_runner_status failed
+  exit 1
+fi
 
 echo "preflight_snapshot=ok"
 
@@ -123,8 +140,10 @@ wait "$watchdog_pid" 2>/dev/null || true
 
 if [ "$codex_status" -ne 0 ]; then
   echo "Codex run failed with status $codex_status."
+  sync_runner_status failed
   exit "$codex_status"
 fi
 
 echo "finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo "last_message=$LAST_MESSAGE_FILE"
+sync_runner_status completed

@@ -183,6 +183,10 @@ cat data/reports/contadores-crm-followup-latest.md
   `GET /api/contadores/followup/runner/status` y muestra estado del lock,
   ultimo resumen, logs timestamped y stdout/stderr del LaunchAgent. Esta ruta
   queda protegida por sesion o `X-Internal-Token`; no es publica.
+- El LaunchAgent local tambien sincroniza su ultimo estado al server real con
+  `POST /api/contadores/followup/runner/status`, usando `INTERNAL_API_TOKEN`.
+  Asi el backoffice desplegado puede mostrar el ultimo resumen/log tail aunque
+  la ejecucion haya corrido en la Mac.
 
 Verificar API de funnels:
 

@@ -402,6 +402,7 @@ def test_contadores_followup_snapshot_is_read_only_and_segments_leads(monkeypatc
 def test_contadores_followup_runner_status_reads_local_artifacts(monkeypatch, tmp_path) -> None:
     """Runner status should expose local launchd artifacts without mutation."""
     configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("INTERNAL_API_TOKEN", "test-internal-token")
     data_dir = tmp_path / "data"
     reports_dir = data_dir / "reports"
     lock_dir = data_dir / "locks" / "contadores-crm-hourly-followup.lock"
@@ -429,6 +430,31 @@ def test_contadores_followup_runner_status_reads_local_artifacts(monkeypatch, tm
     assert payload["latest_log_tail"] == "line 2\nline 3"
     assert payload["launchd_err_tail"] == "stderr tail"
     assert payload["logs"][0]["name"] == "contadores-crm-followup-20260503T010000Z.log"
+
+    with TestClient(app) as client:
+        unauthorized = client.post(
+            "/api/contadores/followup/runner/status",
+            json={"status": "completed", "latest_summary": "should not write"},
+        )
+        synced = client.post(
+            "/api/contadores/followup/runner/status",
+            headers={"X-Internal-Token": "test-internal-token"},
+            json={
+                "status": "completed",
+                "generated_at": "2026-05-03T01:10:00Z",
+                "latest_summary": "Synced summary",
+                "latest_log_tail": "synced tail",
+                "launchd_out_tail": "synced stdout",
+                "launchd_err_tail": "synced stderr",
+            },
+        )
+
+    assert unauthorized.status_code == 401
+    assert synced.status_code == 200
+    synced_payload = synced.json()
+    assert synced_payload["latest_summary"] == "Synced summary"
+    assert "synced tail" in synced_payload["latest_log_tail"]
+    assert synced_payload["launchd_out_tail"] == "synced stdout"
 
 
 def test_contadores_followup_internal_apis_send_and_update_leads(monkeypatch, tmp_path) -> None:
