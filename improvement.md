@@ -163,8 +163,7 @@
 
 ## 2026-05-03 19:01 - Codex bot worker lane
 
-- Status: local validation passed; preparing commit, push, deploy, and server
-  verification.
+- Status: deployed and verified on the real server.
 - Improvement: make the bot worker dispatch path more resilient by keeping
   pending WhatsApp delivery dispatch independent from the active funnel list and
   by reusing one `/api/funnels` read per loop cycle.
@@ -182,6 +181,18 @@
 - Validation: `uv run --project src/bot --with pytest pytest src/bot/tests`
   passed with 49 tests. Focused rerun of `test_worker_loop.py` and
   `test_contadores_flow.py` passed with 12 tests.
+
+### 2026-05-03 19:21 - Final
+
+- Pushed bot worker commit `3ed50c8` to `main`; the deployed server HEAD
+  includes that commit.
+- Deployed through the repo rollout path. A concurrent deploy left the bot
+  stopped during verification, so I restarted the bot with
+  `docker compose up -d --no-deps bot` after backend health was green.
+- Verified on the real server: `/health` returned `ready=true`, authenticated
+  `/api/runtime` returned `ready=True` and `enabled=True`, authenticated
+  `/api/funnels` returned 3 funnels, backend was healthy, bot was running, and
+  bot logs showed startup plus Contadores/Abogados sheet sync without errors.
 
 ## 2026-05-03 19:04 - Codex frontend format lane
 
