@@ -45,9 +45,10 @@ ALLOWED_ACTIONS = {
 }
 
 CODEX_RUNTIME_NOTE = (
-    "This is a production runtime decision. Do not inspect or modify repository files, "
-    "do not run shell commands, and do not use tools. Use only this prompt and the "
-    "attached skills as context. Return JSON only."
+    "This is a production runtime decision. You may inspect repository files, "
+    "attached skills, and use read-only tools or shell commands when that helps "
+    "resolve source-of-truth questions. Do not modify repository files, external "
+    "systems, or production state. Return JSON only."
 )
 
 CODEX_CONVERSATION_SKILLS = [

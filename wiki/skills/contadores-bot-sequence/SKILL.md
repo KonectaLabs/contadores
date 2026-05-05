@@ -28,8 +28,11 @@ override the built-in Contadores definition.
    conversational bot with the full conversation history, funnel, `funnel_info`,
    stage, latest messages, inferred country/timezone when clear, and commercial
    rules.
-   - Primary runtime: Codex SDK `gpt-5.5` with low effort, using this skill and
-     `contadores-lead-reply-playbook` as structured context.
+   - Primary runtime: Codex SDK `gpt-5.5` with medium effort, using this skill
+     and `contadores-lead-reply-playbook` as structured context.
+   - Codex may inspect repository files and use read-only tools/shell commands
+     to resolve source-of-truth questions during the runtime decision. It must
+     not modify files, external systems, or production state.
    - Fallback runtime: DSPy/Grok 4.3 through OpenRouter, or `gpt-5.4-mini` when
      OpenRouter is not configured.
    - Static few-shot examples live in code. Do not fetch CRM examples during a

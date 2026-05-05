@@ -174,6 +174,10 @@ def test_codex_conversation_bot_parses_strict_json(monkeypatch) -> None:
     assert result.runtime_provider == "codex"
     assert calls[0]["model"] == CONVERSATION_BOT_CODEX_MODEL
     assert calls[0]["effort"] == CONVERSATION_BOT_CODEX_EFFORT
+    assert calls[0]["effort"] == "medium"
+    assert "You may inspect repository files" in str(calls[0]["prompt"])
+    assert "Do not inspect or modify repository files" not in str(calls[0]["prompt"])
+    assert "do not use tools" not in str(calls[0]["prompt"])
     assert "Return only valid JSON" in str(calls[0]["prompt"])
 
 

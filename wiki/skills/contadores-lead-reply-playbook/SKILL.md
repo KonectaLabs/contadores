@@ -263,12 +263,15 @@ stage. Price, inclusions, country, process, domain, existing page, guarantee,
 "no vi el video", "lo analizo", and simple confirmations should not become
 `needs_human` by default.
 
-The production runtime is Codex SDK `gpt-5.5` with low effort. It receives this
+The production runtime is Codex SDK `gpt-5.5` with medium effort. It receives this
 playbook plus `contadores-bot-sequence`, a global prompt, `funnel_info`, full
 conversation history, and a static few-shot bank curated in code. The fallback
 is DSPy/Grok 4.3 through OpenRouter, or `gpt-5.4-mini` when OpenRouter is not
 configured. Codex fallback failures should create runtime email alerts without
 pausing the lead when the fallback safely answered.
+Codex may inspect repository files and use read-only tools to resolve source of
+truth, but it must not modify files or external systems during a runtime reply
+decision.
 
 The static few-shot bank is intentionally repetitive: use those patterns and
 adapt the few changing words. Do not improvise a new sales angle unless the

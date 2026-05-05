@@ -260,9 +260,12 @@ Bot conversacional post-video y post-Calendly:
   `ContadoresConversationBotProgram` con historial completo, funnel, stage,
   ultimos mensajes y timezone inferida por telefono cuando sea claro.
 - El runtime principal es Codex SDK con `CONVERSATION_BOT_CODEX_MODEL`
-  (`gpt-5.5` por defecto) y `CONVERSATION_BOT_CODEX_EFFORT=low`, usando las
+  (`gpt-5.5` por defecto) y `CONVERSATION_BOT_CODEX_EFFORT=medium`, usando las
   skills `contadores-bot-sequence` y `contadores-lead-reply-playbook` como
   contexto estructurado.
+  Puede inspeccionar archivos del repo y usar herramientas read-only para
+  resolver dudas de source of truth; no debe modificar archivos ni estado
+  externo durante una decision runtime.
 - Si Codex falla, el lead no se pausa por eso: se crea una alerta runtime por
   email y se responde con fallback DSPy/Grok. El fallback usa
   `OPENROUTER_GROK_4_3_MODEL=openrouter/x-ai/grok-4.3` cuando hay

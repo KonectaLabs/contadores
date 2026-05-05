@@ -41,7 +41,7 @@ OpenAI speech-to-text, and the env should keep
 overridden.
 
 The conversational bot uses Codex SDK as primary runtime
-(`CONVERSATION_BOT_CODEX_MODEL=gpt-5.5`, low effort) and Grok/DSPy as fallback.
+(`CONVERSATION_BOT_CODEX_MODEL=gpt-5.5`, medium effort) and Grok/DSPy as fallback.
 Deploys must preserve `CODEX_HOME` in the data volume so Codex auth persists.
 Codex fallback errors create runtime email alerts but should not pause leads
 when the fallback answered safely.
