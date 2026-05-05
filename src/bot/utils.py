@@ -50,7 +50,7 @@ CODEX_CHATGPT_REAUTH_COMMAND = os.getenv(
         "cd /root/projects/contadores && "
         "docker compose exec -it -e OPENAI_API_KEY= "
         "-e CODEX_HOME=/app/data/codex-home-chatgpt "
-        "backend codex login --device-auth"
+        "backend sh -lc 'mkdir -p /app/data/codex-home-chatgpt && codex login --device-auth'"
     ),
 ).strip()
 INTERNAL_API_TOKEN_HEADER = "X-Internal-Token"
