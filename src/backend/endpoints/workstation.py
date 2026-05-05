@@ -1095,7 +1095,7 @@ def generate_solo_page_version_sync(
                     path=str((REPO_ROOT / SOLO_PAGE_SKILL).resolve()),
                 )
             ],
-            cwd=client_workdir,
+            cwd=REPO_ROOT,
             sandbox_writable_roots=[client_workdir],
         )
         index_path = version_dir / "index.html"

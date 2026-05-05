@@ -3842,6 +3842,54 @@ def test_workstation_tick_generates_preview_without_blocking_on_missing_photo(mo
     assert updated.last_preview_sent_at is not None
 
 
+def test_workstation_solo_page_codex_runs_from_repo_with_client_write_scope(monkeypatch, tmp_path) -> None:
+    """Codex should read repo templates while writing only inside the client folder."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    data_dir = tmp_path / "data"
+    monkeypatch.setattr(database_module, "DATA_DIR", data_dir)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-workstation-codex-cwd",
+        phone="+5491777777774",
+        full_name="Cliente Cwd",
+    )
+    workstation = WorkstationClient.create_for_lead(
+        lead,
+        work_type=WorkstationClientWorkType.SOLO_PAGINA,
+        status=WorkstationClientStatus.PENDING_PAYMENT,
+        automation_status=WorkstationAutomationStatus.INTAKE,
+    )
+    calls: list[dict[str, object]] = []
+
+    def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
+        output_marker = "Required output folder:\n"
+        output_dir = Path(prompt.split(output_marker, 1)[1].splitlines()[0].strip())
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "index.html").write_text("<html><body>Draft</body></html>", encoding="utf-8")
+        (output_dir / "styles.css").write_text("body{font-family:sans-serif}", encoding="utf-8")
+        (output_dir / "script.js").write_text("", encoding="utf-8")
+        calls.append({"prompt": prompt, **kwargs})
+        return SimpleNamespace(final_response="created", items=[])
+
+    def fake_render_landing_page_video_sync(*, index_path: Path, output_path: Path) -> None:
+        assert index_path.name == "index.html"
+        output_path.write_bytes(b"mp4")
+
+    monkeypatch.setattr(workstation_endpoints, "run_codex_with_context", fake_run_codex_with_context)
+    monkeypatch.setattr(workstation_endpoints, "render_landing_page_video_sync", fake_render_landing_page_video_sync)
+
+    version_dir = workstation_endpoints.generate_solo_page_version_sync(
+        client=workstation,
+        lead=lead,
+        replies=[],
+        revision=False,
+    )
+
+    assert (version_dir / "preview.mp4").read_bytes() == b"mp4"
+    assert len(calls) == 1
+    assert Path(calls[0]["cwd"]).resolve() == workstation_endpoints.REPO_ROOT.resolve()
+    assert calls[0]["sandbox_writable_roots"] == [workstation_endpoints.client_folder(workstation)]
+
+
 def test_workstation_tick_approval_marks_needs_human(monkeypatch, tmp_path) -> None:
     """Client approval should stop automation and hand the job to a human operator."""
     configure_contadores_db(monkeypatch, tmp_path)
