@@ -1123,6 +1123,72 @@ def test_active_offer_reply_uses_conversation_bot_without_starting_old_sequence(
     assert [item["sequence_step"] for item in pending_after_second_tick.json()["messages"]] == ["ai_reply"]
 
 
+def test_active_offer_reply_waits_when_new_inbound_arrives_during_ai(monkeypatch, tmp_path) -> None:
+    """If another lead message arrives while AI is thinking, do not answer the stale batch."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    ContadoresConfig.update(enabled=True, post_loom_quiet_seconds=30)
+    clock = {"now": now_utc()}
+    monkeypatch.setattr(contadores_endpoints, "now_utc", lambda: clock["now"])
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-active-offer-backoff",
+        phone="+593991111112",
+        full_name="Marielis",
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=True,
+        text="Hola Marielis, si te interesa esta oferta respondeme y te mostramos un ejemplo.",
+        delivery_status=MessageDeliveryStatus.DELIVERED,
+        sequence_step="promo_web_profesional_20260505",
+        created_at=clock["now"] - timedelta(minutes=2),
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=False,
+        text="Si",
+        created_at=clock["now"] - timedelta(seconds=45),
+    )
+    seen_latest_inbound: list[str] = []
+
+    class FakeConversationBot:
+        async def aforward(self, **kwargs):
+            seen_latest_inbound.append(kwargs["latest_inbound"])
+            if len(seen_latest_inbound) == 1:
+                ContadoresMessage.add(
+                    lead_id=lead.id,
+                    from_me=False,
+                    text="Claro",
+                    created_at=clock["now"] + timedelta(seconds=1),
+                )
+            return ContadoresConversationBotResult(
+                action="ask_scheduling_details",
+                message_text="Perfecto. Me pasa su email, dia y horario para coordinar una llamada corta?",
+                classification_label="active_offer_scheduling_requested",
+                reason="El lead mostro interes en la promo activa.",
+                missing_fields=["email", "day", "time"],
+            )
+
+    monkeypatch.setattr(contadores_endpoints, "ContadoresConversationBotProgram", FakeConversationBot)
+
+    with TestClient(app) as client:
+        first_tick = client.post("/api/contadores/automation/tick")
+        pending_after_first_tick = client.get("/api/contadores/messages/pending-delivery")
+        clock["now"] = clock["now"] + timedelta(seconds=41)
+        second_tick = client.post("/api/contadores/automation/tick")
+        pending_after_second_tick = client.get("/api/contadores/messages/pending-delivery")
+
+    assert first_tick.status_code == 200
+    assert first_tick.json()["scheduling_detail_requests_sent"] == 0
+    assert pending_after_first_tick.status_code == 200
+    assert pending_after_first_tick.json()["messages"] == []
+
+    assert second_tick.status_code == 200
+    assert second_tick.json()["scheduling_detail_requests_sent"] == 1
+    assert seen_latest_inbound == ["Si", "Claro"]
+    assert pending_after_second_tick.status_code == 200
+    assert [item["sequence_step"] for item in pending_after_second_tick.json()["messages"]] == ["ai_reply"]
+
+
 def test_active_offer_reply_handles_venezuela_leads(monkeypatch, tmp_path) -> None:
     """A deliberate promo can continue with Venezuelan leads even though legacy follow-ups skip them."""
     configure_contadores_db(monkeypatch, tmp_path)

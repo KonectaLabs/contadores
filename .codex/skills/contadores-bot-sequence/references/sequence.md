@@ -55,7 +55,11 @@ If there is no reply 10 minutes after the Loom send:
 ## Conversational bot after video
 
 After the lead replies post-Loom and the quiet window passes, DSPy runs the
-conversational bot. The bot receives:
+conversational bot. The quiet window is a backoff: bot processing is locked per
+lead, the backend re-reads the inbound batch before running, and it revalidates
+that no newer inbound arrived before queueing. If the lead sends another message
+while the AI is generating, the stale reply is discarded and the next tick waits
+for a fresh quiet window. The bot receives:
 
 - funnel id;
 - funnel label;

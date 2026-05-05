@@ -28,6 +28,11 @@ override the built-in Contadores definition.
    conversational bot with the full conversation history, funnel, `funnel_info`,
    stage, latest messages, inferred country/timezone when clear, and commercial
    rules.
+   - The backend must treat this silence window as a backoff, not just a delay:
+     lock bot processing per lead, re-read the current inbound batch before
+     running, and revalidate it before queueing. If a newer inbound arrives
+     while the AI is generating, do not send the stale reply; wait for the next
+     quiet window and answer the latest batch once.
    - Primary runtime: ChatGPT-authenticated Codex SDK `gpt-5.5` with medium
      effort, using this skill and `contadores-lead-reply-playbook` as
      structured context.

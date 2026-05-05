@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import csv
-import asyncio
 import json
 import logging
 import mimetypes
@@ -2187,6 +2187,8 @@ async def process_conversation_reply_batch(
     *,
     lead: ContadoresLead,
     replies_in_window: list[ContadoresMessage],
+    reply_window_start: datetime | None,
+    quiet_seconds: int,
     conversation_bot: ContadoresConversationBotProgram,
     now: datetime,
     active_offer_context: bool = False,
@@ -2210,6 +2212,15 @@ async def process_conversation_reply_batch(
         return metrics
 
     latest_inbound = replies_in_window[-1]
+    if not conversation_reply_batch_still_current(
+        lead_id=lead.id,
+        reply_window_start=reply_window_start,
+        latest_inbound=latest_inbound,
+        quiet_seconds=quiet_seconds,
+        now=now,
+    ):
+        return metrics
+
     if latest_inbound_is_untranscribed_media(latest_inbound):
         ContadoresLead.update_flow_state(
             lead.id,
@@ -2238,6 +2249,14 @@ async def process_conversation_reply_batch(
         latest_inbound=latest_inbound.text,
         conversation=format_conversation_for_bot(messages),
     )
+    if not conversation_reply_batch_still_current(
+        lead_id=lead.id,
+        reply_window_start=reply_window_start,
+        latest_inbound=latest_inbound,
+        quiet_seconds=quiet_seconds,
+        now=now_utc(),
+    ):
+        return metrics
     return apply_conversation_bot_result(
         lead=lead,
         result=result,
@@ -4394,20 +4413,49 @@ async def run_contadores_automation_tick(
             if exclusion_reasons:
                 continue
             reply_window_start = get_active_offer_reply_window_start(lead, active_offer=active_offer)
-            replies_in_window = get_reply_batch_since(lead.id, start_at=reply_window_start)
-            last_reply_at = ensure_utc_datetime(replies_in_window[-1].created_at) if replies_in_window else None
-            if replies_in_window and has_quiet_window(
-                last_message_at=last_reply_at,
+            replies_in_window = get_quiet_reply_batch_since(
+                lead.id,
+                start_at=reply_window_start,
                 quiet_seconds=config.post_loom_quiet_seconds,
                 now=now,
-            ):
-                metric_updates = await process_conversation_reply_batch(
-                    lead=lead,
-                    replies_in_window=replies_in_window,
-                    conversation_bot=conversation_bot,
-                    now=now,
-                    active_offer_context=True,
-                )
+            )
+            if replies_in_window:
+                async with get_conversation_bot_lock(lead.id):
+                    fresh_lead = ContadoresLead.get_by_id(lead.id)
+                    if fresh_lead is None or fresh_lead.automation_paused:
+                        continue
+                    fresh_latest_outbound = ContadoresMessage.get_latest_outbound_message(fresh_lead.id)
+                    fresh_workstation_client = WorkstationClient.get_by_lead_id(fresh_lead.id)
+                    if build_active_offer_exclusion_reasons(
+                        fresh_lead,
+                        workstation_client=fresh_workstation_client,
+                        latest_outbound=fresh_latest_outbound,
+                    ):
+                        continue
+                    fresh_active_offer = get_latest_active_offer_message(fresh_lead.id)
+                    if fresh_active_offer is None:
+                        continue
+                    reply_window_start = get_active_offer_reply_window_start(
+                        fresh_lead,
+                        active_offer=fresh_active_offer,
+                    )
+                    replies_in_window = get_quiet_reply_batch_since(
+                        fresh_lead.id,
+                        start_at=reply_window_start,
+                        quiet_seconds=config.post_loom_quiet_seconds,
+                        now=now_utc(),
+                    )
+                    if not replies_in_window:
+                        continue
+                    metric_updates = await process_conversation_reply_batch(
+                        lead=fresh_lead,
+                        replies_in_window=replies_in_window,
+                        reply_window_start=reply_window_start,
+                        quiet_seconds=config.post_loom_quiet_seconds,
+                        conversation_bot=conversation_bot,
+                        now=now_utc(),
+                        active_offer_context=True,
+                    )
                 ai_replies_sent += metric_updates["ai_replies_sent"]
                 scheduling_detail_requests_sent += metric_updates["scheduling_detail_requests_sent"]
                 scheduling_handoffs += metric_updates["scheduling_handoffs"]
@@ -4477,8 +4525,12 @@ async def run_contadores_automation_tick(
             continue
 
         reply_window_start = get_conversation_reply_window_start(lead)
-        replies_in_window = get_reply_batch_since(lead.id, start_at=reply_window_start)
-        last_reply_at = ensure_utc_datetime(replies_in_window[-1].created_at) if replies_in_window else None
+        replies_in_window = get_quiet_reply_batch_since(
+            lead.id,
+            start_at=reply_window_start,
+            quiet_seconds=config.post_loom_quiet_seconds,
+            now=now,
+        )
         loom_sent_at = ensure_utc_datetime(lead.loom_sent_at)
         reached_min_wait = True
         if lead.stage == ContadoresLeadStage.AWAITING_VIDEO_REPLY:
@@ -4501,58 +4553,46 @@ async def run_contadores_automation_tick(
         if not replies_in_window or not reached_min_wait:
             continue
 
-        if not has_quiet_window(
-            last_message_at=last_reply_at,
-            quiet_seconds=config.post_loom_quiet_seconds,
-            now=now,
-        ):
-            continue
-
-        batch_text = "\n".join(
-            f"- {item.text.strip()}"
-            for item in replies_in_window
-            if item.text.strip()
-        ).strip()
-        if not batch_text:
-            continue
-
-        latest_inbound = replies_in_window[-1]
-        if latest_inbound_is_untranscribed_media(latest_inbound):
-            ContadoresLead.update_flow_state(
-                lead.id,
-                stage=ContadoresLeadStage.NEEDS_HUMAN,
-                automation_paused=True,
-                automation_paused_reason="untranscribed_media",
-                classification_completed_at=now,
-                last_classification_label="needs_human",
-                last_classification_reason="El ultimo inbound es media/audio sin transcript; requiere revision humana.",
-                clear_needs_human_notified_at=True,
+        async with get_conversation_bot_lock(lead.id):
+            fresh_lead = ContadoresLead.get_by_id(lead.id)
+            if fresh_lead is None or fresh_lead.automation_paused:
+                continue
+            if fresh_lead.stage not in {
+                ContadoresLeadStage.AWAITING_VIDEO_REPLY,
+                ContadoresLeadStage.CALENDLY_SENT,
+            }:
+                continue
+            fresh_latest_outbound = ContadoresMessage.get_latest_outbound_message(fresh_lead.id)
+            fresh_workstation_client = WorkstationClient.get_by_lead_id(fresh_lead.id)
+            if build_followup_exclusion_reasons(
+                fresh_lead,
+                workstation_client=fresh_workstation_client,
+                latest_outbound=fresh_latest_outbound,
+            ):
+                continue
+            fresh_reply_window_start = get_conversation_reply_window_start(fresh_lead)
+            fresh_replies_in_window = get_quiet_reply_batch_since(
+                fresh_lead.id,
+                start_at=fresh_reply_window_start,
+                quiet_seconds=config.post_loom_quiet_seconds,
+                now=now_utc(),
             )
-            classified_needs_human += 1
-            human_handoffs += 1
-            continue
-
-        messages = ContadoresMessage.list_by_lead(lead.id)
-        funnel = resolve_funnel(lead.funnel_id)
-        inferred_timezone = infer_timezone_from_phone(lead.phone, lead.normalized_phone)
-        result = await conversation_bot.aforward(
-            funnel_id=funnel.id,
-            funnel_label=funnel.label,
-            funnel_info=build_funnel_info_for_bot(funnel),
-            lead_name=lead.full_name or "",
-            phone=lead.phone,
-            inferred_timezone=inferred_timezone,
-            current_stage=lead.stage.value,
-            latest_inbound=latest_inbound.text,
-            conversation=format_conversation_for_bot(messages),
-        )
-        metric_updates = apply_conversation_bot_result(
-            lead=lead,
-            result=result,
-            inferred_timezone=inferred_timezone,
-            latest_inbound=latest_inbound,
-            now=now,
-        )
+            if not fresh_replies_in_window:
+                continue
+            if fresh_lead.stage == ContadoresLeadStage.AWAITING_VIDEO_REPLY:
+                fresh_loom_sent_at = ensure_utc_datetime(fresh_lead.loom_sent_at)
+                if fresh_loom_sent_at is None:
+                    continue
+                if now_utc() < fresh_loom_sent_at + timedelta(seconds=config.post_loom_min_seconds):
+                    continue
+            metric_updates = await process_conversation_reply_batch(
+                lead=fresh_lead,
+                replies_in_window=fresh_replies_in_window,
+                reply_window_start=fresh_reply_window_start,
+                quiet_seconds=config.post_loom_quiet_seconds,
+                conversation_bot=conversation_bot,
+                now=now_utc(),
+            )
         ai_replies_sent += metric_updates["ai_replies_sent"]
         scheduling_detail_requests_sent += metric_updates["scheduling_detail_requests_sent"]
         scheduling_handoffs += metric_updates["scheduling_handoffs"]

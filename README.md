@@ -259,6 +259,10 @@ Bot conversacional post-video y post-Calendly:
 - Luego del Loom/video y de la ventana de silencio, el backend llama a
   `ContadoresConversationBotProgram` con historial completo, funnel, stage,
   ultimos mensajes y timezone inferida por telefono cuando sea claro.
+- La ventana de silencio funciona como backoff real: el backend bloquea el
+  procesamiento conversacional por lead, relee el batch actual antes de correr
+  la AI y vuelve a validarlo antes de encolar. Si entra otro inbound mientras la
+  AI genera, descarta esa respuesta vieja y espera la proxima ventana quieta.
 - El runtime principal es Codex SDK con `CONVERSATION_BOT_CODEX_MODEL`
   (`gpt-5.5` por defecto) y `CONVERSATION_BOT_CODEX_EFFORT=medium`, usando las
   skills `contadores-bot-sequence` y `contadores-lead-reply-playbook` como
