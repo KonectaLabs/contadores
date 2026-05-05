@@ -17,10 +17,15 @@ from pathlib import Path
 from typing import Any, Literal
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, Response
+from phonenumbers import NumberParseException, parse as parse_phone_number, timezone as phone_timezone
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
 from backend.calendly import normalize_calendly_url
+from backend.ai.contadores_conversation_bot import (
+    ContadoresConversationBotProgram,
+    ContadoresConversationBotResult,
+)
 from backend.ai.contadores_post_loom_classifier import (
     PostLoomReplyClassifierProgram,
     PostLoomServiceRecapProgram,
@@ -56,6 +61,9 @@ contadores_router = APIRouter(prefix="/api/contadores", tags=["contadores"])
 OPENER_FOLLOWUP_SEQUENCE_STEP = "opener_followup_24h"
 OPENER_FOLLOWUP_RETRY_SEQUENCE_STEP = "opener_followup_24h_template_retry_20260424"
 MANUAL_PING_SEQUENCE_STEP = "manual_ping_template"
+AI_REPLY_SEQUENCE_STEP = "ai_reply"
+SCHEDULING_HANDOFF_SEQUENCE_STEP = "scheduling_handoff_confirmation"
+BOOKING_DETAILS_COLLECTED_REASON = "booking_details_collected"
 OPENER_FOLLOWUP_DELAY = timedelta(hours=24)
 WHATSAPP_CUSTOM_MESSAGE_WINDOW = timedelta(hours=24)
 CONTADORES_DELIVERY_MAX_ATTEMPTS = max(1, int(os.getenv("CONTADORES_DELIVERY_MAX_ATTEMPTS", "3")))
@@ -338,6 +346,127 @@ def build_classifier_context() -> str:
         "'¿conseguiste ver el video?'. Clasificá si la persona claramente quiere avanzar "
         "al siguiente paso, si solamente confirma que vio el video, o si necesita intervención humana."
     )
+
+
+def infer_timezone_from_phone(phone: str | None, normalized_phone: str | None = None) -> str:
+    """Infer one likely timezone from the lead phone when phonenumbers can do it."""
+    raw_value = (phone or "").strip()
+    digits = "".join(ch for ch in (normalized_phone or raw_value) if ch.isdigit())
+    candidates = [raw_value]
+    if digits:
+        candidates.append(f"+{digits}")
+
+    for candidate in candidates:
+        if not candidate:
+            continue
+        try:
+            parsed = parse_phone_number(candidate, None if candidate.startswith("+") else "AR")
+        except NumberParseException:
+            continue
+        timezones = phone_timezone.time_zones_for_number(parsed)
+        if len(timezones) == 1 and timezones[0] != "Etc/Unknown":
+            return timezones[0]
+    return ""
+
+
+def format_conversation_for_bot(messages: list[ContadoresMessage]) -> str:
+    """Render a compact chronological transcript for the conversation bot."""
+    rows: list[str] = []
+    for message in messages[-30:]:
+        speaker = "KONECTA" if message.from_me else "LEAD"
+        text = (message.text or "").strip()
+        if message.media_type:
+            media_note = f"[media:{message.media_type}]"
+            text = f"{media_note} {text}".strip()
+        sequence = f" step={message.sequence_step}" if message.sequence_step else ""
+        timestamp = format_timestamp_seconds(message.created_at) or ""
+        rows.append(f"{timestamp} {speaker}{sequence}: {text}")
+    return "\n".join(rows)
+
+
+def latest_inbound_is_untranscribed_media(message: ContadoresMessage | None) -> bool:
+    """Return True when the latest inbound cannot be answered from text."""
+    if message is None or message.from_me:
+        return False
+    clean_text = " ".join((message.text or "").split()).strip().lower()
+    media_type = (message.media_type or "").strip().lower()
+    bracket_texts = {
+        "[audio]",
+        "[image]",
+        "[video]",
+        "[document]",
+        "[sticker]",
+        f"[{media_type}]" if media_type else "",
+    }
+    if media_type and (not clean_text or clean_text in bracket_texts):
+        return True
+    if clean_text in bracket_texts - {""}:
+        return True
+    return False
+
+
+def get_latest_conversation_handled_at(lead: ContadoresLead, *, anchor_at: datetime | None) -> datetime | None:
+    """Return the latest bot-handled timestamp after a stage anchor."""
+    resolved_anchor = ensure_utc_datetime(anchor_at)
+    handled_at: datetime | None = None
+    for message in reversed(ContadoresMessage.list_by_lead(lead.id)):
+        if not message.from_me:
+            continue
+        if message.sequence_step not in {
+            AI_REPLY_SEQUENCE_STEP,
+            SCHEDULING_HANDOFF_SEQUENCE_STEP,
+            LOOM_RECAP_SEQUENCE_STEP,
+        }:
+            continue
+        created_at = ensure_utc_datetime(message.created_at)
+        if created_at is None:
+            continue
+        if resolved_anchor is not None and created_at <= resolved_anchor:
+            continue
+        handled_at = created_at
+        break
+
+    classification_at = ensure_utc_datetime(lead.classification_completed_at)
+    if classification_at is not None and (
+        resolved_anchor is None or classification_at > resolved_anchor
+    ):
+        handled_at = max(
+            [item for item in [handled_at, classification_at] if item is not None],
+            default=classification_at,
+        )
+    return handled_at
+
+
+def get_conversation_reply_window_start(lead: ContadoresLead) -> datetime | None:
+    """Return the timestamp after which inbound messages still need bot handling."""
+    anchor_at: datetime | None = None
+    if lead.stage == ContadoresLeadStage.CALENDLY_SENT:
+        anchor_at = ensure_utc_datetime(lead.calendly_sent_at)
+    elif lead.stage == ContadoresLeadStage.AWAITING_VIDEO_REPLY:
+        anchor_at = ensure_utc_datetime(lead.loom_sent_at)
+    if anchor_at is None:
+        return None
+    return get_latest_conversation_handled_at(lead, anchor_at=anchor_at) or anchor_at
+
+
+def format_scheduling_handoff_reason(
+    *,
+    result: ContadoresConversationBotResult,
+    inferred_timezone: str,
+    latest_inbound: ContadoresMessage | None,
+) -> str:
+    """Build an operator-facing scheduling handoff note for the alert email."""
+    timezone_value = result.timezone or inferred_timezone
+    latest_text = (latest_inbound.text if latest_inbound else "") or ""
+    lines = [
+        "Lead listo para agendar llamada de 15 minutos.",
+        f"Email: {result.scheduling_email or '-'}",
+        f"Dia: {result.scheduling_day or '-'}",
+        f"Horario: {result.scheduling_time or '-'}",
+        f"Zona horaria: {timezone_value or '-'}",
+        f"Ultimo mensaje: {latest_text.strip() or '-'}",
+    ]
+    return "\n".join(lines)
 
 
 def build_calendly_url(*, base_url: str) -> str:
@@ -1706,6 +1835,176 @@ def send_calendly_sequence(*, lead: ContadoresLead, config: ContadoresConfig) ->
     return [intro, calendly_url]
 
 
+def queue_ai_bot_message(
+    *,
+    lead: ContadoresLead,
+    text: str,
+    sequence_step: str = AI_REPLY_SEQUENCE_STEP,
+) -> list[ContadoresMessage]:
+    """Queue one conversation-bot free-text reply without pausing automation."""
+    clean_text = normalize_message_for_dedupe(text)
+    if not clean_text:
+        return []
+    assert_whatsapp_custom_window_open(lead, sequence_step=sequence_step)
+    duplicate = find_recent_duplicate_outbound(
+        lead_id=lead.id,
+        text=clean_text,
+        dedupe_hours=24,
+    )
+    if duplicate is not None:
+        return []
+    row = enqueue_lead_outbound(
+        lead=lead,
+        text=clean_text,
+        sequence_step=sequence_step,
+    )
+    return [row]
+
+
+def apply_conversation_bot_result(
+    *,
+    lead: ContadoresLead,
+    result: ContadoresConversationBotResult,
+    inferred_timezone: str,
+    latest_inbound: ContadoresMessage | None,
+    now: datetime,
+) -> dict[str, int]:
+    """Apply one conversation-bot decision and return metric increments."""
+    metrics = {
+        "ai_replies_sent": 0,
+        "scheduling_detail_requests_sent": 0,
+        "scheduling_handoffs": 0,
+        "human_handoffs": 0,
+        "closed_by_ai": 0,
+        "no_actions": 0,
+    }
+    label = result.classification_label or result.action
+    reason = result.reason or "Decision del bot conversacional."
+
+    if result.action == "handoff_scheduling":
+        if not result.timezone and not inferred_timezone:
+            message_text = (
+                result.message_text
+                or "Perfecto. Me confirma tambien su zona horaria asi lo dejamos bien coordinado?"
+            )
+            queued_rows = queue_ai_bot_message(lead=lead, text=message_text)
+            ContadoresLead.update_flow_state(
+                lead.id,
+                classification_completed_at=now,
+                last_classification_label="scheduling_details_requested",
+                last_classification_reason="Falta confirmar la zona horaria para coordinar la llamada.",
+            )
+            metrics["scheduling_detail_requests_sent"] += 1 if queued_rows else 0
+            return metrics
+
+        message_text = (
+            result.message_text
+            or "Perfecto, con esos datos lo dejamos para coordinar y le confirmamos la invitacion."
+        )
+        queued_rows = queue_ai_bot_message(
+            lead=lead,
+            text=message_text,
+            sequence_step=SCHEDULING_HANDOFF_SEQUENCE_STEP,
+        )
+        ContadoresLead.update_flow_state(
+            lead.id,
+            stage=ContadoresLeadStage.NEEDS_HUMAN,
+            automation_paused=True,
+            automation_paused_reason=BOOKING_DETAILS_COLLECTED_REASON,
+            classification_completed_at=now,
+            last_classification_label=BOOKING_DETAILS_COLLECTED_REASON,
+            last_classification_reason=format_scheduling_handoff_reason(
+                result=result,
+                inferred_timezone=inferred_timezone,
+                latest_inbound=latest_inbound,
+            ),
+            clear_needs_human_notified_at=True,
+        )
+        metrics["scheduling_handoffs"] += 1
+        metrics["ai_replies_sent"] += 1 if queued_rows else 0
+        return metrics
+
+    if result.action == "ask_scheduling_details":
+        message_text = result.message_text
+        if not message_text:
+            missing = ", ".join(result.missing_fields) or "los datos de la llamada"
+            message_text = f"Perfecto. Me pasaria {missing} asi lo coordinamos?"
+        queued_rows = queue_ai_bot_message(lead=lead, text=message_text)
+        ContadoresLead.update_flow_state(
+            lead.id,
+            classification_completed_at=now,
+            last_classification_label=label or "scheduling_details_requested",
+            last_classification_reason=reason,
+        )
+        metrics["scheduling_detail_requests_sent"] += 1 if queued_rows else 0
+        return metrics
+
+    if result.action == "send_reply":
+        if not result.message_text:
+            ContadoresLead.update_flow_state(
+                lead.id,
+                stage=ContadoresLeadStage.NEEDS_HUMAN,
+                automation_paused=True,
+                automation_paused_reason="empty_ai_reply",
+                classification_completed_at=now,
+                last_classification_label="needs_human",
+                last_classification_reason="El bot no genero una respuesta segura.",
+                clear_needs_human_notified_at=True,
+            )
+            metrics["human_handoffs"] += 1
+            return metrics
+        queued_rows = queue_ai_bot_message(lead=lead, text=result.message_text)
+        ContadoresLead.update_flow_state(
+            lead.id,
+            classification_completed_at=now,
+            last_classification_label=label,
+            last_classification_reason=reason,
+        )
+        metrics["ai_replies_sent"] += 1 if queued_rows else 0
+        return metrics
+
+    if result.action == "close_lead":
+        if result.message_text:
+            queued_rows = queue_ai_bot_message(lead=lead, text=result.message_text)
+            metrics["ai_replies_sent"] += 1 if queued_rows else 0
+        ContadoresLead.update_flow_state(
+            lead.id,
+            stage=ContadoresLeadStage.CLOSED,
+            closed_at=now,
+            stage_before_closed=resolve_stage_before_closing(lead),
+            automation_paused=True,
+            automation_paused_reason="ai_closed",
+            classification_completed_at=now,
+            last_classification_label=label or "closed_by_ai",
+            last_classification_reason=reason,
+        )
+        metrics["closed_by_ai"] += 1
+        return metrics
+
+    if result.action == "no_action":
+        ContadoresLead.update_flow_state(
+            lead.id,
+            classification_completed_at=now,
+            last_classification_label=label or "no_action",
+            last_classification_reason=reason,
+        )
+        metrics["no_actions"] += 1
+        return metrics
+
+    ContadoresLead.update_flow_state(
+        lead.id,
+        stage=ContadoresLeadStage.NEEDS_HUMAN,
+        automation_paused=True,
+        automation_paused_reason=result.action or "ai_handoff",
+        classification_completed_at=now,
+        last_classification_label=label or "needs_human",
+        last_classification_reason=reason,
+        clear_needs_human_notified_at=True,
+    )
+    metrics["human_handoffs"] += 1
+    return metrics
+
+
 async def send_post_loom_service_recap(
     *,
     lead: ContadoresLead,
@@ -2653,6 +2952,12 @@ class ContadoresAutomationTickResponse(BaseModel):
     opener_sent: int = 0
     loom_sent: int = 0
     video_checks_sent: int = 0
+    ai_replies_sent: int = 0
+    scheduling_detail_requests_sent: int = 0
+    scheduling_handoffs: int = 0
+    human_handoffs: int = 0
+    closed_by_ai: int = 0
+    no_actions: int = 0
     classified_wants_to_proceed: int = 0
     video_confirmation_recaps_sent: int = 0
     classified_needs_human: int = 0
@@ -2667,6 +2972,7 @@ class PendingContadoresAlertItem(BaseModel):
     phone: str
     email: str | None = None
     stage: str
+    automation_paused_reason: str | None = None
     latest_inbound_text: str | None = None
     reason: str | None = None
     alert_emails: list[str] = Field(default_factory=list)
@@ -3615,7 +3921,7 @@ async def register_contadores_whatsapp_inbound(
             lead=contadores_matches[0],
             command=command,
         )
-        refreshed_lead, row = record_whatsapp_inbound_for_lead(
+        refreshed_lead, _ = record_whatsapp_inbound_for_lead(
             lead=lead,
             command=command,
         )
@@ -3625,17 +3931,6 @@ async def register_contadores_whatsapp_inbound(
                 route=refreshed_lead.funnel_id,
                 lead_id=refreshed_lead.id,
             )
-        if lead_has_new_inbound_after_calendly(refreshed_lead):
-            updated = ContadoresLead.update_flow_state(
-                lead.id,
-                stage=ContadoresLeadStage.NEEDS_HUMAN,
-                last_classification_label="needs_human",
-                last_classification_reason="Inbound reply received after Calendly sequence.",
-                classification_completed_at=ensure_utc_datetime(row.created_at) or now_utc(),
-                automation_paused=True,
-                automation_paused_reason="post_calendly_inbound",
-            )
-            refreshed_lead = updated or refreshed_lead
         return ContadoresWhatsAppInboundResponse(
             status="processed",
             route=refreshed_lead.funnel_id,
@@ -3674,12 +3969,17 @@ async def run_contadores_automation_tick(
         return ContadoresAutomationTickResponse(status="disabled")
 
     leads = ContadoresLead.list_recent(limit=1000, funnel_id=funnel_id, include_archived=False)
-    classifier = PostLoomReplyClassifierProgram()
-    service_recap_generator = PostLoomServiceRecapProgram()
+    conversation_bot = ContadoresConversationBotProgram()
     now = now_utc()
     opener_sent = 0
     loom_sent = 0
     video_checks_sent = 0
+    ai_replies_sent = 0
+    scheduling_detail_requests_sent = 0
+    scheduling_handoffs = 0
+    human_handoffs = 0
+    closed_by_ai = 0
+    no_actions = 0
     classified_wants_to_proceed = 0
     video_confirmation_recaps_sent = 0
     classified_needs_human = 0
@@ -3736,22 +4036,34 @@ async def run_contadores_automation_tick(
             send_opener_followup(lead=lead)
             continue
 
-        if lead.stage != ContadoresLeadStage.AWAITING_VIDEO_REPLY or lead.loom_sent_at is None:
+        if lead.stage not in {
+            ContadoresLeadStage.AWAITING_VIDEO_REPLY,
+            ContadoresLeadStage.CALENDLY_SENT,
+        }:
             continue
 
-        reply_window_start = get_post_loom_reply_window_start(lead)
+        if lead.stage == ContadoresLeadStage.AWAITING_VIDEO_REPLY and lead.loom_sent_at is None:
+            continue
+        if lead.stage == ContadoresLeadStage.CALENDLY_SENT and lead.calendly_sent_at is None:
+            continue
+
+        reply_window_start = get_conversation_reply_window_start(lead)
         replies_in_window = get_reply_batch_since(lead.id, start_at=reply_window_start)
         last_reply_at = ensure_utc_datetime(replies_in_window[-1].created_at) if replies_in_window else None
         loom_sent_at = ensure_utc_datetime(lead.loom_sent_at)
-        if loom_sent_at is None:
-            continue
-        reached_min_wait = now >= loom_sent_at + timedelta(seconds=config.post_loom_min_seconds)
+        reached_min_wait = True
+        if lead.stage == ContadoresLeadStage.AWAITING_VIDEO_REPLY:
+            if loom_sent_at is None:
+                continue
+            reached_min_wait = now >= loom_sent_at + timedelta(seconds=config.post_loom_min_seconds)
 
         if (
-            not replies_in_window
+            lead.stage == ContadoresLeadStage.AWAITING_VIDEO_REPLY
+            and not replies_in_window
             and reached_min_wait
             and lead.video_check_sent_at is None
             and get_latest_loom_recap_message(lead) is None
+            and get_latest_conversation_handled_at(lead, anchor_at=loom_sent_at) is None
         ):
             send_video_check(lead=lead)
             video_checks_sent += 1
@@ -3775,55 +4087,62 @@ async def run_contadores_automation_tick(
         if not batch_text:
             continue
 
-        result = await classifier.aforward(
-            loom_context=build_classifier_context(),
-            reply_batch=batch_text,
-        )
-        label = result.label
-
-        if label == WATCHED_VIDEO_CONFIRMATION_LABEL and get_latest_loom_recap_message(lead) is None:
-            queued_rows = await send_post_loom_service_recap(
-                lead=lead,
-                reply_batch=batch_text,
-                generator=service_recap_generator,
+        latest_inbound = replies_in_window[-1]
+        if latest_inbound_is_untranscribed_media(latest_inbound):
+            ContadoresLead.update_flow_state(
+                lead.id,
+                stage=ContadoresLeadStage.NEEDS_HUMAN,
+                automation_paused=True,
+                automation_paused_reason="untranscribed_media",
+                classification_completed_at=now,
+                last_classification_label="needs_human",
+                last_classification_reason="El ultimo inbound es media/audio sin transcript; requiere revision humana.",
+                clear_needs_human_notified_at=True,
             )
-            if queued_rows:
-                ContadoresLead.update_flow_state(
-                    lead.id,
-                    classification_completed_at=now,
-                    last_classification_reason=result.reasoning,
-                )
-                video_confirmation_recaps_sent += 1
-                continue
-
-        if label == WATCHED_VIDEO_CONFIRMATION_LABEL:
-            label = "needs_human"
-            result.reasoning = "La respuesta posterior al recap sigue siendo ambigua y requiere cierre humano."
-
-        updated = ContadoresLead.update_flow_state(
-            lead.id,
-            classification_completed_at=now,
-            last_classification_label=label,
-            last_classification_reason=result.reasoning,
-        )
-        lead = updated or lead
-        if label == "wants_to_proceed":
-            send_calendly_sequence(lead=lead, config=config)
-            classified_wants_to_proceed += 1
-            calendly_sent += 1
+            classified_needs_human += 1
+            human_handoffs += 1
             continue
 
-        ContadoresLead.update_flow_state(
-            lead.id,
-            stage=ContadoresLeadStage.NEEDS_HUMAN,
+        messages = ContadoresMessage.list_by_lead(lead.id)
+        funnel = resolve_funnel(lead.funnel_id)
+        inferred_timezone = infer_timezone_from_phone(lead.phone, lead.normalized_phone)
+        result = await conversation_bot.aforward(
+            funnel_id=funnel.id,
+            funnel_label=funnel.label,
+            lead_name=lead.full_name or "",
+            phone=lead.phone,
+            inferred_timezone=inferred_timezone,
+            current_stage=lead.stage.value,
+            latest_inbound=latest_inbound.text,
+            conversation=format_conversation_for_bot(messages),
         )
-        classified_needs_human += 1
+        metric_updates = apply_conversation_bot_result(
+            lead=lead,
+            result=result,
+            inferred_timezone=inferred_timezone,
+            latest_inbound=latest_inbound,
+            now=now,
+        )
+        ai_replies_sent += metric_updates["ai_replies_sent"]
+        scheduling_detail_requests_sent += metric_updates["scheduling_detail_requests_sent"]
+        scheduling_handoffs += metric_updates["scheduling_handoffs"]
+        human_handoffs += metric_updates["human_handoffs"]
+        closed_by_ai += metric_updates["closed_by_ai"]
+        no_actions += metric_updates["no_actions"]
+        if metric_updates["human_handoffs"]:
+            classified_needs_human += metric_updates["human_handoffs"]
 
     return ContadoresAutomationTickResponse(
         status="ok",
         opener_sent=opener_sent,
         loom_sent=loom_sent,
         video_checks_sent=video_checks_sent,
+        ai_replies_sent=ai_replies_sent,
+        scheduling_detail_requests_sent=scheduling_detail_requests_sent,
+        scheduling_handoffs=scheduling_handoffs,
+        human_handoffs=human_handoffs,
+        closed_by_ai=closed_by_ai,
+        no_actions=no_actions,
         classified_wants_to_proceed=classified_wants_to_proceed,
         video_confirmation_recaps_sent=video_confirmation_recaps_sent,
         classified_needs_human=classified_needs_human,
@@ -3841,7 +4160,8 @@ async def list_pending_contadores_alerts(
     for lead in ContadoresLead.list_needs_human_without_notification(funnel_id=funnel_id, limit=100):
         if derive_effective_lead_stage(lead) != ContadoresLeadStage.NEEDS_HUMAN:
             continue
-        if derive_manual_reply_status(lead) == "answered":
+        is_scheduling_handoff = lead.automation_paused_reason == BOOKING_DETAILS_COLLECTED_REASON
+        if derive_manual_reply_status(lead) == "answered" and not is_scheduling_handoff:
             continue
         latest_inbound = ContadoresMessage.get_latest_inbound_message(lead.id)
         items.append(
@@ -3851,6 +4171,7 @@ async def list_pending_contadores_alerts(
                 phone=lead.phone,
                 email=lead.email,
                 stage=derive_effective_lead_stage(lead).value,
+                automation_paused_reason=lead.automation_paused_reason,
                 latest_inbound_text=latest_inbound.text if latest_inbound else None,
                 reason=lead.last_classification_reason,
                 alert_emails=config.alert_emails,

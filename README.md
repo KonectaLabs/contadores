@@ -44,9 +44,9 @@ Cada funnel contiene:
 - IDs de anuncios Click-to-WhatsApp (`whatsapp_referral_source_ids`);
 - texto del video;
 - estrategia WhatsApp MP4 (`loom_mp4`);
-- clasificacion DSPy post-video y recap automatico para confirmaciones simples;
+- bot conversacional DSPy post-video/post-Calendly para responder dudas y pedir datos de llamada;
 - `kind=campaign|inbox`, donde `inbox` no corre fases ni automatizacion;
-- Calendly;
+- Calendly solo como accion manual;
 - acciones manuales de Calendly: con mensaje previo o solo link;
 - emails de alerta;
 - ventanas de espera.
@@ -254,33 +254,43 @@ Tags:
 - La UI muestra tags en el detalle como solo lectura; para cambiarlos hay que seleccionar leads y usar la accion batch `Set tags`.
 - El filtro por tag se combina con las fases, busqueda y estrategia.
 
-Respuesta post-video:
+Bot conversacional post-video y post-Calendly:
 
-- Luego del Loom/video y de la ventana de silencio, DSPy clasifica las
-  respuestas como `wants_to_proceed`, `watched_video_confirmation` o
-  `needs_human`.
-- `watched_video_confirmation` es solo para respuestas que confirman que vio el
-  video, como `Si` o `lo vi`, sin pregunta, objecion, fecha ni pedido claro de
-  avanzar. Es una decision interna del LLM, no una fase nueva del CRM.
-- En ese caso el backend genera con DSPy un unico mensaje dentro del mismo paso
-  `loom_intro`: vuelve a explicar el servicio en texto, adaptando el nicho
-  desde el funnel y el pais desde el telefono cuando el codigo es claro, y pide
-  un dia para llamada. No envia Calendly todavia.
-- Despues del recap el lead sigue en `awaiting_video_reply`; nuevas respuestas
-  se analizan desde ese punto para decidir si corresponde avanzar o pasar a
-  atencion humana.
+- Luego del Loom/video y de la ventana de silencio, el backend llama a
+  `ContadoresConversationBotProgram` con historial completo, funnel, stage,
+  ultimos mensajes y timezone inferida por telefono cuando sea claro.
+- El modelo principal es `OPENROUTER_GROK_4_3_MODEL`, por defecto
+  `openrouter/x-ai/grok-4.3`, usando `OPENROUTER_API_KEY`. Si esa key no esta
+  configurada, el backend cae a `gpt-5.4-mini`.
+- El bot devuelve una accion estructurada:
+  `send_reply`, `ask_scheduling_details`, `handoff_human`,
+  `handoff_scheduling`, `close_lead` o `no_action`.
+- Preguntas conocidas de precio, pais/cobertura, garantia, proceso, dominio,
+  pagina existente, "no vi el video", "lo analizo" o confirmaciones simples se
+  responden con `sequence_step=ai_reply` sin mover el lead a `needs_human`.
+- Si falta email, dia, horario o zona horaria para una llamada, el bot pide solo
+  el dato faltante. La llamada default es de 15 minutos.
+- Cuando ya tiene email, dia y horario, confirma por WhatsApp con
+  `sequence_step=scheduling_handoff_confirmation`, pausa el lead en
+  `needs_human`, guarda `automation_paused_reason=booking_details_collected` y
+  deja email/dia/horario/timezone en `last_classification_reason` para la alerta
+  por email.
+- El bot no inventa audio/media sin transcript. Audio, imagen, video, documento
+  o sticker sin texto pasan a humano.
+- Cerrados, booked, archivados, excluidos, Venezuela y Workstation siguen
+  bloqueados por los guards existentes.
 
 Acciones manuales de Calendly:
 
 - `Calendly with intro` encola el texto previo y despues el link de Calendly.
 - `Calendly link only` encola solo el link de Calendly.
 - El link de Calendly es siempre `https://calendly.com/facundogoiriz/crecimiento`, para Contadores, Abogados y cualquier otro funnel.
-- Ambas acciones registran `calendly_sent_at` y mantienen el lead en Manual. La automatizacion sigue usando siempre texto previo + link y puede dejar el lead fuera de Manual.
-- Si un lead responde con dia y horario concreto para una llamada, la
-  automation debe intentar reservarlo solo si existe una via real de booking de
-  Calendly. Hoy el codigo no crea eventos de Calendly desde texto libre; en ese
-  caso marca `booking_time_provided`, pausa el lead en `needs_human` y dispara
-  la alerta urgente por email para que Facu lo agende.
+- Ambas acciones registran `calendly_sent_at` y mantienen el lead en Manual.
+- La automatizacion nueva no manda Calendly automaticamente. Para avanzar, el
+  bot pide email, dia y horario para que Facu coordine la llamada manualmente.
+- Hoy el codigo no crea eventos de Google Calendar ni Calendly desde texto
+  libre; cuando junta los datos, marca `booking_details_collected`, pausa en
+  `needs_human` y dispara la alerta por email.
 
 Vista Manual del backoffice:
 

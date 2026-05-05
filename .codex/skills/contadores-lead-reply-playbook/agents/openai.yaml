@@ -1,0 +1,4 @@
+interface:
+  display_name: "Contadores Lead Reply Playbook"
+  short_description: "Reply to CRM leads with proven copy."
+  default_prompt: "Use the Contadores lead reply playbook to inspect CRM context, choose the right response pattern, draft the WhatsApp reply, and send only when requested."

@@ -85,11 +85,12 @@ Also read these skills when relevant:
   closed. Custom manual copy is only valid inside the open window.
 - Send at most one intentional follow-up per lead per automation run, unless the
   built-in bot sequence itself sends its paired Loom intro/video messages.
-- The built-in bot can also send one recap inside the existing `loom_intro`
-  step after DSPy internally classifies a post-video reply as a simple
-  watched-video confirmation. Do not duplicate that recap manually in the same
-  run; wait for the next lead reply or handle the lead as a manual close if it
-  needs human judgment.
+- The built-in bot can answer known post-video/post-Calendly questions with
+  `sequence_step=ai_reply` and keep the lead in its current stage. It only
+  pauses to `needs_human` for true human handoff cases or when it collected
+  scheduling details with `scheduling_handoff_confirmation`. Do not duplicate an
+  AI reply manually in the same run; wait for the next lead reply or handle the
+  lead as a manual close if it needs human judgment.
 - Do not only wait for replies. Each run should also inspect leads that already
   received our last message and decide whether a stronger, non-duplicative
   follow-up would increase conversion. This is only allowed when the delivery

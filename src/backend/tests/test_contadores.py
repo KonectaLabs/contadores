@@ -15,6 +15,7 @@ from sqlmodel import SQLModel, create_engine
 import backend.database as database_module
 import backend.endpoints.contadores as contadores_endpoints
 import backend.endpoints.workstation as workstation_endpoints
+from backend.ai.contadores_conversation_bot import ContadoresConversationBotResult
 from backend.contadores_strategies import get_contadores_strategy
 from backend.database import (
     ContadoresConfig,
@@ -1303,8 +1304,8 @@ def test_contadores_automation_tick_skips_hard_excluded_followups(monkeypatch, t
     assert ContadoresMessage.list_by_lead(workstation.id) == []
 
 
-def test_contadores_automation_tick_classifies_affirmative_reply_and_sends_calendly(monkeypatch, tmp_path) -> None:
-    """A clear affirmative post-Loom reply should advance straight to Calendly."""
+def test_contadores_automation_tick_affirmative_reply_asks_for_scheduling_details(monkeypatch, tmp_path) -> None:
+    """A clear affirmative post-Loom reply should ask for call details, not send Calendly."""
     configure_contadores_db(monkeypatch, tmp_path)
     ContadoresConfig.update(
         enabled=True,
@@ -1331,13 +1332,19 @@ def test_contadores_automation_tick_classifies_affirmative_reply_and_sends_calen
         created_at=now_utc() - timedelta(seconds=45),
     )
 
-    class FakeClassifier:
-        async def aforward(self, *, loom_context: str, reply_batch: str):
-            assert "quiere avanzar" in loom_context.lower()
-            assert "quiero avanzar" in reply_batch.lower()
-            return SimpleNamespace(label="wants_to_proceed", reasoning="clear affirmative")
+    class FakeConversationBot:
+        async def aforward(self, **kwargs):
+            assert "quiero avanzar" in kwargs["latest_inbound"].lower()
+            assert "LEAD" in kwargs["conversation"]
+            return ContadoresConversationBotResult(
+                action="ask_scheduling_details",
+                message_text="Perfecto. Me pasaria su email, dia y horario para coordinar una llamada de 15 minutos?",
+                classification_label="scheduling_details_requested",
+                reason="El lead quiere avanzar pero faltan datos de agenda.",
+                missing_fields=["email", "dia", "horario"],
+            )
 
-    monkeypatch.setattr(contadores_endpoints, "PostLoomReplyClassifierProgram", FakeClassifier)
+    monkeypatch.setattr(contadores_endpoints, "ContadoresConversationBotProgram", FakeConversationBot)
 
     with TestClient(app) as client:
         response = client.post("/api/contadores/automation/tick")
@@ -1345,23 +1352,17 @@ def test_contadores_automation_tick_classifies_affirmative_reply_and_sends_calen
         pending = client.get("/api/contadores/messages/pending-delivery")
 
     assert response.status_code == 200
-    assert response.json()["classified_wants_to_proceed"] == 1
-    assert response.json()["calendly_sent"] == 1
+    assert response.json()["scheduling_detail_requests_sent"] == 1
     assert detail.status_code == 200
-    assert detail.json()["lead"]["stage"] == "calendly_sent"
-    assert detail.json()["lead"]["last_classification_label"] == "wants_to_proceed"
-    assert [item["sequence_step"] for item in pending.json()["messages"]] == ["calendly_intro", "calendly_url"]
-    assert pending.json()["messages"][1]["text"] == "https://calendly.com/facundogoiriz/crecimiento"
-    assert "utm_" not in pending.json()["messages"][1]["text"]
-    assert pending.json()["messages"][0]["text"] == (
-        "Para avanzar solo falta -> Reunion, nos conocemos -> definimos medio de pago -> "
-        "pagas 300 USD -> empezamos a trabajar para vos a las 24 horas.\n\n"
-        "Elige el horario que mejor te quede:"
-    )
+    assert response.json()["calendly_sent"] == 0
+    assert detail.json()["lead"]["stage"] == "awaiting_video_reply"
+    assert detail.json()["lead"]["last_classification_label"] == "scheduling_details_requested"
+    assert [item["sequence_step"] for item in pending.json()["messages"]] == ["ai_reply"]
+    assert "email" in pending.json()["messages"][0]["text"].lower()
 
 
-def test_contadores_automation_tick_recaps_service_after_simple_video_confirmation(monkeypatch, tmp_path) -> None:
-    """A plain watched-video confirmation should restate the service before asking for a call date."""
+def test_contadores_automation_tick_answers_simple_video_confirmation(monkeypatch, tmp_path) -> None:
+    """A plain watched-video confirmation should stay in stage and get one bot reply."""
     configure_contadores_db(monkeypatch, tmp_path)
     ContadoresConfig.update(
         enabled=True,
@@ -1390,34 +1391,25 @@ def test_contadores_automation_tick_recaps_service_after_simple_video_confirmati
         created_at=now_utc() - timedelta(seconds=45),
     )
 
-    class FakeClassifier:
-        async def aforward(self, *, loom_context: str, reply_batch: str):
-            assert "solamente confirma" in loom_context.lower()
-            assert reply_batch == "- Si"
-            return SimpleNamespace(
-                label="watched_video_confirmation",
-                reasoning="Solo confirmo que vio el video.",
-            )
-
-    class FakeServiceRecapGenerator:
-        async def aforward(self, *, funnel_id: str, funnel_label: str, phone: str, reply_batch: str):
-            assert funnel_id == "abogados"
-            assert funnel_label == "Abogados"
-            assert phone == "+59175432222"
-            assert reply_batch == "- Si"
-            return SimpleNamespace(
+    class FakeConversationBot:
+        async def aforward(self, **kwargs):
+            assert kwargs["funnel_id"] == "abogados"
+            assert kwargs["funnel_label"] == "Abogados"
+            assert kwargs["phone"] == "+59175432222"
+            assert kwargs["latest_inbound"] == "Si"
+            return ContadoresConversationBotResult(
+                action="send_reply",
                 message_text=(
                     "Perfecto.\n\n"
                     "Nosotros lo que hacemos es ayudarle a conseguir mas consultas de potenciales "
                     "clientes en Bolivia, directo a su WhatsApp.\n\n"
-                    "Para eso le armamos una pagina web moderna y profesional, y ademas campanas "
-                    "publicitarias enfocadas en personas de Bolivia que puedan necesitar sus servicios legales.\n\n"
                     "Para avanzar, que dia le queda mejor esta semana?"
-                )
+                ),
+                classification_label="video_confirmation_answered",
+                reason="Solo confirmo que vio el video.",
             )
 
-    monkeypatch.setattr(contadores_endpoints, "PostLoomReplyClassifierProgram", FakeClassifier)
-    monkeypatch.setattr(contadores_endpoints, "PostLoomServiceRecapProgram", FakeServiceRecapGenerator)
+    monkeypatch.setattr(contadores_endpoints, "ContadoresConversationBotProgram", FakeConversationBot)
 
     with TestClient(app) as client:
         create_funnel = client.post("/api/funnels", json=build_abogados_test_funnel())
@@ -1429,23 +1421,262 @@ def test_contadores_automation_tick_recaps_service_after_simple_video_confirmati
 
     assert create_funnel.status_code == 200
     assert first_tick.status_code == 200
-    assert first_tick.json()["video_confirmation_recaps_sent"] == 1
+    assert first_tick.json()["ai_replies_sent"] == 1
+    assert first_tick.json()["video_confirmation_recaps_sent"] == 0
     assert first_tick.json()["calendly_sent"] == 0
     assert detail.status_code == 200
     assert detail.json()["lead"]["stage"] == "awaiting_video_reply"
-    assert detail.json()["lead"]["last_classification_label"] is None
+    assert detail.json()["lead"]["last_classification_label"] == "video_confirmation_answered"
     assert pending_after_first_tick.status_code == 200
     first_messages = pending_after_first_tick.json()["messages"]
-    assert [item["sequence_step"] for item in first_messages] == ["loom_intro"]
+    assert [item["sequence_step"] for item in first_messages] == ["ai_reply"]
     assert "Bolivia" in first_messages[0]["text"]
     assert "directo a su WhatsApp" in first_messages[0]["text"]
 
     assert second_tick.status_code == 200
-    assert second_tick.json()["video_confirmation_recaps_sent"] == 0
+    assert second_tick.json()["ai_replies_sent"] == 0
     assert pending_after_second_tick.status_code == 200
     assert [item["sequence_step"] for item in pending_after_second_tick.json()["messages"]] == [
-        "loom_intro"
+        "ai_reply"
     ]
+
+
+def test_conversation_bot_answers_common_questions_without_human_handoff(monkeypatch, tmp_path) -> None:
+    """Known objections should get AI replies while keeping the lead in the same stage."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    ContadoresConfig.update(
+        enabled=True,
+        post_loom_min_seconds=300,
+        post_loom_quiet_seconds=30,
+    )
+    inbound_texts = [
+        "Cuanto cuesta?",
+        "En que pais es yo soy de Bolivia",
+        "Aun no vi el video, estaba manejando",
+        "Que garantia hay si no llegan clientes?",
+        "Pagina web tengo",
+    ]
+    loom_sent_at = now_utc() - timedelta(minutes=7)
+    leads: list[ContadoresLead] = []
+    for index, inbound_text in enumerate(inbound_texts):
+        lead = ContadoresLead.upsert(
+            external_lead_id=f"sheet-row-common-question-{index}",
+            phone=f"+54913333333{index:02d}",
+            full_name=f"Common Question {index}",
+        )
+        ContadoresLead.update_flow_state(
+            lead.id,
+            stage=ContadoresLeadStage.AWAITING_VIDEO_REPLY,
+            opener_sent_at=loom_sent_at - timedelta(minutes=1),
+            first_reply_received_at=loom_sent_at - timedelta(minutes=1),
+            loom_sent_at=loom_sent_at,
+        )
+        ContadoresMessage.add(
+            lead_id=lead.id,
+            from_me=False,
+            text=inbound_text,
+            created_at=now_utc() - timedelta(seconds=45),
+        )
+        leads.append(lead)
+
+    class FakeConversationBot:
+        async def aforward(self, **kwargs):
+            return ContadoresConversationBotResult(
+                action="send_reply",
+                message_text=f"Respuesta util para: {kwargs['latest_inbound']}",
+                classification_label="answered_known_question",
+                reason="Pregunta cubierta por el playbook.",
+            )
+
+    monkeypatch.setattr(contadores_endpoints, "ContadoresConversationBotProgram", FakeConversationBot)
+
+    with TestClient(app) as client:
+        response = client.post("/api/contadores/automation/tick")
+        pending = client.get("/api/contadores/messages/pending-delivery")
+        alerts = client.get("/api/contadores/alerts/pending")
+        details = [client.get(f"/api/contadores/leads/{lead.id}") for lead in leads]
+
+    assert response.status_code == 200
+    assert response.json()["ai_replies_sent"] == len(inbound_texts)
+    assert response.json()["human_handoffs"] == 0
+    assert pending.status_code == 200
+    assert [item["sequence_step"] for item in pending.json()["messages"]] == ["ai_reply"] * len(inbound_texts)
+    assert alerts.status_code == 200
+    assert alerts.json()["items"] == []
+    assert [detail.json()["lead"]["stage"] for detail in details] == ["awaiting_video_reply"] * len(inbound_texts)
+
+
+def test_conversation_bot_handoffs_complete_scheduling_details(monkeypatch, tmp_path) -> None:
+    """Email, day, and time should trigger a scheduling handoff alert, not Calendly."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    ContadoresConfig.update(
+        enabled=True,
+        post_loom_min_seconds=300,
+        post_loom_quiet_seconds=30,
+    )
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-scheduling-complete",
+        phone="+5491133333399",
+        full_name="Scheduling Complete",
+        email="crm@example.com",
+    )
+    loom_sent_at = now_utc() - timedelta(minutes=7)
+    ContadoresLead.update_flow_state(
+        lead.id,
+        stage=ContadoresLeadStage.AWAITING_VIDEO_REPLY,
+        opener_sent_at=loom_sent_at - timedelta(minutes=1),
+        first_reply_received_at=loom_sent_at - timedelta(minutes=1),
+        loom_sent_at=loom_sent_at,
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=False,
+        text="Martes a las 15 hs. Mi mail es cliente@example.com",
+        created_at=now_utc() - timedelta(seconds=45),
+    )
+
+    class FakeConversationBot:
+        async def aforward(self, **kwargs):
+            return ContadoresConversationBotResult(
+                action="handoff_scheduling",
+                message_text="Perfecto, con esos datos lo dejamos para coordinar y le confirmamos la invitacion.",
+                classification_label="booking_details_collected",
+                reason="El lead dio todos los datos para coordinar.",
+                scheduling_email="cliente@example.com",
+                scheduling_day="martes",
+                scheduling_time="15 hs",
+            )
+
+    monkeypatch.setattr(contadores_endpoints, "ContadoresConversationBotProgram", FakeConversationBot)
+
+    with TestClient(app) as client:
+        response = client.post("/api/contadores/automation/tick")
+        detail = client.get(f"/api/contadores/leads/{lead.id}")
+        pending = client.get("/api/contadores/messages/pending-delivery")
+        alerts = client.get("/api/contadores/alerts/pending")
+
+    assert response.status_code == 200
+    assert response.json()["scheduling_handoffs"] == 1
+    assert response.json()["calendly_sent"] == 0
+    assert detail.json()["lead"]["stage"] == "needs_human"
+    assert detail.json()["lead"]["automation_paused"] is True
+    assert detail.json()["lead"]["automation_paused_reason"] == "booking_details_collected"
+    assert [item["sequence_step"] for item in pending.json()["messages"]] == [
+        "scheduling_handoff_confirmation"
+    ]
+    assert alerts.status_code == 200
+    assert [item["lead_id"] for item in alerts.json()["items"]] == [lead.id]
+    assert "cliente@example.com" in alerts.json()["items"][0]["reason"]
+    assert "martes" in alerts.json()["items"][0]["reason"]
+    assert "15 hs" in alerts.json()["items"][0]["reason"]
+    assert "America/Buenos_Aires" in alerts.json()["items"][0]["reason"]
+
+
+def test_post_calendly_inbound_question_is_answered_by_conversation_bot(monkeypatch, tmp_path) -> None:
+    """A question after Calendly should be answered by the bot instead of immediate handoff."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    ContadoresConfig.update(
+        enabled=True,
+        post_loom_quiet_seconds=1,
+    )
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-post-cal-question",
+        phone="+5491444444401",
+        full_name="Lara Reply",
+    )
+    calendly_sent_at = now_utc() - timedelta(minutes=2)
+    ContadoresLead.update_flow_state(
+        lead.id,
+        stage=ContadoresLeadStage.CALENDLY_SENT,
+        calendly_sent_at=calendly_sent_at,
+    )
+
+    class FakeConversationBot:
+        async def aforward(self, **kwargs):
+            assert kwargs["current_stage"] == "calendly_sent"
+            return ContadoresConversationBotResult(
+                action="send_reply",
+                message_text="Si, le explico. La inversion es de 300 USD, pago unico.",
+                classification_label="answered_post_calendly_question",
+                reason="Pregunta conocida posterior al cierre.",
+            )
+
+    monkeypatch.setattr(contadores_endpoints, "ContadoresConversationBotProgram", FakeConversationBot)
+
+    with TestClient(app) as client:
+        inbound = client.post(
+            "/api/contadores/whatsapp/inbound",
+            json={
+                "phone": lead.phone,
+                "text": "Tengo una duda antes de agendar. Cuanto cuesta?",
+            },
+        )
+        detail_after_inbound = client.get(f"/api/contadores/leads/{lead.id}")
+        monkeypatch.setattr(
+            contadores_endpoints,
+            "now_utc",
+            lambda: datetime.now(timezone.utc) + timedelta(seconds=5),
+        )
+        tick = client.post("/api/contadores/automation/tick")
+        detail_after_tick = client.get(f"/api/contadores/leads/{lead.id}")
+        pending = client.get("/api/contadores/messages/pending-delivery")
+        alerts = client.get("/api/contadores/alerts/pending")
+
+    assert inbound.status_code == 200
+    assert detail_after_inbound.json()["lead"]["stage"] == "calendly_sent"
+    assert detail_after_inbound.json()["lead"]["automation_paused"] is False
+    assert tick.status_code == 200
+    assert tick.json()["ai_replies_sent"] == 1
+    assert detail_after_tick.json()["lead"]["stage"] == "calendly_sent"
+    assert [item["sequence_step"] for item in pending.json()["messages"]] == ["ai_reply"]
+    assert alerts.json()["items"] == []
+
+
+def test_conversation_bot_escalates_untranscribed_audio_without_guessing(monkeypatch, tmp_path) -> None:
+    """Audio/media-only inbound should go to human review without calling the bot."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    ContadoresConfig.update(
+        enabled=True,
+        post_loom_min_seconds=300,
+        post_loom_quiet_seconds=30,
+    )
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-audio-handoff",
+        phone="+5491333333388",
+        full_name="Audio Handoff",
+    )
+    loom_sent_at = now_utc() - timedelta(minutes=7)
+    ContadoresLead.update_flow_state(
+        lead.id,
+        stage=ContadoresLeadStage.AWAITING_VIDEO_REPLY,
+        opener_sent_at=loom_sent_at - timedelta(minutes=1),
+        first_reply_received_at=loom_sent_at - timedelta(minutes=1),
+        loom_sent_at=loom_sent_at,
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=False,
+        text="[audio]",
+        media_type="audio",
+        created_at=now_utc() - timedelta(seconds=45),
+    )
+
+    class FailingConversationBot:
+        async def aforward(self, **kwargs):
+            raise AssertionError("Conversation bot should not be called for untranscribed media")
+
+    monkeypatch.setattr(contadores_endpoints, "ContadoresConversationBotProgram", FailingConversationBot)
+
+    with TestClient(app) as client:
+        response = client.post("/api/contadores/automation/tick")
+        detail = client.get(f"/api/contadores/leads/{lead.id}")
+        pending = client.get("/api/contadores/messages/pending-delivery")
+
+    assert response.status_code == 200
+    assert response.json()["human_handoffs"] == 1
+    assert detail.json()["lead"]["stage"] == "needs_human"
+    assert detail.json()["lead"]["automation_paused_reason"] == "untranscribed_media"
+    assert pending.json()["messages"] == []
 
 
 def test_contadores_reply_after_24h_followup_still_advances_to_loom(monkeypatch, tmp_path) -> None:
@@ -1996,8 +2227,8 @@ def test_contadores_send_calendly_link_only_marks_calendly_sent(monkeypatch, tmp
     assert pending.json()["messages"][0]["text"] == "https://calendly.com/facundogoiriz/crecimiento"
 
 
-def test_contadores_post_calendly_inbound_returns_to_needs_human(monkeypatch, tmp_path) -> None:
-    """Any new inbound after Calendly should hand the lead back to a human."""
+def test_contadores_post_calendly_inbound_does_not_immediately_handoff(monkeypatch, tmp_path) -> None:
+    """A new inbound after Calendly should remain eligible for the conversation bot."""
     configure_contadores_db(monkeypatch, tmp_path)
     lead = ContadoresLead.upsert(
         external_lead_id="sheet-row-5c",
@@ -2026,15 +2257,14 @@ def test_contadores_post_calendly_inbound_returns_to_needs_human(monkeypatch, tm
     assert response.json()["route"] == "contadores"
 
     assert detail.status_code == 200
-    assert detail.json()["lead"]["stage"] == "needs_human"
-    assert detail.json()["lead"]["raw_stage"] == "needs_human"
-    assert detail.json()["lead"]["automation_paused"] is True
-    assert detail.json()["lead"]["automation_paused_reason"] == "post_calendly_inbound"
-    assert detail.json()["lead"]["last_classification_label"] == "needs_human"
-    assert detail.json()["lead"]["last_classification_reason"] == "Inbound reply received after Calendly sequence."
+    assert detail.json()["lead"]["stage"] == "calendly_sent"
+    assert detail.json()["lead"]["raw_stage"] == "calendly_sent"
+    assert detail.json()["lead"]["automation_paused"] is False
+    assert detail.json()["lead"]["automation_paused_reason"] is None
+    assert detail.json()["lead"]["last_classification_label"] is None
 
     assert alerts.status_code == 200
-    assert [item["lead_id"] for item in alerts.json()["items"]] == [lead.id]
+    assert alerts.json()["items"] == []
 
 
 def test_contadores_inbound_audio_payload_is_persisted_and_playable(monkeypatch, tmp_path) -> None:

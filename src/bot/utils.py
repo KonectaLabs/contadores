@@ -132,6 +132,7 @@ class PendingContadoresAlertItem(BaseModel):
     phone: str
     email: str | None = None
     stage: str
+    automation_paused_reason: str | None = None
     latest_inbound_text: str | None = None
     reason: str | None = None
     alert_emails: list[str] = Field(default_factory=list)
@@ -159,6 +160,12 @@ class ContadoresAutomationTickResponse(BaseModel):
     opener_sent: int = 0
     loom_sent: int = 0
     video_checks_sent: int = 0
+    ai_replies_sent: int = 0
+    scheduling_detail_requests_sent: int = 0
+    scheduling_handoffs: int = 0
+    human_handoffs: int = 0
+    closed_by_ai: int = 0
+    no_actions: int = 0
     classified_wants_to_proceed: int = 0
     video_confirmation_recaps_sent: int = 0
     classified_needs_human: int = 0
@@ -698,9 +705,17 @@ async def send_contadores_pending_alerts(
             )
             continue
 
+        scheduling_handoff = item.automation_paused_reason == "booking_details_collected"
+        first_line = (
+            f"{funnel_label}: lead listo para que Facu agende una llamada."
+            if scheduling_handoff
+            else f"Se freno la automatizacion de {funnel_label} y requiere revision humana."
+        )
+        subject_prefix = "agendar llamada" if scheduling_handoff else "needs_human"
+
         body = "\n".join(
             [
-                f"Se freno la automatizacion de {funnel_label} y requiere revision humana.",
+                first_line,
                 "",
                 f"Lead ID: {item.lead_id}",
                 f"Lead link: {build_contadores_lead_review_url(item.lead_id)}",
@@ -708,7 +723,7 @@ async def send_contadores_pending_alerts(
                 f"WhatsApp: {item.phone}",
                 f"Email: {item.email or '-'}",
                 f"Stage: {item.stage}",
-                f"Motivo: {item.reason or '-'}",
+                f"Motivo / datos para Facu: {item.reason or '-'}",
                 "",
                 "Ultimo mensaje inbound:",
                 item.latest_inbound_text or "-",
@@ -720,7 +735,7 @@ async def send_contadores_pending_alerts(
                 inbox_address=alert_inbox.inbox_address,
                 recipient=recipient,
                 text=body,
-                subject=f"[{funnel_label}] needs_human {item.phone}",
+                subject=f"[{funnel_label}] {subject_prefix} {item.phone}",
                 attachments=None,
                 thread_id=None,
                 in_reply_to=None,

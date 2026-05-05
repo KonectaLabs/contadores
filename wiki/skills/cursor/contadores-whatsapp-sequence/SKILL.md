@@ -5,8 +5,8 @@ description: >-
   Konecta Labs. Use when implementing, reviewing, or updating the bot flow that
   sends message 1, waits for any inbound reply, waits 30 seconds, sends message
   2 and message 3 (WhatsApp MP4), waits, then sends the video check and
-  either recaps the service after a simple watched-video confirmation or sends
-  the Calendly handoff when classification says the lead wants to proceed.
+  runs the conversational bot to answer known questions, collect scheduling
+  details, or hand off only when human action is truly needed.
 ---
 
 # Secuencia WhatsApp de contadores
@@ -26,21 +26,26 @@ description: >-
 6. Enviar enseguida el mensaje 3 como WhatsApp MP4.
 7. Esperar la ventana configurada.
 8. Enviar el video check si no hubo respuesta.
-9. Clasificar las respuestas post-video con DSPy:
-   `wants_to_proceed`, `watched_video_confirmation`, o `needs_human`.
-10. Si la clasificacion dice `watched_video_confirmation`, generar con DSPy un
-    recap del servicio adaptado al funnel y al pais inferido por telefono,
-    encolado dentro del mismo paso `loom_intro`.
-11. Si la clasificacion dice `wants_to_proceed`, enviar Calendly.
-12. Si la clasificacion dice `needs_human`, pausar y pasar a Manual.
+9. Ejecutar el bot conversacional con DSPy usando historial completo, funnel,
+   stage, ultimos mensajes, pais/timezone inferidos cuando sea claro y reglas
+   comerciales.
+10. Si el bot responde una duda conocida, encolar `sequence_step=ai_reply` y
+    mantener el lead en su stage actual.
+11. Si faltan datos de llamada, pedir solo email, dia, horario o timezone
+    faltante con `sequence_step=ai_reply`.
+12. Si ya estan email, dia y horario, confirmar por WhatsApp con
+    `sequence_step=scheduling_handoff_confirmation`, pausar en `needs_human` con
+    `automation_paused_reason=booking_details_collected` y alertar a Facu.
+13. Si falta informacion real para responder, hay audio/media sin transcript,
+    exclusion, opt-out o caso no cubierto, pausar en `needs_human`.
 
 ## Reglas de contenido
 
 - El mensaje 2 no lleva link.
 - El mensaje 3 debe ser el MP4 configurado, no un link de Loom.
 - El mensaje 4 no lleva link.
-- El recap post-video no lleva Calendly.
-- El mensaje de link Calendly debe ser solo `https://calendly.com/facundogoiriz/crecimiento`.
+- Las respuestas del bot no llevan Calendly.
+- El mensaje de link Calendly debe ser solo `https://calendly.com/facundogoiriz/crecimiento` y solo se usa en acciones manuales.
 - No mezclar el texto del mensaje 2 con el MP4.
 - No mezclar el texto previo de Calendly con el link del Calendly.
 - El trigger inicial hacia Loom es mecanico: cualquier respuesta al opener
@@ -94,29 +99,30 @@ Enviar después de la espera post-Loom solo si no hubo respuesta.
 conseguiste ver el video?
 ```
 
-### Recap post-video
+### Bot conversacional post-video
 
-Enviar solo cuando la clasificacion DSPy devuelve
-`watched_video_confirmation`: el lead apenas confirmo que vio el video, sin
-pregunta, objecion, fecha ni pedido claro de avanzar.
-
-Esa clasificacion es interna del LLM. No crear una fase nueva del CRM ni
-mostrarla como pipeline separado; el lead sigue en `awaiting_video_reply`.
-
-El backend debe generar este mensaje con DSPy, no con regex ni match por texto.
-Inputs obligatorios del generador:
+Despues de la quiet window, el backend debe llamar al bot conversacional con
+DSPy, no con regex ni match por texto. Inputs obligatorios:
 
 - `funnel_id`;
 - `funnel_label`;
 - telefono del lead;
-- batch de respuestas post-Loom.
+- stage actual;
+- historial completo;
+- batch de respuestas post-Loom;
+- timezone inferida cuando el telefono lo permita.
 
-El mensaje debe explicar nuevamente que Konecta ayuda a conseguir mas consultas
-de potenciales clientes directo al WhatsApp, mediante pagina web moderna y
-campanas publicitarias a medida. Debe adaptar el nicho segun el funnel
-(`contadores`, `abogados`, `mecanicos`, negocio general, etc.) y adaptar el
-pais si el codigo telefonico es claro. Cierra preguntando que dia de esta
-semana le queda mejor para una llamada corta.
+Acciones permitidas: `send_reply`, `ask_scheduling_details`, `handoff_human`,
+`handoff_scheduling`, `close_lead` y `no_action`.
+
+El bot debe contestar dudas conocidas y mantener el stage: precio, que incluye,
+pais/cobertura, garantia, proceso, dominio, pagina existente, no vio el video,
+esta ocupado, lo analiza/consulta, y confirmaciones simples.
+
+Cuando conviene avanzar a reunion, el bot pide email, dia, horario y timezone
+solo si falta. La llamada default es de 15 minutos. Cuando los datos estan
+completos, confirma que Facu coordina la llamada y pasa a `needs_human` para que
+se agende manualmente.
 
 Ejemplo de forma:
 
@@ -132,19 +138,21 @@ La idea es que usted tenga una presencia mucho mas fuerte y que le lleguen oport
 Para avanzar, lo mejor seria una llamada corta donde le explicamos como se aplicaria a su caso. Que dia le queda mejor esta semana?
 ```
 
-### Calendly intro
+### Scheduling handoff
 
-Enviar cuando la clasificacion dice `wants_to_proceed`.
+Enviar cuando el lead ya dio email, dia y horario:
 
 ```text
-Esperamos que haya quedado todo claro luego de ver el video.
-Para avanzar, el unico paso que falta de tu lado es elegir un horario en el calendario.
-Elegi el horario que mejor te quede:
+Perfecto, gracias.
+
+Le paso estos datos a Facu para coordinar la llamada y le confirmamos por aca.
 ```
 
-### Calendly link
+Despues marcar `needs_human`, guardar `booking_details_collected` y dejar email,
+dia, horario, timezone y ultimo mensaje en la razon de clasificacion para el
+email de alerta.
 
-Enviar inmediatamente despues del Calendly intro.
+### Calendly manual
 
 ```text
 https://calendly.com/facundogoiriz/crecimiento
@@ -152,9 +160,9 @@ https://calendly.com/facundogoiriz/crecimiento
 
 ## Notas de implementación
 
-- Usar el Calendly fijo compartido por todos los funnels.
-- Guardar la secuencia como mensajes separados. El recap post-video usa el
-  `sequence_step=loom_intro` existente y deja el lead en `awaiting_video_reply`.
+- Usar el Calendly fijo compartido por todos los funnels solo para acciones manuales.
+- Guardar las respuestas del bot como `sequence_step=ai_reply`; el handoff de
+  agenda usa `sequence_step=scheduling_handoff_confirmation`.
 - Para Click-to-WhatsApp, rutear por `referral.source_id` contra `whatsapp_referral_source_ids`. No agregar ruteo amplio por texto editable.
 - Excepcion aprobada: si el texto normalizado es `Hola! Quiero mas informacion de su propuesta para abogados!`, rutear a `abogados`.
 - Si el inbound no matchea reply/referral/frase aprobada, guardarlo en el buzon `general`.

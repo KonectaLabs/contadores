@@ -82,9 +82,9 @@ uv run python src/scripts/requeue_failed_contadores_messages.py
 4. Verify `/api/runtime` readiness on the server.
 5. Verify `/api/funnels` on the server.
 6. Verify sheet ingestion and WhatsApp flow on the real server when the change touches those surfaces.
-   When the change touches the post-video sequence, include the
-   simple watched-video confirmation path that queues the recap inside
-   `loom_intro`.
+   When the change touches the post-video sequence, include the conversational
+   bot path that queues `ai_reply`, plus the scheduling handoff path that queues
+   `scheduling_handoff_confirmation`.
 
 For a new niche funnel, create/edit the funnel definition first, deploy code,
 then verify that funnel against its configured sheet and WhatsApp routing.

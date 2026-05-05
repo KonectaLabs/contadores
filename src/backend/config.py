@@ -58,6 +58,18 @@ def get_gpt_5_4_mini(
     )
 
 
+def get_grok_4_3():
+    """Get Grok 4.3 through OpenRouter."""
+    full_model = os.getenv("OPENROUTER_GROK_4_3_MODEL", "openrouter/x-ai/grok-4.3")
+
+    return dspy.LM(
+        full_model,
+        temperature=0.7,
+        max_tokens=16_384,
+        api_key=OPENROUTER_API_KEY,
+    )
+
+
 def get_gpt_5_2(
     reasoning_effort: Literal["minimal", "low", "medium", "high"] = "low",
     verbosity: Literal["low", "medium", "high"] = "low",
@@ -81,6 +93,7 @@ CACHE: bool = True
 
 gpt_5_mini = get_gpt_5_mini(reasoning_effort=REASONING_EFFORT, verbosity=VERBOSITY)
 gpt_5_4_mini = get_gpt_5_4_mini(reasoning_effort="medium", verbosity="low")
+grok_4_3 = get_grok_4_3()
 gpt_5_2 = get_gpt_5_2(reasoning_effort="high", verbosity="high")
 
 
@@ -124,6 +137,7 @@ gemini_3_1_flash_lite_preview = dspy.LM(
 
 FAST_MODEL = grok_4_1_fast_reasoning
 SMART_MODEL = gpt_5_2
+CONVERSATION_BOT_MODEL = grok_4_3 if OPENROUTER_API_KEY else gpt_5_4_mini
 
 
 # DSPY CONFIGURATION

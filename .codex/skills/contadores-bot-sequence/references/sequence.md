@@ -52,34 +52,44 @@ If there is no reply 10 minutes after the Loom send:
 
 `¿conseguiste ver el video?`
 
-## Post-video service recap
+## Conversational bot after video
 
-After the lead replies post-Loom and the quiet window passes, DSPy classifies
-the reply batch. The classifier can return:
-
-- `wants_to_proceed`
-- `watched_video_confirmation`
-- `needs_human`
-
-When it returns `watched_video_confirmation`, the automation sends one generated
-WhatsApp message with `sequence_step=loom_intro` and keeps the lead in
-`awaiting_video_reply`. This is not a new CRM stage or visible pipeline step; it
-is a subaction inside the existing Loom/video stage. The label is only an
-internal LLM decision for a plain confirmation that the lead watched the video,
-with no question, objection, scheduling date, or clear request to proceed.
-
-The recap generator receives:
+After the lead replies post-Loom and the quiet window passes, DSPy runs the
+conversational bot. The bot receives:
 
 - funnel id;
 - funnel label;
 - lead phone number;
-- post-Loom reply batch.
+- current stage;
+- full conversation history;
+- latest inbound batch;
+- inferred timezone when the phone country is clear.
 
-It must adapt the niche from the funnel and the country from the phone number
-when the country code is clear. The message should restate the service in text:
-Konecta helps the lead get more potential client inquiries directly to WhatsApp,
-using a modern professional website and tailored ad campaigns. It ends by asking
-what day this week works for a short call. It must not include the Calendly URL.
+The bot must return one of:
+
+- `send_reply`
+- `ask_scheduling_details`
+- `handoff_human`
+- `handoff_scheduling`
+- `close_lead`
+- `no_action`
+
+Known questions stay in the current stage and are queued as
+`sequence_step=ai_reply`: price, inclusions, country/coverage, guarantee,
+process, domain, existing page, not having watched the video, being busy,
+analyzing/consulting, and simple confirmations.
+
+If the lead wants a meeting, the bot asks only for missing scheduling details:
+email, day, time, and timezone when it cannot infer one confidently. The default
+call duration is 15 minutes. When email, day, and time are all present, queue
+`sequence_step=scheduling_handoff_confirmation`, move the lead to
+`needs_human`, set `automation_paused_reason=booking_details_collected`, and
+store the scheduling details in `last_classification_reason` for the alert
+email.
+
+The automation must not include the Calendly URL in AI replies. Audio, image,
+video, document, or sticker-only inbound messages without transcript go to
+`needs_human`; the bot must not guess their content.
 
 Example shape for an Abogados lead with a Bolivia number:
 
@@ -110,17 +120,19 @@ Marking a lead as `booked` must not send any WhatsApp message. The legacy
 `send-manual-booked` action name is kept as a compatibility alias, but it only
 marks the lead as `booked`.
 
-## Calendly handoff
+## Scheduling handoff
 
-When classification says `wants_to_proceed`, send:
+When the lead gives complete scheduling details, send a short confirmation:
 
-`Esperamos que haya quedado todo claro luego de ver el video.
-Para avanzar, el único paso que falta de tu lado es elegir un horario en el calendario.
-Elegí el horario que mejor te quede:`
+```text
+Perfecto, gracias.
 
-Then send:
+Le paso estos datos a Facu para coordinar la llamada y le confirmamos por aca.
+```
 
-`https://calendly.com/facundogoiriz/crecimiento`
+Then pause in `needs_human` with `automation_paused_reason=booking_details_collected`.
+The alert email must include lead, funnel, email, day, time, inferred timezone,
+latest inbound message, and the direct CRM link.
 
 Manual operators can also choose `send-calendly-link` from the CRM to send only
 `https://calendly.com/facundogoiriz/crecimiento`. That manual shortcut still marks the lead as
@@ -128,7 +140,9 @@ having reached Calendly, keeps the lead in Manual, and is not used by automation
 
 ## Human handoff
 
-Anything ambiguous, hesitant, negative, objection-based, or question-heavy goes to `needs_human`.
+Only uncovered situations, missing real data, exclusions, explicit opt-out,
+audio/media without transcript, and complete scheduling handoffs should go to
+`needs_human`. Normal questions should be answered by the bot.
 
 The backoffice Manual stage is the full manual queue. The pipeline also has a
 `Needs answer` bucket between Manual and Closed for leads with

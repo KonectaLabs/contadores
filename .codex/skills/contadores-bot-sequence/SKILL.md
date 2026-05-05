@@ -1,6 +1,6 @@
 ---
 name: contadores-bot-sequence
-description: Use when working on the WhatsApp sequence, message copy, timing windows, template opener, Loom step, Calendly step, or human handoff behavior for Contadores.
+description: Use when working on the WhatsApp sequence, message copy, timing windows, template opener, Loom step, conversational bot replies, scheduling handoff, manual Calendly actions, or human handoff behavior for Contadores.
 ---
 
 # Contadores Bot Sequence
@@ -24,27 +24,27 @@ override the built-in Contadores definition.
    - `loom_mp4`: WhatsApp MP4 from `data/contadores/videos/loom_60_seconds_captions.mp4`.
 6. Wait 10 minutes.
 7. If there is still no reply, send `¿conseguiste ver el video?`
-8. Once there are 30 seconds of silence after the post-Loom replies, classify:
-   - `wants_to_proceed`
-   - `watched_video_confirmation`
-   - `needs_human`
-9. If `watched_video_confirmation`, generate a one-message service recap inside
-   the same Loom stage and keep the lead waiting for the next reply.
-   - This label is only for replies that simply confirm the lead saw the video,
-     such as "Si" / "lo vi", with no question, objection, date, or clear intent
-     to proceed.
-   - This label is an internal LLM decision only. Do not persist it as a new CRM
-     stage or expose it as a separate pipeline step.
-   - Queue the recap as `sequence_step=loom_intro` so it remains part of the
-     existing Loom/video stage.
-   - The generated recap receives the lead phone number and funnel id/label, so
-     it can adapt country and niche (`contadores`, `abogados`, `mecanicos`,
-     general business, etc.).
-   - The recap should restate that Konecta helps them get more potential client
-     inquiries directly to WhatsApp, through a modern professional website and
-     tailored ad campaigns, then ask what day this week works for a short call.
-10. If `wants_to_proceed`, send the Calendly text and then the Calendly URL.
-11. If `needs_human`, stop automation and alert the operators.
+8. Once there are 30 seconds of silence after the post-Loom replies, run the
+   conversational bot with the full conversation history, funnel, stage, latest
+   messages, inferred country/timezone when clear, and commercial rules.
+9. The bot must return one structured action:
+   - `send_reply`
+   - `ask_scheduling_details`
+   - `handoff_human`
+   - `handoff_scheduling`
+   - `close_lead`
+   - `no_action`
+10. If the bot answers a known question, queue `sequence_step=ai_reply` and keep
+    the lead in its current stage.
+11. If the bot needs email, day, time, or timezone for a call, queue
+    `sequence_step=ai_reply` asking only for the missing detail.
+12. If the bot has email, day, and time, queue
+    `sequence_step=scheduling_handoff_confirmation`, pause the lead in
+    `needs_human`, set `automation_paused_reason=booking_details_collected`,
+    and alert Facu with the scheduling details.
+13. If the bot lacks real data to answer, receives media/audio without
+    transcript, sees an exclusion, or hits an uncovered situation, pause in
+    `needs_human` and alert the operators.
 
 ## Manual-only template
 
@@ -76,7 +76,8 @@ Operators have two backoffice actions:
 - `send-calendly-link`: send only the Calendly URL.
 
 Both actions record `calendly_sent_at` and keep the lead in Manual.
-Automation must keep using the full Calendly text + URL sequence.
+Automation must not send Calendly automatically in the conversational bot flow;
+it asks for email, day, and time, then hands the scheduling details to Facu.
 The Calendly URL is fixed across Contadores, Abogados, and every other funnel.
 
 ## Manual reply ownership

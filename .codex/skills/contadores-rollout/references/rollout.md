@@ -50,8 +50,9 @@ verified.
 5. Verify `/api/runtime` readiness.
 6. Verify `/api/funnels`.
 7. Verify sheet ingestion and WhatsApp flow on the server.
-8. If the post-video sequence changed, verify the simple watched-video
-   confirmation path queues the recap inside `loom_intro`.
+8. If the post-video sequence changed, verify the conversational bot path that
+   queues `ai_reply`, plus the scheduling handoff path that queues
+   `scheduling_handoff_confirmation`.
 
 For new funnels, keep their definition in the same persistent config file used
 by the UI. Do not rely on local-only edits that are absent from the server
