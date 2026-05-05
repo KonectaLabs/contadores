@@ -76,6 +76,7 @@ def is_internal_bot_api_path(path: str) -> bool:
     return (
         path.startswith("/api/contadores/")
         or path.startswith("/api/workstation/automation/")
+        or path == "/api/runtime"
         or path == "/api/funnels"
     )
 
