@@ -3842,8 +3842,8 @@ def test_workstation_tick_generates_preview_without_blocking_on_missing_photo(mo
     assert updated.last_preview_sent_at is not None
 
 
-def test_workstation_solo_page_codex_runs_from_repo_with_client_write_scope(monkeypatch, tmp_path) -> None:
-    """Codex should read repo templates while writing only inside the client folder."""
+def test_workstation_solo_page_codex_runs_from_repo_root(monkeypatch, tmp_path) -> None:
+    """Codex should read repo templates and then validate client-folder outputs."""
     configure_contadores_db(monkeypatch, tmp_path)
     data_dir = tmp_path / "data"
     monkeypatch.setattr(database_module, "DATA_DIR", data_dir)
@@ -3887,7 +3887,7 @@ def test_workstation_solo_page_codex_runs_from_repo_with_client_write_scope(monk
     assert (version_dir / "preview.mp4").read_bytes() == b"mp4"
     assert len(calls) == 1
     assert Path(calls[0]["cwd"]).resolve() == workstation_endpoints.REPO_ROOT.resolve()
-    assert calls[0]["sandbox_writable_roots"] == [workstation_endpoints.client_folder(workstation)]
+    assert "sandbox_writable_roots" not in calls[0]
 
 
 def test_workstation_tick_approval_marks_needs_human(monkeypatch, tmp_path) -> None:

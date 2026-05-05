@@ -1096,7 +1096,6 @@ def generate_solo_page_version_sync(
                 )
             ],
             cwd=REPO_ROOT,
-            sandbox_writable_roots=[client_workdir],
         )
         index_path = version_dir / "index.html"
         if not index_path.exists():
