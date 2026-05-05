@@ -39,7 +39,8 @@ For reusable copy examples, read [references/copy-bank.md](references/copy-bank.
 - Do not message closed, booked, archived, excluded, Venezuelan, or Workstation
   client leads unless the user explicitly asks to override and the system allows it.
 - If the latest inbound is audio/media only and there is no transcript, do not
-  guess the content. Ask for a transcript or inspect available media first.
+  guess the content. The runtime should transcribe audio first when `media_path`
+  is available; otherwise ask for a transcript or inspect available media first.
 - If the lead gives a concrete day/time for a call, treat it as booking intent.
   Do not send a generic follow-up or Calendly automatically. Ask only for the
   missing scheduling detail, usually email or timezone, and escalate once email,
@@ -170,6 +171,17 @@ The production bot should answer known questions and keep the lead in the same
 stage. Price, inclusions, country, process, domain, existing page, guarantee,
 "no vi el video", "lo analizo", and simple confirmations should not become
 `needs_human` by default.
+
+The production runtime is Codex SDK `gpt-5.5` with low effort. It receives this
+playbook plus `contadores-bot-sequence`, a global prompt, `funnel_info`, full
+conversation history, and a static few-shot bank curated in code. The fallback
+is DSPy/Grok 4.3 through OpenRouter, or `gpt-5.4-mini` when OpenRouter is not
+configured. Codex fallback failures should create runtime email alerts without
+pausing the lead when the fallback safely answered.
+
+The static few-shot bank is intentionally repetitive: use those patterns and
+adapt the few changing words. Do not improvise a new sales angle unless the
+conversation is genuinely outside the bank.
 
 Use `needs_human` only when there is an uncovered situation, missing real data,
 an exclusion, an explicit opt-out, audio/media without transcript, or complete
@@ -430,6 +442,27 @@ If they ask about location:
 
 ```text
 No tenemos oficinas en su ciudad, somos argentinos y trabajamos de forma remota, pero operamos sin problemas en toda latinoamerica.
+```
+
+If they question the foreign number, Bolivia presence, and refund guarantee in
+the same message, use a transparent but selective reply. Acknowledge the concern,
+explain the Italian number, frame the refund guarantee as reputation plus an
+optional simple written agreement, avoid pretending Bolivian legal presence,
+and always offer a short meeting to know each other.
+
+```text
+Es correcto, somos un equipo de argentinos y trabajamos de forma remota para toda Latinoamerica.
+
+El numero es italiano porque mi socio Alan Kravchuk vivio mucho tiempo en Italia y conserva ese numero. Puede verlo aca:
+https://www.linkedin.com/in/alan-yoel-kravchuk-006a501aa
+
+En cuanto a la devolucion, la garantia principal es nuestra reputacion y el compromiso que asumimos con cada cliente. Tambien podemos dejarlo por escrito en un acuerdo simple antes de empezar.
+
+Ahora, siendo totalmente claros: si para usted es indispensable que tengamos oficina o personeria en Bolivia, probablemente no seamos la mejor opcion.
+
+Usted llego a nosotros por nuestro anuncio y completo el formulario porque le intereso la propuesta. Nosotros trabajamos con profesionales que quieren crecer, que entienden que toda inversion comercial tiene un riesgo, y que estan dispuestos a apostar por conseguir mas clientes.
+
+Si le interesa avanzar con esa mentalidad, con gusto lo vemos en una reunion corta y le explicamos como se aplicaria a su caso. Que dia le queda mejor?
 ```
 
 ### Lead says no, not candidate, or stop

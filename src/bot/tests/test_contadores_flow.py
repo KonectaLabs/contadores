@@ -556,6 +556,78 @@ def test_send_contadores_pending_alerts_includes_direct_lead_link(monkeypatch) -
     ) in sent_calls[0]["text"]
 
 
+def test_send_contadores_pending_alerts_handles_runtime_fallback_alert(monkeypatch) -> None:
+    """Runtime Codex fallback alerts should email the error and mark the runtime alert row."""
+    sent_calls: list[dict[str, str | None]] = []
+    marked_runtime_alerts: list[int] = []
+    marked_leads: list[str] = []
+
+    async def fake_fetch_pending_contadores_alerts(client, *, funnel_id="contadores"):
+        del client
+        del funnel_id
+        return [
+            PendingContadoresAlertItem(
+                lead_id="runtime-lead-1",
+                full_name="Facu",
+                phone="+5491153484587",
+                email=None,
+                stage="runtime_alert",
+                automation_paused_reason="codex_fallback",
+                latest_inbound_text="Cuanto cuesta?",
+                reason="Codex fallo y se uso fallback.",
+                alert_emails=["ops@example.com"],
+                alert_kind="runtime",
+                runtime_alert_id=123,
+                funnel_label="Abogados",
+                codex_error="Codex failed: timeout",
+                fallback_action="send_reply",
+            )
+        ]
+
+    async def fake_ensure_alert_inbox():
+        return SimpleNamespace(inbox_id="alerts-inbox-1", inbox_address="alerts@example.com")
+
+    async def fake_send_message(**kwargs) -> DeliveryReceipt:
+        sent_calls.append(kwargs)
+        return DeliveryReceipt(external_id="agentmail-runtime-alert-1")
+
+    async def fake_mark_backend_contadores_runtime_alert_sent(client, *, runtime_alert_id: int):
+        del client
+        marked_runtime_alerts.append(runtime_alert_id)
+
+    async def fake_mark_backend_contadores_alert_sent(client, *, lead_id: str):
+        del client
+        marked_leads.append(lead_id)
+
+    monkeypatch.setattr(utils, "fetch_pending_contadores_alerts", fake_fetch_pending_contadores_alerts)
+    monkeypatch.setattr(
+        utils,
+        "mark_backend_contadores_runtime_alert_sent",
+        fake_mark_backend_contadores_runtime_alert_sent,
+    )
+    monkeypatch.setattr(utils, "mark_backend_contadores_alert_sent", fake_mark_backend_contadores_alert_sent)
+
+    outcomes = asyncio.run(
+        send_contadores_pending_alerts(
+            SimpleNamespace(),
+            email_provider=SimpleNamespace(
+                configured=True,
+                ensure_alert_inbox=fake_ensure_alert_inbox,
+                send_message=fake_send_message,
+            ),
+            funnel_label="Contadores",
+        )
+    )
+
+    assert [item["status"] for item in outcomes] == ["sent"]
+    assert marked_runtime_alerts == [123]
+    assert marked_leads == []
+    assert sent_calls[0]["subject"] == "[Abogados] codex_fallback +5491153484587"
+    assert "Error Codex: Codex failed: timeout" in sent_calls[0]["text"]
+    assert "Accion fallback usada: send_reply" in sent_calls[0]["text"]
+    assert "Lead link: https://chatterface.fgoiriz.com/?section=contadores&contadores_lead=runtime-lead-1" in sent_calls[0]["text"]
+
+
 def test_process_whatsapp_message_status_event_ignores_missing_contadores_message(monkeypatch) -> None:
     """Unknown WhatsApp delivery ids should be ignored after the app split."""
 

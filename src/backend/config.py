@@ -16,6 +16,19 @@ PERPLEXITY_API_KEY = os.getenv("PERPLEXITY_API_KEY", "")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
+AUDIO_TRANSCRIPTION_MODEL = os.getenv("OPENAI_AUDIO_TRANSCRIPTION_MODEL", "gpt-4o-transcribe")
+AUDIO_TRANSCRIPTION_PROMPT = os.getenv(
+    "OPENAI_AUDIO_TRANSCRIPTION_PROMPT",
+    (
+        "Transcribe audio de WhatsApp de leads de Konecta. "
+        "Devuelve solo el texto dicho, manteniendo idioma y palabras comerciales como "
+        "pagina, campanas, reunion, WhatsApp, contadores y abogados."
+    ),
+)
+CONVERSATION_BOT_CODEX_MODEL = os.getenv("CONVERSATION_BOT_CODEX_MODEL", "gpt-5.5")
+CONVERSATION_BOT_CODEX_EFFORT = os.getenv("CONVERSATION_BOT_CODEX_EFFORT", "low")
+CONVERSATION_BOT_CODEX_SERVICE_TIER = (os.getenv("CONVERSATION_BOT_CODEX_SERVICE_TIER", "") or "").strip() or None
+
 
 # Instantly configuration
 INSTANTLY_API_KEY = os.getenv("INSTANTLY_API_KEY", "")

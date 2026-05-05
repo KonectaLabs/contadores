@@ -148,6 +148,7 @@ async def run_worker_iteration(
                 "video_confirmation_recaps_sent",
                 "classified_needs_human",
                 "calendly_sent",
+                "codex_fallback_alerts",
             ]
         ):
             logger.info("%s automation summary: %s", funnel.label, automation_summary)

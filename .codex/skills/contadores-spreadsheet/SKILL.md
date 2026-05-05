@@ -131,6 +131,10 @@ Treat the spreadsheet as the source of truth for:
 - which step was already sent;
 - whether the conversational bot already sent `ai_reply` or
   `scheduling_handoff_confirmation`;
+- whether an inbound audio was transcribed into text or remained media-only for
+  human review;
+- whether Codex failed and the Grok/DSPy fallback answered, which should create
+  a runtime alert without changing the lead stage;
 - when the next action should happen;
 - whether automation should stop and hand off to a human.
 

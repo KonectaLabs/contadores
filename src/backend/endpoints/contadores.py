@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import csv
 import json
+import logging
 import mimetypes
 import os
 import re
@@ -26,11 +27,8 @@ from backend.ai.contadores_conversation_bot import (
     ContadoresConversationBotProgram,
     ContadoresConversationBotResult,
 )
-from backend.ai.contadores_post_loom_classifier import (
-    PostLoomReplyClassifierProgram,
-    PostLoomServiceRecapProgram,
-)
 from backend.auth import INTERNAL_API_TOKEN_HEADER, has_valid_internal_api_token
+from backend.audio_transcription import AudioTranscriptionError, transcribe_audio_media
 from backend.contadores_strategies import (
     LOOM_STEP,
     choose_contadores_strategy as choose_default_contadores_strategy,
@@ -43,6 +41,7 @@ from backend.database import (
     ContadoresLead,
     ContadoresLeadStage,
     ContadoresMessage,
+    ContadoresRuntimeAlert,
     ContadoresStrategyAssignment,
     DATA_DIR,
     MessageDeliveryStatus,
@@ -57,6 +56,7 @@ from backend.funnel_config import get_file_backed_funnel, get_funnel, upsert_fun
 from backend.funnel_config import list_funnels, list_funnels_by_whatsapp_referral_source_id
 
 contadores_router = APIRouter(prefix="/api/contadores", tags=["contadores"])
+logger = logging.getLogger(__name__)
 
 OPENER_FOLLOWUP_SEQUENCE_STEP = "opener_followup_24h"
 OPENER_FOLLOWUP_RETRY_SEQUENCE_STEP = "opener_followup_24h_template_retry_20260424"
@@ -382,6 +382,45 @@ def format_conversation_for_bot(messages: list[ContadoresMessage]) -> str:
         timestamp = format_timestamp_seconds(message.created_at) or ""
         rows.append(f"{timestamp} {speaker}{sequence}: {text}")
     return "\n".join(rows)
+
+
+def build_funnel_info_for_bot(funnel: Any) -> str:
+    """Build the funnel-specific context passed into the global conversation bot."""
+    funnel_id = str(getattr(funnel, "id", "") or "").strip() or "contadores"
+    label = str(getattr(funnel, "label", "") or "").strip() or funnel_id
+    opener_text = str(getattr(funnel, "opener_text", "") or "").strip()
+    loom_intro_text = str(getattr(funnel, "loom_intro_text", "") or "").strip()
+    video_check_text = str(getattr(funnel, "video_check_text", "") or "").strip()
+
+    if funnel_id == ABOGADOS_FUNNEL_ID:
+        audience = "abogados, estudios juridicos y profesionales legales"
+        objective = "atraer consultas de potenciales clientes para las areas legales que quieran priorizar"
+        services = "familia, sucesiones, civil, laboral, mercantil u otras areas que defina el abogado"
+    elif funnel_id == "contadores":
+        audience = "contadores, estudios contables y asesores tributarios"
+        objective = "atraer consultas de prospectos para servicios contables directo a WhatsApp"
+        services = "servicios contables, tributarios, empresas, monotributistas u otros servicios del estudio"
+    else:
+        audience = f"profesionales del funnel {label}"
+        objective = "atraer consultas calificadas directo a WhatsApp con pagina profesional y campanas"
+        services = "las areas o servicios que el profesional quiera priorizar"
+
+    parts = [
+        f"Funnel: {label} ({funnel_id}).",
+        f"Publico: {audience}.",
+        f"Objetivo: {objective}.",
+        "Oferta: pagina profesional personalizada + 3 campanas publicitarias enfocadas.",
+        "Precio: 300 USD, pago unico.",
+        "Cierre v1: no enviar Calendly; pedir email, dia y horario para una llamada corta de 15 minutos.",
+        f"Areas o servicios prioritarios: {services}.",
+    ]
+    if opener_text:
+        parts.append(f"Opener actual: {opener_text}")
+    if loom_intro_text:
+        parts.append(f"Intro/video actual: {loom_intro_text}")
+    if video_check_text:
+        parts.append(f"Check actual: {video_check_text}")
+    return "\n".join(parts)
 
 
 def latest_inbound_is_untranscribed_media(message: ContadoresMessage | None) -> bool:
@@ -1877,9 +1916,22 @@ def apply_conversation_bot_result(
         "human_handoffs": 0,
         "closed_by_ai": 0,
         "no_actions": 0,
+        "codex_fallback_alerts": 0,
     }
     label = result.classification_label or result.action
     reason = result.reason or "Decision del bot conversacional."
+
+    if result.runtime_error:
+        funnel = resolve_funnel(lead.funnel_id)
+        ContadoresRuntimeAlert.add(
+            lead=lead,
+            funnel_label=funnel.label,
+            alert_type="codex_fallback",
+            error=result.runtime_error,
+            fallback_action=result.action,
+            latest_inbound_text=latest_inbound.text if latest_inbound else "",
+        )
+        metrics["codex_fallback_alerts"] += 1
 
     if result.action == "handoff_scheduling":
         if not result.timezone and not inferred_timezone:
@@ -2003,31 +2055,6 @@ def apply_conversation_bot_result(
     )
     metrics["human_handoffs"] += 1
     return metrics
-
-
-async def send_post_loom_service_recap(
-    *,
-    lead: ContadoresLead,
-    reply_batch: str,
-    generator: PostLoomServiceRecapProgram,
-) -> list[ContadoresMessage]:
-    """Generate and queue the recap sent after a simple watched-video confirmation."""
-    funnel = resolve_funnel(lead.funnel_id)
-    result = await generator.aforward(
-        funnel_id=funnel.id,
-        funnel_label=funnel.label,
-        phone=lead.phone,
-        reply_batch=reply_batch,
-    )
-    text = result.message_text.strip()
-    if not text:
-        return []
-    row = enqueue_lead_outbound(
-        lead=lead,
-        text=text,
-        sequence_step=LOOM_RECAP_SEQUENCE_STEP,
-    )
-    return [row]
 
 
 def send_calendly_link_only(*, lead: ContadoresLead, config: ContadoresConfig) -> list[ContadoresMessage]:
@@ -2923,16 +2950,33 @@ def upsert_general_inbox_lead_from_inbound(
     return ContadoresLead.get_by_id(lead.id) or lead, existing is None
 
 
+def resolve_inbound_message_text(command: ContadoresWhatsAppInboundCommand) -> str:
+    """Return text to persist for inbound media, transcribing audio when possible."""
+    media_type = (command.media_type or "").strip().lower()
+    if media_type != "audio" or not command.media_path:
+        return command.text
+
+    try:
+        return transcribe_audio_media(command.media_path, mime_type=command.media_mime_type)
+    except AudioTranscriptionError as error:
+        logger.warning("Could not transcribe inbound audio %s: %s", command.media_path, error)
+        return command.text
+    except Exception:
+        logger.exception("Unexpected inbound audio transcription failure for %s.", command.media_path)
+        return command.text
+
+
 def record_whatsapp_inbound_for_lead(
     *,
     lead: ContadoresLead,
     command: ContadoresWhatsAppInboundCommand,
 ) -> tuple[ContadoresLead, ContadoresMessage]:
     """Persist one inbound WhatsApp message."""
+    message_text = resolve_inbound_message_text(command)
     row = ContadoresMessage.add(
         lead_id=lead.id,
         from_me=False,
-        text=command.text,
+        text=message_text,
         external_id=command.external_id,
         media_type=command.media_type,
         media_path=command.media_path,
@@ -2962,6 +3006,7 @@ class ContadoresAutomationTickResponse(BaseModel):
     video_confirmation_recaps_sent: int = 0
     classified_needs_human: int = 0
     calendly_sent: int = 0
+    codex_fallback_alerts: int = 0
 
 
 class PendingContadoresAlertItem(BaseModel):
@@ -2976,6 +3021,11 @@ class PendingContadoresAlertItem(BaseModel):
     latest_inbound_text: str | None = None
     reason: str | None = None
     alert_emails: list[str] = Field(default_factory=list)
+    alert_kind: str = "needs_human"
+    runtime_alert_id: int | None = None
+    funnel_label: str | None = None
+    codex_error: str | None = None
+    fallback_action: str | None = None
 
 
 class PendingContadoresAlertsResponse(BaseModel):
@@ -3984,6 +4034,7 @@ async def run_contadores_automation_tick(
     video_confirmation_recaps_sent = 0
     classified_needs_human = 0
     calendly_sent = 0
+    codex_fallback_alerts = 0
 
     for lead in leads:
         if lead.stage in {ContadoresLeadStage.ARCHIVED, ContadoresLeadStage.CLOSED, ContadoresLeadStage.BOOKED}:
@@ -4109,6 +4160,7 @@ async def run_contadores_automation_tick(
         result = await conversation_bot.aforward(
             funnel_id=funnel.id,
             funnel_label=funnel.label,
+            funnel_info=build_funnel_info_for_bot(funnel),
             lead_name=lead.full_name or "",
             phone=lead.phone,
             inferred_timezone=inferred_timezone,
@@ -4129,6 +4181,7 @@ async def run_contadores_automation_tick(
         human_handoffs += metric_updates["human_handoffs"]
         closed_by_ai += metric_updates["closed_by_ai"]
         no_actions += metric_updates["no_actions"]
+        codex_fallback_alerts += metric_updates["codex_fallback_alerts"]
         if metric_updates["human_handoffs"]:
             classified_needs_human += metric_updates["human_handoffs"]
 
@@ -4147,6 +4200,7 @@ async def run_contadores_automation_tick(
         video_confirmation_recaps_sent=video_confirmation_recaps_sent,
         classified_needs_human=classified_needs_human,
         calendly_sent=calendly_sent,
+        codex_fallback_alerts=codex_fallback_alerts,
     )
 
 
@@ -4177,6 +4231,28 @@ async def list_pending_contadores_alerts(
                 alert_emails=config.alert_emails,
             )
         )
+    for alert in ContadoresRuntimeAlert.list_pending(funnel_id=funnel_id, limit=100):
+        items.append(
+            PendingContadoresAlertItem(
+                lead_id=alert.lead_id,
+                full_name=alert.full_name,
+                phone=alert.phone,
+                email=None,
+                stage="runtime_alert",
+                automation_paused_reason=alert.alert_type,
+                latest_inbound_text=alert.latest_inbound_text,
+                reason=(
+                    "Codex fallo en el bot conversacional y se uso fallback. "
+                    f"Accion fallback: {alert.fallback_action or '-'}."
+                ),
+                alert_emails=config.alert_emails,
+                alert_kind="runtime",
+                runtime_alert_id=alert.id,
+                funnel_label=alert.funnel_label,
+                codex_error=alert.error,
+                fallback_action=alert.fallback_action,
+            )
+        )
     return PendingContadoresAlertsResponse(items=items)
 
 
@@ -4195,6 +4271,22 @@ async def mark_contadores_alerted(
     config = get_effective_funnel_config(updated.funnel_id)
     ContadoresConfig.mark_alert_sent(sent_at=command.sent_at or now_utc())
     return build_lead_summary(updated, config=config)
+
+
+@contadores_router.post("/runtime-alerts/{alert_id}/mark-alerted")
+async def mark_contadores_runtime_alerted(
+    alert_id: int,
+    command: MarkContadoresAlertedCommand,
+) -> dict[str, str]:
+    """Mark that one runtime fallback alert email was sent."""
+    updated = ContadoresRuntimeAlert.mark_notified(
+        alert_id=alert_id,
+        notified_at=command.sent_at or now_utc(),
+    )
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Runtime alert not found")
+    ContadoresConfig.mark_alert_sent(sent_at=command.sent_at or now_utc())
+    return {"status": "ok"}
 
 
 @contadores_router.post("/bookings/mark", response_model=ContadoresLeadSummary)

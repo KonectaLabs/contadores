@@ -1896,6 +1896,96 @@ class ContadoresMessage(SQLModel, table=True):
             return row
 
 
+class ContadoresRuntimeAlert(SQLModel, table=True):
+    """Lightweight operator alert that does not change the lead stage."""
+
+    __tablename__ = "contadores_runtime_alerts"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    lead_id: str = Field(foreign_key="contadores_leads.id", index=True)
+    funnel_id: str = Field(default="contadores", index=True)
+    funnel_label: str = ""
+    phone: str = Field(default="", index=True)
+    full_name: str | None = Field(default=None)
+    alert_type: str = Field(default="codex_fallback", index=True)
+    error: str = ""
+    fallback_action: str = ""
+    latest_inbound_text: str = ""
+    notified_at: datetime | None = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
+
+    @classmethod
+    def add(
+        cls,
+        *,
+        lead: ContadoresLead,
+        funnel_label: str,
+        alert_type: str,
+        error: str,
+        fallback_action: str,
+        latest_inbound_text: str,
+    ) -> "ContadoresRuntimeAlert":
+        """Persist one runtime alert for later email notification."""
+        with Session(engine) as session:
+            row = cls(
+                lead_id=lead.id,
+                funnel_id=(lead.funnel_id or "contadores").strip() or "contadores",
+                funnel_label=(funnel_label or "").strip(),
+                phone=(lead.phone or "").strip(),
+                full_name=(lead.full_name or "").strip() or None,
+                alert_type=(alert_type or "runtime_alert").strip() or "runtime_alert",
+                error=" ".join(str(error or "").split()).strip()[:2000],
+                fallback_action=(fallback_action or "").strip(),
+                latest_inbound_text=(latest_inbound_text or "").strip()[:2000],
+            )
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            session.expunge(row)
+            return row
+
+    @classmethod
+    def list_pending(
+        cls,
+        *,
+        funnel_id: str | None = None,
+        limit: int = 100,
+    ) -> list["ContadoresRuntimeAlert"]:
+        """List runtime alerts that still need an operator email."""
+        with Session(engine) as session:
+            statement = (
+                select(cls)
+                .where(cls.notified_at.is_(None))
+                .order_by(cls.created_at, cls.id)
+                .limit(limit)
+            )
+            if funnel_id is not None:
+                statement = statement.where(cls.funnel_id == ((funnel_id or "").strip() or "contadores"))
+            rows = list(session.exec(statement).all())
+            for row in rows:
+                session.expunge(row)
+            return rows
+
+    @classmethod
+    def mark_notified(
+        cls,
+        *,
+        alert_id: int,
+        notified_at: datetime | None = None,
+    ) -> Optional["ContadoresRuntimeAlert"]:
+        """Mark one runtime alert as emailed."""
+        with Session(engine) as session:
+            row = session.get(cls, alert_id)
+            if row is None:
+                return None
+            row.notified_at = notified_at or datetime.now(timezone.utc)
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            session.expunge(row)
+            return row
+
+
 class WorkstationClientStatus(str, Enum):
     """Status for one converted client."""
 

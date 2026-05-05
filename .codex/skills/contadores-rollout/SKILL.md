@@ -34,6 +34,17 @@ WhatsApp strategy videos should be referenced by `media_path` under the shared
 same path through one stable media URL. WhatsApp media sent by leads should also
 be downloaded into `data/contadores/inbound_media` when available so operators
 can inspect images, videos, audio, documents, and stickers from the CRM.
+Inbound audio should be transcribed before the conversational bot runs. The
+server image must include `ffmpeg` so WhatsApp `.ogg` audio can be converted for
+OpenAI speech-to-text, and the env should keep
+`OPENAI_AUDIO_TRANSCRIPTION_MODEL=gpt-4o-transcribe` unless deliberately
+overridden.
+
+The conversational bot uses Codex SDK as primary runtime
+(`CONVERSATION_BOT_CODEX_MODEL=gpt-5.5`, low effort) and Grok/DSPy as fallback.
+Deploys must preserve `CODEX_HOME` in the data volume so Codex auth persists.
+Codex fallback errors create runtime email alerts but should not pause leads
+when the fallback answered safely.
 
 Outbound WhatsApp send failures are persisted on `contadores_messages`. The bot
 reports send exceptions to the backend, the backend requeues until
@@ -83,7 +94,8 @@ uv run python src/scripts/requeue_failed_contadores_messages.py
 5. Verify `/api/funnels` on the server.
 6. Verify sheet ingestion and WhatsApp flow on the real server when the change touches those surfaces.
    When the change touches the post-video sequence, include the conversational
-   bot path that queues `ai_reply`, plus the scheduling handoff path that queues
+   bot path that queues `ai_reply`, the audio transcription path, runtime
+   fallback alerts, plus the scheduling handoff path that queues
    `scheduling_handoff_confirmation`.
 
 For a new niche funnel, create/edit the funnel definition first, deploy code,

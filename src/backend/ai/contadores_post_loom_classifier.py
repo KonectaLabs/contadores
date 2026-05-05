@@ -1,4 +1,8 @@
-"""Post-Loom reply programs for Contadores automation."""
+"""Legacy Post-Loom classifiers kept for regression tests and old snapshots.
+
+The active automation uses `ContadoresConversationBotProgram`, which answers
+known questions directly and only hands off true unknowns or scheduling details.
+"""
 
 from __future__ import annotations
 

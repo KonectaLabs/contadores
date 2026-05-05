@@ -379,6 +379,27 @@ Follow-up process reply:
 Agendamos una reunion, nos conocemos, despejamos las ultimas dudas, definimos un metodo de pago para los 300 USD, y una vez se realice el pago, nosotros comenzamos a trabajar en tu caso. En menos de 1 semana tenemos la pagina web y las campanas publicitarias corriendo. Y tienes 30 dias de garantia, si no te traemos potenciales clientes en 30 dias, te devolvemos el dinero.
 ```
 
+## Audio / Media
+
+Runtime rule:
+
+```text
+Si WhatsApp trae un audio con `media_path`, primero transcribirlo y tratar el transcript como texto normal.
+Si el audio no se pudo descargar o transcribir, no inventar el contenido: pasa a humano como media sin transcript.
+Imagen, documento, sticker o video sin texto tambien pasan a humano.
+```
+
+Example after successful audio transcript:
+
+```text
+Lead audio transcript: Me interesa, cuanto cuesta?
+Reply: La inversion es de 300 USD, pago unico.
+
+A cambio recibe mas oportunidades de clientes potenciales directo a su WhatsApp.
+
+Eso lo logramos mediante una pagina profesional y campanas enfocadas.
+```
+
 ## Guarantee / Trust / Objections
 
 Lead:
@@ -430,6 +451,31 @@ los hacemos en instagram y Facebook
 
 ```text
 y los anuncios atraeran clientes asi como nuestro anuncio lo trajo a usted a estar hablando hoy con nosotros
+```
+
+Lead questions foreign number, Bolivia presence, and refund guarantee:
+
+```text
+Buen, este numero es de Italia y la persona del video me parece no es de Bolivia donde yo radico y me desempeno.
+Como garantizan la devolucion?
+O tienen oficina y representante en Bolivia
+```
+
+Thread-approved reply:
+
+```text
+Es correcto, somos un equipo de argentinos y trabajamos de forma remota para toda Latinoamerica.
+
+El numero es italiano porque mi socio Alan Kravchuk vivio mucho tiempo en Italia y conserva ese numero. Puede verlo aca:
+https://www.linkedin.com/in/alan-yoel-kravchuk-006a501aa
+
+En cuanto a la devolucion, la garantia principal es nuestra reputacion y el compromiso que asumimos con cada cliente. Tambien podemos dejarlo por escrito en un acuerdo simple antes de empezar.
+
+Ahora, siendo totalmente claros: si para usted es indispensable que tengamos oficina o personeria en Bolivia, probablemente no seamos la mejor opcion.
+
+Usted llego a nosotros por nuestro anuncio y completo el formulario porque le intereso la propuesta. Nosotros trabajamos con profesionales que quieren crecer, que entienden que toda inversion comercial tiene un riesgo, y que estan dispuestos a apostar por conseguir mas clientes.
+
+Si le interesa avanzar con esa mentalidad, con gusto lo vemos en una reunion corta y le explicamos como se aplicaria a su caso. Que dia le queda mejor?
 ```
 
 ## Close / No Fit

@@ -136,6 +136,11 @@ class PendingContadoresAlertItem(BaseModel):
     latest_inbound_text: str | None = None
     reason: str | None = None
     alert_emails: list[str] = Field(default_factory=list)
+    alert_kind: str = "needs_human"
+    runtime_alert_id: int | None = None
+    funnel_label: str | None = None
+    codex_error: str | None = None
+    fallback_action: str | None = None
 
 
 class PendingContadoresAlertsResponse(BaseModel):
@@ -170,6 +175,7 @@ class ContadoresAutomationTickResponse(BaseModel):
     video_confirmation_recaps_sent: int = 0
     classified_needs_human: int = 0
     calendly_sent: int = 0
+    codex_fallback_alerts: int = 0
 
 
 class DispatchResult(BaseModel):
@@ -670,6 +676,19 @@ async def mark_backend_contadores_alert_sent(
     response.raise_for_status()
 
 
+async def mark_backend_contadores_runtime_alert_sent(
+    client: httpx.AsyncClient,
+    *,
+    runtime_alert_id: int,
+) -> None:
+    """Mark one pending runtime alert as sent."""
+    response = await client.post(
+        backend_url(f"/api/contadores/runtime-alerts/{runtime_alert_id}/mark-alerted"),
+        json={},
+    )
+    response.raise_for_status()
+
+
 async def send_contadores_pending_alerts(
     client: httpx.AsyncClient,
     *,
@@ -705,43 +724,63 @@ async def send_contadores_pending_alerts(
             )
             continue
 
+        runtime_alert = item.alert_kind == "runtime" or item.automation_paused_reason == "codex_fallback"
         scheduling_handoff = item.automation_paused_reason == "booking_details_collected"
-        first_line = (
-            f"{funnel_label}: lead listo para que Facu agende una llamada."
-            if scheduling_handoff
-            else f"Se freno la automatizacion de {funnel_label} y requiere revision humana."
-        )
-        subject_prefix = "agendar llamada" if scheduling_handoff else "needs_human"
+        effective_funnel_label = item.funnel_label or funnel_label
+        if runtime_alert:
+            first_line = (
+                f"{effective_funnel_label}: Codex fallo en el bot conversacional y se uso fallback "
+                "sin pausar el lead."
+            )
+            subject_prefix = "codex_fallback"
+        elif scheduling_handoff:
+            first_line = f"{effective_funnel_label}: lead listo para que Facu agende una llamada."
+            subject_prefix = "agendar llamada"
+        else:
+            first_line = f"Se freno la automatizacion de {effective_funnel_label} y requiere revision humana."
+            subject_prefix = "needs_human"
 
-        body = "\n".join(
-            [
-                first_line,
-                "",
-                f"Lead ID: {item.lead_id}",
-                f"Lead link: {build_contadores_lead_review_url(item.lead_id)}",
-                f"Nombre: {item.full_name or '-'}",
-                f"WhatsApp: {item.phone}",
-                f"Email: {item.email or '-'}",
-                f"Stage: {item.stage}",
-                f"Motivo / datos para Facu: {item.reason or '-'}",
-                "",
-                "Ultimo mensaje inbound:",
-                item.latest_inbound_text or "-",
-            ]
-        )
+        body_parts = [
+            first_line,
+            "",
+            f"Lead ID: {item.lead_id}",
+            f"Lead link: {build_contadores_lead_review_url(item.lead_id)}",
+            f"Nombre: {item.full_name or '-'}",
+            f"WhatsApp: {item.phone}",
+            f"Email: {item.email or '-'}",
+            f"Stage: {item.stage}",
+        ]
+        if runtime_alert:
+            body_parts.extend(
+                [
+                    f"Error Codex: {item.codex_error or '-'}",
+                    f"Accion fallback usada: {item.fallback_action or '-'}",
+                    f"Motivo: {item.reason or '-'}",
+                ]
+            )
+        else:
+            body_parts.append(f"Motivo / datos para Facu: {item.reason or '-'}")
+        body_parts.extend(["", "Ultimo mensaje inbound:", item.latest_inbound_text or "-"])
+        body = "\n".join(body_parts)
         for recipient in recipients:
             await email_provider.send_message(
                 inbox_id=alert_inbox.inbox_id,
                 inbox_address=alert_inbox.inbox_address,
                 recipient=recipient,
                 text=body,
-                subject=f"[{funnel_label}] {subject_prefix} {item.phone}",
+                subject=f"[{effective_funnel_label}] {subject_prefix} {item.phone}",
                 attachments=None,
                 thread_id=None,
                 in_reply_to=None,
                 references=None,
             )
-        await mark_backend_contadores_alert_sent(client, lead_id=item.lead_id)
+        if runtime_alert and item.runtime_alert_id is not None:
+            await mark_backend_contadores_runtime_alert_sent(
+                client,
+                runtime_alert_id=item.runtime_alert_id,
+            )
+        else:
+            await mark_backend_contadores_alert_sent(client, lead_id=item.lead_id)
         outcomes.append(
             {
                 "lead_id": item.lead_id,

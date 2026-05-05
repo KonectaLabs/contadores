@@ -15,6 +15,7 @@ from sqlmodel import SQLModel, create_engine
 import backend.database as database_module
 import backend.endpoints.contadores as contadores_endpoints
 import backend.endpoints.workstation as workstation_endpoints
+from backend.audio_transcription import AudioTranscriptionError
 from backend.ai.contadores_conversation_bot import ContadoresConversationBotResult
 from backend.contadores_strategies import get_contadores_strategy
 from backend.database import (
@@ -1506,6 +1507,71 @@ def test_conversation_bot_answers_common_questions_without_human_handoff(monkeyp
     assert [detail.json()["lead"]["stage"] for detail in details] == ["awaiting_video_reply"] * len(inbound_texts)
 
 
+def test_conversation_bot_codex_failure_records_runtime_alert_without_handoff(monkeypatch, tmp_path) -> None:
+    """Codex fallback alerts should not pause the lead when DSPy answers safely."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    ContadoresConfig.update(
+        enabled=True,
+        post_loom_min_seconds=300,
+        post_loom_quiet_seconds=30,
+        alert_emails=["ops@example.com"],
+    )
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-codex-fallback",
+        phone="+5491333333377",
+        full_name="Codex Fallback",
+    )
+    loom_sent_at = now_utc() - timedelta(minutes=7)
+    ContadoresLead.update_flow_state(
+        lead.id,
+        stage=ContadoresLeadStage.AWAITING_VIDEO_REPLY,
+        opener_sent_at=loom_sent_at - timedelta(minutes=1),
+        first_reply_received_at=loom_sent_at - timedelta(minutes=1),
+        loom_sent_at=loom_sent_at,
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=False,
+        text="Cuanto cuesta?",
+        created_at=now_utc() - timedelta(seconds=45),
+    )
+
+    class FakeConversationBot:
+        async def aforward(self, **kwargs):
+            assert "funnel_info" in kwargs
+            return ContadoresConversationBotResult(
+                action="send_reply",
+                message_text="La inversion es de 300 USD, pago unico.",
+                classification_label="answered_price",
+                reason="Fallback respondio precio.",
+                runtime_provider="dspy_fallback",
+                runtime_error="Codex failed: RuntimeError: boom",
+            )
+
+    monkeypatch.setattr(contadores_endpoints, "ContadoresConversationBotProgram", FakeConversationBot)
+
+    with TestClient(app) as client:
+        response = client.post("/api/contadores/automation/tick")
+        detail = client.get(f"/api/contadores/leads/{lead.id}")
+        pending = client.get("/api/contadores/messages/pending-delivery")
+        alerts = client.get("/api/contadores/alerts/pending")
+
+    assert response.status_code == 200
+    assert response.json()["ai_replies_sent"] == 1
+    assert response.json()["human_handoffs"] == 0
+    assert response.json()["codex_fallback_alerts"] == 1
+    assert detail.json()["lead"]["stage"] == "awaiting_video_reply"
+    assert detail.json()["lead"]["automation_paused"] is False
+    assert pending.json()["messages"][0]["sequence_step"] == "ai_reply"
+    assert alerts.status_code == 200
+    assert len(alerts.json()["items"]) == 1
+    alert = alerts.json()["items"][0]
+    assert alert["alert_kind"] == "runtime"
+    assert alert["codex_error"] == "Codex failed: RuntimeError: boom"
+    assert alert["fallback_action"] == "send_reply"
+    assert alert["latest_inbound_text"] == "Cuanto cuesta?"
+
+
 def test_conversation_bot_handoffs_complete_scheduling_details(monkeypatch, tmp_path) -> None:
     """Email, day, and time should trigger a scheduling handoff alert, not Calendly."""
     configure_contadores_db(monkeypatch, tmp_path)
@@ -1677,6 +1743,80 @@ def test_conversation_bot_escalates_untranscribed_audio_without_guessing(monkeyp
     assert detail.json()["lead"]["stage"] == "needs_human"
     assert detail.json()["lead"]["automation_paused_reason"] == "untranscribed_media"
     assert pending.json()["messages"] == []
+
+
+def test_conversation_bot_answers_transcribed_audio(monkeypatch, tmp_path) -> None:
+    """A transcribed inbound audio should be handled like normal text."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    ContadoresConfig.update(
+        enabled=True,
+        post_loom_min_seconds=300,
+        post_loom_quiet_seconds=30,
+    )
+    data_dir = tmp_path / "data"
+    media_file = data_dir / "contadores" / "inbound_media" / "lead-audio-price.ogg"
+    media_file.parent.mkdir(parents=True)
+    media_file.write_bytes(b"audio-bytes")
+    monkeypatch.setattr(database_module, "DATA_DIR", data_dir)
+    monkeypatch.setattr(contadores_endpoints, "DATA_DIR", data_dir)
+    monkeypatch.setattr(
+        contadores_endpoints,
+        "transcribe_audio_media",
+        lambda media_path, *, mime_type=None: "Me interesa, cuanto cuesta?",
+    )
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-audio-transcribed",
+        phone="+5491333333366",
+        full_name="Audio Transcribed",
+    )
+    loom_sent_at = now_utc() - timedelta(minutes=7)
+    ContadoresLead.update_flow_state(
+        lead.id,
+        stage=ContadoresLeadStage.AWAITING_VIDEO_REPLY,
+        opener_sent_at=loom_sent_at - timedelta(minutes=1),
+        first_reply_received_at=loom_sent_at - timedelta(minutes=1),
+        loom_sent_at=loom_sent_at,
+    )
+
+    class FakeConversationBot:
+        async def aforward(self, **kwargs):
+            assert kwargs["latest_inbound"] == "Me interesa, cuanto cuesta?"
+            return ContadoresConversationBotResult(
+                action="send_reply",
+                message_text="La inversion es de 300 USD, pago unico.",
+                classification_label="answered_audio_price",
+                reason="Audio transcripto con pregunta de precio.",
+            )
+
+    monkeypatch.setattr(contadores_endpoints, "ContadoresConversationBotProgram", FakeConversationBot)
+
+    with TestClient(app) as client:
+        inbound = client.post(
+            "/api/contadores/whatsapp/inbound",
+            json={
+                "phone": lead.phone,
+                "text": "[audio]",
+                "media_type": "audio",
+                "media_path": "data/contadores/inbound_media/lead-audio-price.ogg",
+                "media_mime_type": "audio/ogg",
+                "media_filename": "lead-audio-price.ogg",
+            },
+        )
+        monkeypatch.setattr(
+            contadores_endpoints,
+            "now_utc",
+            lambda: datetime.now(timezone.utc) + timedelta(seconds=45),
+        )
+        tick = client.post("/api/contadores/automation/tick")
+        detail = client.get(f"/api/contadores/leads/{lead.id}")
+        pending = client.get("/api/contadores/messages/pending-delivery")
+
+    assert inbound.status_code == 200
+    assert tick.status_code == 200
+    assert tick.json()["ai_replies_sent"] == 1
+    assert detail.json()["messages"][0]["text"] == "Me interesa, cuanto cuesta?"
+    assert detail.json()["lead"]["stage"] == "awaiting_video_reply"
+    assert pending.json()["messages"][0]["text"] == "La inversion es de 300 USD, pago unico."
 
 
 def test_contadores_reply_after_24h_followup_still_advances_to_loom(monkeypatch, tmp_path) -> None:
@@ -2276,6 +2416,11 @@ def test_contadores_inbound_audio_payload_is_persisted_and_playable(monkeypatch,
     media_file.write_bytes(b"audio-bytes")
     monkeypatch.setattr(database_module, "DATA_DIR", data_dir)
     monkeypatch.setattr(contadores_endpoints, "DATA_DIR", data_dir)
+    monkeypatch.setattr(
+        contadores_endpoints,
+        "transcribe_audio_media",
+        lambda media_path, *, mime_type=None: "Me interesa, cuanto cuesta?",
+    )
     lead = ContadoresLead.upsert(
         external_lead_id="sheet-row-media",
         phone="+5491444444499",
@@ -2305,7 +2450,7 @@ def test_contadores_inbound_audio_payload_is_persisted_and_playable(monkeypatch,
     assert response.json()["route"] == "contadores"
 
     assert detail.status_code == 200
-    assert message["text"] == "[audio]"
+    assert message["text"] == "Me interesa, cuanto cuesta?"
     assert message["media_type"] == "audio"
     assert message["media_path"] == "data/contadores/inbound_media/lead-audio.ogg"
     assert message["media_mime_type"] == "audio/ogg"
@@ -2315,6 +2460,53 @@ def test_contadores_inbound_audio_payload_is_persisted_and_playable(monkeypatch,
     assert media.status_code == 200
     assert media.content == b"audio-bytes"
     assert media.headers["content-type"] == "audio/ogg"
+
+
+def test_contadores_inbound_audio_transcription_failure_keeps_media_playable(monkeypatch, tmp_path) -> None:
+    """If audio transcription fails, keep the audio metadata and placeholder text."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    data_dir = tmp_path / "data"
+    media_file = data_dir / "contadores" / "inbound_media" / "lead-audio-fail.ogg"
+    media_file.parent.mkdir(parents=True)
+    media_file.write_bytes(b"audio-bytes")
+    monkeypatch.setattr(database_module, "DATA_DIR", data_dir)
+    monkeypatch.setattr(contadores_endpoints, "DATA_DIR", data_dir)
+
+    def fail_transcription(media_path, *, mime_type=None):
+        del media_path
+        del mime_type
+        raise AudioTranscriptionError("bad audio")
+
+    monkeypatch.setattr(contadores_endpoints, "transcribe_audio_media", fail_transcription)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-media-fail",
+        phone="+5491444444488",
+        full_name="Media Fail",
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/contadores/whatsapp/inbound",
+            json={
+                "phone": lead.phone,
+                "text": "[audio]",
+                "external_id": "wamid.audio.fail",
+                "media_type": "audio",
+                "media_path": "data/contadores/inbound_media/lead-audio-fail.ogg",
+                "media_mime_type": "audio/ogg",
+                "media_filename": "lead-audio-fail.ogg",
+            },
+        )
+        detail = client.get(f"/api/contadores/leads/{lead.id}")
+        message = detail.json()["messages"][0]
+        media = client.get(message["media_url"])
+
+    assert response.status_code == 200
+    assert message["text"] == "[audio]"
+    assert message["media_type"] == "audio"
+    assert message["media_url"].startswith("/api/contadores/media/")
+    assert media.status_code == 200
+    assert media.content == b"audio-bytes"
 
 
 def test_contadores_outbound_video_uses_stable_media_path_url(monkeypatch, tmp_path) -> None:

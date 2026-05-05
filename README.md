@@ -44,7 +44,7 @@ Cada funnel contiene:
 - IDs de anuncios Click-to-WhatsApp (`whatsapp_referral_source_ids`);
 - texto del video;
 - estrategia WhatsApp MP4 (`loom_mp4`);
-- bot conversacional DSPy post-video/post-Calendly para responder dudas y pedir datos de llamada;
+- bot conversacional Codex post-video/post-Calendly para responder dudas y pedir datos de llamada;
 - `kind=campaign|inbox`, donde `inbox` no corre fases ni automatizacion;
 - Calendly solo como accion manual;
 - acciones manuales de Calendly: con mensaje previo o solo link;
@@ -259,9 +259,15 @@ Bot conversacional post-video y post-Calendly:
 - Luego del Loom/video y de la ventana de silencio, el backend llama a
   `ContadoresConversationBotProgram` con historial completo, funnel, stage,
   ultimos mensajes y timezone inferida por telefono cuando sea claro.
-- El modelo principal es `OPENROUTER_GROK_4_3_MODEL`, por defecto
-  `openrouter/x-ai/grok-4.3`, usando `OPENROUTER_API_KEY`. Si esa key no esta
-  configurada, el backend cae a `gpt-5.4-mini`.
+- El runtime principal es Codex SDK con `CONVERSATION_BOT_CODEX_MODEL`
+  (`gpt-5.5` por defecto) y `CONVERSATION_BOT_CODEX_EFFORT=low`, usando las
+  skills `contadores-bot-sequence` y `contadores-lead-reply-playbook` como
+  contexto estructurado.
+- Si Codex falla, el lead no se pausa por eso: se crea una alerta runtime por
+  email y se responde con fallback DSPy/Grok. El fallback usa
+  `OPENROUTER_GROK_4_3_MODEL=openrouter/x-ai/grok-4.3` cuando hay
+  `OPENROUTER_API_KEY`; si no, usa `gpt-5.4-mini`. Si Codex y fallback fallan,
+  ahi si pasa a `needs_human`.
 - El bot devuelve una accion estructurada:
   `send_reply`, `ask_scheduling_details`, `handoff_human`,
   `handoff_scheduling`, `close_lead` o `no_action`.
@@ -278,8 +284,13 @@ Bot conversacional post-video y post-Calendly:
   `needs_human`, guarda `automation_paused_reason=booking_details_collected` y
   deja email/dia/horario/timezone en `last_classification_reason` para la alerta
   por email.
-- El bot no inventa audio/media sin transcript. Audio, imagen, video, documento
-  o sticker sin texto pasan a humano.
+- Los audios inbound se transcriben antes de llegar al bot con
+  `OPENAI_AUDIO_TRANSCRIPTION_MODEL=gpt-4o-transcribe` por defecto. Si WhatsApp
+  entrega `.ogg`, Docker incluye `ffmpeg` para convertirlo a un formato aceptado
+  por OpenAI. Si descarga/transcripcion falla, se conserva el audio reproducible
+  y recien ahi pasa como media sin transcript.
+- El bot no inventa audio/media sin transcript. Imagen, video, documento,
+  sticker o audio fallido sin texto pasan a humano.
 - Cerrados, booked, archivados, excluidos, Venezuela y Workstation siguen
   bloqueados por los guards existentes.
 
@@ -308,6 +319,9 @@ Media en WhatsApp:
 
 - La media que envian los leads se descarga y se muestra en el backoffice
   cuando el proveedor la entrega.
+- Los audios inbound se guardan con `media_type/media_path` para poder
+  reproducirlos y, si la transcripcion sale bien, el transcript queda como
+  `ContadoresMessage.text` para que el bot siga el proceso como texto normal.
 - La media o archivos que envia el operador desde `Manual outbound` se guardan
   en `data/contadores/outbound_media/{lead_id}/`, se muestran en el chat y el
   bot los despacha por WhatsApp como imagen, video, audio o documento.
@@ -399,9 +413,10 @@ professional-photo/v001/metadata.json
 Las modificaciones desde la UI crean `v002`, `v003`, etc. Nunca se sobrescriben
 las fotos fuente ni las versiones anteriores.
 
-Esta funcion usa el Codex SDK desde el backend. En Docker, la imagen instala
-`@openai/codex` y usa `CODEX_HOME=/app/data/codex-home` por defecto para que la
-autenticacion de Codex pueda persistir en el volumen `data/`. Si
+El backend usa el Codex SDK para Workstation, generacion de imagenes y el bot
+conversacional. En Docker, la imagen instala `@openai/codex` y usa
+`CODEX_HOME=/app/data/codex-home` por defecto para que la autenticacion de Codex
+pueda persistir en el volumen `data/`. Si
 `CODEX_PREFER_CHATGPT_LOGIN=true`, el backend remueve `OPENAI_API_KEY` antes de
 lanzar Codex para priorizar el login ChatGPT/Codex. Si se configura en `false`,
 el proceso Codex conserva `OPENAI_API_KEY`.
