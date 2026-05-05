@@ -3679,6 +3679,32 @@ def test_workstation_conversion_is_idempotent_and_keeps_crm_link(monkeypatch, tm
     assert WorkstationClient.get_by_lead_id(lead.id) is not None
 
 
+def test_workstation_migration_normalizes_enum_values(monkeypatch, tmp_path) -> None:
+    """Existing rows with raw enum values should remain readable after migration."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-workstation-enum-migration",
+        phone="+5491777777770",
+        full_name="Cliente Enum",
+    )
+    workstation = WorkstationClient.create_for_lead(lead)
+    with database_module.engine.begin() as connection:
+        connection.exec_driver_sql(
+            "UPDATE workstation_clients "
+            "SET status = 'paid', work_type = 'pagina_ads', automation_status = 'needs_human' "
+            "WHERE id = ?",
+            (workstation.id,),
+        )
+
+    database_module.ensure_workstation_client_automation_columns()
+
+    rows = WorkstationClient.list_recent()
+    assert len(rows) == 1
+    assert rows[0].status == WorkstationClientStatus.PAID
+    assert rows[0].work_type == WorkstationClientWorkType.PAGINA_ADS
+    assert rows[0].automation_status == WorkstationAutomationStatus.NEEDS_HUMAN
+
+
 def test_workstation_tick_sends_intake_and_mirrors_whatsapp_media(monkeypatch, tmp_path) -> None:
     """Solo-page Workstation intake should ask for basics and mirror inbound media files."""
     configure_contadores_db(monkeypatch, tmp_path)

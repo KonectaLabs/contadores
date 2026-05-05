@@ -4263,8 +4263,8 @@ def ensure_workstation_client_automation_columns() -> None:
             return
         columns = {column["name"] for column in inspector.get_columns("workstation_clients")}
         column_definitions = {
-            "work_type": "TEXT NOT NULL DEFAULT 'pagina_ads'",
-            "automation_status": "TEXT NOT NULL DEFAULT 'needs_human'",
+            "work_type": "TEXT NOT NULL DEFAULT 'PAGINA_ADS'",
+            "automation_status": "TEXT NOT NULL DEFAULT 'NEEDS_HUMAN'",
             "last_automation_handled_at": "TIMESTAMP",
             "last_preview_sent_at": "TIMESTAMP",
             "approved_at": "TIMESTAMP",
@@ -4279,6 +4279,37 @@ def ensure_workstation_client_automation_columns() -> None:
                 f"ALTER TABLE workstation_clients ADD COLUMN {column_name} {column_type}"
             )
             logger.info("Added missing workstation_clients.%s column.", column_name)
+
+        enum_value_fixes = {
+            "status": {
+                "pending_payment": "PENDING_PAYMENT",
+                "paid": "PAID",
+                "in_progress": "IN_PROGRESS",
+                "archived": "ARCHIVED",
+            },
+            "work_type": {
+                "solo_pagina": "SOLO_PAGINA",
+                "pagina_ads": "PAGINA_ADS",
+                "solo_ads": "SOLO_ADS",
+            },
+            "automation_status": {
+                "intake": "INTAKE",
+                "drafting": "DRAFTING",
+                "awaiting_review": "AWAITING_REVIEW",
+                "revision_requested": "REVISION_REQUESTED",
+                "approved": "APPROVED",
+                "needs_human": "NEEDS_HUMAN",
+                "failed": "FAILED",
+            },
+        }
+        for column_name, replacements in enum_value_fixes.items():
+            if column_name not in columns and column_name not in column_definitions:
+                continue
+            for old_value, new_value in replacements.items():
+                connection.exec_driver_sql(
+                    f"UPDATE workstation_clients SET {column_name} = ? WHERE {column_name} = ?",
+                    (new_value, old_value),
+                )
 
         for column_name in [
             "work_type",
