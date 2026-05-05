@@ -954,6 +954,235 @@ def test_manual_ping_action_queues_template_and_pauses_automation(monkeypatch, t
     assert lead_payload["automation_paused"] is True
 
 
+def test_pending_delivery_uses_message_template_params(monkeypatch, tmp_path) -> None:
+    """One-off campaign rows should carry their own WhatsApp template variables."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-promo-template",
+        phone="+5491888888899",
+        full_name="Promo Lead",
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=True,
+        text=(
+            "Hola Karen, promo para contadores de Ecuador:\n\n"
+            "te construimos una pagina web moderna y profesional para mostrar tus servicios.\n\n"
+            "Solo 29 USD.\n"
+            "La pagas solo cuando este terminada y te guste.\n\n"
+            "Si te interesa esta oferta, respondeme y te mostramos un ejemplo."
+        ),
+        delivery_status=MessageDeliveryStatus.UNDELIVERED,
+        sequence_step="promo_web_profesional_20260505",
+        whatsapp_template_name="konecta_promo_web_profesional_es_v1",
+        whatsapp_template_language="es",
+        whatsapp_template_body_params=["Karen", "contadores", "Ecuador", "29"],
+    )
+
+    with TestClient(app) as client:
+        pending_response = client.get("/api/contadores/messages/pending-delivery")
+        detail_response = client.get(f"/api/contadores/leads/{lead.id}")
+
+    assert pending_response.status_code == 200
+    messages = pending_response.json()["messages"]
+    assert len(messages) == 1
+    assert messages[0]["whatsapp_template_name"] == "konecta_promo_web_profesional_es_v1"
+    assert messages[0]["whatsapp_template_language"] == "es"
+    assert messages[0]["whatsapp_template_body_params"] == ["Karen", "contadores", "Ecuador", "29"]
+
+    assert detail_response.status_code == 200
+    detail_messages = detail_response.json()["messages"]
+    assert detail_messages[0]["whatsapp_template_name"] == "konecta_promo_web_profesional_es_v1"
+    assert detail_messages[0]["whatsapp_template_body_params"] == ["Karen", "contadores", "Ecuador", "29"]
+
+
+def test_active_offer_reply_uses_conversation_bot_without_starting_old_sequence(monkeypatch, tmp_path) -> None:
+    """Replies after a promo/offer broadcast should follow that offer instead of the opener/Loom path."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    ContadoresConfig.update(enabled=True, post_loom_quiet_seconds=30)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-active-offer",
+        phone="+593991111111",
+        full_name="Karen Acosta",
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=True,
+        text=(
+            "Hola Karen, promo para contadores de Ecuador:\n\n"
+            "te construimos una pagina web moderna y profesional para mostrar tus servicios.\n\n"
+            "Solo 29 USD.\n"
+            "La pagas solo cuando este terminada y te guste.\n\n"
+            "Si te interesa esta oferta, respondeme y te mostramos un ejemplo."
+        ),
+        delivery_status=MessageDeliveryStatus.DELIVERED,
+        sequence_step="promo_web_profesional_20260505",
+        created_at=now_utc() - timedelta(minutes=2),
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=False,
+        text="Me interesa",
+        created_at=now_utc() - timedelta(seconds=45),
+    )
+
+    class FakeConversationBot:
+        async def aforward(self, **kwargs):
+            assert kwargs["current_stage"] == "awaiting_initial_reply"
+            assert "KONECTA step=promo_web_profesional_20260505" in kwargs["conversation"]
+            assert kwargs["latest_inbound"] == "Me interesa"
+            return ContadoresConversationBotResult(
+                action="ask_scheduling_details",
+                message_text="Perfecto. Me pasa su email, dia y horario para coordinar una llamada corta?",
+                classification_label="active_offer_scheduling_requested",
+                reason="El lead mostro interes en la promo activa.",
+                missing_fields=["email", "day", "time"],
+            )
+
+    monkeypatch.setattr(contadores_endpoints, "ContadoresConversationBotProgram", FakeConversationBot)
+
+    with TestClient(app) as client:
+        first_tick = client.post("/api/contadores/automation/tick")
+        detail = client.get(f"/api/contadores/leads/{lead.id}")
+        pending_after_first_tick = client.get("/api/contadores/messages/pending-delivery")
+        second_tick = client.post("/api/contadores/automation/tick")
+        pending_after_second_tick = client.get("/api/contadores/messages/pending-delivery")
+
+    assert first_tick.status_code == 200
+    assert first_tick.json()["opener_sent"] == 0
+    assert first_tick.json()["scheduling_detail_requests_sent"] == 1
+    assert detail.status_code == 200
+    assert detail.json()["lead"]["stage"] == "awaiting_initial_reply"
+    assert detail.json()["lead"]["automation_paused"] is False
+    assert detail.json()["lead"]["last_classification_label"] == "active_offer_scheduling_requested"
+    assert pending_after_first_tick.status_code == 200
+    assert [item["sequence_step"] for item in pending_after_first_tick.json()["messages"]] == ["ai_reply"]
+    assert "email" in pending_after_first_tick.json()["messages"][0]["text"].lower()
+
+    assert second_tick.status_code == 200
+    assert second_tick.json()["opener_sent"] == 0
+    assert second_tick.json()["scheduling_detail_requests_sent"] == 0
+    assert [item["sequence_step"] for item in pending_after_second_tick.json()["messages"]] == ["ai_reply"]
+
+
+def test_active_offer_reply_handles_venezuela_leads(monkeypatch, tmp_path) -> None:
+    """A deliberate promo can continue with Venezuelan leads even though legacy follow-ups skip them."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    ContadoresConfig.update(enabled=True, post_loom_quiet_seconds=30)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-active-offer-ve",
+        phone="+584121234567",
+        full_name="Maria Gomez",
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=True,
+        text="Hola Maria, promo para contadores de Venezuela:\n\nSolo 19 USD.",
+        delivery_status=MessageDeliveryStatus.DELIVERED,
+        sequence_step="promo_web_profesional_20260505",
+        created_at=now_utc() - timedelta(minutes=2),
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=False,
+        text="Me interesa",
+        created_at=now_utc() - timedelta(seconds=45),
+    )
+
+    class FakeConversationBot:
+        async def aforward(self, **kwargs):
+            assert "Venezuela" in kwargs["conversation"]
+            return ContadoresConversationBotResult(
+                action="ask_scheduling_details",
+                message_text="Perfecto. Me pasa su email, dia y horario para coordinar una llamada corta?",
+                classification_label="active_offer_scheduling_requested",
+                reason="El lead mostro interes en la promo activa.",
+                missing_fields=["email", "day", "time"],
+            )
+
+    monkeypatch.setattr(contadores_endpoints, "ContadoresConversationBotProgram", FakeConversationBot)
+
+    with TestClient(app) as client:
+        tick = client.post("/api/contadores/automation/tick")
+        pending = client.get("/api/contadores/messages/pending-delivery")
+
+    assert tick.status_code == 200
+    assert tick.json()["opener_sent"] == 0
+    assert tick.json()["scheduling_detail_requests_sent"] == 1
+    assert [item["sequence_step"] for item in pending.json()["messages"]] == ["ai_reply"]
+
+
+def test_active_offer_complete_scheduling_handoff_alerts_human(monkeypatch, tmp_path) -> None:
+    """When active-offer replies include email/day/time, the normal scheduling alert path should run."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    ContadoresConfig.update(enabled=True, post_loom_quiet_seconds=30, alert_emails=["facu@example.com"])
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-active-offer-scheduling",
+        phone="+593992222222",
+        full_name="Luis Perez",
+    )
+    offer_sent_at = now_utc() - timedelta(minutes=4)
+    ai_question_at = now_utc() - timedelta(minutes=3)
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=True,
+        text="Hola Luis, promo para contadores de Ecuador:\n\nSolo 29 USD.",
+        delivery_status=MessageDeliveryStatus.DELIVERED,
+        sequence_step="promo_web_profesional_20260505",
+        created_at=offer_sent_at,
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=True,
+        text="Perfecto. Me pasa su email, dia y horario?",
+        delivery_status=MessageDeliveryStatus.DELIVERED,
+        sequence_step="ai_reply",
+        created_at=ai_question_at,
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=False,
+        text="Martes 10, luis@example.com",
+        created_at=now_utc() - timedelta(seconds=45),
+    )
+
+    class FakeConversationBot:
+        async def aforward(self, **kwargs):
+            assert kwargs["latest_inbound"] == "Martes 10, luis@example.com"
+            return ContadoresConversationBotResult(
+                action="handoff_scheduling",
+                message_text="Perfecto, con esos datos lo dejamos para coordinar y le confirmamos la invitacion.",
+                classification_label="booking_details_collected",
+                reason="El lead paso email, dia y horario.",
+                scheduling_email="luis@example.com",
+                scheduling_day="Martes",
+                scheduling_time="10",
+                timezone="America/Guayaquil",
+            )
+
+    monkeypatch.setattr(contadores_endpoints, "ContadoresConversationBotProgram", FakeConversationBot)
+
+    with TestClient(app) as client:
+        tick = client.post("/api/contadores/automation/tick")
+        detail = client.get(f"/api/contadores/leads/{lead.id}")
+        pending_messages = client.get("/api/contadores/messages/pending-delivery")
+        pending_alerts = client.get("/api/contadores/alerts/pending")
+
+    assert tick.status_code == 200
+    assert tick.json()["scheduling_handoffs"] == 1
+    assert detail.status_code == 200
+    assert detail.json()["lead"]["stage"] == "needs_human"
+    assert detail.json()["lead"]["automation_paused"] is True
+    assert detail.json()["lead"]["automation_paused_reason"] == "booking_details_collected"
+    assert "luis@example.com" in detail.json()["lead"]["last_classification_reason"]
+    assert [item["sequence_step"] for item in pending_messages.json()["messages"]] == [
+        "scheduling_handoff_confirmation"
+    ]
+    assert pending_alerts.status_code == 200
+    assert pending_alerts.json()["items"][0]["lead_id"] == lead.id
+    assert pending_alerts.json()["items"][0]["alert_emails"] == ["facu@example.com"]
+
+
 def test_manual_outbound_can_queue_multiple_uploaded_files(monkeypatch, tmp_path) -> None:
     """Manual outbound should persist multiple operator attachments for bot delivery."""
     configure_contadores_db(monkeypatch, tmp_path)

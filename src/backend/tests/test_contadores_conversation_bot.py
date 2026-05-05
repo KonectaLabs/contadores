@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import backend.ai.contadores_conversation_bot as conversation_bot_module
 from backend.ai.contadores_conversation_bot import (
+    ACTIVE_OFFER_REJECTION_REPLY,
     CodexConversationBotProgram,
     ContadoresConversationBotProgram,
     ContadoresConversationBotResult,
@@ -113,6 +114,65 @@ def test_dspy_conversation_bot_normalizes_unknown_action_to_handoff(monkeypatch)
 
     assert result.action == "handoff_human"
     assert result.missing_fields == ["email", "dia"]
+
+
+def test_active_offer_prompt_overrides_default_offer() -> None:
+    """The runtime prompt should tell the bot to follow recent offers/promos."""
+    prompt = build_conversation_bot_prompt(
+        **bot_kwargs(
+            latest_inbound="me interesa",
+            conversation=(
+                "2026-05-05T20:00:00Z KONECTA step=promo_web_profesional_20260505: "
+                "Hola Ana, promo para abogados de Bolivia: Solo 19 USD.\n"
+                "2026-05-05T20:02:00Z LEAD: me interesa"
+            ),
+        )
+    )
+
+    assert "active offer" in prompt.lower()
+    assert "overrides the default 300 USD offer" in prompt
+    assert "Ask for email, day and time" in prompt
+
+
+def test_active_offer_rejection_does_not_send_default_300_survey() -> None:
+    """Rejecting a promo should not receive the default 300 USD rejection survey."""
+    program = ContadoresConversationBotProgram(
+        codex_program=SimpleNamespace(
+            aforward=lambda **kwargs: ContadoresConversationBotResult(
+                action="send_reply",
+                message_text="Ok",
+                classification_label="answered",
+                reason="Respondio.",
+            )
+        )
+    )
+
+    async def fake_aforward(**kwargs):
+        del kwargs
+        return ContadoresConversationBotResult(
+            action="send_reply",
+            message_text="Ok",
+            classification_label="answered",
+            reason="Respondio.",
+        )
+
+    program.codex_program.aforward = fake_aforward
+
+    result = asyncio.run(
+        program.aforward(
+            **bot_kwargs(
+                latest_inbound="No gracias",
+                conversation=(
+                    "2026-05-05T20:00:00Z KONECTA step=promo_test: Solo 19 USD.\n"
+                    "2026-05-05T20:01:00Z LEAD: No gracias"
+                ),
+            )
+        )
+    )
+
+    assert result.action == "close_lead"
+    assert result.message_text == ACTIVE_OFFER_REJECTION_REPLY
+    assert result.message_text != REJECTION_SURVEY_REPLY
 
 
 def test_dspy_conversation_bot_removes_inverted_opening_punctuation(monkeypatch) -> None:
@@ -283,6 +343,7 @@ def test_codex_conversation_bot_overrides_wrong_origin_claim(monkeypatch) -> Non
     assert result.action == "send_reply"
     assert result.classification_label == "answered_company_origin"
     assert "Escribo desde Argentina" in result.message_text
+    assert "clientes potenciales directo a su WhatsApp" in result.message_text
     assert "Ecuador" not in result.message_text
 
 

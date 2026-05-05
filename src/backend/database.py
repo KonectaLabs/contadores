@@ -1503,7 +1503,21 @@ class ContadoresMessage(SQLModel, table=True):
     media_filename: str | None = Field(default=None)
     media_sha256: str | None = Field(default=None)
     media_id: str | None = Field(default=None, index=True)
+    whatsapp_template_name: str | None = Field(default=None, index=True)
+    whatsapp_template_language: str | None = Field(default=None)
+    whatsapp_template_body_params_json: str = Field(default="[]")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
+
+    @property
+    def whatsapp_template_body_params(self) -> list[str]:
+        """Return positional WhatsApp template params stored for this row."""
+        try:
+            payload = json.loads(self.whatsapp_template_body_params_json or "[]")
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(payload, list):
+            return []
+        return [str(item) for item in payload]
 
     @classmethod
     def add(
@@ -1527,6 +1541,9 @@ class ContadoresMessage(SQLModel, table=True):
         media_filename: str | None = None,
         media_sha256: str | None = None,
         media_id: str | None = None,
+        whatsapp_template_name: str | None = None,
+        whatsapp_template_language: str | None = None,
+        whatsapp_template_body_params: list[str] | tuple[str, ...] | None = None,
         created_at: datetime | None = None,
     ) -> "ContadoresMessage":
         """Persist one lead message and keep lead activity timestamps updated."""
@@ -1554,6 +1571,12 @@ class ContadoresMessage(SQLModel, table=True):
                 media_filename=(media_filename or "").strip() or None,
                 media_sha256=(media_sha256 or "").strip() or None,
                 media_id=(media_id or "").strip() or None,
+                whatsapp_template_name=(whatsapp_template_name or "").strip() or None,
+                whatsapp_template_language=(whatsapp_template_language or "").strip() or None,
+                whatsapp_template_body_params_json=json.dumps(
+                    [str(item) for item in (whatsapp_template_body_params or [])],
+                    ensure_ascii=True,
+                ),
                 created_at=now,
             )
             session.add(row)
@@ -3982,6 +4005,7 @@ def init_db() -> None:
     ensure_contadores_tags_column()
     ensure_contadores_strategy_columns()
     ensure_contadores_message_delivery_columns()
+    ensure_contadores_message_template_columns()
     ensure_contadores_config_strategy_weights_column()
     logger.info(f"Database initialized at {DATABASE_URL}")
 
@@ -4154,6 +4178,31 @@ def ensure_contadores_message_delivery_columns() -> None:
         connection.exec_driver_sql(
             "CREATE INDEX IF NOT EXISTS ix_contadores_messages_delivery_error_acknowledged_at "
             "ON contadores_messages (delivery_error_acknowledged_at)"
+        )
+
+
+def ensure_contadores_message_template_columns() -> None:
+    """Add per-message WhatsApp template metadata to existing message tables."""
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        if "contadores_messages" not in inspector.get_table_names():
+            return
+        message_columns = {column["name"] for column in inspector.get_columns("contadores_messages")}
+        column_definitions = {
+            "whatsapp_template_name": "TEXT",
+            "whatsapp_template_language": "TEXT",
+            "whatsapp_template_body_params_json": "TEXT NOT NULL DEFAULT '[]'",
+        }
+        for column_name, column_type in column_definitions.items():
+            if column_name in message_columns:
+                continue
+            connection.exec_driver_sql(
+                f"ALTER TABLE contadores_messages ADD COLUMN {column_name} {column_type}"
+            )
+            logger.info("Added missing contadores_messages.%s column.", column_name)
+        connection.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_contadores_messages_whatsapp_template_name "
+            "ON contadores_messages (whatsapp_template_name)"
         )
 
 

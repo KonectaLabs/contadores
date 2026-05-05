@@ -416,6 +416,35 @@ uv run python src/scripts/requeue_failed_contadores_messages.py --dry-run
 uv run python src/scripts/requeue_failed_contadores_messages.py
 ```
 
+## Promo web profesional mayo 2026
+
+Template Meta:
+
+- Nombre: `konecta_promo_web_profesional_es_v1`
+- Categoria: `MARKETING`
+- Parametros posicionales: nombre corto, profesion, pais, precio.
+- Spec versionado: `src/scripts/whatsapp_template_specs/konecta_promo_web_profesional_es_v1.json`.
+
+Script one-off:
+
+```bash
+uv run python src/scripts/contadores_promo_web_20260505.py
+uv run python src/scripts/contadores_promo_web_20260505.py --execute
+```
+
+El modo default es dry-run: genera `data/reports/promo-web-profesional-2026-05-05-preview.csv`
+y `data/contadores/promo-web-profesional-2026-05-05-aliases.csv`.
+El script excluye convertidos, Workstation, booked, closed, archived, opt-outs
+de marketing y, salvo que se pase `--include-provider-failures`, leads cuyo
+ultimo outbound ya fallo en Meta. Los precios `19/29/49/99` se eligen de forma
+deterministica por lead y pais, con mayor peso a precios bajos en Venezuela,
+Bolivia y mercados similares. Al ejecutar, encola el template con sus variables
+en `contadores_messages`. Las respuestas posteriores entran al mismo bot
+conversacional mediante la ruta generica de oferta activa (`promo_`/`offer_`);
+el bot sigue la oferta del historial y, si hay interes, pide email, dia y
+horario para una llamada. Cuando esos datos estan completos, usa el handoff
+normal de agenda para alertar a Facu.
+
 La carpeta canonica por cliente queda en:
 
 ```text

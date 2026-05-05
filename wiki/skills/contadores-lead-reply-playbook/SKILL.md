@@ -72,6 +72,8 @@ bot text. Do not infer where Konecta is from based on the lead's country.
 Escribo desde Argentina.
 
 Somos Konecta Labs y trabajamos remoto para toda Latinoamerica.
+
+La propuesta funciona bien para su mercado: la idea es traerle clientes potenciales directo a su WhatsApp mediante una pagina web moderna y campanas enfocadas.
 ```
 
 - If a lead asks why the WhatsApp number is Italian, answer:
@@ -202,6 +204,9 @@ LIMIT 40;
   an objection or definition, answer that first and sell the point. Move to
   scheduling only when the lead is ready or the conversation naturally reaches
   the next step.
+- Do not only answer the factual question when there is room to keep selling.
+  Answer the question first, then add one short paragraph that moves the lead
+  closer: benefit, mechanism, or meeting.
 - Prefer simple Spanish without overexplaining.
 - Use the local house words unless the existing conversation differs:
   `pagina`, `campanas`, `reunion`, `WhatsApp`, `300 USD`.

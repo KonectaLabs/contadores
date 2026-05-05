@@ -1,0 +1,17 @@
+{
+  "templates": [
+    {
+      "name": "konecta_promo_web_profesional_es_v1",
+      "language": "es",
+      "category": "MARKETING",
+      "parameter_format": "POSITIONAL",
+      "body": "Hola {{1}}, promo para {{2}} de {{3}}:\n\nte construimos una pagina web moderna y profesional para mostrar tus servicios.\n\nSolo {{4}} USD.\nLa pagas solo cuando este terminada y te guste.\n\nSi te interesa esta oferta, respondeme y te mostramos un ejemplo.",
+      "example_values": [
+        "Karen",
+        "contadores",
+        "Ecuador",
+        "29"
+      ]
+    }
+  ]
+}

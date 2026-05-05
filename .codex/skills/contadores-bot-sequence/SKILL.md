@@ -97,8 +97,11 @@ Use this source of truth before any dynamic context:
 - Founders: Facundo Goiriz and Alan Kravchuk.
 - Operating mode: remote team working with clients across Latin America and
   other markets.
-- Origin answer for leads: `Escribo desde Argentina. Somos Konecta Labs y
-  trabajamos remoto para toda Latinoamerica.`
+- Origin answer for leads must answer location first, then keep selling in the
+  same message: `Escribo desde Argentina. Somos Konecta Labs y trabajamos remoto
+  para toda Latinoamerica. La propuesta funciona bien para su mercado: la idea
+  es traerle clientes potenciales directo a su WhatsApp mediante una pagina web
+  moderna y campanas enfocadas.`
 - Do not claim local offices in Ecuador, Bolivia, Paraguay, Mexico, Colombia,
   Chile, Uruguay, Peru, Venezuela, Spain, or any other country unless the source
   of truth is explicitly updated.
@@ -141,8 +144,9 @@ Use this source of truth before any dynamic context:
   use `handoff_human` instead of inventing.
 
 For `De donde son?`, `De que pais escriben?`, `ustedes no son de aca?`, or
-similar, answer from this section first. Never answer `Somos de Ecuador` or copy
-the lead's country as Konecta's origin.
+similar, answer from this section first and then add one short sales paragraph
+about local-market targeting, WhatsApp opportunities, page, and campaigns. Never
+answer `Somos de Ecuador` or copy the lead's country as Konecta's origin.
 
 ## Manual-only template
 
@@ -196,6 +200,28 @@ Manual/custom outbound is only allowed while WhatsApp's 24-hour customer service
 window is open. If `last_inbound_at` is older than 24 hours or missing, do not
 queue non-template sends. The UI should block the custom composer and point the
 operator to an approved template such as `Manual ping`.
+
+## Promo web profesional mayo 2026
+
+The low-ticket page promo uses the approved Meta template
+`konecta_promo_web_profesional_es_v1` with positional params:
+
+1. short first-name alias;
+2. profession (`contadores` or `abogados`);
+3. country display name;
+4. price (`19`, `29`, `49`, or `99`).
+
+The one-off script is `src/scripts/contadores_promo_web_20260505.py`. Its
+default mode is dry-run. It writes a preview CSV and an alias review CSV under
+`data/`, excludes converted/Workstation/booked/closed/archived/marketing opt-out
+leads, and skips latest provider failures unless
+`--include-provider-failures` is explicitly passed. Real execution queues
+template-backed `contadores_messages` rows with stored template params. Replies
+after generic `promo_` or `offer_` outbound steps are handled by the same
+conversation bot as an active-offer conversation. The bot should infer the
+active offer from the transcript, keep selling that offer instead of the default
+300 USD offer, ask interested leads for email/day/time for a 15-minute meeting,
+and use the normal scheduling handoff path once those details are complete.
 
 ## Runtime rule
 

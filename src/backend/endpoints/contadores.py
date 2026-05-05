@@ -68,6 +68,7 @@ AI_REJECTION_SURVEY_SEQUENCE_STEP = "ai_rejection_survey"
 SCHEDULING_HANDOFF_SEQUENCE_STEP = "scheduling_handoff_confirmation"
 AUDIO_TRANSCRIPT_SEQUENCE_STEP = "audio_transcript"
 BOOKING_DETAILS_COLLECTED_REASON = "booking_details_collected"
+ACTIVE_OFFER_SEQUENCE_PREFIXES = ("promo_", "offer_")
 OPENER_FOLLOWUP_DELAY = timedelta(hours=24)
 WHATSAPP_CUSTOM_MESSAGE_WINDOW = timedelta(hours=24)
 CONTADORES_DELIVERY_MAX_ATTEMPTS = max(1, int(os.getenv("CONTADORES_DELIVERY_MAX_ATTEMPTS", "3")))
@@ -386,6 +387,12 @@ def format_conversation_for_bot(messages: list[ContadoresMessage]) -> str:
         timestamp = format_timestamp_seconds(message.created_at) or ""
         rows.append(f"{timestamp} {speaker}{sequence}: {text}")
     return "\n".join(rows)
+
+
+def is_active_offer_sequence_step(sequence_step: str | None) -> bool:
+    """Return True for generic offer/promo broadcast sequence steps."""
+    clean_step = (sequence_step or "").strip().lower()
+    return any(clean_step.startswith(prefix) for prefix in ACTIVE_OFFER_SEQUENCE_PREFIXES)
 
 
 def build_funnel_info_for_bot(funnel: Any) -> str:
@@ -1043,6 +1050,9 @@ def build_message_response(message: ContadoresMessage) -> "ContadoresMessageResp
         media_sha256=message.media_sha256,
         media_id=message.media_id,
         media_url=build_message_media_url(message),
+        whatsapp_template_name=message.whatsapp_template_name,
+        whatsapp_template_language=message.whatsapp_template_language,
+        whatsapp_template_body_params=message.whatsapp_template_body_params,
         created_at=format_timestamp_seconds(message.created_at) or "",
     )
 
@@ -1079,6 +1089,27 @@ def build_followup_exclusion_reasons(
     reasons: list[str] = []
     if is_likely_venezuelan_phone(lead.phone, lead.normalized_phone):
         reasons.append("venezuela")
+    if workstation_client is not None:
+        reasons.append("workstation_client")
+    if derive_effective_lead_stage(lead) in {
+        ContadoresLeadStage.CLOSED,
+        ContadoresLeadStage.BOOKED,
+        ContadoresLeadStage.ARCHIVED,
+    }:
+        reasons.append("closed_booked_or_archived")
+    if latest_outbound and parse_delivery_error_code(latest_outbound.last_delivery_error) == 131050:
+        reasons.append("marketing_opt_out")
+    return reasons
+
+
+def build_active_offer_exclusion_reasons(
+    lead: ContadoresLead,
+    *,
+    workstation_client: WorkstationClient | None,
+    latest_outbound: ContadoresMessage | None,
+) -> list[str]:
+    """Return hard stops for active-offer reply handling."""
+    reasons: list[str] = []
     if workstation_client is not None:
         reasons.append("workstation_client")
     if derive_effective_lead_stage(lead) in {
@@ -1725,9 +1756,15 @@ def enqueue_lead_outbound(
     media_caption: str | None = None,
     media_mime_type: str | None = None,
     media_filename: str | None = None,
+    whatsapp_template_name: str | None = None,
+    whatsapp_template_language: str | None = None,
+    whatsapp_template_body_params: list[str] | tuple[str, ...] | None = None,
 ) -> ContadoresMessage:
     """Create one pending outbound message."""
-    assert_whatsapp_custom_window_open(lead, sequence_step=sequence_step)
+    if (whatsapp_template_name or "").strip():
+        assert_lead_open_for_outbound(lead)
+    else:
+        assert_whatsapp_custom_window_open(lead, sequence_step=sequence_step)
     row = ContadoresMessage.add(
         lead_id=lead.id,
         from_me=True,
@@ -1744,6 +1781,9 @@ def enqueue_lead_outbound(
         media_caption=media_caption,
         media_mime_type=media_mime_type,
         media_filename=media_filename,
+        whatsapp_template_name=whatsapp_template_name,
+        whatsapp_template_language=whatsapp_template_language,
+        whatsapp_template_body_params=whatsapp_template_body_params,
     )
     return row
 
@@ -1935,6 +1975,7 @@ def apply_conversation_bot_result(
     inferred_timezone: str,
     latest_inbound: ContadoresMessage | None,
     now: datetime,
+    active_offer_context: bool = False,
 ) -> dict[str, int]:
     """Apply one conversation-bot decision and return metric increments."""
     metrics = {
@@ -2010,12 +2051,21 @@ def apply_conversation_bot_result(
             missing = ", ".join(result.missing_fields) or "los datos de la llamada"
             message_text = f"Perfecto. Me pasaria {missing} asi lo coordinamos?"
         queued_rows = queue_ai_bot_message(lead=lead, text=message_text)
-        move_post_loom_ai_reply_to_manual(
-            lead=lead,
-            now=now,
-            label=label or "scheduling_details_requested",
-            reason=reason,
-        )
+        if active_offer_context:
+            ContadoresLead.update_flow_state(
+                lead.id,
+                classification_completed_at=now,
+                last_classification_label=label or "scheduling_details_requested",
+                last_classification_reason=reason,
+                automation_paused=False,
+            )
+        else:
+            move_post_loom_ai_reply_to_manual(
+                lead=lead,
+                now=now,
+                label=label or "scheduling_details_requested",
+                reason=reason,
+            )
         metrics["scheduling_detail_requests_sent"] += 1 if queued_rows else 0
         return metrics
 
@@ -2034,12 +2084,21 @@ def apply_conversation_bot_result(
             metrics["human_handoffs"] += 1
             return metrics
         queued_rows = queue_ai_bot_message(lead=lead, text=result.message_text)
-        move_post_loom_ai_reply_to_manual(
-            lead=lead,
-            now=now,
-            label=label,
-            reason=reason,
-        )
+        if active_offer_context:
+            ContadoresLead.update_flow_state(
+                lead.id,
+                classification_completed_at=now,
+                last_classification_label=label,
+                last_classification_reason=reason,
+                automation_paused=False,
+            )
+        else:
+            move_post_loom_ai_reply_to_manual(
+                lead=lead,
+                now=now,
+                label=label,
+                reason=reason,
+            )
         metrics["ai_replies_sent"] += 1 if queued_rows else 0
         return metrics
 
@@ -2094,6 +2153,71 @@ def apply_conversation_bot_result(
     return metrics
 
 
+async def process_conversation_reply_batch(
+    *,
+    lead: ContadoresLead,
+    replies_in_window: list[ContadoresMessage],
+    conversation_bot: ContadoresConversationBotProgram,
+    now: datetime,
+    active_offer_context: bool = False,
+) -> dict[str, int]:
+    """Run the conversation bot for one quiet inbound batch."""
+    metrics = {
+        "ai_replies_sent": 0,
+        "scheduling_detail_requests_sent": 0,
+        "scheduling_handoffs": 0,
+        "human_handoffs": 0,
+        "closed_by_ai": 0,
+        "no_actions": 0,
+        "codex_fallback_alerts": 0,
+    }
+    batch_text = "\n".join(
+        f"- {item.text.strip()}"
+        for item in replies_in_window
+        if item.text.strip()
+    ).strip()
+    if not batch_text:
+        return metrics
+
+    latest_inbound = replies_in_window[-1]
+    if latest_inbound_is_untranscribed_media(latest_inbound):
+        ContadoresLead.update_flow_state(
+            lead.id,
+            stage=ContadoresLeadStage.NEEDS_HUMAN,
+            automation_paused=True,
+            automation_paused_reason="untranscribed_media",
+            classification_completed_at=now,
+            last_classification_label="needs_human",
+            last_classification_reason="El ultimo inbound es media/audio sin transcript; requiere revision humana.",
+            clear_needs_human_notified_at=True,
+        )
+        metrics["human_handoffs"] += 1
+        return metrics
+
+    messages = ContadoresMessage.list_by_lead(lead.id)
+    funnel = resolve_funnel(lead.funnel_id)
+    inferred_timezone = infer_timezone_from_phone(lead.phone, lead.normalized_phone)
+    result = await conversation_bot.aforward(
+        funnel_id=funnel.id,
+        funnel_label=funnel.label,
+        funnel_info=build_funnel_info_for_bot(funnel),
+        lead_name=lead.full_name or "",
+        phone=lead.phone,
+        inferred_timezone=inferred_timezone,
+        current_stage=lead.stage.value,
+        latest_inbound=latest_inbound.text,
+        conversation=format_conversation_for_bot(messages),
+    )
+    return apply_conversation_bot_result(
+        lead=lead,
+        result=result,
+        inferred_timezone=inferred_timezone,
+        latest_inbound=latest_inbound,
+        now=now,
+        active_offer_context=active_offer_context,
+    )
+
+
 def send_calendly_link_only(*, lead: ContadoresLead, config: ContadoresConfig) -> list[ContadoresMessage]:
     """Queue only the configured Calendly URL and mark the milestone."""
     calendly_url = enqueue_lead_outbound(
@@ -2134,6 +2258,28 @@ def get_reply_batch_since(lead_id: str, *, start_at: datetime | None) -> list[Co
         for row in ContadoresMessage.list_by_lead(lead_id)
         if not row.from_me and ensure_utc_datetime(row.created_at) >= resolved_start_at
     ]
+
+
+def get_latest_active_offer_message(lead_id: str) -> ContadoresMessage | None:
+    """Return the newest outbound promo/offer message for a lead."""
+    for message in reversed(ContadoresMessage.list_by_lead(lead_id)):
+        if not message.from_me:
+            continue
+        if is_active_offer_sequence_step(message.sequence_step):
+            return message
+    return None
+
+
+def get_active_offer_reply_window_start(
+    lead: ContadoresLead,
+    *,
+    active_offer: ContadoresMessage,
+) -> datetime | None:
+    """Return the timestamp after which an active-offer reply still needs handling."""
+    offer_sent_at = ensure_utc_datetime(active_offer.created_at)
+    if offer_sent_at is None:
+        return None
+    return get_latest_conversation_handled_at(lead, anchor_at=offer_sent_at) or offer_sent_at
 
 
 def get_post_loom_reply_window_start(lead: ContadoresLead) -> datetime | None:
@@ -2504,6 +2650,9 @@ class ContadoresMessageResponse(BaseModel):
     media_sha256: str | None = None
     media_id: str | None = None
     media_url: str | None = None
+    whatsapp_template_name: str | None = None
+    whatsapp_template_language: str | None = None
+    whatsapp_template_body_params: list[str] = Field(default_factory=list)
     created_at: str
 
 
@@ -3769,7 +3918,11 @@ async def list_pending_contadores_delivery_messages(
         if lead is None:
             continue
         funnel = resolve_funnel(lead.funnel_id)
-        template_name = resolve_contadores_template_name(row.sequence_step, funnel_id=lead.funnel_id)
+        template_name = (
+            row.whatsapp_template_name
+            or resolve_contadores_template_name(row.sequence_step, funnel_id=lead.funnel_id)
+        )
+        template_language = row.whatsapp_template_language or (funnel.template_language if template_name else None)
         items.append(
             PendingContadoresDeliveryMessage(
                 message_id=row.id or 0,
@@ -3793,8 +3946,8 @@ async def list_pending_contadores_delivery_messages(
                 media_filename=row.media_filename,
                 contact_has_inbound=ContadoresMessage.has_inbound_for_lead(lead.id),
                 whatsapp_template_name=template_name,
-                whatsapp_template_language=funnel.template_language if template_name else None,
-                whatsapp_template_body_params=[],
+                whatsapp_template_language=template_language,
+                whatsapp_template_body_params=row.whatsapp_template_body_params if template_name else [],
             )
         )
     return PendingContadoresDeliveryResponse(messages=items)
@@ -4101,10 +4254,48 @@ async def run_contadores_automation_tick(
             continue
         if lead.automation_paused:
             continue
+
+        workstation_client = WorkstationClient.get_by_lead_id(lead.id)
+        latest_outbound = ContadoresMessage.get_latest_outbound_message(lead.id)
+        active_offer = get_latest_active_offer_message(lead.id)
+        if active_offer is not None:
+            exclusion_reasons = build_active_offer_exclusion_reasons(
+                lead,
+                workstation_client=workstation_client,
+                latest_outbound=latest_outbound,
+            )
+            if exclusion_reasons:
+                continue
+            reply_window_start = get_active_offer_reply_window_start(lead, active_offer=active_offer)
+            replies_in_window = get_reply_batch_since(lead.id, start_at=reply_window_start)
+            last_reply_at = ensure_utc_datetime(replies_in_window[-1].created_at) if replies_in_window else None
+            if replies_in_window and has_quiet_window(
+                last_message_at=last_reply_at,
+                quiet_seconds=config.post_loom_quiet_seconds,
+                now=now,
+            ):
+                metric_updates = await process_conversation_reply_batch(
+                    lead=lead,
+                    replies_in_window=replies_in_window,
+                    conversation_bot=conversation_bot,
+                    now=now,
+                    active_offer_context=True,
+                )
+                ai_replies_sent += metric_updates["ai_replies_sent"]
+                scheduling_detail_requests_sent += metric_updates["scheduling_detail_requests_sent"]
+                scheduling_handoffs += metric_updates["scheduling_handoffs"]
+                human_handoffs += metric_updates["human_handoffs"]
+                closed_by_ai += metric_updates["closed_by_ai"]
+                no_actions += metric_updates["no_actions"]
+                codex_fallback_alerts += metric_updates["codex_fallback_alerts"]
+                if metric_updates["human_handoffs"]:
+                    classified_needs_human += metric_updates["human_handoffs"]
+            continue
+
         exclusion_reasons = build_followup_exclusion_reasons(
             lead,
-            workstation_client=WorkstationClient.get_by_lead_id(lead.id),
-            latest_outbound=ContadoresMessage.get_latest_outbound_message(lead.id),
+            workstation_client=workstation_client,
+            latest_outbound=latest_outbound,
         )
         if exclusion_reasons:
             continue

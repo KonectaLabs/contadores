@@ -73,7 +73,9 @@ CODEX_CONVERSATION_SKILLS = [
 
 COMPANY_ORIGIN_REPLY = (
     "Escribo desde Argentina.\n\n"
-    "Somos Konecta Labs y trabajamos remoto para toda Latinoamerica."
+    "Somos Konecta Labs y trabajamos remoto para toda Latinoamerica.\n\n"
+    "La propuesta funciona bien para su mercado: la idea es traerle clientes potenciales "
+    "directo a su WhatsApp mediante una pagina web moderna y campanas enfocadas."
 )
 
 ITALIAN_NUMBER_REPLY = (
@@ -104,6 +106,11 @@ REJECTION_SURVEY_REPLY = (
     "2) No me sirve la pagina web + publicidades\n"
     "3) No es mi momento para invertir\n"
     "4) Otro motivo"
+)
+
+ACTIVE_OFFER_REJECTION_REPLY = (
+    "Perfecto, no hay problema.\n\n"
+    "No te vuelvo a escribir por esta promo."
 )
 
 WRONG_LOCAL_ORIGIN_PATTERN = re.compile(
@@ -192,6 +199,12 @@ def _normalize_text_for_rules(value: str) -> str:
     """Normalize Spanish copy for simple guardrail checks."""
     ascii_text = unicodedata.normalize("NFKD", value or "").encode("ascii", "ignore").decode("ascii")
     return " ".join(ascii_text.lower().split())
+
+
+def _conversation_has_active_offer(value: str) -> bool:
+    """Return True when the transcript includes a generic promo/offer outbound step."""
+    normalized = _normalize_text_for_rules(value)
+    return "konecta step=promo_" in normalized or "konecta step=offer_" in normalized
 
 
 def _asks_about_italian_number(value: str) -> bool:
@@ -367,9 +380,24 @@ def _apply_company_source_truth_guard(
     *,
     latest_inbound: str,
     funnel_id: str,
+    conversation: str = "",
 ) -> ContadoresConversationBotResult:
     """Prevent the model from inventing facts or using robotic high-risk copy."""
     if _is_service_rejection(latest_inbound):
+        if _conversation_has_active_offer(conversation):
+            return result.model_copy(
+                update={
+                    "action": "close_lead",
+                    "message_text": ACTIVE_OFFER_REJECTION_REPLY,
+                    "classification_label": "active_offer_rejected",
+                    "reason": "El lead rechazo una promo/oferta activa; se cierra sin encuesta de la oferta default.",
+                    "missing_fields": [],
+                    "scheduling_email": "",
+                    "scheduling_day": "",
+                    "scheduling_time": "",
+                    "timezone": "",
+                }
+            )
         return result.model_copy(
             update={
                 "action": "close_lead",
@@ -550,6 +578,7 @@ class DspyConversationBotProgram(Program):
             result,
             latest_inbound=latest_inbound,
             funnel_id=funnel_id,
+            conversation=conversation,
         )
 
 
@@ -620,6 +649,7 @@ class CodexConversationBotProgram:
             normalized,
             latest_inbound=latest_inbound,
             funnel_id=funnel_id,
+            conversation=conversation,
         )
 
 
@@ -683,6 +713,7 @@ class ContadoresConversationBotProgram(Program):
                 result,
                 latest_inbound=latest_inbound,
                 funnel_id=funnel_id,
+                conversation=conversation,
             )
         except Exception as chatgpt_error:
             chatgpt_error_text = f"{chatgpt_error.__class__.__name__}: {chatgpt_error}"
@@ -701,6 +732,7 @@ class ContadoresConversationBotProgram(Program):
                     api_key_result,
                     latest_inbound=latest_inbound,
                     funnel_id=funnel_id,
+                    conversation=conversation,
                 )
             except Exception as api_key_error:
                 api_key_error_text = f"{api_key_error.__class__.__name__}: {api_key_error}"
@@ -717,6 +749,7 @@ class ContadoresConversationBotProgram(Program):
                 fallback,
                 latest_inbound=latest_inbound,
                 funnel_id=funnel_id,
+                conversation=conversation,
             )
         except Exception as fallback_error:
             return ContadoresConversationBotResult(

@@ -392,6 +392,56 @@ def test_dispatch_one_contadores_message_uses_template_without_body_params() -> 
     )
 
 
+def test_dispatch_one_contadores_message_uses_template_body_params() -> None:
+    """Campaign templates should pass positional params through to WhatsApp."""
+    template_calls: list[tuple[str, str, str, list[str], str | None]] = []
+
+    async def fake_send_template_message(
+        *,
+        to: str,
+        template_name: str,
+        template_language: str,
+        body_params: list[str],
+        delivered_text: str | None = None,
+    ) -> DeliveryReceipt:
+        template_calls.append((to, template_name, template_language, body_params, delivered_text))
+        return DeliveryReceipt(external_id="wa-template-promo", delivered_text=delivered_text)
+
+    item = PendingContadoresDeliveryMessage(
+        message_id=22,
+        lead_id="lead-promo",
+        external_lead_id="sheet-promo",
+        phone="+5491333333333",
+        normalized_phone="5491333333333",
+        full_name="Karen Acosta",
+        text="Hola Karen, promo para contadores de Ecuador:",
+        dispatch_after="2026-05-05T10:00:00Z",
+        created_at="2026-05-05T10:00:00Z",
+        sequence_step="promo_web_profesional_20260505",
+        whatsapp_template_name="konecta_promo_web_profesional_es_v1",
+        whatsapp_template_language="es",
+        whatsapp_template_body_params=["Karen", "contadores", "Ecuador", "29"],
+    )
+
+    receipt = asyncio.run(
+        dispatch_one_contadores_message(
+            item=item,
+            whatsapp_provider=SimpleNamespace(send_template_message=fake_send_template_message),
+        )
+    )
+
+    assert receipt.external_id == "wa-template-promo"
+    assert template_calls == [
+        (
+            "+5491333333333",
+            "konecta_promo_web_profesional_es_v1",
+            "es",
+            ["Karen", "contadores", "Ecuador", "29"],
+            "Hola Karen, promo para contadores de Ecuador:",
+        )
+    ]
+
+
 def test_dispatch_one_contadores_message_sends_video_media() -> None:
     """Media strategy rows should use WhatsApp video dispatch."""
     video_calls: list[tuple[str, str, str | None, str | None]] = []
