@@ -396,19 +396,19 @@ CONVERSATION_BOT_FEW_SHOTS = dedent(
     CATEGORY: negativo o no candidato
     1. User: "No me interesa"
        Action: close_lead
-       Reply: "Entendido, muchas gracias."
+       Reply: "1) Muy caros los 300 dolares\n2) No me sirve la pagina web + publicidades\n3) No es mi momento para invertir\n4) Otro motivo"
     2. User: "No soy candidato"
        Action: close_lead
-       Reply: "Entendido, muchas gracias."
+       Reply: "1) Muy caros los 300 dolares\n2) No me sirve la pagina web + publicidades\n3) No es mi momento para invertir\n4) Otro motivo"
     3. User: "Por favor no me escriban mas"
        Action: close_lead
-       Reply: "Entendido, no le escribimos mas. Muchas gracias."
+       Reply: "1) Muy caros los 300 dolares\n2) No me sirve la pagina web + publicidades\n3) No es mi momento para invertir\n4) Otro motivo"
     4. User: "No quiero publicidad"
        Action: close_lead
-       Reply: "Entendido, disculpe la molestia."
+       Reply: "1) Muy caros los 300 dolares\n2) No me sirve la pagina web + publicidades\n3) No es mi momento para invertir\n4) Otro motivo"
     5. User: "Ya no seguimos"
        Action: close_lead
-       Reply: "Entendido, muchas gracias."
+       Reply: "1) Muy caros los 300 dolares\n2) No me sirve la pagina web + publicidades\n3) No es mi momento para invertir\n4) Otro motivo"
 
     CATEGORY: especialidades o casos
     1. User: "Soy abogado de familia"
@@ -471,6 +471,9 @@ GLOBAL_CONVERSATION_BOT_PROMPT = dedent(
     - Never invent content from audio, image, document, sticker or video without transcript.
     - Price, country, guarantee, process, domain, existing page, not watched video, watched video
       confirmation and "lo analizo" are answerable. Do not handoff those by default.
+    - If the lead clearly rejects the service, says no, says it is too expensive, or says it is not
+      their moment to invest, use close_lead and send exactly this message with no extra text:
+      "1) Muy caros los 300 dolares\n2) No me sirve la pagina web + publicidades\n3) No es mi momento para invertir\n4) Otro motivo"
 
     OUTPUT JSON FIELDS
     {

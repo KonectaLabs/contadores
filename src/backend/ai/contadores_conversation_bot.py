@@ -99,6 +99,13 @@ CONSULTATION_DEFINITION_REPLY_BY_FUNNEL = {
     ),
 }
 
+REJECTION_SURVEY_REPLY = (
+    "1) Muy caros los 300 dolares\n"
+    "2) No me sirve la pagina web + publicidades\n"
+    "3) No es mi momento para invertir\n"
+    "4) Otro motivo"
+)
+
 WRONG_LOCAL_ORIGIN_PATTERN = re.compile(
     r"\b(somos|soy|estamos|la empresa es|somos una empresa)\s+"
     r"(de|en|ecuatorianos|bolivianos|paraguayos|mexicanos|colombianos|chilenos|"
@@ -240,6 +247,89 @@ def _asks_about_consultation_definition(value: str) -> bool:
     return any(marker in normalized for marker in markers)
 
 
+def _is_service_rejection(value: str) -> bool:
+    """Return True when the lead clearly rejects the service or investment."""
+    normalized = _normalize_text_for_rules(value)
+    if not normalized:
+        return False
+
+    video_or_uncertainty_markers = (
+        "no vi",
+        "no lo vi",
+        "no pude ver",
+        "no he visto",
+        "no vi el video",
+        "no pude ver el video",
+        "no entiendo",
+        "no entendi",
+        "no se",
+        "no se si",
+    )
+    if any(marker in normalized for marker in video_or_uncertainty_markers):
+        return False
+
+    opt_out_markers = (
+        "no me escrib",
+        "no escriban",
+        "no manden",
+        "dejen de escribir",
+        "baja",
+        "unsubscribe",
+        "eliminar mi numero",
+    )
+    if any(marker in normalized for marker in opt_out_markers):
+        return False
+
+    rejection_phrases = (
+        "no gracias",
+        "gracias no",
+        "no me interesa",
+        "no estoy interesado",
+        "no estoy interesada",
+        "no estamos interesados",
+        "no nos interesa",
+        "no me sirve",
+        "no nos sirve",
+        "no quiero",
+        "no deseo",
+        "no necesito",
+        "no lo necesito",
+        "no voy a avanzar",
+        "no vamos a avanzar",
+        "no seguimos",
+        "no sigo",
+        "no contratar",
+        "no voy a contratar",
+        "no lo quiero",
+        "no me convence",
+        "no es mi momento",
+        "por ahora no",
+        "por el momento no",
+        "no por ahora",
+        "mas adelante",
+        "paso",
+        "lo dejo pasar",
+        "no tengo presupuesto",
+        "no tengo el presupuesto",
+        "no puedo invertir",
+        "no voy a invertir",
+    )
+    if any(phrase in normalized for phrase in rejection_phrases):
+        return True
+
+    budget_rejection_markers = (
+        "muy caro",
+        "muy caros",
+        "demasiado caro",
+        "demasiado caros",
+        "esta caro",
+        "estan caros",
+        "se me hace caro",
+        "presupuesto alto",
+    )
+    return any(marker in normalized for marker in budget_rejection_markers)
+
+
 def _consultation_definition_reply(funnel_id: str) -> str:
     """Return the canonical persuasive definition for consultation objections."""
     return CONSULTATION_DEFINITION_REPLY_BY_FUNNEL.get(
@@ -279,6 +369,21 @@ def _apply_company_source_truth_guard(
     funnel_id: str,
 ) -> ContadoresConversationBotResult:
     """Prevent the model from inventing facts or using robotic high-risk copy."""
+    if _is_service_rejection(latest_inbound):
+        return result.model_copy(
+            update={
+                "action": "close_lead",
+                "message_text": REJECTION_SURVEY_REPLY,
+                "classification_label": "service_rejection_survey",
+                "reason": "El lead rechazo el servicio; se envia encuesta de motivo y se cierra.",
+                "missing_fields": [],
+                "scheduling_email": "",
+                "scheduling_day": "",
+                "scheduling_time": "",
+                "timezone": "",
+            }
+        )
+
     if result.action in {"close_lead", "no_action", "handoff_scheduling"}:
         return result
 

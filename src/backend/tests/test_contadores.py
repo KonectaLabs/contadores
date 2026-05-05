@@ -16,7 +16,7 @@ import backend.database as database_module
 import backend.endpoints.contadores as contadores_endpoints
 import backend.endpoints.workstation as workstation_endpoints
 from backend.audio_transcription import AudioTranscriptionError
-from backend.ai.contadores_conversation_bot import ContadoresConversationBotResult
+from backend.ai.contadores_conversation_bot import ContadoresConversationBotResult, REJECTION_SURVEY_REPLY
 from backend.contadores_strategies import get_contadores_strategy
 from backend.database import (
     ContadoresConfig,
@@ -1505,6 +1505,71 @@ def test_conversation_bot_answers_common_questions_without_human_handoff(monkeyp
     assert alerts.status_code == 200
     assert alerts.json()["items"] == []
     assert [detail.json()["lead"]["stage"] for detail in details] == ["awaiting_video_reply"] * len(inbound_texts)
+
+
+def test_conversation_bot_sends_rejection_survey_and_closes_lead(monkeypatch, tmp_path) -> None:
+    """A service rejection should receive the exact survey and then leave automation."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    ContadoresConfig.update(
+        enabled=True,
+        post_loom_min_seconds=300,
+        post_loom_quiet_seconds=30,
+    )
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-rejection-survey",
+        phone="+5491333333388",
+        full_name="Rejection Survey",
+    )
+    loom_sent_at = now_utc() - timedelta(minutes=7)
+    ContadoresLead.update_flow_state(
+        lead.id,
+        stage=ContadoresLeadStage.AWAITING_VIDEO_REPLY,
+        opener_sent_at=loom_sent_at - timedelta(minutes=1),
+        first_reply_received_at=loom_sent_at - timedelta(minutes=1),
+        loom_sent_at=loom_sent_at,
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=False,
+        text="No me interesa, gracias",
+        created_at=now_utc() - timedelta(seconds=45),
+    )
+
+    class FakeConversationBot:
+        async def aforward(self, **kwargs):
+            assert kwargs["latest_inbound"] == "No me interesa, gracias"
+            return ContadoresConversationBotResult(
+                action="close_lead",
+                message_text=REJECTION_SURVEY_REPLY,
+                classification_label="service_rejection_survey",
+                reason="El lead rechazo el servicio.",
+            )
+
+    monkeypatch.setattr(contadores_endpoints, "ContadoresConversationBotProgram", FakeConversationBot)
+
+    with TestClient(app) as client:
+        response = client.post("/api/contadores/automation/tick")
+        detail = client.get(f"/api/contadores/leads/{lead.id}")
+        pending = client.get("/api/contadores/messages/pending-delivery")
+        second_tick = client.post("/api/contadores/automation/tick")
+        pending_after_second_tick = client.get("/api/contadores/messages/pending-delivery")
+
+    assert response.status_code == 200
+    assert response.json()["closed_by_ai"] == 1
+    assert response.json()["ai_replies_sent"] == 1
+    assert detail.status_code == 200
+    assert detail.json()["lead"]["stage"] == "closed"
+    assert detail.json()["lead"]["automation_paused"] is True
+    assert detail.json()["lead"]["automation_paused_reason"] == "ai_closed"
+    assert pending.status_code == 200
+    assert len(pending.json()["messages"]) == 1
+    assert pending.json()["messages"][0]["text"] == REJECTION_SURVEY_REPLY
+    assert pending.json()["messages"][0]["sequence_step"] == "ai_rejection_survey"
+    assert second_tick.status_code == 200
+    assert second_tick.json()["closed_by_ai"] == 0
+    assert [item["message_id"] for item in pending_after_second_tick.json()["messages"]] == [
+        pending.json()["messages"][0]["message_id"]
+    ]
 
 
 def test_conversation_bot_codex_failure_records_runtime_alert_without_handoff(monkeypatch, tmp_path) -> None:

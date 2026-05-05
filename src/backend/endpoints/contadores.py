@@ -26,6 +26,7 @@ from backend.calendly import normalize_calendly_url
 from backend.ai.contadores_conversation_bot import (
     ContadoresConversationBotProgram,
     ContadoresConversationBotResult,
+    REJECTION_SURVEY_REPLY,
 )
 from backend.auth import INTERNAL_API_TOKEN_HEADER, has_valid_internal_api_token
 from backend.audio_transcription import AudioTranscriptionError, transcribe_audio_media
@@ -62,6 +63,7 @@ OPENER_FOLLOWUP_SEQUENCE_STEP = "opener_followup_24h"
 OPENER_FOLLOWUP_RETRY_SEQUENCE_STEP = "opener_followup_24h_template_retry_20260424"
 MANUAL_PING_SEQUENCE_STEP = "manual_ping_template"
 AI_REPLY_SEQUENCE_STEP = "ai_reply"
+AI_REJECTION_SURVEY_SEQUENCE_STEP = "ai_rejection_survey"
 SCHEDULING_HANDOFF_SEQUENCE_STEP = "scheduling_handoff_confirmation"
 AUDIO_TRANSCRIPT_SEQUENCE_STEP = "audio_transcript"
 BOOKING_DETAILS_COLLECTED_REASON = "booking_details_collected"
@@ -454,6 +456,7 @@ def get_latest_conversation_handled_at(lead: ContadoresLead, *, anchor_at: datet
             continue
         if message.sequence_step not in {
             AI_REPLY_SEQUENCE_STEP,
+            AI_REJECTION_SURVEY_SEQUENCE_STEP,
             SCHEDULING_HANDOFF_SEQUENCE_STEP,
             LOOM_RECAP_SEQUENCE_STEP,
         }:
@@ -1882,20 +1885,21 @@ def queue_ai_bot_message(
     sequence_step: str = AI_REPLY_SEQUENCE_STEP,
 ) -> list[ContadoresMessage]:
     """Queue one conversation-bot free-text reply without pausing automation."""
-    clean_text = normalize_message_for_dedupe(text)
-    if not clean_text:
+    message_text = str(text or "").strip()
+    dedupe_text = normalize_message_for_dedupe(message_text)
+    if not dedupe_text:
         return []
     assert_whatsapp_custom_window_open(lead, sequence_step=sequence_step)
     duplicate = find_recent_duplicate_outbound(
         lead_id=lead.id,
-        text=clean_text,
+        text=dedupe_text,
         dedupe_hours=24,
     )
     if duplicate is not None:
         return []
     row = enqueue_lead_outbound(
         lead=lead,
-        text=clean_text,
+        text=message_text,
         sequence_step=sequence_step,
     )
     return [row]
@@ -2018,7 +2022,16 @@ def apply_conversation_bot_result(
 
     if result.action == "close_lead":
         if result.message_text:
-            queued_rows = queue_ai_bot_message(lead=lead, text=result.message_text)
+            sequence_step = (
+                AI_REJECTION_SURVEY_SEQUENCE_STEP
+                if result.message_text.strip() == REJECTION_SURVEY_REPLY
+                else AI_REPLY_SEQUENCE_STEP
+            )
+            queued_rows = queue_ai_bot_message(
+                lead=lead,
+                text=result.message_text,
+                sequence_step=sequence_step,
+            )
             metrics["ai_replies_sent"] += 1 if queued_rows else 0
         ContadoresLead.update_flow_state(
             lead.id,

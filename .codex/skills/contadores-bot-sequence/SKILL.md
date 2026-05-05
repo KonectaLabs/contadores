@@ -53,21 +53,29 @@ override the built-in Contadores definition.
     the lead in its current stage.
     - Copy must follow Facu/operator WhatsApp style: natural, short, not
       AI-polished, and no inverted opening punctuation like `¿` or `¡`.
-11. If the bot needs email, day, time, or timezone for a call, queue
+11. If the lead clearly rejects the service, says they do not want to continue,
+    or says the investment/service is not for them, queue exactly:
+    `1) Muy caros los 300 dolares`
+    `2) No me sirve la pagina web + publicidades`
+    `3) No es mi momento para invertir`
+    `4) Otro motivo`
+    with `sequence_step=ai_rejection_survey`, then close the lead so automation
+    never replies again until an operator reopens it.
+12. If the bot needs email, day, time, or timezone for a call, queue
     `sequence_step=ai_reply` asking only for the missing detail.
-12. If the bot has email, day, and time, queue
+13. If the bot has email, day, and time, queue
     `sequence_step=scheduling_handoff_confirmation`, pause the lead in
     `needs_human`, set `automation_paused_reason=booking_details_collected`,
     and alert Facu with the scheduling details.
-13. Inbound audio should be transcribed first with OpenAI
+14. Inbound audio should be transcribed first with OpenAI
     `gpt-4o-transcribe`; WhatsApp `.ogg` audio is converted with `ffmpeg`.
     Store the original audio as a playable media message, then store the
     transcript as the next inbound message with
     `sequence_step=audio_transcript`.
-14. If the bot lacks real data to answer, receives media/audio without
+15. If the bot lacks real data to answer, receives media/audio without
     transcript, sees an exclusion, or hits an uncovered situation, pause in
     `needs_human` and alert the operators.
-15. If Codex fails but DSPy/Grok answers safely, keep the lead in its current
+16. If Codex fails but DSPy/Grok answers safely, keep the lead in its current
     stage, send the fallback reply, and create a runtime email alert with the
     Codex error, fallback action, latest inbound, and CRM link. Only move to
     `needs_human` when both Codex and fallback fail or when the action itself

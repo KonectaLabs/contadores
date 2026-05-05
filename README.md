@@ -279,6 +279,10 @@ Bot conversacional post-video y post-Calendly:
 - Preguntas conocidas de precio, pais/cobertura, garantia, proceso, dominio,
   pagina existente, "no vi el video", "lo analizo" o confirmaciones simples se
   responden con `sequence_step=ai_reply` sin mover el lead a `needs_human`.
+- Si el lead rechaza el servicio o dice que no quiere avanzar, el bot envia
+  exactamente `1) Muy caros los 300 dolares`, `2) No me sirve la pagina web +
+  publicidades`, `3) No es mi momento para invertir`, `4) Otro motivo`, con
+  `sequence_step=ai_rejection_survey`, y cierra el lead para no responder mas.
 - El origen/identidad de Konecta no se infiere del pais del lead. El prompt y
   un guardrail post-modelo usan el source of truth del repo `konecta-labs`:
   Konecta Labs, trade name de Octopy LLC, equipo founder-led de IA aplicada,

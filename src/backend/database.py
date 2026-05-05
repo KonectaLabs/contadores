@@ -1725,6 +1725,7 @@ class ContadoresMessage(SQLModel, table=True):
     def list_pending_delivery(cls, *, limit: int = 100) -> list["ContadoresMessage"]:
         """List every pending outbound step that is due for dispatch."""
         now_utc = datetime.now(timezone.utc)
+        closed_lead_delivery_steps = ("ai_rejection_survey",)
         with Session(engine) as session:
             statement = (
                 select(cls)
@@ -1734,9 +1735,12 @@ class ContadoresMessage(SQLModel, table=True):
                     cls.delivery_status == MessageDeliveryStatus.UNDELIVERED,
                     cls.dispatch_after <= now_utc,
                     ContadoresLead.stage != ContadoresLeadStage.ARCHIVED,
-                    ContadoresLead.stage != ContadoresLeadStage.CLOSED,
                     ContadoresLead.stage != ContadoresLeadStage.BOOKED,
-                    ContadoresLead.closed_at.is_(None),
+                    (
+                        (ContadoresLead.stage != ContadoresLeadStage.CLOSED)
+                        & ContadoresLead.closed_at.is_(None)
+                    )
+                    | cls.sequence_step.in_(closed_lead_delivery_steps),
                 )
                 .order_by(cls.dispatch_after, cls.id)
                 .limit(limit)

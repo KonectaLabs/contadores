@@ -11,6 +11,7 @@ from backend.ai.contadores_conversation_bot import (
     ContadoresConversationBotProgram,
     ContadoresConversationBotResult,
     DspyConversationBotProgram,
+    REJECTION_SURVEY_REPLY,
 )
 from backend.ai.contadores_conversation_prompt import build_conversation_bot_prompt
 from backend.config import CONVERSATION_BOT_CODEX_EFFORT, CONVERSATION_BOT_CODEX_MODEL
@@ -137,6 +138,73 @@ def test_dspy_conversation_bot_removes_inverted_opening_punctuation(monkeypatch)
     result = asyncio.run(program.aforward(**bot_kwargs(latest_inbound="Si", conversation="LEAD: Si")))
 
     assert result.message_text == "Que dia le queda mejor? Perfecto!"
+
+
+def test_dspy_conversation_bot_forces_rejection_survey(monkeypatch) -> None:
+    program = DspyConversationBotProgram()
+
+    class FakePredict:
+        async def acall(self, **kwargs):
+            del kwargs
+            return SimpleNamespace(
+                action="send_reply",
+                message_text="Ok, no hay problema.",
+                classification_label="answered_rejection",
+                reason="Intento responder el rechazo.",
+                missing_fields=[],
+                scheduling_email="",
+                scheduling_day="",
+                scheduling_time="",
+                timezone="",
+            )
+
+    monkeypatch.setattr(program, "predict", FakePredict())
+
+    result = asyncio.run(
+        program.aforward(
+            **bot_kwargs(
+                latest_inbound="No me interesa, gracias",
+                conversation="LEAD: No me interesa, gracias",
+            )
+        )
+    )
+
+    assert result.action == "close_lead"
+    assert result.message_text == REJECTION_SURVEY_REPLY
+    assert result.classification_label == "service_rejection_survey"
+
+
+def test_dspy_conversation_bot_does_not_treat_unwatched_video_as_rejection(monkeypatch) -> None:
+    program = DspyConversationBotProgram()
+
+    class FakePredict:
+        async def acall(self, **kwargs):
+            del kwargs
+            return SimpleNamespace(
+                action="send_reply",
+                message_text="Ok no hay problema, mire el video cuando pueda.",
+                classification_label="not_watched_video",
+                reason="No vio el video todavia.",
+                missing_fields=[],
+                scheduling_email="",
+                scheduling_day="",
+                scheduling_time="",
+                timezone="",
+            )
+
+    monkeypatch.setattr(program, "predict", FakePredict())
+
+    result = asyncio.run(
+        program.aforward(
+            **bot_kwargs(
+                latest_inbound="No pude ver el video todavia",
+                conversation="LEAD: No pude ver el video todavia",
+            )
+        )
+    )
+
+    assert result.action == "send_reply"
+    assert result.message_text == "Ok no hay problema, mire el video cuando pueda."
 
 
 def test_prompt_includes_konecta_source_of_truth() -> None:

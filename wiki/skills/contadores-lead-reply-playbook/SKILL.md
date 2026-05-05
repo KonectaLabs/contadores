@@ -46,6 +46,12 @@ For reusable copy examples, read [references/copy-bank.md](references/copy-bank.
   Do not send a generic follow-up or Calendly automatically. Ask only for the
   missing scheduling detail, usually email or timezone, and escalate once email,
   day, and time are available.
+- If the lead clearly says no to the service or does not want to continue, send
+  only this exact text and close the lead:
+  `1) Muy caros los 300 dolares`
+  `2) No me sirve la pagina web + publicidades`
+  `3) No es mi momento para invertir`
+  `4) Otro motivo`
 
 ## Company Source Of Truth
 
@@ -520,6 +526,21 @@ If asking about budget:
 
 ```text
 Cuanto estaria dispuesto a invertir? Seria diferente si se le permitiese el pago en cuotas?
+```
+
+### Lead rejects vaguely after price or proposal
+
+When the lead says something vague like `Mas adelante`, `por ahora no`,
+`lo dejamos para despues`, or a soft no after hearing the 300 USD offer, do not
+ask a long open question. The user wants the exact short diagnostic options
+below, and only those options. This is used to understand the reason without
+making the lead think too much.
+
+```text
+1) Muy caros los 300 dolares
+2) No me sirve la pagina web + publicidades
+3) No es mi momento para invertir
+4) Otro motivo
 ```
 
 ### Lead asks if it is a scam or asks for trust
