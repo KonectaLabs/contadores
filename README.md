@@ -278,7 +278,10 @@ Bot conversacional post-video y post-Calendly:
   `handoff_scheduling`, `close_lead` o `no_action`.
 - Preguntas conocidas de precio, pais/cobertura, garantia, proceso, dominio,
   pagina existente, "no vi el video", "lo analizo" o confirmaciones simples se
-  responden con `sequence_step=ai_reply` sin mover el lead a `needs_human`.
+  responden con `sequence_step=ai_reply` y, si vienen del post-Loom, mueven el
+  lead a `needs_human`/Manual con
+  `automation_paused_reason=ai_reply_conversation`. Como la AI ya contesto, el
+  `manual_reply_status` queda `answered`.
 - Si el lead rechaza el servicio o dice que no quiere avanzar, el bot envia
   exactamente `1) Muy caros los 300 dolares`, `2) No me sirve la pagina web +
   publicidades`, `3) No es mi momento para invertir`, `4) Otro motivo`, con

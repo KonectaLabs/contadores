@@ -49,8 +49,10 @@ override the built-in Contadores definition.
    - `handoff_scheduling`
    - `close_lead`
    - `no_action`
-10. If the bot answers a known question, queue `sequence_step=ai_reply` and keep
-    the lead in its current stage.
+10. If the bot answers a known post-Loom question, queue `sequence_step=ai_reply`
+    and move the lead to Manual (`needs_human`) with
+    `automation_paused_reason=ai_reply_conversation`. Because the AI just
+    answered, `manual_reply_status` should be `answered`, not `needs_reply`.
     - Copy must follow Facu/operator WhatsApp style: natural, short, not
       AI-polished, and no inverted opening punctuation like `¿` or `¡`.
 11. If the lead clearly rejects the service, says they do not want to continue,
@@ -75,11 +77,10 @@ override the built-in Contadores definition.
 15. If the bot lacks real data to answer, receives media/audio without
     transcript, sees an exclusion, or hits an uncovered situation, pause in
     `needs_human` and alert the operators.
-16. If Codex fails but DSPy/Grok answers safely, keep the lead in its current
-    stage, send the fallback reply, and create a runtime email alert with the
-    Codex error, fallback action, latest inbound, and CRM link. Only move to
-    `needs_human` when both Codex and fallback fail or when the action itself
-    requires human/scheduling handoff.
+16. If Codex fails but DSPy/Grok answers safely, send the fallback reply,
+    create a runtime email alert with the Codex error, fallback action, latest
+    inbound, and CRM link, and still apply the normal post-Loom AI reply rule:
+    the lead moves to Manual as an answered conversation.
 
 ## Company source of truth
 

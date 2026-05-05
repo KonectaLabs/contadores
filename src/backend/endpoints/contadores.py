@@ -63,6 +63,7 @@ OPENER_FOLLOWUP_SEQUENCE_STEP = "opener_followup_24h"
 OPENER_FOLLOWUP_RETRY_SEQUENCE_STEP = "opener_followup_24h_template_retry_20260424"
 MANUAL_PING_SEQUENCE_STEP = "manual_ping_template"
 AI_REPLY_SEQUENCE_STEP = "ai_reply"
+AI_REPLY_MANUAL_REASON = "ai_reply_conversation"
 AI_REJECTION_SURVEY_SEQUENCE_STEP = "ai_rejection_survey"
 SCHEDULING_HANDOFF_SEQUENCE_STEP = "scheduling_handoff_confirmation"
 AUDIO_TRANSCRIPT_SEQUENCE_STEP = "audio_transcript"
@@ -1905,6 +1906,28 @@ def queue_ai_bot_message(
     return [row]
 
 
+def move_post_loom_ai_reply_to_manual(
+    *,
+    lead: ContadoresLead,
+    now: datetime,
+    label: str,
+    reason: str,
+) -> None:
+    """Move post-Loom conversations to Manual after the AI answers."""
+    updates: dict[str, Any] = {
+        "classification_completed_at": now,
+        "last_classification_label": label,
+        "last_classification_reason": reason,
+    }
+    if lead.stage == ContadoresLeadStage.AWAITING_VIDEO_REPLY:
+        updates.update(
+            stage=ContadoresLeadStage.NEEDS_HUMAN,
+            automation_paused=True,
+            automation_paused_reason=AI_REPLY_MANUAL_REASON,
+        )
+    ContadoresLead.update_flow_state(lead.id, **updates)
+
+
 def apply_conversation_bot_result(
     *,
     lead: ContadoresLead,
@@ -1987,11 +2010,11 @@ def apply_conversation_bot_result(
             missing = ", ".join(result.missing_fields) or "los datos de la llamada"
             message_text = f"Perfecto. Me pasaria {missing} asi lo coordinamos?"
         queued_rows = queue_ai_bot_message(lead=lead, text=message_text)
-        ContadoresLead.update_flow_state(
-            lead.id,
-            classification_completed_at=now,
-            last_classification_label=label or "scheduling_details_requested",
-            last_classification_reason=reason,
+        move_post_loom_ai_reply_to_manual(
+            lead=lead,
+            now=now,
+            label=label or "scheduling_details_requested",
+            reason=reason,
         )
         metrics["scheduling_detail_requests_sent"] += 1 if queued_rows else 0
         return metrics
@@ -2011,11 +2034,11 @@ def apply_conversation_bot_result(
             metrics["human_handoffs"] += 1
             return metrics
         queued_rows = queue_ai_bot_message(lead=lead, text=result.message_text)
-        ContadoresLead.update_flow_state(
-            lead.id,
-            classification_completed_at=now,
-            last_classification_label=label,
-            last_classification_reason=reason,
+        move_post_loom_ai_reply_to_manual(
+            lead=lead,
+            now=now,
+            label=label,
+            reason=reason,
         )
         metrics["ai_replies_sent"] += 1 if queued_rows else 0
         return metrics

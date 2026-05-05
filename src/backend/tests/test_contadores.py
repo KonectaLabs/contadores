@@ -1356,14 +1356,17 @@ def test_contadores_automation_tick_affirmative_reply_asks_for_scheduling_detail
     assert response.json()["scheduling_detail_requests_sent"] == 1
     assert detail.status_code == 200
     assert response.json()["calendly_sent"] == 0
-    assert detail.json()["lead"]["stage"] == "awaiting_video_reply"
+    assert detail.json()["lead"]["stage"] == "needs_human"
+    assert detail.json()["lead"]["automation_paused"] is True
+    assert detail.json()["lead"]["automation_paused_reason"] == "ai_reply_conversation"
+    assert detail.json()["lead"]["manual_reply_status"] == "answered"
     assert detail.json()["lead"]["last_classification_label"] == "scheduling_details_requested"
     assert [item["sequence_step"] for item in pending.json()["messages"]] == ["ai_reply"]
     assert "email" in pending.json()["messages"][0]["text"].lower()
 
 
 def test_contadores_automation_tick_answers_simple_video_confirmation(monkeypatch, tmp_path) -> None:
-    """A plain watched-video confirmation should stay in stage and get one bot reply."""
+    """A plain watched-video confirmation should get one bot reply and move to Manual."""
     configure_contadores_db(monkeypatch, tmp_path)
     ContadoresConfig.update(
         enabled=True,
@@ -1426,7 +1429,10 @@ def test_contadores_automation_tick_answers_simple_video_confirmation(monkeypatc
     assert first_tick.json()["video_confirmation_recaps_sent"] == 0
     assert first_tick.json()["calendly_sent"] == 0
     assert detail.status_code == 200
-    assert detail.json()["lead"]["stage"] == "awaiting_video_reply"
+    assert detail.json()["lead"]["stage"] == "needs_human"
+    assert detail.json()["lead"]["automation_paused"] is True
+    assert detail.json()["lead"]["automation_paused_reason"] == "ai_reply_conversation"
+    assert detail.json()["lead"]["manual_reply_status"] == "answered"
     assert detail.json()["lead"]["last_classification_label"] == "video_confirmation_answered"
     assert pending_after_first_tick.status_code == 200
     first_messages = pending_after_first_tick.json()["messages"]
@@ -1443,7 +1449,7 @@ def test_contadores_automation_tick_answers_simple_video_confirmation(monkeypatc
 
 
 def test_conversation_bot_answers_common_questions_without_human_handoff(monkeypatch, tmp_path) -> None:
-    """Known objections should get AI replies while keeping the lead in the same stage."""
+    """Known objections should get AI replies and move the conversation to Manual."""
     configure_contadores_db(monkeypatch, tmp_path)
     ContadoresConfig.update(
         enabled=True,
@@ -1504,7 +1510,11 @@ def test_conversation_bot_answers_common_questions_without_human_handoff(monkeyp
     assert [item["sequence_step"] for item in pending.json()["messages"]] == ["ai_reply"] * len(inbound_texts)
     assert alerts.status_code == 200
     assert alerts.json()["items"] == []
-    assert [detail.json()["lead"]["stage"] for detail in details] == ["awaiting_video_reply"] * len(inbound_texts)
+    assert [detail.json()["lead"]["stage"] for detail in details] == ["needs_human"] * len(inbound_texts)
+    assert [detail.json()["lead"]["automation_paused_reason"] for detail in details] == [
+        "ai_reply_conversation"
+    ] * len(inbound_texts)
+    assert [detail.json()["lead"]["manual_reply_status"] for detail in details] == ["answered"] * len(inbound_texts)
 
 
 def test_conversation_bot_sends_rejection_survey_and_closes_lead(monkeypatch, tmp_path) -> None:
@@ -1573,7 +1583,7 @@ def test_conversation_bot_sends_rejection_survey_and_closes_lead(monkeypatch, tm
 
 
 def test_conversation_bot_codex_failure_records_runtime_alert_without_handoff(monkeypatch, tmp_path) -> None:
-    """Codex fallback alerts should not pause the lead when DSPy answers safely."""
+    """Codex fallback alerts should keep the AI reply and move the lead to Manual."""
     configure_contadores_db(monkeypatch, tmp_path)
     ContadoresConfig.update(
         enabled=True,
@@ -1630,8 +1640,10 @@ def test_conversation_bot_codex_failure_records_runtime_alert_without_handoff(mo
     assert response.json()["ai_replies_sent"] == 1
     assert response.json()["human_handoffs"] == 0
     assert response.json()["codex_fallback_alerts"] == 1
-    assert detail.json()["lead"]["stage"] == "awaiting_video_reply"
-    assert detail.json()["lead"]["automation_paused"] is False
+    assert detail.json()["lead"]["stage"] == "needs_human"
+    assert detail.json()["lead"]["automation_paused"] is True
+    assert detail.json()["lead"]["automation_paused_reason"] == "ai_reply_conversation"
+    assert detail.json()["lead"]["manual_reply_status"] == "answered"
     assert pending.json()["messages"][0]["sequence_step"] == "ai_reply"
     assert alerts.status_code == 200
     assert len(alerts.json()["items"]) == 1
@@ -1894,7 +1906,9 @@ def test_conversation_bot_answers_transcribed_audio(monkeypatch, tmp_path) -> No
     assert messages[1]["text"] == "Me interesa, cuanto cuesta?"
     assert messages[1]["media_type"] is None
     assert messages[1]["sequence_step"] == contadores_endpoints.AUDIO_TRANSCRIPT_SEQUENCE_STEP
-    assert detail.json()["lead"]["stage"] == "awaiting_video_reply"
+    assert detail.json()["lead"]["stage"] == "needs_human"
+    assert detail.json()["lead"]["automation_paused_reason"] == "ai_reply_conversation"
+    assert detail.json()["lead"]["manual_reply_status"] == "answered"
     assert pending.json()["messages"][0]["text"] == "La inversion es de 300 USD, pago unico."
 
 

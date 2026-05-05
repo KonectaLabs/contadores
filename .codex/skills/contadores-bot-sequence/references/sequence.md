@@ -74,10 +74,12 @@ The bot must return one of:
 - `close_lead`
 - `no_action`
 
-Known questions stay in the current stage and are queued as
-`sequence_step=ai_reply`: price, inclusions, country/coverage, guarantee,
-process, domain, existing page, not having watched the video, being busy,
-analyzing/consulting, and simple confirmations.
+Known post-Loom questions are queued as `sequence_step=ai_reply` and then moved
+to Manual (`needs_human`) with `automation_paused_reason=ai_reply_conversation`.
+Because the AI already answered, the manual reply status should be `answered`.
+This covers price, inclusions, country/coverage, guarantee, process, domain,
+existing page, not having watched the video, being busy, analyzing/consulting,
+and simple confirmations.
 
 AI replies must use Facu/operator WhatsApp style: natural, short paragraphs,
 not AI-polished, and no inverted opening punctuation like `¿` or `¡`. Prefer
