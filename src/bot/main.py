@@ -41,6 +41,7 @@ try:
         send_contadores_pending_alerts,
         wait_for_backend_ready,
     )
+    from .webhook_inbox import WhatsAppInboundInbox
 except ImportError:
     from logging_utils import (
         BotLogState,
@@ -69,6 +70,7 @@ except ImportError:
         send_contadores_pending_alerts,
         wait_for_backend_ready,
     )
+    from webhook_inbox import WhatsAppInboundInbox
 
 logger = configure_runtime_logging()
 LOG_STATE = BotLogState()
@@ -121,9 +123,17 @@ async def run_worker_iteration(
     backend_client: httpx.AsyncClient,
     email_provider: AgentMailProvider,
     whatsapp_provider: WhatsAppProvider,
+    whatsapp_inbound_inbox: WhatsAppInboundInbox,
     funnels: list[Any] | None = None,
 ) -> None:
     """Advance automation, send alerts, and dispatch pending WhatsApp messages."""
+    replay_summary = await replay_pending_whatsapp_inbound_events(
+        backend_client=backend_client,
+        inbox=whatsapp_inbound_inbox,
+    )
+    if replay_summary["delivered"] or replay_summary["failed"]:
+        logger.info("WhatsApp inbound inbox replay summary: %s", replay_summary)
+
     current_funnels = funnels if funnels is not None else await fetch_funnels(backend_client)
 
     for funnel in current_funnels:
@@ -196,6 +206,7 @@ async def run_worker_loop(
     backend_client: httpx.AsyncClient,
     email_provider: AgentMailProvider,
     whatsapp_provider: WhatsAppProvider,
+    whatsapp_inbound_inbox: WhatsAppInboundInbox,
 ) -> None:
     """Run the continuous Contadores worker loop."""
     last_sheet_sync_at_by_funnel: dict[str, float] = {}
@@ -207,6 +218,7 @@ async def run_worker_loop(
                     backend_client=backend_client,
                     email_provider=email_provider,
                     whatsapp_provider=whatsapp_provider,
+                    whatsapp_inbound_inbox=whatsapp_inbound_inbox,
                     funnels=funnels,
                 )
                 note_backend_recovered(logger, LOG_STATE)
@@ -258,14 +270,81 @@ async def handle_whatsapp_inbound(
     *,
     backend_client: httpx.AsyncClient,
     event: WhatsAppInboundEvent,
+    inbox: WhatsAppInboundInbox,
 ) -> dict[str, Any]:
-    """Process one inbound WhatsApp event through the Contadores backend."""
-    result = await process_whatsapp_inbound_event(
-        backend_client,
-        event=event,
-    )
+    """Durably save and then process one inbound WhatsApp event."""
+    event_key = inbox.save_event(event)
+    try:
+        result = await deliver_saved_whatsapp_inbound_event(
+            backend_client=backend_client,
+            inbox=inbox,
+            event=event,
+            event_key=event_key,
+        )
+    except Exception:
+        logger.exception("Queued inbound WhatsApp event for retry after backend delivery failed.")
+        return {"status": "queued", "event_key": event_key}
+    return result or {"status": "duplicate", "event_key": event_key}
+
+
+async def deliver_saved_whatsapp_inbound_event(
+    *,
+    backend_client: httpx.AsyncClient,
+    inbox: WhatsAppInboundInbox,
+    event: WhatsAppInboundEvent,
+    event_key: str,
+) -> dict[str, Any] | None:
+    """Deliver one reserved inbox event to the backend."""
+    if not inbox.reserve_event(event_key):
+        return None
+
+    try:
+        result = await process_whatsapp_inbound_event(
+            backend_client,
+            event=event,
+        )
+    except Exception as exc:
+        inbox.mark_failed(event_key, str(exc))
+        raise
+
+    inbox.mark_delivered(event_key)
     log_whatsapp_inbound_activity(logger, result)
     return result
+
+
+async def replay_pending_whatsapp_inbound_events(
+    *,
+    backend_client: httpx.AsyncClient,
+    inbox: WhatsAppInboundInbox,
+    limit: int = 50,
+) -> dict[str, int]:
+    """Retry saved inbound webhooks until the backend accepts them."""
+    summary = {"checked": 0, "delivered": 0, "failed": 0, "pending": inbox.pending_count()}
+    for saved_event in inbox.list_retryable(limit=limit):
+        summary["checked"] += 1
+        try:
+            delivered = await deliver_saved_whatsapp_inbound_event(
+                backend_client=backend_client,
+                inbox=inbox,
+                event=saved_event.to_event(),
+                event_key=saved_event.event_key,
+            )
+        except httpx.HTTPStatusError as exc:
+            summary["failed"] += 1
+            status_code = exc.response.status_code if exc.response else 0
+            if status_code >= 500:
+                break
+        except httpx.RequestError:
+            summary["failed"] += 1
+            break
+        except Exception:
+            logger.exception("Failed to replay saved inbound WhatsApp event.")
+            summary["failed"] += 1
+        else:
+            if delivered:
+                summary["delivered"] += 1
+    summary["pending"] = inbox.pending_count()
+    return summary
 
 
 async def handle_whatsapp_status(
@@ -328,14 +407,18 @@ async def lifespan(app: FastAPI):
         logger.exception("AgentMail startup failed. Email alerts are disabled; WhatsApp workers will keep running.")
         await email_provider.disable()
 
+    whatsapp_inbound_inbox = WhatsAppInboundInbox.from_env()
+
     async def on_whatsapp_inbound(event: WhatsAppInboundEvent) -> None:
         try:
             await handle_whatsapp_inbound(
                 backend_client=backend_client,
                 event=event,
+                inbox=whatsapp_inbound_inbox,
             )
         except Exception:
-            logger.exception("Failed to process an inbound WhatsApp event.")
+            logger.exception("Failed to durably save an inbound WhatsApp event.")
+            raise
 
     async def on_whatsapp_status(event: WhatsAppMessageStatusEvent) -> None:
         try:
@@ -352,12 +435,14 @@ async def lifespan(app: FastAPI):
             backend_client=backend_client,
             email_provider=email_provider,
             whatsapp_provider=whatsapp_provider,
+            whatsapp_inbound_inbox=whatsapp_inbound_inbox,
         )
     )
 
     app.state.backend_client = backend_client
     app.state.email_provider = email_provider
     app.state.whatsapp_provider = whatsapp_provider
+    app.state.whatsapp_inbound_inbox = whatsapp_inbound_inbox
     app.state.worker_task = worker_task
 
     try:

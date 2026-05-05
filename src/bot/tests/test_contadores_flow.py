@@ -8,6 +8,7 @@ from io import BytesIO
 from types import SimpleNamespace
 
 import httpx
+import main as bot_main
 import openpyxl
 import utils
 from providers import DeliveryReceipt, WhatsAppInboundEvent, WhatsAppMessageStatusEvent
@@ -20,6 +21,7 @@ from utils import (
     read_xlsx_sheet_rows,
     send_contadores_pending_alerts,
 )
+from webhook_inbox import WhatsAppInboundInbox
 
 
 def test_run_contadores_sheet_sync_iteration_imports_only_uncontacted_rows(monkeypatch) -> None:
@@ -192,6 +194,95 @@ def test_process_whatsapp_inbound_event_forwards_profile_name(monkeypatch) -> No
         }
     ]
     assert result["profile_name"] == "Ana WhatsApp"
+
+
+def test_whatsapp_inbound_is_queued_when_backend_delivery_fails(monkeypatch, tmp_path) -> None:
+    """Inbound webhooks should survive backend outages for later replay."""
+    monkeypatch.setattr(utils, "BACKEND_BASE_URL", "http://backend")
+    inbox = WhatsAppInboundInbox(tmp_path / "inbox.sqlite")
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        assert request.url.path == "/api/contadores/whatsapp/inbound"
+        if calls == 1:
+            return httpx.Response(500, json={"detail": "backend down"})
+        return httpx.Response(
+            200,
+            json={"status": "processed", "route": "contadores", "lead_id": "lead-1"},
+        )
+
+    event = WhatsAppInboundEvent(
+        phone="5491111111111",
+        text="Hola",
+        profile_name="Ana WhatsApp",
+        external_id="wamid.queue.1",
+    )
+
+    async def run() -> tuple[dict[str, object], dict[str, int]]:
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as client:
+            queued = await bot_main.handle_whatsapp_inbound(
+                backend_client=client,
+                event=event,
+                inbox=inbox,
+            )
+            replayed = await bot_main.replay_pending_whatsapp_inbound_events(
+                backend_client=client,
+                inbox=inbox,
+            )
+        return queued, replayed
+
+    queued_result, replay_result = asyncio.run(run())
+
+    assert queued_result["status"] == "queued"
+    assert replay_result["delivered"] == 1
+    assert inbox.pending_count() == 0
+    assert calls == 2
+
+
+def test_whatsapp_inbound_duplicate_after_delivery_is_not_reposted(monkeypatch, tmp_path) -> None:
+    """Meta retries after a delivered event should be absorbed by the bot inbox."""
+    monkeypatch.setattr(utils, "BACKEND_BASE_URL", "http://backend")
+    inbox = WhatsAppInboundInbox(tmp_path / "inbox.sqlite")
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(
+            200,
+            json={"status": "processed", "route": "contadores", "lead_id": "lead-1"},
+        )
+
+    event = WhatsAppInboundEvent(
+        phone="5491111111111",
+        text="Hola",
+        external_id="wamid.once.1",
+    )
+
+    async def run() -> tuple[dict[str, object], dict[str, object]]:
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as client:
+            first = await bot_main.handle_whatsapp_inbound(
+                backend_client=client,
+                event=event,
+                inbox=inbox,
+            )
+            second = await bot_main.handle_whatsapp_inbound(
+                backend_client=client,
+                event=event,
+                inbox=inbox,
+            )
+        return first, second
+
+    first_result, second_result = asyncio.run(run())
+
+    assert first_result["status"] == "processed"
+    assert second_result["status"] == "duplicate"
+    assert inbox.pending_count() == 0
+    assert calls == 1
 
 
 def test_dispatch_pending_contadores_messages_sends_immediately_without_random_delay(monkeypatch) -> None:

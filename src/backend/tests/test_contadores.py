@@ -2489,6 +2489,31 @@ def test_contadores_inbound_matches_mexico_52_and_521_variants(monkeypatch, tmp_
     assert detail.json()["messages"][0]["external_id"] == "wamid.mx.1"
 
 
+def test_contadores_inbound_external_id_is_idempotent(monkeypatch, tmp_path) -> None:
+    """Meta webhook retries should not duplicate an already stored inbound message."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-dedupe",
+        phone="+5491112345678",
+        full_name="Dedupe Lead",
+    )
+    payload = {
+        "phone": "+5491112345678",
+        "text": "Si, me interesa",
+        "external_id": "wamid.dedupe.1",
+    }
+
+    with TestClient(app) as client:
+        first = client.post("/api/contadores/whatsapp/inbound", json=payload)
+        second = client.post("/api/contadores/whatsapp/inbound", json=payload)
+        detail = client.get(f"/api/contadores/leads/{lead.id}")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert second.json()["reason"] == "duplicate_external_id"
+    assert [message["external_id"] for message in detail.json()["messages"]] == ["wamid.dedupe.1"]
+
+
 def test_inbound_whatsapp_profile_name_fills_missing_lead_name(monkeypatch, tmp_path) -> None:
     """An existing phone-only lead should pick up the sender's WhatsApp profile name."""
     configure_contadores_db(monkeypatch, tmp_path)

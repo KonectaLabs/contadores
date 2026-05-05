@@ -3552,6 +3552,26 @@ def record_whatsapp_inbound_for_lead(
     return ContadoresLead.get_by_id(lead.id) or lead, transcript_row
 
 
+def duplicate_inbound_response(command: ContadoresWhatsAppInboundCommand) -> ContadoresWhatsAppInboundResponse | None:
+    """Return a processed response when Meta retries an already stored inbound message."""
+    external_id = (command.external_id or "").strip()
+    if not external_id:
+        return None
+
+    existing_messages = ContadoresMessage.list_by_external_id(external_id, from_me=False)
+    if not existing_messages:
+        return None
+
+    existing_message = existing_messages[0]
+    lead = ContadoresLead.get_by_id(existing_message.lead_id)
+    return ContadoresWhatsAppInboundResponse(
+        status="processed",
+        route=lead.funnel_id if lead else None,
+        lead_id=existing_message.lead_id,
+        reason="duplicate_external_id",
+    )
+
+
 class ContadoresAutomationTickResponse(BaseModel):
     """Result of one automation tick."""
 
@@ -4431,6 +4451,10 @@ async def register_contadores_whatsapp_inbound(
     command: ContadoresWhatsAppInboundCommand,
 ) -> ContadoresWhatsAppInboundResponse:
     """Route one raw WhatsApp inbound event to a Contadores lead safely."""
+    duplicate_response = duplicate_inbound_response(command)
+    if duplicate_response is not None:
+        return duplicate_response
+
     contadores_reply_matches, contadores_reply_ambiguous = list_contadores_matches_by_replied_message(
         command.in_reply_to
     )

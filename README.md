@@ -244,6 +244,12 @@ Entrada Click-to-WhatsApp:
 - Por defecto no se usa el texto prellenado del anuncio para rutear porque el usuario puede editarlo antes de enviarlo.
 - Excepcion aprobada: el texto normalizado `Hola! Quiero mas informacion de su propuesta para abogados!` rutea directo a `abogados` cuando no hay reply/referral usable.
 - Si no hay `referral.source_id`, ni frase aprobada, ni match de funnel, el mensaje se guarda como lead en el buzon `general`.
+- El servicio `bot` guarda cada webhook inbound de WhatsApp en
+  `BOT_WEBHOOK_INBOX_PATH` antes de llamar al backend. Si el backend esta caido,
+  el evento queda en ese SQLite y se reintenta en el worker hasta que
+  `/api/contadores/whatsapp/inbound` lo acepte.
+- El backend trata `external_id`/`wamid` inbound como idempotente. Si Meta
+  reintenta un webhook ya guardado, devuelve `processed` sin duplicar el mensaje.
 
 Buzon General:
 
@@ -582,6 +588,10 @@ local queda en `data/database.sqlite`, montada como volumen persistente, y el
 engine activa WAL + busy timeout para reducir locks entre el backend y el bot.
 No subir `--workers` sin migrar a Postgres o definir otra estrategia de
 concurrencia.
+
+El bot tambien usa el volumen persistente `data/` para
+`bot-webhook-inbox.sqlite`. Ese inbox es el buffer antifallos de inbound
+WhatsApp entre Meta y el backend; no borrarlo durante deploys o limpiezas.
 
 ## Rollout recomendado
 

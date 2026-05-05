@@ -66,6 +66,11 @@ Also read these skills when relevant:
 - Always inspect message delivery status before deciding that a lead ignored us.
   If our last outbound failed, the next action is delivery repair or exclusion,
   not "the lead did not answer".
+- WhatsApp inbound webhooks are first written by the `bot` service to the
+  durable SQLite inbox at `BOT_WEBHOOK_INBOX_PATH` and then replayed into
+  `/api/contadores/whatsapp/inbound`. When debugging missing replies, inspect
+  both `contadores_messages` and the bot inbox before assuming the lead was
+  silent.
 - Respect Meta/provider failures. Do not blindly requeue opt-out, invalid,
   undeliverable, or ecosystem-blocked numbers after retry budget is exhausted.
 - If a lead answers with a concrete day/time for a call, treat it as urgent
