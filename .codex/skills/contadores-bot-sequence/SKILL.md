@@ -36,6 +36,8 @@ override the built-in Contadores definition.
    - `no_action`
 10. If the bot answers a known question, queue `sequence_step=ai_reply` and keep
     the lead in its current stage.
+    - Copy must follow Facu/operator WhatsApp style: natural, short, not
+      AI-polished, and no inverted opening punctuation like `¿` or `¡`.
 11. If the bot needs email, day, time, or timezone for a call, queue
     `sequence_step=ai_reply` asking only for the missing detail.
 12. If the bot has email, day, and time, queue

@@ -31,6 +31,8 @@ description: >-
    comerciales.
 10. Si el bot responde una duda conocida, encolar `sequence_step=ai_reply` y
     mantener el lead en su stage actual.
+    El copy debe sonar como Facu/operador por WhatsApp: natural, corto, no
+    robotizado, y sin signos de apertura como `¿` o `¡`.
 11. Si faltan datos de llamada, pedir solo email, dia, horario o timezone
     faltante con `sequence_step=ai_reply`.
 12. Si ya estan email, dia y horario, confirmar por WhatsApp con
@@ -118,6 +120,10 @@ Acciones permitidas: `send_reply`, `ask_scheduling_details`, `handoff_human`,
 El bot debe contestar dudas conocidas y mantener el stage: precio, que incluye,
 pais/cobertura, garantia, proceso, dominio, pagina existente, no vio el video,
 esta ocupado, lo analiza/consulta, y confirmaciones simples.
+
+Las respuestas deben seguir estilo WhatsApp real: frases simples, no demasiado
+perfectas, sin tono de asistente AI y sin signos de apertura. Usar `Que dia le
+queda?`, no `¿Que dia le queda?`.
 
 Cuando conviene avanzar a reunion, el bot pide email, dia, horario y timezone
 solo si falta. La llamada default es de 15 minutos. Cuando los datos estan

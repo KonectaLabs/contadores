@@ -115,6 +115,15 @@ LIMIT 40;
 - For informal chats where the operator already used `tu`/`vos`, keep that tone.
 - Keep messages WhatsApp-native: short paragraphs, direct language, no corporate
   polish.
+- Do not write like a polished AI assistant. Match Facu/operator examples.
+- Do not use inverted opening punctuation. Write `Que dia le queda?`, not
+  `¿Que dia le queda?`.
+- It is fine if the syntax is not perfectly formal. Prefer natural WhatsApp
+  wording like `aca`, `campanas`, `reunion`, `Ok no hay problema`, and simple
+  closing `?`.
+- Avoid robotic filler such as `espero que se encuentre bien`,
+  `con gusto le informo`, `quedo atento a sus comentarios`, or long corporate
+  transitions.
 - Prefer simple Spanish without overexplaining.
 - Use the local house words unless the existing conversation differs:
   `pagina`, `campanas`, `reunion`, `WhatsApp`, `300 USD`.

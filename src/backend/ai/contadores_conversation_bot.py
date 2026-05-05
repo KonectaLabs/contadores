@@ -66,6 +66,11 @@ def _normalize_action(value: str) -> ConversationBotAction:
     return "handoff_human"
 
 
+def _normalize_message_text(value: Any) -> str:
+    """Normalize bot copy to the house WhatsApp writing style."""
+    return str(value or "").strip().replace("¿", "").replace("¡", "")
+
+
 class ContadoresConversationBotSignature(dspy.Signature):
     """Choose the next WhatsApp action for a Konecta lead.
 
@@ -89,6 +94,12 @@ class ContadoresConversationBotSignature(dspy.Signature):
     <hard_rules>
     - Spanish only.
     - Write WhatsApp-native copy: short paragraphs, direct, human, no corporate polish.
+    - Imitate Facu's/operator examples. Do not sound like a polished AI assistant.
+    - Do not use inverted opening punctuation. Write `Que dia le queda?`, never `¿Que dia le queda?`.
+    - It is okay if the copy is not perfectly formal. Prefer natural chat wording like `aca`, `campanas`,
+      `reunion`, `Ok no hay problema`, and simple closing `?`.
+    - Avoid robotic phrases such as "espero que se encuentre bien", "con gusto le informo",
+      "quedo atento a sus comentarios", or overexplained corporate transitions.
     - Do not include Calendly links. The new flow collects email, day, and time for a human to schedule.
     - The default meeting is 15 minutes.
     - If email, day, and time are all clear, use `handoff_scheduling`.
@@ -201,7 +212,7 @@ class ContadoresConversationBotProgram(Program):
         )
         return ContadoresConversationBotResult(
             action=_normalize_action(str(getattr(prediction, "action", ""))),
-            message_text=str(getattr(prediction, "message_text", "") or "").strip(),
+            message_text=_normalize_message_text(getattr(prediction, "message_text", "")),
             classification_label=str(getattr(prediction, "classification_label", "") or "").strip(),
             reason=str(getattr(prediction, "reason", "") or "").strip(),
             missing_fields=_normalize_list(getattr(prediction, "missing_fields", None)),

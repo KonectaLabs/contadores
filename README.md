@@ -268,6 +268,9 @@ Bot conversacional post-video y post-Calendly:
 - Preguntas conocidas de precio, pais/cobertura, garantia, proceso, dominio,
   pagina existente, "no vi el video", "lo analizo" o confirmaciones simples se
   responden con `sequence_step=ai_reply` sin mover el lead a `needs_human`.
+- El copy del bot debe sonar a WhatsApp real de Facu/operador: natural, corto,
+  no robotizado, sin signos de apertura como `¿` o `¡`, y sin frases
+  corporativas de asistente AI.
 - Si falta email, dia, horario o zona horaria para una llamada, el bot pide solo
   el dato faltante. La llamada default es de 15 minutos.
 - Cuando ya tiene email, dia y horario, confirma por WhatsApp con

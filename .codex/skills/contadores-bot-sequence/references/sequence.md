@@ -79,6 +79,10 @@ Known questions stay in the current stage and are queued as
 process, domain, existing page, not having watched the video, being busy,
 analyzing/consulting, and simple confirmations.
 
+AI replies must use Facu/operator WhatsApp style: natural, short paragraphs,
+not AI-polished, and no inverted opening punctuation like `¿` or `¡`. Prefer
+`Que dia le queda?` over formally perfect syntax.
+
 If the lead wants a meeting, the bot asks only for missing scheduling details:
 email, day, time, and timezone when it cannot infer one confidently. The default
 call duration is 15 minutes. When email, day, and time are all present, queue

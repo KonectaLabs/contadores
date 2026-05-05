@@ -91,3 +91,38 @@ def test_conversation_bot_normalizes_unknown_action_to_handoff(monkeypatch) -> N
 
     assert result.action == "handoff_human"
     assert result.missing_fields == ["email", "dia"]
+
+
+def test_conversation_bot_removes_inverted_opening_punctuation(monkeypatch) -> None:
+    program = ContadoresConversationBotProgram()
+
+    def fake_predict(**kwargs):
+        del kwargs
+        return SimpleNamespace(
+            action="send_reply",
+            message_text="¿Que dia le queda mejor? ¡Perfecto!",
+            classification_label="answered",
+            reason="Respondio con estilo de WhatsApp.",
+            missing_fields=[],
+            scheduling_email="",
+            scheduling_day="",
+            scheduling_time="",
+            timezone="",
+        )
+
+    monkeypatch.setattr(program, "predict", fake_predict)
+
+    result = asyncio.run(
+        program.aforward(
+            funnel_id="abogados",
+            funnel_label="Abogados",
+            lead_name="",
+            phone="+59175432222",
+            inferred_timezone="America/La_Paz",
+            current_stage="awaiting_video_reply",
+            latest_inbound="Si",
+            conversation="LEAD: Si",
+        )
+    )
+
+    assert result.message_text == "Que dia le queda mejor? Perfecto!"
