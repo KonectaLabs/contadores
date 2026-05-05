@@ -73,7 +73,11 @@ PUBLIC_PATHS_WITHOUT_SESSION = {
 
 def is_internal_bot_api_path(path: str) -> bool:
     """Return True when a path belongs to bot-consumed internal APIs."""
-    return path.startswith("/api/contadores/") or path == "/api/funnels"
+    return (
+        path.startswith("/api/contadores/")
+        or path.startswith("/api/workstation/automation/")
+        or path == "/api/funnels"
+    )
 
 
 def build_internal_auth_error() -> JSONResponse:

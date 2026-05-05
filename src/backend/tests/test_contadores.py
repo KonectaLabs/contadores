@@ -24,7 +24,11 @@ from backend.database import (
     ContadoresLeadStage,
     ContadoresMessage,
     MessageDeliveryStatus,
+    WorkstationAutomationStatus,
     WorkstationClient,
+    WorkstationClientStatus,
+    WorkstationClientWorkType,
+    WorkstationMediaAsset,
 )
 from backend.main import app
 
@@ -1054,6 +1058,116 @@ def test_pending_delivery_uses_message_template_params(monkeypatch, tmp_path) ->
     assert detail_messages[0]["whatsapp_template_body_params"] == ["Karen", "contadores", "Ecuador", "29"]
 
 
+def test_active_offer_positive_reply_sends_page_example_video(monkeypatch, tmp_path) -> None:
+    """The solo-page promo should send an example video before asking for scheduling."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    ContadoresConfig.update(enabled=True, post_loom_quiet_seconds=30)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-active-offer-page-example",
+        phone="+593991111113",
+        full_name="Carla Perez",
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=True,
+        text="Hola Carla, si te interesa esta oferta respondeme y te mostramos un ejemplo.",
+        delivery_status=MessageDeliveryStatus.DELIVERED,
+        sequence_step="promo_web_profesional_20260505",
+        created_at=now_utc() - timedelta(minutes=2),
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=False,
+        text="Me interesa",
+        created_at=now_utc() - timedelta(seconds=45),
+    )
+
+    class FailIfCalledConversationBot:
+        async def aforward(self, **kwargs):
+            raise AssertionError(f"conversation bot should not run for first solo-page interest: {kwargs}")
+
+    monkeypatch.setattr(contadores_endpoints, "ContadoresConversationBotProgram", FailIfCalledConversationBot)
+
+    with TestClient(app) as client:
+        tick = client.post("/api/contadores/automation/tick")
+        pending = client.get("/api/contadores/messages/pending-delivery")
+        detail = client.get(f"/api/contadores/leads/{lead.id}")
+
+    assert tick.status_code == 200
+    assert tick.json()["page_examples_sent"] == 1
+    assert tick.json()["scheduling_detail_requests_sent"] == 0
+    messages = pending.json()["messages"]
+    assert [item["sequence_step"] for item in messages] == ["auto_accountant_page_example_video"]
+    assert messages[0]["media_type"] == "video"
+    assert messages[0]["media_path"] == "data/contadores/videos/cliente-pagina.mp4"
+    assert WorkstationClient.get_by_lead_id(lead.id) is None
+    assert detail.json()["lead"]["last_classification_label"] == "page_example_sent"
+
+
+def test_active_offer_positive_reply_after_example_creates_solo_page_workstation(monkeypatch, tmp_path) -> None:
+    """Positive replies after the page example should create the pending-payment Workstation job."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setattr(database_module, "DATA_DIR", tmp_path / "data")
+    ContadoresConfig.update(enabled=True, post_loom_quiet_seconds=30)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-active-offer-workstation",
+        phone="+593991111114",
+        full_name="Daniel Molina",
+    )
+    offer_at = now_utc() - timedelta(minutes=4)
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=True,
+        text="Hola Daniel, si te interesa esta oferta respondeme y te mostramos un ejemplo.",
+        delivery_status=MessageDeliveryStatus.DELIVERED,
+        sequence_step="promo_web_profesional_20260505",
+        created_at=offer_at,
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=True,
+        text="Esta es una pagina de un cliente contador nuestro, asi podria verse tu pagina",
+        delivery_status=MessageDeliveryStatus.DELIVERED,
+        sequence_step="auto_accountant_page_example_video",
+        media_type="video",
+        media_path="data/contadores/videos/cliente-pagina.mp4",
+        media_filename="cliente-pagina.mp4",
+        created_at=offer_at + timedelta(minutes=1),
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=False,
+        text="Dale hagamos la pagina",
+        created_at=now_utc() - timedelta(seconds=45),
+    )
+
+    class FailIfCalledConversationBot:
+        async def aforward(self, **kwargs):
+            raise AssertionError(f"conversation bot should not run after accepted page example: {kwargs}")
+
+    monkeypatch.setattr(contadores_endpoints, "ContadoresConversationBotProgram", FailIfCalledConversationBot)
+
+    with TestClient(app) as client:
+        tick = client.post("/api/contadores/automation/tick")
+        detail = client.get(f"/api/contadores/leads/{lead.id}")
+        workstation_detail = client.get(f"/api/workstation/clients/{WorkstationClient.get_by_lead_id(lead.id).id}")
+
+    assert tick.status_code == 200
+    assert tick.json()["workstation_solo_page_started"] == 1
+    workstation = WorkstationClient.get_by_lead_id(lead.id)
+    assert workstation is not None
+    assert workstation.work_type == WorkstationClientWorkType.SOLO_PAGINA
+    assert workstation.status == WorkstationClientStatus.PENDING_PAYMENT
+    assert workstation.automation_status == WorkstationAutomationStatus.INTAKE
+    assert detail.json()["lead"]["stage"] == "booked"
+    assert detail.json()["lead"]["automation_paused"] is True
+    assert detail.json()["lead"]["automation_paused_reason"] == "workstation_solo_page_started"
+    assert workstation_detail.status_code == 200
+    assert workstation_detail.json()["client"]["work_type"] == "solo_pagina"
+    assert workstation_detail.json()["client"]["status"] == "pending_payment"
+    assert workstation_detail.json()["client"]["automation_status"] == "intake"
+
+
 def test_active_offer_reply_uses_conversation_bot_without_starting_old_sequence(monkeypatch, tmp_path) -> None:
     """Replies after a promo/offer broadcast should follow that offer instead of the opener/Loom path."""
     configure_contadores_db(monkeypatch, tmp_path)
@@ -1080,7 +1194,7 @@ def test_active_offer_reply_uses_conversation_bot_without_starting_old_sequence(
     ContadoresMessage.add(
         lead_id=lead.id,
         from_me=False,
-        text="Me interesa",
+        text="Cuanto demora la entrega?",
         created_at=now_utc() - timedelta(seconds=45),
     )
 
@@ -1088,7 +1202,7 @@ def test_active_offer_reply_uses_conversation_bot_without_starting_old_sequence(
         async def aforward(self, **kwargs):
             assert kwargs["current_stage"] == "awaiting_initial_reply"
             assert "KONECTA step=promo_web_profesional_20260505" in kwargs["conversation"]
-            assert kwargs["latest_inbound"] == "Me interesa"
+            assert kwargs["latest_inbound"] == "Cuanto demora la entrega?"
             return ContadoresConversationBotResult(
                 action="ask_scheduling_details",
                 message_text="Perfecto. Me pasa su email, dia y horario para coordinar una llamada corta?",
@@ -1145,7 +1259,7 @@ def test_active_offer_reply_waits_when_new_inbound_arrives_during_ai(monkeypatch
     ContadoresMessage.add(
         lead_id=lead.id,
         from_me=False,
-        text="Si",
+        text="Cuanto demora?",
         created_at=clock["now"] - timedelta(seconds=45),
     )
     seen_latest_inbound: list[str] = []
@@ -1157,7 +1271,7 @@ def test_active_offer_reply_waits_when_new_inbound_arrives_during_ai(monkeypatch
                 ContadoresMessage.add(
                     lead_id=lead.id,
                     from_me=False,
-                    text="Claro",
+                    text="Y el dominio?",
                     created_at=clock["now"] + timedelta(seconds=1),
                 )
             return ContadoresConversationBotResult(
@@ -1184,7 +1298,7 @@ def test_active_offer_reply_waits_when_new_inbound_arrives_during_ai(monkeypatch
 
     assert second_tick.status_code == 200
     assert second_tick.json()["scheduling_detail_requests_sent"] == 1
-    assert seen_latest_inbound == ["Si", "Claro"]
+    assert seen_latest_inbound == ["Cuanto demora?", "Y el dominio?"]
     assert pending_after_second_tick.status_code == 200
     assert [item["sequence_step"] for item in pending_after_second_tick.json()["messages"]] == ["ai_reply"]
 
@@ -1209,7 +1323,7 @@ def test_active_offer_reply_handles_venezuela_leads(monkeypatch, tmp_path) -> No
     ContadoresMessage.add(
         lead_id=lead.id,
         from_me=False,
-        text="Me interesa",
+        text="Cuanto demora la entrega?",
         created_at=now_utc() - timedelta(seconds=45),
     )
 
@@ -3563,6 +3677,171 @@ def test_workstation_conversion_is_idempotent_and_keeps_crm_link(monkeypatch, tm
     assert "workstation_status" not in crm_detail.json()["lead"]
     assert crm_detail.json()["lead"]["stage"] == "booked"
     assert WorkstationClient.get_by_lead_id(lead.id) is not None
+
+
+def test_workstation_tick_sends_intake_and_mirrors_whatsapp_media(monkeypatch, tmp_path) -> None:
+    """Solo-page Workstation intake should ask for basics and mirror inbound media files."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    data_dir = tmp_path / "data"
+    monkeypatch.setattr(database_module, "DATA_DIR", data_dir)
+    monkeypatch.setattr(contadores_endpoints, "DATA_DIR", data_dir)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-workstation-intake-media",
+        phone="+5491777777771",
+        full_name="Cliente Media",
+    )
+    source_path = data_dir / "contadores" / "inbound_media" / lead.id / "foto.jpg"
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    source_path.write_bytes(b"source-photo")
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=False,
+        text="[image]",
+        media_type="image",
+        media_path=str(Path("data") / "contadores" / "inbound_media" / lead.id / "foto.jpg"),
+        media_mime_type="image/jpeg",
+        media_filename="foto.jpg",
+        created_at=now_utc() - timedelta(seconds=45),
+    )
+    workstation = WorkstationClient.create_for_lead(
+        lead,
+        work_type=WorkstationClientWorkType.SOLO_PAGINA,
+        status=WorkstationClientStatus.PENDING_PAYMENT,
+        automation_status=WorkstationAutomationStatus.INTAKE,
+    )
+
+    with TestClient(app) as client:
+        tick = client.post("/api/workstation/automation/tick")
+        pending = client.get("/api/contadores/messages/pending-delivery")
+
+    assert tick.status_code == 200
+    assert tick.json()["intake_messages_sent"] == 1
+    assert [item["sequence_step"] for item in pending.json()["messages"]] == ["workstation_intake"]
+    media_assets = WorkstationMediaAsset.list_by_client(workstation.id)
+    assert len(media_assets) == 1
+    assert media_assets[0].stored_path.startswith("data/workstation/clients/")
+    mirrored_path = data_dir / Path(media_assets[0].stored_path).relative_to("data")
+    assert mirrored_path.read_bytes() == b"source-photo"
+
+
+def test_workstation_tick_generates_preview_without_blocking_on_missing_photo(monkeypatch, tmp_path) -> None:
+    """A solo-page draft should be generated from intake text even if no photo arrived yet."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    data_dir = tmp_path / "data"
+    monkeypatch.setattr(database_module, "DATA_DIR", data_dir)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-workstation-draft",
+        phone="+5491777777772",
+        full_name="Cliente Draft",
+    )
+    workstation = WorkstationClient.create_for_lead(
+        lead,
+        work_type=WorkstationClientWorkType.SOLO_PAGINA,
+        status=WorkstationClientStatus.PENDING_PAYMENT,
+        automation_status=WorkstationAutomationStatus.INTAKE,
+    )
+    intake_at = now_utc() - timedelta(minutes=2)
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=True,
+        text="Perfecto, entonces arrancamos con la pagina.",
+        sequence_step="workstation_intake",
+        delivery_status=MessageDeliveryStatus.DELIVERED,
+        created_at=intake_at,
+    )
+    WorkstationClient.update_automation_state(
+        workstation.id,
+        automation_status=WorkstationAutomationStatus.INTAKE,
+        last_automation_handled_at=intake_at,
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=False,
+        text="El estudio se llama Molina Contadores, hacemos impuestos y sociedades en Quito.",
+        created_at=now_utc() - timedelta(seconds=45),
+    )
+    generated_calls: list[dict[str, object]] = []
+
+    def fake_generate_solo_page_version_sync(**kwargs) -> Path:
+        generated_calls.append(kwargs)
+        version_dir = workstation_endpoints.next_landing_page_version_dir(kwargs["client"])
+        (version_dir / "index.html").write_text("<html><body>Draft</body></html>", encoding="utf-8")
+        (version_dir / "styles.css").write_text("body{font-family:sans-serif}", encoding="utf-8")
+        (version_dir / "script.js").write_text("", encoding="utf-8")
+        (version_dir / "preview.mp4").write_bytes(b"mp4")
+        return version_dir
+
+    monkeypatch.setattr(workstation_endpoints, "generate_solo_page_version_sync", fake_generate_solo_page_version_sync)
+
+    with TestClient(app) as client:
+        tick = client.post("/api/workstation/automation/tick")
+        pending = client.get("/api/contadores/messages/pending-delivery")
+
+    assert tick.status_code == 200
+    assert tick.json()["drafts_generated"] == 1
+    assert tick.json()["revision_videos_sent"] == 1
+    assert len(generated_calls) == 1
+    assert generated_calls[0]["revision"] is False
+    messages = pending.json()["messages"]
+    assert [item["sequence_step"] for item in messages] == ["workstation_preview_video"]
+    assert messages[0]["media_type"] == "video"
+    assert messages[0]["media_path"].endswith("landing-page/v001/preview.mp4")
+    updated = WorkstationClient.get_by_lead_id(lead.id)
+    assert updated.automation_status == WorkstationAutomationStatus.AWAITING_REVIEW
+    assert updated.last_preview_sent_at is not None
+
+
+def test_workstation_tick_approval_marks_needs_human(monkeypatch, tmp_path) -> None:
+    """Client approval should stop automation and hand the job to a human operator."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setattr(database_module, "DATA_DIR", tmp_path / "data")
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-workstation-approved",
+        phone="+5491777777773",
+        full_name="Cliente Aprobado",
+    )
+    workstation = WorkstationClient.create_for_lead(
+        lead,
+        work_type=WorkstationClientWorkType.SOLO_PAGINA,
+        status=WorkstationClientStatus.PENDING_PAYMENT,
+        automation_status=WorkstationAutomationStatus.AWAITING_REVIEW,
+    )
+    preview_at = now_utc() - timedelta(minutes=5)
+    WorkstationClient.update_automation_state(
+        workstation.id,
+        automation_status=WorkstationAutomationStatus.AWAITING_REVIEW,
+        last_preview_sent_at=preview_at,
+        last_automation_handled_at=preview_at,
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=True,
+        text="Le mando un video con el boceto de su pagina.",
+        sequence_step="workstation_preview_video",
+        media_type="video",
+        media_path="data/workstation/clients/demo/landing-page/v001/preview.mp4",
+        delivery_status=MessageDeliveryStatus.DELIVERED,
+        created_at=preview_at,
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=False,
+        text="Me gusta, asi esta bien",
+        created_at=now_utc() - timedelta(seconds=45),
+    )
+
+    with TestClient(app) as client:
+        tick = client.post("/api/workstation/automation/tick")
+        detail = client.get(f"/api/contadores/leads/{lead.id}")
+
+    assert tick.status_code == 200
+    assert tick.json()["approvals"] == 1
+    assert tick.json()["human_handoffs"] == 1
+    updated = WorkstationClient.get_by_lead_id(lead.id)
+    assert updated.automation_status == WorkstationAutomationStatus.NEEDS_HUMAN
+    assert updated.approved_at is not None
+    assert detail.json()["lead"]["stage"] == "needs_human"
+    assert detail.json()["lead"]["automation_paused_reason"] == "workstation_solo_page_approved"
 
 
 def test_workstation_clients_can_be_filtered_by_funnel(monkeypatch, tmp_path) -> None:

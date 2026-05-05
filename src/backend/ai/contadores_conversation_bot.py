@@ -30,6 +30,8 @@ from backend.config import (
 
 ConversationBotAction = Literal[
     "send_reply",
+    "send_page_example_video",
+    "start_workstation_solo_page",
     "ask_scheduling_details",
     "handoff_human",
     "handoff_scheduling",
@@ -39,6 +41,8 @@ ConversationBotAction = Literal[
 
 ALLOWED_ACTIONS = {
     "send_reply",
+    "send_page_example_video",
+    "start_workstation_solo_page",
     "ask_scheduling_details",
     "handoff_human",
     "handoff_scheduling",

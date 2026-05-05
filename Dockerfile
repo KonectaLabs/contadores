@@ -19,6 +19,7 @@ ENV PYTHONPATH=/app/src
 ENV CODEX_HOME=/app/data/codex-home
 ENV CODEX_BIN=/usr/local/bin/codex
 RUN uv sync --frozen --no-dev
+RUN uv run playwright install chromium --with-deps
 COPY src/backend/ ./src/backend/
 COPY .codex/skills/ ./.codex/skills/
 COPY --from=frontend-builder /app/src/frontend/dist ./src/frontend/dist

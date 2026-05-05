@@ -351,11 +351,20 @@ export interface WorkstationClientSummary {
   id: string;
   lead_id: string;
   funnel_id: string;
+  work_type: string;
+  status: string;
+  automation_status: string;
   display_name: string;
   folder_name: string;
   folder_path: string;
   media_count: number;
   lead: LeadSummary | null;
+  last_automation_handled_at: string | null;
+  last_preview_sent_at: string | null;
+  approved_at: string | null;
+  ping_1_sent_at: string | null;
+  ping_2_sent_at: string | null;
+  handoff_sent_at: string | null;
   created_at: string;
   updated_at: string;
 }

@@ -2219,6 +2219,9 @@ function WorkstationView({
                     <strong>{client.display_name || client.lead?.full_name || "Client"}</strong>
                   </div>
                   <p>{client.lead?.phone || client.folder_name}</p>
+                  <small>
+                    {humanize(client.work_type)} · {humanize(client.status)} · {humanize(client.automation_status)}
+                  </small>
                   <small>{client.media_count} media · {client.folder_path}</small>
                 </div>
               </button>
@@ -2243,6 +2246,9 @@ function WorkstationView({
                       {selectedLead
                         ? [selectedLead.phone || "-", selectedLead.email || "-", selectedLead.external_lead_id].join(" · ")
                         : activeClient.folder_path}
+                    </p>
+                    <p className="ct-detail-meta">
+                      {humanize(activeClient.work_type)} · {humanize(activeClient.status)} · {humanize(activeClient.automation_status)}
                     </p>
                   </div>
                 </div>

@@ -47,7 +47,10 @@ from backend.database import (
     ContadoresStrategyAssignment,
     DATA_DIR,
     MessageDeliveryStatus,
+    WorkstationAutomationStatus,
     WorkstationClient,
+    WorkstationClientStatus,
+    WorkstationClientWorkType,
     engine,
     normalize_contadores_tags,
     normalize_email,
@@ -75,9 +78,12 @@ PAGE_EXAMPLE_VIDEO_PATH = "data/contadores/videos/cliente-pagina.mp4"
 LAWYER_PAGE_EXAMPLE_VIDEO_PATH = "data/contadores/videos/pagina-abogado.mp4"
 ACCOUNTANT_PAGE_EXAMPLE_VIDEO_SEQUENCE_STEP = "manual_accountant_page_example_video"
 LAWYER_PAGE_EXAMPLE_VIDEO_SEQUENCE_STEP = "manual_lawyer_page_example_video"
+AUTO_ACCOUNTANT_PAGE_EXAMPLE_VIDEO_SEQUENCE_STEP = "auto_accountant_page_example_video"
+AUTO_LAWYER_PAGE_EXAMPLE_VIDEO_SEQUENCE_STEP = "auto_lawyer_page_example_video"
 ACCOUNTANT_PAGE_EXAMPLE_VIDEO_TEXT = "Esta es una pagina de un cliente contador nuestro, asi podria verse tu pagina"
 LAWYER_PAGE_EXAMPLE_VIDEO_TEXT = "Esta es una pagina de un cliente abogado nuestro, asi podria verse tu pagina"
 PAGE_EXAMPLE_VIDEO_TEXT = "Esta es una pagina de un cliente nuestro, asi podria verse tu pagina"
+WORKSTATION_SOLO_PAGE_STARTED_REASON = "workstation_solo_page_started"
 OPENER_FOLLOWUP_DELAY = timedelta(hours=24)
 WHATSAPP_CUSTOM_MESSAGE_WINDOW = timedelta(hours=24)
 CONTADORES_DELIVERY_MAX_ATTEMPTS = max(1, int(os.getenv("CONTADORES_DELIVERY_MAX_ATTEMPTS", "3")))
@@ -403,6 +409,95 @@ def is_active_offer_sequence_step(sequence_step: str | None) -> bool:
     """Return True for generic offer/promo broadcast sequence steps."""
     clean_step = (sequence_step or "").strip().lower()
     return any(clean_step.startswith(prefix) for prefix in ACTIVE_OFFER_SEQUENCE_PREFIXES)
+
+
+def is_page_example_sequence_step(sequence_step: str | None) -> bool:
+    """Return True when an outbound message is one of the page-example videos."""
+    return (sequence_step or "").strip() in {
+        PAGE_EXAMPLE_VIDEO_SEQUENCE_STEP,
+        ACCOUNTANT_PAGE_EXAMPLE_VIDEO_SEQUENCE_STEP,
+        LAWYER_PAGE_EXAMPLE_VIDEO_SEQUENCE_STEP,
+        AUTO_ACCOUNTANT_PAGE_EXAMPLE_VIDEO_SEQUENCE_STEP,
+        AUTO_LAWYER_PAGE_EXAMPLE_VIDEO_SEQUENCE_STEP,
+    }
+
+
+def latest_page_example_after(
+    *,
+    lead_id: str,
+    anchor_at: datetime | None,
+) -> ContadoresMessage | None:
+    """Return the latest page-example outbound after an active offer anchor."""
+    resolved_anchor = ensure_utc_datetime(anchor_at)
+    latest: ContadoresMessage | None = None
+    for message in ContadoresMessage.list_by_lead(lead_id):
+        if not message.from_me or not is_page_example_sequence_step(message.sequence_step):
+            continue
+        created_at = ensure_utc_datetime(message.created_at)
+        if resolved_anchor is not None and created_at is not None and created_at <= resolved_anchor:
+            continue
+        latest = message
+    return latest
+
+
+def inbound_shows_solo_page_interest(text: str) -> bool:
+    """Return True for high-confidence interest in seeing or starting the page."""
+    normalized = normalize_followup_text(text)
+    if not normalized:
+        return False
+    rejection_markers = (
+        "no gracias",
+        "no me interesa",
+        "no estoy interesado",
+        "no estoy interesada",
+        "no quiero",
+        "no deseo",
+        "por ahora no",
+        "mas adelante",
+        "muy caro",
+        "caro",
+    )
+    if any(marker in normalized for marker in rejection_markers):
+        return False
+    interest_markers = (
+        "si",
+        "ok",
+        "dale",
+        "perfecto",
+        "me interesa",
+        "quiero",
+        "hagamos",
+        "avancemos",
+        "empecemos",
+        "arranquemos",
+        "me gusta",
+        "esta bien",
+        "listo",
+        "mandame",
+        "muestrame",
+        "mostrame",
+        "pasame",
+        "como empezamos",
+        "como seguimos",
+    )
+    return any(re.search(rf"\b{re.escape(marker)}\b", normalized) for marker in interest_markers)
+
+
+def choose_auto_page_example_for_lead(lead: ContadoresLead) -> tuple[str, str, str, str]:
+    """Return text, sequence step, media path, and filename for the lead's funnel."""
+    if (lead.funnel_id or "").strip() == ABOGADOS_FUNNEL_ID:
+        return (
+            LAWYER_PAGE_EXAMPLE_VIDEO_TEXT,
+            AUTO_LAWYER_PAGE_EXAMPLE_VIDEO_SEQUENCE_STEP,
+            LAWYER_PAGE_EXAMPLE_VIDEO_PATH,
+            "pagina-abogado.mp4",
+        )
+    return (
+        ACCOUNTANT_PAGE_EXAMPLE_VIDEO_TEXT,
+        AUTO_ACCOUNTANT_PAGE_EXAMPLE_VIDEO_SEQUENCE_STEP,
+        PAGE_EXAMPLE_VIDEO_PATH,
+        "cliente-pagina.mp4",
+    )
 
 
 def build_funnel_info_for_bot(funnel: Any) -> str:
@@ -1998,6 +2093,39 @@ def move_post_loom_ai_reply_to_manual(
     ContadoresLead.update_flow_state(lead.id, **updates)
 
 
+def start_solo_page_workstation_for_lead(
+    *,
+    lead: ContadoresLead,
+    now: datetime,
+    reason: str,
+) -> WorkstationClient:
+    """Create the pending-payment solo-page Workstation client and pause sales automation."""
+    client = WorkstationClient.create_for_lead(
+        lead,
+        work_type=WorkstationClientWorkType.SOLO_PAGINA,
+        status=WorkstationClientStatus.PENDING_PAYMENT,
+        automation_status=WorkstationAutomationStatus.INTAKE,
+    )
+    WorkstationClient.update_automation_state(
+        client.id,
+        automation_status=WorkstationAutomationStatus.INTAKE,
+        status=WorkstationClientStatus.PENDING_PAYMENT,
+        last_automation_handled_at=now,
+    )
+    ContadoresLead.update_flow_state(
+        lead.id,
+        stage=ContadoresLeadStage.BOOKED,
+        booked_at=now,
+        automation_paused=True,
+        automation_paused_reason=WORKSTATION_SOLO_PAGE_STARTED_REASON,
+        classification_completed_at=now,
+        last_classification_label=WORKSTATION_SOLO_PAGE_STARTED_REASON,
+        last_classification_reason=reason,
+    )
+    fresh_client = WorkstationClient.get_by_id(client.id)
+    return fresh_client or client
+
+
 def apply_conversation_bot_result(
     *,
     lead: ContadoresLead,
@@ -2015,6 +2143,8 @@ def apply_conversation_bot_result(
         "human_handoffs": 0,
         "closed_by_ai": 0,
         "no_actions": 0,
+        "page_examples_sent": 0,
+        "workstation_solo_page_started": 0,
         "codex_fallback_alerts": 0,
     }
     label = result.classification_label or result.action
@@ -2031,6 +2161,33 @@ def apply_conversation_bot_result(
             latest_inbound_text=latest_inbound.text if latest_inbound else "",
         )
         metrics["codex_fallback_alerts"] += 1
+
+    if result.action == "send_page_example_video":
+        text, sequence_step, media_path, media_filename = choose_auto_page_example_for_lead(lead)
+        queued_rows = send_page_example_video(
+            lead=lead,
+            text=text,
+            sequence_step=sequence_step,
+            media_path=media_path,
+            media_filename=media_filename,
+        )
+        ContadoresLead.update_flow_state(
+            lead.id,
+            classification_completed_at=now,
+            last_classification_label=label or "page_example_sent",
+            last_classification_reason=reason,
+        )
+        metrics["page_examples_sent"] += 1 if queued_rows else 0
+        return metrics
+
+    if result.action == "start_workstation_solo_page":
+        start_solo_page_workstation_for_lead(
+            lead=lead,
+            now=now,
+            reason=reason or "El lead acepto avanzar con la pagina despues del ejemplo.",
+        )
+        metrics["workstation_solo_page_started"] += 1
+        return metrics
 
     if result.action == "handoff_scheduling":
         if not result.timezone and not inferred_timezone:
@@ -2201,6 +2358,8 @@ async def process_conversation_reply_batch(
         "human_handoffs": 0,
         "closed_by_ai": 0,
         "no_actions": 0,
+        "page_examples_sent": 0,
+        "workstation_solo_page_started": 0,
         "codex_fallback_alerts": 0,
     }
     batch_text = "\n".join(
@@ -2329,6 +2488,58 @@ def get_active_offer_reply_window_start(
     if offer_sent_at is None:
         return None
     return get_latest_conversation_handled_at(lead, anchor_at=offer_sent_at) or offer_sent_at
+
+
+def apply_solo_page_offer_shortcut(
+    *,
+    lead: ContadoresLead,
+    active_offer: ContadoresMessage,
+    replies_in_window: list[ContadoresMessage],
+    now: datetime,
+) -> dict[str, int] | None:
+    """Handle the happy path for solo-page promos before the generic sales bot."""
+    metrics = {
+        "ai_replies_sent": 0,
+        "scheduling_detail_requests_sent": 0,
+        "scheduling_handoffs": 0,
+        "human_handoffs": 0,
+        "closed_by_ai": 0,
+        "no_actions": 0,
+        "page_examples_sent": 0,
+        "workstation_solo_page_started": 0,
+        "codex_fallback_alerts": 0,
+    }
+    latest_text = "\n".join(item.text for item in replies_in_window if item.text.strip()).strip()
+    if not inbound_shows_solo_page_interest(latest_text):
+        return None
+
+    offer_sent_at = ensure_utc_datetime(active_offer.created_at)
+    example = latest_page_example_after(lead_id=lead.id, anchor_at=offer_sent_at)
+    if example is None:
+        text, sequence_step, media_path, media_filename = choose_auto_page_example_for_lead(lead)
+        queued_rows = send_page_example_video(
+            lead=lead,
+            text=text,
+            sequence_step=sequence_step,
+            media_path=media_path,
+            media_filename=media_filename,
+        )
+        ContadoresLead.update_flow_state(
+            lead.id,
+            classification_completed_at=now,
+            last_classification_label="page_example_sent",
+            last_classification_reason="El lead mostro interes en la promo de solo pagina; se envio ejemplo.",
+        )
+        metrics["page_examples_sent"] = 1 if queued_rows else 0
+        return metrics
+
+    start_solo_page_workstation_for_lead(
+        lead=lead,
+        now=now,
+        reason="El lead acepto avanzar con la promo de solo pagina despues del ejemplo.",
+    )
+    metrics["workstation_solo_page_started"] = 1
+    return metrics
 
 
 def get_post_loom_reply_window_start(lead: ContadoresLead) -> datetime | None:
@@ -3354,6 +3565,8 @@ class ContadoresAutomationTickResponse(BaseModel):
     human_handoffs: int = 0
     closed_by_ai: int = 0
     no_actions: int = 0
+    page_examples_sent: int = 0
+    workstation_solo_page_started: int = 0
     classified_wants_to_proceed: int = 0
     video_confirmation_recaps_sent: int = 0
     classified_needs_human: int = 0
@@ -4389,6 +4602,8 @@ async def run_contadores_automation_tick(
     human_handoffs = 0
     closed_by_ai = 0
     no_actions = 0
+    page_examples_sent = 0
+    workstation_solo_page_started = 0
     classified_wants_to_proceed = 0
     video_confirmation_recaps_sent = 0
     classified_needs_human = 0
@@ -4447,21 +4662,31 @@ async def run_contadores_automation_tick(
                     )
                     if not replies_in_window:
                         continue
-                    metric_updates = await process_conversation_reply_batch(
+                    current_now = now_utc()
+                    metric_updates = apply_solo_page_offer_shortcut(
                         lead=fresh_lead,
+                        active_offer=fresh_active_offer,
                         replies_in_window=replies_in_window,
-                        reply_window_start=reply_window_start,
-                        quiet_seconds=config.post_loom_quiet_seconds,
-                        conversation_bot=conversation_bot,
-                        now=now_utc(),
-                        active_offer_context=True,
+                        now=current_now,
                     )
+                    if metric_updates is None:
+                        metric_updates = await process_conversation_reply_batch(
+                            lead=fresh_lead,
+                            replies_in_window=replies_in_window,
+                            reply_window_start=reply_window_start,
+                            quiet_seconds=config.post_loom_quiet_seconds,
+                            conversation_bot=conversation_bot,
+                            now=current_now,
+                            active_offer_context=True,
+                        )
                 ai_replies_sent += metric_updates["ai_replies_sent"]
                 scheduling_detail_requests_sent += metric_updates["scheduling_detail_requests_sent"]
                 scheduling_handoffs += metric_updates["scheduling_handoffs"]
                 human_handoffs += metric_updates["human_handoffs"]
                 closed_by_ai += metric_updates["closed_by_ai"]
                 no_actions += metric_updates["no_actions"]
+                page_examples_sent += metric_updates["page_examples_sent"]
+                workstation_solo_page_started += metric_updates["workstation_solo_page_started"]
                 codex_fallback_alerts += metric_updates["codex_fallback_alerts"]
                 if metric_updates["human_handoffs"]:
                     classified_needs_human += metric_updates["human_handoffs"]
@@ -4599,6 +4824,8 @@ async def run_contadores_automation_tick(
         human_handoffs += metric_updates["human_handoffs"]
         closed_by_ai += metric_updates["closed_by_ai"]
         no_actions += metric_updates["no_actions"]
+        page_examples_sent += metric_updates["page_examples_sent"]
+        workstation_solo_page_started += metric_updates["workstation_solo_page_started"]
         codex_fallback_alerts += metric_updates["codex_fallback_alerts"]
         if metric_updates["human_handoffs"]:
             classified_needs_human += metric_updates["human_handoffs"]
@@ -4614,6 +4841,8 @@ async def run_contadores_automation_tick(
         human_handoffs=human_handoffs,
         closed_by_ai=closed_by_ai,
         no_actions=no_actions,
+        page_examples_sent=page_examples_sent,
+        workstation_solo_page_started=workstation_solo_page_started,
         classified_wants_to_proceed=classified_wants_to_proceed,
         video_confirmation_recaps_sent=video_confirmation_recaps_sent,
         classified_needs_human=classified_needs_human,
@@ -4650,6 +4879,20 @@ async def list_pending_contadores_alerts(
             )
         )
     for alert in ContadoresRuntimeAlert.list_pending(funnel_id=funnel_id, limit=100):
+        if alert.alert_type.startswith("workstation_"):
+            alert_reason = (
+                "Fallo la automatizacion de Workstation solo pagina. "
+                f"Accion sugerida: {alert.fallback_action or 'revisar Workstation'}. "
+                "Si fue Codex, reautenticar en https://auth.openai.com/codex/device "
+                "generando un codigo con `env -u OPENAI_API_KEY codex login --device-auth`."
+            )
+        else:
+            alert_reason = (
+                "Codex ChatGPT fallo en el bot conversacional y se uso fallback. "
+                f"Accion fallback: {alert.fallback_action or '-'}. "
+                "Reautenticar en https://auth.openai.com/codex/device "
+                "generando un codigo con `env -u OPENAI_API_KEY codex login --device-auth`."
+            )
         items.append(
             PendingContadoresAlertItem(
                 lead_id=alert.lead_id,
@@ -4659,12 +4902,7 @@ async def list_pending_contadores_alerts(
                 stage="runtime_alert",
                 automation_paused_reason=alert.alert_type,
                 latest_inbound_text=alert.latest_inbound_text,
-                reason=(
-                    "Codex ChatGPT fallo en el bot conversacional y se uso fallback. "
-                    f"Accion fallback: {alert.fallback_action or '-'}. "
-                    "Reautenticar en https://auth.openai.com/codex/device "
-                    "generando un codigo con `env -u OPENAI_API_KEY codex login --device-auth`."
-                ),
+                reason=alert_reason,
                 alert_emails=config.alert_emails,
                 alert_kind="runtime",
                 runtime_alert_id=alert.id,

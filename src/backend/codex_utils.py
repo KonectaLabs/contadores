@@ -153,6 +153,7 @@ def run_codex(
     effort: ReasoningEffortName = DEFAULT_EFFORT,
     service_tier: ServiceTierName | None = None,
     cwd: str | Path | None = None,
+    sandbox_writable_roots: list[str | Path] | None = None,
     codex_home: str | Path | None = None,
     codex_bin: str = DEFAULT_CODEX_BIN,
     prefer_chatgpt_login: bool = DEFAULT_PREFER_CHATGPT_LOGIN,
@@ -178,6 +179,7 @@ def run_codex(
         effort=effort,
         service_tier=service_tier,
         cwd=cwd,
+        sandbox_writable_roots=sandbox_writable_roots,
         codex_home=codex_home,
         codex_bin=codex_bin,
         prefer_chatgpt_login=prefer_chatgpt_login,
@@ -192,6 +194,7 @@ def run_codex_with_mentions(
     effort: ReasoningEffortName = DEFAULT_EFFORT,
     service_tier: ServiceTierName | None = None,
     cwd: str | Path | None = None,
+    sandbox_writable_roots: list[str | Path] | None = None,
     codex_home: str | Path | None = None,
     codex_bin: str = DEFAULT_CODEX_BIN,
     prefer_chatgpt_login: bool = DEFAULT_PREFER_CHATGPT_LOGIN,
@@ -204,6 +207,7 @@ def run_codex_with_mentions(
             effort=effort,
             service_tier=service_tier,
             cwd=cwd,
+            sandbox_writable_roots=sandbox_writable_roots,
             codex_home=codex_home,
             codex_bin=codex_bin,
             prefer_chatgpt_login=prefer_chatgpt_login,
@@ -223,6 +227,7 @@ def run_codex_with_mentions(
         effort=effort,
         service_tier=service_tier,
         cwd=cwd,
+        sandbox_writable_roots=sandbox_writable_roots,
         codex_home=codex_home,
         codex_bin=codex_bin,
         prefer_chatgpt_login=prefer_chatgpt_login,
@@ -239,6 +244,7 @@ def run_codex_with_context(
     effort: ReasoningEffortName = DEFAULT_EFFORT,
     service_tier: ServiceTierName | None = None,
     cwd: str | Path | None = None,
+    sandbox_writable_roots: list[str | Path] | None = None,
     codex_home: str | Path | None = None,
     codex_bin: str = DEFAULT_CODEX_BIN,
     prefer_chatgpt_login: bool = DEFAULT_PREFER_CHATGPT_LOGIN,
@@ -269,6 +275,7 @@ def run_codex_with_context(
         effort=effort,
         service_tier=service_tier,
         cwd=cwd,
+        sandbox_writable_roots=sandbox_writable_roots,
         codex_home=codex_home,
         codex_bin=codex_bin,
         prefer_chatgpt_login=prefer_chatgpt_login,
@@ -361,6 +368,7 @@ def _run_codex_input(
     effort: ReasoningEffortName,
     service_tier: ServiceTierName | None,
     cwd: str | Path | None,
+    sandbox_writable_roots: list[str | Path] | None,
     codex_home: str | Path | None,
     codex_bin: str,
     prefer_chatgpt_login: bool,
@@ -385,9 +393,7 @@ def _run_codex_input(
                 root=sdk["AskForApprovalValue"].never
             ),
             effort=sdk["ReasoningEffort"](effort),
-            sandbox_policy=sdk["SandboxPolicy"](
-                root=sdk["DangerFullAccessSandboxPolicy"](type="dangerFullAccess")
-            ),
+            sandbox_policy=_build_sandbox_policy(sdk, sandbox_writable_roots=sandbox_writable_roots),
             service_tier=sdk["ServiceTier"](service_tier) if service_tier else None,
         )
 
@@ -398,6 +404,33 @@ def _run_codex_input(
         effort=effort,
         service_tier=service_tier,
         cwd=run_cwd,
+    )
+
+
+def _build_sandbox_policy(
+    sdk: dict[str, Any],
+    *,
+    sandbox_writable_roots: list[str | Path] | None,
+) -> Any:
+    """Build the Codex sandbox policy for one run."""
+    if sandbox_writable_roots is None:
+        return sdk["SandboxPolicy"](
+            root=sdk["DangerFullAccessSandboxPolicy"](type="dangerFullAccess")
+        )
+
+    workspace_policy = sdk.get("WorkspaceWriteSandboxPolicy")
+    if workspace_policy is None:
+        raise RuntimeError("Codex SDK does not expose WorkspaceWriteSandboxPolicy")
+    writable_roots = [
+        str(Path(root).expanduser().resolve())
+        for root in sandbox_writable_roots
+    ]
+    return sdk["SandboxPolicy"](
+        root=workspace_policy(
+            type="workspaceWrite",
+            writable_roots=writable_roots,
+            network_access=True,
+        )
     )
 
 
@@ -449,6 +482,7 @@ def _load_codex_sdk() -> dict[str, Any]:
             AppsListResponse,
             AskForApprovalValue,
             DangerFullAccessSandboxPolicy,
+            WorkspaceWriteSandboxPolicy,
         )
     except ImportError as error:
         message = (
@@ -465,6 +499,7 @@ def _load_codex_sdk() -> dict[str, Any]:
         "AskForApprovalValue": AskForApprovalValue,
         "Codex": Codex,
         "DangerFullAccessSandboxPolicy": DangerFullAccessSandboxPolicy,
+        "WorkspaceWriteSandboxPolicy": WorkspaceWriteSandboxPolicy,
         "LocalImageInput": LocalImageInput,
         "MentionInput": MentionInput,
         "ReasoningEffort": ReasoningEffort,

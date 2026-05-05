@@ -184,11 +184,26 @@ class ContadoresAutomationTickResponse(BaseModel):
     human_handoffs: int = 0
     closed_by_ai: int = 0
     no_actions: int = 0
+    page_examples_sent: int = 0
+    workstation_solo_page_started: int = 0
     classified_wants_to_proceed: int = 0
     video_confirmation_recaps_sent: int = 0
     classified_needs_human: int = 0
     calendly_sent: int = 0
     codex_fallback_alerts: int = 0
+
+
+class WorkstationAutomationTickResponse(BaseModel):
+    """Backend Workstation automation tick summary."""
+
+    status: str
+    intake_messages_sent: int = 0
+    drafts_generated: int = 0
+    revision_videos_sent: int = 0
+    approvals: int = 0
+    pings_sent: int = 0
+    human_handoffs: int = 0
+    failures: int = 0
 
 
 class DispatchResult(BaseModel):
@@ -456,6 +471,13 @@ async def run_contadores_automation_iteration(
     )
     response.raise_for_status()
     return ContadoresAutomationTickResponse.model_validate(response.json()).model_dump()
+
+
+async def run_workstation_automation_iteration(client: httpx.AsyncClient) -> dict[str, Any]:
+    """Ask the backend to advance Workstation automation state."""
+    response = await client.post(backend_url("/api/workstation/automation/tick"))
+    response.raise_for_status()
+    return WorkstationAutomationTickResponse.model_validate(response.json()).model_dump()
 
 
 async def update_backend_contadores_message_text(
@@ -741,11 +763,15 @@ async def send_contadores_pending_alerts(
         scheduling_handoff = item.automation_paused_reason == "booking_details_collected"
         effective_funnel_label = item.funnel_label or funnel_label
         if runtime_alert:
-            first_line = (
-                f"{effective_funnel_label}: Codex fallo en el bot conversacional y se uso fallback "
-                "sin pausar el lead."
-            )
-            subject_prefix = "codex_fallback"
+            if (item.automation_paused_reason or "").startswith("workstation_"):
+                first_line = f"{effective_funnel_label}: fallo la automatizacion de Workstation."
+                subject_prefix = "workstation_alert"
+            else:
+                first_line = (
+                    f"{effective_funnel_label}: Codex fallo en el bot conversacional y se uso fallback "
+                    "sin pausar el lead."
+                )
+                subject_prefix = "codex_fallback"
         elif scheduling_handoff:
             first_line = f"{effective_funnel_label}: lead listo para que Facu agende una llamada."
             subject_prefix = "agendar llamada"

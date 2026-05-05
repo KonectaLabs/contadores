@@ -39,6 +39,31 @@ CONVERSATION_BOT_CODEX_API_KEY_HOME = (
     )
     or ""
 ).strip()
+WORKSTATION_PING_TEMPLATE_1_NAME = os.getenv(
+    "WORKSTATION_PING_TEMPLATE_1_NAME",
+    "konecta_workstation_ping_1_es_v1",
+).strip()
+WORKSTATION_PING_TEMPLATE_2_NAME = os.getenv(
+    "WORKSTATION_PING_TEMPLATE_2_NAME",
+    "konecta_workstation_ping_2_es_v1",
+).strip()
+WORKSTATION_HANDOFF_TEMPLATE_NAME = os.getenv(
+    "WORKSTATION_HANDOFF_TEMPLATE_NAME",
+    "konecta_workstation_handoff_es_v1",
+).strip()
+WORKSTATION_TEMPLATE_LANGUAGE = os.getenv("WORKSTATION_TEMPLATE_LANGUAGE", "es").strip() or "es"
+WORKSTATION_HUMAN_HANDOFF_TEXT = os.getenv(
+    "WORKSTATION_HUMAN_HANDOFF_TEXT",
+    "Te paso con Facundo para seguir la conversacion por WhatsApp.",
+).strip()
+WORKSTATION_PING_1_TEXT = os.getenv(
+    "WORKSTATION_PING_1_TEXT",
+    "Hola, queria avisarle que ya tengo una actualizacion de su pagina. Esta por ahi?",
+).strip()
+WORKSTATION_PING_2_TEXT = os.getenv(
+    "WORKSTATION_PING_2_TEXT",
+    "Le escribo para retomar lo de su pagina. Quiere que sigamos con el boceto?",
+).strip()
 
 
 # Instantly configuration

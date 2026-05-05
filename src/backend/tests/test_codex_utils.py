@@ -301,6 +301,75 @@ def test_run_codex_accepts_effort_and_service_tier(monkeypatch, tmp_path):
     assert calls["run_kwargs"]["service_tier"].value == "fast"
 
 
+def test_run_codex_accepts_workspace_write_sandbox(monkeypatch, tmp_path):
+    """Callers can constrain Codex writes to a known work folder."""
+    calls = {}
+
+    class FakeAskForApprovalValue:
+        never = "never"
+
+    class FakeValue:
+        def __init__(self, value):
+            self.value = value
+
+    class FakeWrapper:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    class FakeResult:
+        final_response = "done"
+        items = []
+
+    class FakeThread:
+        def run(self, prompt, **kwargs):
+            del prompt
+            calls["run_kwargs"] = kwargs
+            return FakeResult()
+
+    class FakeCodex:
+        def __init__(self, config):
+            del config
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def thread_start(self, *, model):
+            del model
+            return FakeThread()
+
+    workdir = tmp_path / "client"
+    workdir.mkdir()
+    monkeypatch.setattr(
+        codex_utils,
+        "_load_codex_sdk",
+        lambda: {
+            "AppServerConfig": lambda **kwargs: kwargs,
+            "AskForApproval": lambda **kwargs: FakeWrapper(**kwargs),
+            "AskForApprovalValue": FakeAskForApprovalValue,
+            "Codex": FakeCodex,
+            "DangerFullAccessSandboxPolicy": lambda **kwargs: FakeWrapper(**kwargs),
+            "ReasoningEffort": FakeValue,
+            "SandboxPolicy": lambda **kwargs: FakeWrapper(**kwargs),
+            "ServiceTier": FakeValue,
+            "WorkspaceWriteSandboxPolicy": lambda **kwargs: FakeWrapper(**kwargs),
+        },
+    )
+
+    codex_utils.run_codex(
+        "do the thing",
+        cwd=workdir,
+        sandbox_writable_roots=[workdir],
+    )
+
+    sandbox_root = calls["run_kwargs"]["sandbox_policy"].root
+    assert sandbox_root.type == "workspaceWrite"
+    assert sandbox_root.writable_roots == [str(workdir.resolve())]
+    assert sandbox_root.network_access is True
+
+
 def test_run_codex_with_mentions_passes_structured_input(monkeypatch, tmp_path):
     """Mentions should be passed as structured SDK input items, not plain @ text."""
     calls = {}

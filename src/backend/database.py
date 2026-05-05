@@ -2016,9 +2016,30 @@ class ContadoresRuntimeAlert(SQLModel, table=True):
 class WorkstationClientStatus(str, Enum):
     """Status for one converted client."""
 
+    PENDING_PAYMENT = "pending_payment"
     PAID = "paid"
     IN_PROGRESS = "in_progress"
     ARCHIVED = "archived"
+
+
+class WorkstationClientWorkType(str, Enum):
+    """Commercial job type for one Workstation client."""
+
+    SOLO_PAGINA = "solo_pagina"
+    PAGINA_ADS = "pagina_ads"
+    SOLO_ADS = "solo_ads"
+
+
+class WorkstationAutomationStatus(str, Enum):
+    """Automation lifecycle for a Workstation delivery job."""
+
+    INTAKE = "intake"
+    DRAFTING = "drafting"
+    AWAITING_REVIEW = "awaiting_review"
+    REVISION_REQUESTED = "revision_requested"
+    APPROVED = "approved"
+    NEEDS_HUMAN = "needs_human"
+    FAILED = "failed"
 
 
 def normalize_workstation_client_status(
@@ -2032,6 +2053,32 @@ def normalize_workstation_client_status(
         if candidate.value == value:
             return candidate
     return WorkstationClientStatus.PAID
+
+
+def normalize_workstation_work_type(
+    work_type: WorkstationClientWorkType | str | None,
+) -> WorkstationClientWorkType:
+    """Normalize raw Workstation job-type values."""
+    if isinstance(work_type, WorkstationClientWorkType):
+        return work_type
+    value = (work_type or "").strip().lower()
+    for candidate in WorkstationClientWorkType:
+        if candidate.value == value:
+            return candidate
+    return WorkstationClientWorkType.PAGINA_ADS
+
+
+def normalize_workstation_automation_status(
+    status: WorkstationAutomationStatus | str | None,
+) -> WorkstationAutomationStatus:
+    """Normalize raw Workstation automation status values."""
+    if isinstance(status, WorkstationAutomationStatus):
+        return status
+    value = (status or "").strip().lower()
+    for candidate in WorkstationAutomationStatus:
+        if candidate.value == value:
+            return candidate
+    return WorkstationAutomationStatus.NEEDS_HUMAN
 
 
 def normalize_workstation_slug(value: str | None) -> str:
@@ -2056,9 +2103,20 @@ class WorkstationClient(SQLModel, table=True):
     lead_id: str = Field(foreign_key="contadores_leads.id", index=True)
     funnel_id: str = Field(default="contadores", index=True)
     status: WorkstationClientStatus = Field(default=WorkstationClientStatus.PAID, index=True)
+    work_type: WorkstationClientWorkType = Field(default=WorkstationClientWorkType.PAGINA_ADS, index=True)
+    automation_status: WorkstationAutomationStatus = Field(
+        default=WorkstationAutomationStatus.NEEDS_HUMAN,
+        index=True,
+    )
     display_name: str = Field(default="")
     folder_name: str = Field(default="", index=True)
     notes: str = Field(default="")
+    last_automation_handled_at: datetime | None = Field(default=None, index=True)
+    last_preview_sent_at: datetime | None = Field(default=None, index=True)
+    approved_at: datetime | None = Field(default=None, index=True)
+    ping_1_sent_at: datetime | None = Field(default=None, index=True)
+    ping_2_sent_at: datetime | None = Field(default=None, index=True)
+    handoff_sent_at: datetime | None = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
 
@@ -2091,6 +2149,8 @@ class WorkstationClient(SQLModel, table=True):
         limit: int = 300,
         funnel_id: str | None = None,
         status: WorkstationClientStatus | str | None = None,
+        work_type: WorkstationClientWorkType | str | None = None,
+        automation_status: WorkstationAutomationStatus | str | None = None,
     ) -> list["WorkstationClient"]:
         """List recent converted clients."""
         with Session(engine) as session:
@@ -2099,6 +2159,12 @@ class WorkstationClient(SQLModel, table=True):
                 statement = statement.where(cls.funnel_id == ((funnel_id or "").strip() or "contadores"))
             if status is not None:
                 statement = statement.where(cls.status == normalize_workstation_client_status(status))
+            if work_type is not None:
+                statement = statement.where(cls.work_type == normalize_workstation_work_type(work_type))
+            if automation_status is not None:
+                statement = statement.where(
+                    cls.automation_status == normalize_workstation_automation_status(automation_status)
+                )
             statement = statement.order_by(cls.updated_at.desc(), cls.created_at.desc(), cls.id.desc()).limit(limit)
             rows = list(session.exec(statement).all())
             for row in rows:
@@ -2106,7 +2172,41 @@ class WorkstationClient(SQLModel, table=True):
             return rows
 
     @classmethod
-    def create_for_lead(cls, lead: ContadoresLead) -> "WorkstationClient":
+    def list_active_automation(
+        cls,
+        *,
+        limit: int = 100,
+        work_type: WorkstationClientWorkType | str = WorkstationClientWorkType.SOLO_PAGINA,
+    ) -> list["WorkstationClient"]:
+        """List Workstation clients whose automation can still advance."""
+        terminal_statuses = {
+            WorkstationAutomationStatus.APPROVED,
+            WorkstationAutomationStatus.NEEDS_HUMAN,
+            WorkstationAutomationStatus.FAILED,
+        }
+        with Session(engine) as session:
+            statement = (
+                select(cls)
+                .where(cls.work_type == normalize_workstation_work_type(work_type))
+                .where(cls.status != WorkstationClientStatus.ARCHIVED)
+                .where(cls.automation_status.not_in(terminal_statuses))
+                .order_by(cls.updated_at, cls.created_at, cls.id)
+                .limit(limit)
+            )
+            rows = list(session.exec(statement).all())
+            for row in rows:
+                session.expunge(row)
+            return rows
+
+    @classmethod
+    def create_for_lead(
+        cls,
+        lead: ContadoresLead,
+        *,
+        work_type: WorkstationClientWorkType | str = WorkstationClientWorkType.PAGINA_ADS,
+        status: WorkstationClientStatus | str = WorkstationClientStatus.PAID,
+        automation_status: WorkstationAutomationStatus | str = WorkstationAutomationStatus.NEEDS_HUMAN,
+    ) -> "WorkstationClient":
         """Create one Workstation client for a paid lead, idempotently."""
         existing = cls.get_by_lead_id(lead.id)
         if existing is not None:
@@ -2121,12 +2221,56 @@ class WorkstationClient(SQLModel, table=True):
                 id=client_id,
                 lead_id=lead.id,
                 funnel_id=lead.funnel_id or "contadores",
-                status=WorkstationClientStatus.PAID,
+                status=normalize_workstation_client_status(status),
+                work_type=normalize_workstation_work_type(work_type),
+                automation_status=normalize_workstation_automation_status(automation_status),
                 display_name=display_name,
                 folder_name=folder_name,
                 created_at=now,
                 updated_at=now,
             )
+            session.add(item)
+            session.commit()
+            session.refresh(item)
+            session.expunge(item)
+            return item
+
+    @classmethod
+    def update_automation_state(
+        cls,
+        client_id: str,
+        *,
+        automation_status: WorkstationAutomationStatus | str | None = None,
+        status: WorkstationClientStatus | str | None = None,
+        last_automation_handled_at: datetime | None = None,
+        last_preview_sent_at: datetime | None = None,
+        approved_at: datetime | None = None,
+        ping_1_sent_at: datetime | None = None,
+        ping_2_sent_at: datetime | None = None,
+        handoff_sent_at: datetime | None = None,
+    ) -> Optional["WorkstationClient"]:
+        """Update automation fields for one Workstation client."""
+        with Session(engine) as session:
+            item = session.get(cls, client_id)
+            if item is None:
+                return None
+            if automation_status is not None:
+                item.automation_status = normalize_workstation_automation_status(automation_status)
+            if status is not None:
+                item.status = normalize_workstation_client_status(status)
+            if last_automation_handled_at is not None:
+                item.last_automation_handled_at = last_automation_handled_at
+            if last_preview_sent_at is not None:
+                item.last_preview_sent_at = last_preview_sent_at
+            if approved_at is not None:
+                item.approved_at = approved_at
+            if ping_1_sent_at is not None:
+                item.ping_1_sent_at = ping_1_sent_at
+            if ping_2_sent_at is not None:
+                item.ping_2_sent_at = ping_2_sent_at
+            if handoff_sent_at is not None:
+                item.handoff_sent_at = handoff_sent_at
+            item.updated_at = datetime.now(timezone.utc)
             session.add(item)
             session.commit()
             session.refresh(item)
@@ -4007,6 +4151,7 @@ def init_db() -> None:
     ensure_contadores_message_delivery_columns()
     ensure_contadores_message_template_columns()
     ensure_contadores_config_strategy_weights_column()
+    ensure_workstation_client_automation_columns()
     logger.info(f"Database initialized at {DATABASE_URL}")
 
 
@@ -4108,6 +4253,47 @@ def ensure_contadores_manual_reply_columns() -> None:
                 "ALTER TABLE contadores_leads ADD COLUMN manual_reply_handled_at TIMESTAMP"
             )
             logger.info("Added missing contadores_leads.manual_reply_handled_at column.")
+
+
+def ensure_workstation_client_automation_columns() -> None:
+    """Add solo-page automation columns to existing Workstation tables."""
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        if "workstation_clients" not in inspector.get_table_names():
+            return
+        columns = {column["name"] for column in inspector.get_columns("workstation_clients")}
+        column_definitions = {
+            "work_type": "TEXT NOT NULL DEFAULT 'pagina_ads'",
+            "automation_status": "TEXT NOT NULL DEFAULT 'needs_human'",
+            "last_automation_handled_at": "TIMESTAMP",
+            "last_preview_sent_at": "TIMESTAMP",
+            "approved_at": "TIMESTAMP",
+            "ping_1_sent_at": "TIMESTAMP",
+            "ping_2_sent_at": "TIMESTAMP",
+            "handoff_sent_at": "TIMESTAMP",
+        }
+        for column_name, column_type in column_definitions.items():
+            if column_name in columns:
+                continue
+            connection.exec_driver_sql(
+                f"ALTER TABLE workstation_clients ADD COLUMN {column_name} {column_type}"
+            )
+            logger.info("Added missing workstation_clients.%s column.", column_name)
+
+        for column_name in [
+            "work_type",
+            "automation_status",
+            "last_automation_handled_at",
+            "last_preview_sent_at",
+            "approved_at",
+            "ping_1_sent_at",
+            "ping_2_sent_at",
+            "handoff_sent_at",
+        ]:
+            connection.exec_driver_sql(
+                f"CREATE INDEX IF NOT EXISTS ix_workstation_clients_{column_name} "
+                f"ON workstation_clients ({column_name})"
+            )
 
 
 def ensure_contadores_strategy_columns() -> None:

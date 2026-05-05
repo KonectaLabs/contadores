@@ -110,6 +110,10 @@ KONECTA_SOURCE_OF_TRUTH = dedent(
       or a next step.
     - If a recent active offer/promo exists, it overrides the default 300 USD offer for this
       conversation. Continue selling and explaining that active offer.
+    - For the low-ticket "solo pagina" promo, do not move straight to scheduling when the
+      lead shows clear interest. First use `send_page_example_video` so the lead sees an
+      example page. If the lead answers positively after receiving that example, use
+      `start_workstation_solo_page`.
     - Do not hardcode one promo. Infer the active offer from the actual outbound text in the
       conversation.
     - Do not invent inclusions. If the active offer only mentions a page, do not add campaigns.
@@ -120,6 +124,8 @@ KONECTA_SOURCE_OF_TRUTH = dedent(
       Ask for email, day and time when they show interest or want to advance.
     - If email, day and time are all clear after an active-offer reply, use handoff_scheduling
       so the operator receives the scheduling alert.
+    - Exception: for solo-page promos, `start_workstation_solo_page` is the next step after
+      the example page is accepted; the Workstation bot will collect the page details.
 
     GUARANTEE AND CLAIM LIMITS
     - Guarantee: if there are no new consultations/prospects to review in 30 days, money back.
@@ -521,9 +527,9 @@ GLOBAL_CONVERSATION_BOT_PROMPT = dedent(
       from Argentina and Konecta works remotely across Latin America. Do not pretend local offices.
     - If email, day and time are all clear, use handoff_scheduling.
     - If one scheduling field is missing, ask only for that missing field.
-    - For an interested reply to an active offer or promo, move toward the same scheduling path:
-      collect email, day and time for a 15-minute meeting. Do not replace the meeting with a
-      long WhatsApp intake.
+    - For an interested reply to an active offer or promo, move toward the same scheduling path
+      unless the active offer is solo pagina. For solo pagina, send the page example first and
+      then start the Workstation flow after the example is accepted.
     - Never invent content from audio, image, document, sticker or video without transcript.
     - Price, country, guarantee, process, domain, existing page, not watched video, watched video
       confirmation and "lo analizo" are answerable. Do not handoff those by default.
@@ -533,7 +539,7 @@ GLOBAL_CONVERSATION_BOT_PROMPT = dedent(
 
     OUTPUT JSON FIELDS
     {
-      "action": "send_reply | ask_scheduling_details | handoff_human | handoff_scheduling | close_lead | no_action",
+      "action": "send_reply | send_page_example_video | start_workstation_solo_page | ask_scheduling_details | handoff_human | handoff_scheduling | close_lead | no_action",
       "message_text": "WhatsApp text to send, or empty string",
       "classification_label": "short snake_case label",
       "reason": "one short Spanish operator-facing reason",

@@ -12,6 +12,7 @@ def test_worker_iteration_dispatches_pending_messages_without_campaign_funnels(m
     """Queued WhatsApp messages should not wait on an active campaign funnel."""
     dispatched_limits: list[int] = []
     dispatched_batches: list[list[str]] = []
+    workstation_ticks = 0
 
     async def fail_if_funnels_are_refetched(client):
         del client
@@ -28,9 +29,16 @@ def test_worker_iteration_dispatches_pending_messages_without_campaign_funnels(m
         dispatched_batches.append(list(pending))
         return []
 
+    async def fake_workstation_tick(client):
+        nonlocal workstation_ticks
+        del client
+        workstation_ticks += 1
+        return {}
+
     monkeypatch.setattr(bot_main, "fetch_funnels", fail_if_funnels_are_refetched)
     monkeypatch.setattr(bot_main, "fetch_pending_contadores_outbound", fake_fetch_pending)
     monkeypatch.setattr(bot_main, "dispatch_pending_contadores_messages", fake_dispatch_pending)
+    monkeypatch.setattr(bot_main, "run_workstation_automation_iteration", fake_workstation_tick)
 
     asyncio.run(
         bot_main.run_worker_iteration(
@@ -43,3 +51,4 @@ def test_worker_iteration_dispatches_pending_messages_without_campaign_funnels(m
 
     assert dispatched_limits == [200]
     assert dispatched_batches == [["pending-message"]]
+    assert workstation_ticks == 1

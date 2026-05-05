@@ -113,6 +113,13 @@ Verificar API de Contadores:
 curl http://127.0.0.1:8000/api/contadores/config
 ```
 
+Ejecutar un tick interno de Workstation desde el worker o localmente:
+
+```bash
+curl -X POST -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
+  http://127.0.0.1:8000/api/workstation/automation/tick
+```
+
 Snapshot read-only para automations de follow-up:
 
 ```bash
@@ -338,6 +345,24 @@ Acciones manuales de Calendly:
   libre; cuando junta los datos, marca `booking_details_collected`, pausa en
   `needs_human` y dispara la alerta por email.
 
+Promo solo pagina:
+
+- Si un lead responde positivamente a la promo de pagina barata, el bot manda
+  automaticamente un video de ejemplo reutilizable segun funnel:
+  `data/contadores/videos/cliente-pagina.mp4` para contadores o
+  `data/contadores/videos/pagina-abogado.mp4` para abogados.
+- Si el lead vuelve a responder con interes despues del ejemplo, se crea un
+  `WorkstationClient` idempotente con `work_type=solo_pagina`,
+  `status=pending_payment` y `automation_status=intake`.
+- El CRM queda pausado con
+  `automation_paused_reason=workstation_solo_page_started`; desde ese punto
+  responde el tick de Workstation, no el bot comercial.
+- Los pasos nuevos de secuencia son
+  `auto_accountant_page_example_video`, `auto_lawyer_page_example_video`,
+  `workstation_intake`, `workstation_preview_video`,
+  `workstation_revision_video`, `workstation_ping_1`,
+  `workstation_ping_2` y `workstation_handoff`.
+
 Vista Manual del backoffice:
 
 - `Manual` muestra todos los leads manuales.
@@ -443,11 +468,10 @@ de marketing y, salvo que se pase `--include-provider-failures`, leads cuyo
 ultimo outbound ya fallo en Meta. Los precios `19/29/49/99` se eligen de forma
 deterministica por lead y pais, con mayor peso a precios bajos en Venezuela,
 Bolivia y mercados similares. Al ejecutar, encola el template con sus variables
-en `contadores_messages`. Las respuestas posteriores entran al mismo bot
-conversacional mediante la ruta generica de oferta activa (`promo_`/`offer_`);
-el bot sigue la oferta del historial y, si hay interes, pide email, dia y
-horario para una llamada. Cuando esos datos estan completos, usa el handoff
-normal de agenda para alertar a Facu.
+en `contadores_messages`. Las respuestas posteriores entran por la ruta de
+oferta activa (`promo_`/`offer_`), pero esta promo tiene un atajo
+deterministico: primer interes manda el video de ejemplo y el segundo interes
+crea Workstation de `solo_pagina` para intake y boceto.
 
 La carpeta canonica por cliente queda en:
 
@@ -463,6 +487,9 @@ Dentro de esa carpeta se refrescan estos archivos:
 - `media/`: archivos subidos desde Workstation.
 - `professional-photo/vNNN/`: versiones generadas por Codex para la foto
   profesional del cliente.
+- `landing-page/vNNN/`: bocetos estaticos generados por Codex para la promo
+  solo pagina, con `index.html`, `styles.css`, `script.js`, `assets/`,
+  `preview.mp4` y `metadata.json`.
 
 La foto profesional se crea desde imagenes seleccionadas en `media/` y se guarda
 siempre con versionado determinista:
@@ -482,6 +509,27 @@ pueda persistir en el volumen `data/`. Si
 `CODEX_PREFER_CHATGPT_LOGIN=true`, el backend remueve `OPENAI_API_KEY` antes de
 lanzar Codex para priorizar el login ChatGPT/Codex. Si se configura en `false`,
 el proceso Codex conserva `OPENAI_API_KEY`.
+
+La automatizacion Workstation solo pagina usa `run_codex_with_context` con
+`gpt-5.5`, `medium`, la skill `.codex/skills/workstation-solo-page/SKILL.md` y
+un write scope limitado al folder del cliente. Si Codex falla o no genera los
+archivos esperados, se marca `automation_status=failed` y se crea una alerta por
+email con el error y el comando/link de reauth.
+
+El preview que recibe el cliente es solo MP4. El backend renderiza el HTML
+estatico con Playwright en desktop `1440x900`, graba un scroll y normaliza el
+archivo con `ffmpeg` a H.264. No se manda link temporal al cliente.
+
+Cuando la ventana de WhatsApp esta cerrada, Workstation solo usa templates Meta
+aprobados. Los nombres son configurables por `.env`:
+
+- `WORKSTATION_PING_TEMPLATE_1_NAME=konecta_workstation_ping_1_es_v1`
+- `WORKSTATION_PING_TEMPLATE_2_NAME=konecta_workstation_ping_2_es_v1`
+- `WORKSTATION_HANDOFF_TEMPLATE_NAME=konecta_workstation_handoff_es_v1`
+
+La cadencia es 24h, 48h y 72h desde el ultimo preview. Si faltan templates o
+falla WhatsApp/Codex, se alerta por email y no se manda texto custom fuera de la
+ventana de 24 horas.
 
 El backend tambien expone un endpoint publico, sin cookie ni token, para generar
 una imagen con Codex desde un prompt y referencias visuales opcionales:

@@ -6,10 +6,12 @@ import asyncio
 import json
 import mimetypes
 import shutil
+import subprocess
+import tempfile
 import uuid
 import zipfile
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
 
@@ -20,11 +22,24 @@ from pydantic import BaseModel, Field
 
 import backend.database as database_module
 from backend.codex_utils import CodexSkill, run_codex_with_context
+from backend.config import (
+    WORKSTATION_HANDOFF_TEMPLATE_NAME,
+    WORKSTATION_HUMAN_HANDOFF_TEXT,
+    WORKSTATION_PING_1_TEXT,
+    WORKSTATION_PING_2_TEXT,
+    WORKSTATION_PING_TEMPLATE_1_NAME,
+    WORKSTATION_PING_TEMPLATE_2_NAME,
+    WORKSTATION_TEMPLATE_LANGUAGE,
+)
 from backend.database import (
     ContadoresLead,
     ContadoresMessage,
+    ContadoresRuntimeAlert,
+    WorkstationAutomationStatus,
     WorkstationClient,
     WorkstationMediaAsset,
+    WorkstationClientStatus,
+    WorkstationClientWorkType,
     normalize_workstation_slug,
 )
 from backend.endpoints.contadores import (
@@ -32,10 +47,12 @@ from backend.endpoints.contadores import (
     ContadoresMessageResponse,
     build_lead_summary,
     build_message_response,
+    enqueue_lead_outbound,
     format_timestamp_seconds,
     get_effective_funnel_config,
     group_strategy_assignments_by_lead,
     now_utc,
+    resolve_message_media_file,
 )
 
 workstation_router = APIRouter(prefix="/api/workstation", tags=["workstation"])
@@ -43,7 +60,25 @@ workstation_router = APIRouter(prefix="/api/workstation", tags=["workstation"])
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PROFESSIONAL_PHOTO_SKILL = Path(".codex/skills/client-professional-photo/SKILL.md")
 PROFESSIONAL_PHOTO_EDIT_SKILL = Path(".codex/skills/client-professional-photo-edit/SKILL.md")
+SOLO_PAGE_SKILL = Path(".codex/skills/workstation-solo-page/SKILL.md")
 ACTIVE_PROFESSIONAL_PHOTO_JOB_STATUSES = {"queued", "running"}
+WORKSTATION_INTAKE_SEQUENCE_STEP = "workstation_intake"
+WORKSTATION_PREVIEW_SEQUENCE_STEP = "workstation_preview_video"
+WORKSTATION_REVISION_SEQUENCE_STEP = "workstation_revision_video"
+WORKSTATION_PING_1_SEQUENCE_STEP = "workstation_ping_1"
+WORKSTATION_PING_2_SEQUENCE_STEP = "workstation_ping_2"
+WORKSTATION_HANDOFF_SEQUENCE_STEP = "workstation_handoff"
+WORKSTATION_BACKOFF_SECONDS = 30
+WORKSTATION_PING_1_DELAY_SECONDS = 24 * 60 * 60
+WORKSTATION_PING_2_DELAY_SECONDS = 48 * 60 * 60
+WORKSTATION_HANDOFF_DELAY_SECONDS = 72 * 60 * 60
+WORKSTATION_INTAKE_TEXT = (
+    "Perfecto, entonces arrancamos con la pagina.\n\n"
+    "Mandeme por aca lo basico que quiere que aparezca: nombre del estudio, ciudad/pais, "
+    "servicios principales y WhatsApp de contacto.\n\n"
+    "Si tiene una foto suya, pagina actual, logo o documento, mandemelo tambien. "
+    "Con eso le preparo un primer boceto en video."
+)
 
 
 def workstation_root() -> Path:
@@ -204,9 +239,18 @@ def write_client_files(client: WorkstationClient) -> None:
             "id": client.id,
             "lead_id": client.lead_id,
             "funnel_id": client.funnel_id,
+            "work_type": client.work_type.value,
+            "status": client.status.value,
+            "automation_status": client.automation_status.value,
             "display_name": client.display_name,
             "folder_name": client.folder_name,
             "folder_path": relative_data_path(folder),
+            "last_automation_handled_at": format_timestamp_seconds(client.last_automation_handled_at),
+            "last_preview_sent_at": format_timestamp_seconds(client.last_preview_sent_at),
+            "approved_at": format_timestamp_seconds(client.approved_at),
+            "ping_1_sent_at": format_timestamp_seconds(client.ping_1_sent_at),
+            "ping_2_sent_at": format_timestamp_seconds(client.ping_2_sent_at),
+            "handoff_sent_at": format_timestamp_seconds(client.handoff_sent_at),
             "created_at": format_timestamp_seconds(client.created_at),
             "updated_at": format_timestamp_seconds(client.updated_at),
         },
@@ -272,11 +316,20 @@ class WorkstationClientSummary(BaseModel):
     id: str
     lead_id: str
     funnel_id: str
+    work_type: str
+    status: str
+    automation_status: str
     display_name: str
     folder_name: str
     folder_path: str
     media_count: int = 0
     lead: ContadoresLeadSummary | None = None
+    last_automation_handled_at: str | None = None
+    last_preview_sent_at: str | None = None
+    approved_at: str | None = None
+    ping_1_sent_at: str | None = None
+    ping_2_sent_at: str | None = None
+    handoff_sent_at: str | None = None
     created_at: str
     updated_at: str
 
@@ -301,6 +354,9 @@ class CreateWorkstationClientCommand(BaseModel):
     """Create converted client from a CRM lead."""
 
     lead_id: str = Field(min_length=1)
+    work_type: str = WorkstationClientWorkType.PAGINA_ADS.value
+    status: str = WorkstationClientStatus.PAID.value
+    automation_status: str = WorkstationAutomationStatus.NEEDS_HUMAN.value
 
 
 class UpdateWorkstationNotesCommand(BaseModel):
@@ -384,6 +440,19 @@ class EditProfessionalPhotoCommand(BaseModel):
     media_asset_ids: list[str] = Field(default_factory=list)
 
 
+class WorkstationAutomationTickResponse(BaseModel):
+    """Summary of one Workstation automation pass."""
+
+    status: str = "ok"
+    intake_messages_sent: int = 0
+    drafts_generated: int = 0
+    revision_videos_sent: int = 0
+    approvals: int = 0
+    pings_sent: int = 0
+    human_handoffs: int = 0
+    failures: int = 0
+
+
 WorkstationClientDetailResponse.model_rebuild()
 
 
@@ -401,6 +470,26 @@ def build_media_response(asset: WorkstationMediaAsset) -> WorkstationMediaAssetR
         media_url=f"/api/workstation/media/{asset.id}/file",
         created_at=format_timestamp_seconds(asset.created_at) or "",
     )
+
+
+@workstation_router.post("/automation/tick", response_model=WorkstationAutomationTickResponse)
+async def run_workstation_automation_tick() -> WorkstationAutomationTickResponse:
+    """Advance automatic Workstation solo-page delivery jobs."""
+    summary = WorkstationAutomationTickResponse()
+    now = now_utc()
+    for client in WorkstationClient.list_active_automation(
+        work_type=WorkstationClientWorkType.SOLO_PAGINA,
+        limit=100,
+    ):
+        metrics = await advance_solo_page_client(client, now=now)
+        summary.intake_messages_sent += metrics["intake_messages_sent"]
+        summary.drafts_generated += metrics["drafts_generated"]
+        summary.revision_videos_sent += metrics["revision_videos_sent"]
+        summary.approvals += metrics["approvals"]
+        summary.pings_sent += metrics["pings_sent"]
+        summary.human_handoffs += metrics["human_handoffs"]
+        summary.failures += metrics["failures"]
+    return summary
 
 
 def build_professional_photo_response(client: WorkstationClient, version_dir: Path) -> WorkstationProfessionalPhotoVersion:
@@ -721,6 +810,639 @@ Requirements:
     return build_professional_photo_response(client, version_dir)
 
 
+def landing_page_root(client: WorkstationClient) -> Path:
+    """Return the generated static page root for one client."""
+    root = client_folder(client) / "landing-page"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def next_landing_page_version_dir(client: WorkstationClient) -> Path:
+    """Create and return the next landing page version directory."""
+    root = landing_page_root(client)
+    existing_numbers = []
+    for path in root.iterdir():
+        if path.is_dir() and path.name.startswith("v") and path.name[1:].isdigit():
+            existing_numbers.append(int(path.name[1:]))
+    version_dir = root / f"v{max(existing_numbers, default=0) + 1:03d}"
+    version_dir.mkdir(parents=True, exist_ok=False)
+    return version_dir
+
+
+def latest_landing_page_version_dir(client: WorkstationClient) -> Path | None:
+    """Return the newest generated landing page version, if any."""
+    versions = [
+        path
+        for path in landing_page_root(client).iterdir()
+        if path.is_dir() and path.name.startswith("v") and (path / "index.html").exists()
+    ]
+    return sorted(versions)[-1] if versions else None
+
+
+def render_landing_page_video_sync(*, index_path: Path, output_path: Path) -> None:
+    """Record a desktop scroll preview of a static landing page as MP4."""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError as error:
+        raise RuntimeError("playwright is required to render Workstation preview videos") from error
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                viewport={"width": 1440, "height": 900},
+                record_video_dir=str(temp_path),
+                record_video_size={"width": 1440, "height": 900},
+            )
+            page = context.new_page()
+            page.goto(index_path.resolve().as_uri(), wait_until="networkidle")
+            page.wait_for_timeout(800)
+            page.evaluate(
+                """
+                async () => {
+                  const max = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+                  const steps = 150;
+                  for (let i = 0; i <= steps; i += 1) {
+                    const y = Math.round((max * i) / steps);
+                    window.scrollTo(0, y);
+                    await new Promise((resolve) => setTimeout(resolve, 30));
+                  }
+                  await new Promise((resolve) => setTimeout(resolve, 700));
+                }
+                """
+            )
+            context.close()
+            browser.close()
+
+        webm_files = sorted(temp_path.glob("*.webm"))
+        if not webm_files:
+            raise RuntimeError("Playwright did not record a preview video")
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        command = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(webm_files[0]),
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            "-an",
+            str(output_path),
+        ]
+        completed = subprocess.run(command, capture_output=True, text=True, check=False)
+        if completed.returncode != 0:
+            error_text = (completed.stderr or completed.stdout or "ffmpeg failed").strip()
+            raise RuntimeError(f"ffmpeg could not create preview video: {error_text}")
+
+
+def inbound_after(messages: list[ContadoresMessage], timestamp: datetime | None) -> list[ContadoresMessage]:
+    """Return inbound messages newer than one timestamp."""
+    anchor = timestamp.astimezone(timezone.utc) if timestamp and timestamp.tzinfo else timestamp
+    replies: list[ContadoresMessage] = []
+    for message in messages:
+        if message.from_me:
+            continue
+        created_at = message.created_at
+        if created_at and created_at.tzinfo:
+            created_at = created_at.astimezone(timezone.utc)
+        if anchor is not None and created_at is not None and created_at <= anchor:
+            continue
+        replies.append(message)
+    return replies
+
+
+def latest_inbound_is_quiet(messages: list[ContadoresMessage], *, now: datetime) -> bool:
+    """Return True when the latest inbound has passed the Workstation backoff."""
+    if not messages:
+        return False
+    latest_at = messages[-1].created_at
+    if latest_at is None:
+        return False
+    if latest_at.tzinfo is None:
+        latest_at = latest_at.replace(tzinfo=timezone.utc)
+    return now >= latest_at + timedelta(seconds=WORKSTATION_BACKOFF_SECONDS)
+
+
+def text_shows_workstation_approval(text: str) -> bool:
+    """Return True when the client accepts the current page version."""
+    normalized = " ".join((text or "").lower().replace("á", "a").replace("í", "i").split())
+    if not normalized:
+        return False
+    negative_markers = ("pero", "cambia", "cambiar", "modifica", "modificar", "no me gusta", "ajust")
+    if any(marker in normalized for marker in negative_markers):
+        return False
+    approval_markers = (
+        "me gusta",
+        "aprobado",
+        "asi esta bien",
+        "esta bien",
+        "listo",
+        "perfecto",
+        "queda bien",
+        "todo bien",
+        "dale",
+        "ok",
+    )
+    return any(marker in normalized for marker in approval_markers)
+
+
+def mirror_workstation_message_media(client: WorkstationClient, messages: list[ContadoresMessage]) -> list[WorkstationMediaAsset]:
+    """Copy inbound WhatsApp media into the client's Workstation media folder."""
+    existing_paths = {asset.stored_path for asset in WorkstationMediaAsset.list_by_client(client.id)}
+    mirrored: list[WorkstationMediaAsset] = []
+    for message in messages:
+        if message.from_me or not message.media_path:
+            continue
+        source_path = resolve_message_media_file(message.media_path)
+        if source_path is None or not source_path.is_file():
+            continue
+        safe_name = safe_upload_filename(message.media_filename or source_path.name)
+        stored_filename = f"whatsapp-{message.id or uuid.uuid4().hex[:8]}-{safe_name}"
+        target_path = client_folder(client) / "media" / stored_filename
+        stored_path = relative_data_path(target_path)
+        if stored_path in existing_paths:
+            continue
+        shutil.copy2(source_path, target_path)
+        asset = WorkstationMediaAsset.create(
+            client_id=client.id,
+            asset_id=uuid.uuid4().hex,
+            title=message.media_caption or message.media_filename or source_path.name,
+            original_filename=message.media_filename or source_path.name,
+            stored_filename=stored_filename,
+            stored_path=stored_path,
+            content_type=message.media_mime_type or mimetypes.guess_type(source_path.name)[0],
+            size_bytes=target_path.stat().st_size,
+        )
+        mirrored.append(asset)
+        existing_paths.add(stored_path)
+    if mirrored:
+        write_client_files(WorkstationClient.get_by_id(client.id) or client)
+    return mirrored
+
+
+def first_workstation_image_assets(client: WorkstationClient) -> list[WorkstationMediaAsset]:
+    """Return image assets that can act as identity/reference photos."""
+    return [
+        asset
+        for asset in WorkstationMediaAsset.list_by_client(client.id)
+        if (asset.content_type or "").startswith("image/")
+    ]
+
+
+def ensure_professional_photo_if_possible(client: WorkstationClient) -> None:
+    """Generate one professional photo when the client already provided an image."""
+    if list_professional_photo_versions(client):
+        return
+    image_assets = first_workstation_image_assets(client)
+    if not image_assets:
+        return
+    try:
+        generate_professional_photo_sync(
+            client=client,
+            assets=[image_assets[0]],
+            context=f"Funnel: {client.funnel_id}. Trabajo: pagina web profesional.",
+        )
+    except Exception as error:
+        logger.warning("Could not auto-generate professional photo for %s: %s", client.id, error)
+
+
+def build_solo_page_codex_prompt(
+    *,
+    client: WorkstationClient,
+    lead: ContadoresLead,
+    version_dir: Path,
+    replies: list[ContadoresMessage],
+    revision: bool,
+) -> str:
+    """Build the Codex prompt for one static solo-page version."""
+    write_client_files(client)
+    previous_version = latest_landing_page_version_dir(client)
+    reply_text = "\n".join(f"- {message.text}" for message in replies if message.text.strip()).strip()
+    base_template = (
+        REPO_ROOT / "tmp" / "pagina_abogado_static"
+        if client.funnel_id == "abogados"
+        else REPO_ROOT / "tmp" / "pagina_contador_static"
+    )
+    professional_photos = list_professional_photo_versions(client)
+    photo_paths = "\n".join(item.image_path for item in professional_photos) or "(none)"
+    return f"""
+Use the workstation-solo-page skill to create a static website draft for this client.
+
+Client folder:
+{client_folder(client)}
+
+Required output folder:
+{version_dir}
+
+Base template folder to reuse:
+{base_template}
+
+Previous page version:
+{previous_version or "(none)"}
+
+Client profile:
+- Name: {lead.full_name or client.display_name}
+- Funnel: {client.funnel_id}
+- Phone: {lead.phone or lead.normalized_phone or "-"}
+- Email: {lead.email or "-"}
+
+Professional photo versions available:
+{photo_paths}
+
+Latest client messages for this version:
+{reply_text or "(no new reply text)"}
+
+Requirements:
+- Create only static files: index.html, styles.css, script.js, assets/.
+- Use easy-to-read HTML/CSS/JS. Avoid build tools.
+- If this is a revision, apply the requested changes to the previous version.
+- If client information is incomplete, still create a credible first draft with honest placeholders.
+- Save all files inside the required output folder only.
+- Do not modify source templates, repo files, or other client folders.
+- Respond with a short confirmation and the created paths.
+
+Revision mode: {"yes" if revision else "no"}
+""".strip()
+
+
+def generate_solo_page_version_sync(
+    *,
+    client: WorkstationClient,
+    lead: ContadoresLead,
+    replies: list[ContadoresMessage],
+    revision: bool,
+) -> Path:
+    """Run Codex to create one landing-page version and render its preview video."""
+    client_workdir = client_folder(client)
+    version_dir = next_landing_page_version_dir(client)
+    prompt = build_solo_page_codex_prompt(
+        client=client,
+        lead=lead,
+        version_dir=version_dir,
+        replies=replies,
+        revision=revision,
+    )
+    try:
+        result = run_codex_with_context(
+            prompt,
+            skills=[
+                CodexSkill(
+                    name="workstation-solo-page",
+                    path=str((REPO_ROOT / SOLO_PAGE_SKILL).resolve()),
+                )
+            ],
+            cwd=client_workdir,
+            sandbox_writable_roots=[client_workdir],
+        )
+        index_path = version_dir / "index.html"
+        if not index_path.exists():
+            raise RuntimeError(f"Codex did not create {index_path}")
+        if not (version_dir / "styles.css").exists():
+            raise RuntimeError(f"Codex did not create {version_dir / 'styles.css'}")
+        if not (version_dir / "script.js").exists():
+            (version_dir / "script.js").write_text("", encoding="utf-8")
+        preview_path = version_dir / "preview.mp4"
+        render_landing_page_video_sync(index_path=index_path, output_path=preview_path)
+        metadata = {
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "operation": "revision" if revision else "draft",
+            "client_id": client.id,
+            "lead_id": lead.id,
+            "codex_response": result.final_response,
+            "source_messages": [message.id for message in replies],
+            "preview_path": relative_data_path(preview_path),
+        }
+        (version_dir / "metadata.json").write_text(
+            json.dumps(metadata, ensure_ascii=True, indent=2),
+            encoding="utf-8",
+        )
+        return version_dir
+    except Exception:
+        shutil.rmtree(version_dir, ignore_errors=True)
+        raise
+
+
+def add_workstation_runtime_alert(
+    *,
+    lead: ContadoresLead,
+    alert_type: str,
+    error: str,
+    latest_inbound_text: str = "",
+) -> None:
+    """Create an operator email alert for Workstation automation failures."""
+    config = get_effective_funnel_config(lead.funnel_id)
+    ContadoresRuntimeAlert.add(
+        lead=lead,
+        funnel_label=config.label,
+        alert_type=alert_type,
+        error=error,
+        fallback_action="workstation_handoff",
+        latest_inbound_text=latest_inbound_text,
+    )
+
+
+def mark_workstation_failed(
+    *,
+    client: WorkstationClient,
+    lead: ContadoresLead,
+    error: str,
+    latest_inbound_text: str = "",
+) -> None:
+    """Stop Workstation automation and alert operators."""
+    WorkstationClient.update_automation_state(
+        client.id,
+        automation_status=WorkstationAutomationStatus.FAILED,
+        last_automation_handled_at=now_utc(),
+    )
+    add_workstation_runtime_alert(
+        lead=lead,
+        alert_type="workstation_codex_failure",
+        error=error,
+        latest_inbound_text=latest_inbound_text,
+    )
+
+
+def queue_workstation_preview(
+    *,
+    client: WorkstationClient,
+    lead: ContadoresLead,
+    version_dir: Path,
+    sequence_step: str,
+) -> ContadoresMessage:
+    """Queue one generated preview MP4 for WhatsApp delivery."""
+    preview_path = version_dir / "preview.mp4"
+    return enqueue_lead_outbound(
+        lead=lead,
+        text="Le mando un video con el boceto de su pagina. Digame que le gustaria cambiar o si asi esta bien.",
+        sequence_step=sequence_step,
+        media_type="video",
+        media_path=relative_data_path(preview_path),
+        media_filename=f"{client.folder_name}-{version_dir.name}.mp4",
+    )
+
+
+def queue_workstation_template(
+    *,
+    lead: ContadoresLead,
+    text: str,
+    sequence_step: str,
+    template_name: str,
+) -> ContadoresMessage:
+    """Queue a template-backed Workstation reactivation message."""
+    clean_template = (template_name or "").strip()
+    if not clean_template:
+        raise RuntimeError(f"Missing WhatsApp template for {sequence_step}")
+    return enqueue_lead_outbound(
+        lead=lead,
+        text=text,
+        sequence_step=sequence_step,
+        whatsapp_template_name=clean_template,
+        whatsapp_template_language=WORKSTATION_TEMPLATE_LANGUAGE,
+    )
+
+
+def process_workstation_pings(
+    *,
+    client: WorkstationClient,
+    lead: ContadoresLead,
+    messages: list[ContadoresMessage],
+    now: datetime,
+) -> int:
+    """Send staged template pings when a preview is waiting for review."""
+    if client.automation_status != WorkstationAutomationStatus.AWAITING_REVIEW:
+        return 0
+    if client.last_preview_sent_at is None:
+        return 0
+    if inbound_after(messages, client.last_preview_sent_at):
+        return 0
+
+    elapsed = now - client.last_preview_sent_at
+    if client.handoff_sent_at is None and elapsed >= timedelta(seconds=WORKSTATION_HANDOFF_DELAY_SECONDS):
+        queue_workstation_template(
+            lead=lead,
+            text=WORKSTATION_HUMAN_HANDOFF_TEXT,
+            sequence_step=WORKSTATION_HANDOFF_SEQUENCE_STEP,
+            template_name=WORKSTATION_HANDOFF_TEMPLATE_NAME,
+        )
+        WorkstationClient.update_automation_state(
+            client.id,
+            automation_status=WorkstationAutomationStatus.NEEDS_HUMAN,
+            handoff_sent_at=now,
+            last_automation_handled_at=now,
+        )
+        ContadoresLead.update_flow_state(
+            lead.id,
+            stage="needs_human",
+            automation_paused=True,
+            automation_paused_reason="workstation_no_response_handoff",
+            last_classification_label="workstation_no_response_handoff",
+            last_classification_reason="El cliente no respondio a los pings del boceto; seguir por humano.",
+            clear_needs_human_notified_at=True,
+        )
+        return 1
+    if client.ping_2_sent_at is None and elapsed >= timedelta(seconds=WORKSTATION_PING_2_DELAY_SECONDS):
+        queue_workstation_template(
+            lead=lead,
+            text=WORKSTATION_PING_2_TEXT,
+            sequence_step=WORKSTATION_PING_2_SEQUENCE_STEP,
+            template_name=WORKSTATION_PING_TEMPLATE_2_NAME,
+        )
+        WorkstationClient.update_automation_state(
+            client.id,
+            ping_2_sent_at=now,
+            last_automation_handled_at=now,
+        )
+        return 1
+    if client.ping_1_sent_at is None and elapsed >= timedelta(seconds=WORKSTATION_PING_1_DELAY_SECONDS):
+        queue_workstation_template(
+            lead=lead,
+            text=WORKSTATION_PING_1_TEXT,
+            sequence_step=WORKSTATION_PING_1_SEQUENCE_STEP,
+            template_name=WORKSTATION_PING_TEMPLATE_1_NAME,
+        )
+        WorkstationClient.update_automation_state(
+            client.id,
+            ping_1_sent_at=now,
+            last_automation_handled_at=now,
+        )
+        return 1
+    return 0
+
+
+async def advance_solo_page_client(client: WorkstationClient, *, now: datetime) -> dict[str, int]:
+    """Advance one solo-page Workstation client by at most one step."""
+    metrics = {
+        "intake_messages_sent": 0,
+        "drafts_generated": 0,
+        "revision_videos_sent": 0,
+        "approvals": 0,
+        "pings_sent": 0,
+        "human_handoffs": 0,
+        "failures": 0,
+    }
+    lead = ContadoresLead.get_by_id(client.lead_id)
+    if lead is None:
+        WorkstationClient.update_automation_state(
+            client.id,
+            automation_status=WorkstationAutomationStatus.FAILED,
+            last_automation_handled_at=now,
+        )
+        metrics["failures"] = 1
+        return metrics
+
+    messages = ContadoresMessage.list_by_lead(lead.id)
+    mirror_workstation_message_media(client, messages)
+    fresh_client = WorkstationClient.get_by_id(client.id) or client
+
+    if fresh_client.automation_status == WorkstationAutomationStatus.INTAKE:
+        if not any(message.from_me and message.sequence_step == WORKSTATION_INTAKE_SEQUENCE_STEP for message in messages):
+            enqueue_lead_outbound(
+                lead=lead,
+                text=WORKSTATION_INTAKE_TEXT,
+                sequence_step=WORKSTATION_INTAKE_SEQUENCE_STEP,
+            )
+            WorkstationClient.update_automation_state(
+                fresh_client.id,
+                automation_status=WorkstationAutomationStatus.INTAKE,
+                last_automation_handled_at=now,
+            )
+            metrics["intake_messages_sent"] = 1
+            return metrics
+
+        replies = inbound_after(messages, fresh_client.last_automation_handled_at)
+        if not replies or not latest_inbound_is_quiet(replies, now=now):
+            return metrics
+        WorkstationClient.update_automation_state(
+            fresh_client.id,
+            automation_status=WorkstationAutomationStatus.DRAFTING,
+            last_automation_handled_at=now,
+        )
+        try:
+            ensure_professional_photo_if_possible(fresh_client)
+            version_dir = await run_in_threadpool(
+                generate_solo_page_version_sync,
+                client=WorkstationClient.get_by_id(fresh_client.id) or fresh_client,
+                lead=lead,
+                replies=replies,
+                revision=False,
+            )
+            row = queue_workstation_preview(
+                client=fresh_client,
+                lead=lead,
+                version_dir=version_dir,
+                sequence_step=WORKSTATION_PREVIEW_SEQUENCE_STEP,
+            )
+        except Exception as error:
+            mark_workstation_failed(
+                client=fresh_client,
+                lead=lead,
+                error=f"{error.__class__.__name__}: {error}",
+                latest_inbound_text=replies[-1].text if replies else "",
+            )
+            metrics["failures"] = 1
+            return metrics
+        WorkstationClient.update_automation_state(
+            fresh_client.id,
+            automation_status=WorkstationAutomationStatus.AWAITING_REVIEW,
+            last_automation_handled_at=now,
+            last_preview_sent_at=row.created_at,
+        )
+        metrics["drafts_generated"] = 1
+        metrics["revision_videos_sent"] = 1
+        return metrics
+
+    if fresh_client.automation_status == WorkstationAutomationStatus.AWAITING_REVIEW:
+        replies = inbound_after(messages, fresh_client.last_preview_sent_at)
+        if not replies:
+            try:
+                metrics["pings_sent"] = process_workstation_pings(
+                    client=fresh_client,
+                    lead=lead,
+                    messages=messages,
+                    now=now,
+                )
+                handoff_due = (
+                    fresh_client.last_preview_sent_at is not None
+                    and now - fresh_client.last_preview_sent_at >= timedelta(seconds=WORKSTATION_HANDOFF_DELAY_SECONDS)
+                )
+                metrics["human_handoffs"] = 1 if metrics["pings_sent"] and handoff_due else 0
+            except Exception as error:
+                mark_workstation_failed(
+                    client=fresh_client,
+                    lead=lead,
+                    error=f"{error.__class__.__name__}: {error}",
+                )
+                metrics["failures"] = 1
+            return metrics
+        if not latest_inbound_is_quiet(replies, now=now):
+            return metrics
+        reply_text = "\n".join(message.text for message in replies if message.text.strip())
+        if text_shows_workstation_approval(reply_text):
+            WorkstationClient.update_automation_state(
+                fresh_client.id,
+                automation_status=WorkstationAutomationStatus.NEEDS_HUMAN,
+                approved_at=now,
+                last_automation_handled_at=now,
+            )
+            ContadoresLead.update_flow_state(
+                lead.id,
+                stage="needs_human",
+                automation_paused=True,
+                automation_paused_reason="workstation_solo_page_approved",
+                last_classification_label="workstation_solo_page_approved",
+                last_classification_reason=(
+                    "El cliente aprobo el boceto de pagina. Comprar dominio, deployar y coordinar cobro."
+                ),
+                clear_needs_human_notified_at=True,
+            )
+            metrics["approvals"] = 1
+            metrics["human_handoffs"] = 1
+            return metrics
+
+        WorkstationClient.update_automation_state(
+            fresh_client.id,
+            automation_status=WorkstationAutomationStatus.REVISION_REQUESTED,
+            last_automation_handled_at=now,
+        )
+        try:
+            version_dir = await run_in_threadpool(
+                generate_solo_page_version_sync,
+                client=fresh_client,
+                lead=lead,
+                replies=replies,
+                revision=True,
+            )
+            row = queue_workstation_preview(
+                client=fresh_client,
+                lead=lead,
+                version_dir=version_dir,
+                sequence_step=WORKSTATION_REVISION_SEQUENCE_STEP,
+            )
+        except Exception as error:
+            mark_workstation_failed(
+                client=fresh_client,
+                lead=lead,
+                error=f"{error.__class__.__name__}: {error}",
+                latest_inbound_text=replies[-1].text if replies else "",
+            )
+            metrics["failures"] = 1
+            return metrics
+        WorkstationClient.update_automation_state(
+            fresh_client.id,
+            automation_status=WorkstationAutomationStatus.AWAITING_REVIEW,
+            last_automation_handled_at=now,
+            last_preview_sent_at=row.created_at,
+        )
+        metrics["revision_videos_sent"] = 1
+        return metrics
+
+    return metrics
+
+
 def build_client_summary(client: WorkstationClient) -> WorkstationClientSummary:
     """Serialize one Workstation client for list/detail views."""
     lead = ContadoresLead.get_by_id(client.lead_id)
@@ -730,11 +1452,20 @@ def build_client_summary(client: WorkstationClient) -> WorkstationClientSummary:
         id=client.id,
         lead_id=client.lead_id,
         funnel_id=client.funnel_id,
+        work_type=client.work_type.value,
+        status=client.status.value,
+        automation_status=client.automation_status.value,
         display_name=client.display_name,
         folder_name=client.folder_name,
         folder_path=relative_data_path(folder),
         media_count=len(media),
         lead=lead_summary_for_workstation(lead) if lead else None,
+        last_automation_handled_at=format_timestamp_seconds(client.last_automation_handled_at),
+        last_preview_sent_at=format_timestamp_seconds(client.last_preview_sent_at),
+        approved_at=format_timestamp_seconds(client.approved_at),
+        ping_1_sent_at=format_timestamp_seconds(client.ping_1_sent_at),
+        ping_2_sent_at=format_timestamp_seconds(client.ping_2_sent_at),
+        handoff_sent_at=format_timestamp_seconds(client.handoff_sent_at),
         created_at=format_timestamp_seconds(client.created_at) or "",
         updated_at=format_timestamp_seconds(client.updated_at) or "",
     )
@@ -793,15 +1524,30 @@ async def list_workstation_clients(
 @workstation_router.post("/clients", response_model=WorkstationClientDetailResponse)
 async def create_workstation_client(command: CreateWorkstationClientCommand) -> WorkstationClientDetailResponse:
     """Create or return a Workstation client from one source lead."""
-    return await create_workstation_client_from_lead(command.lead_id)
+    return await create_workstation_client_from_lead(
+        command.lead_id,
+        work_type=command.work_type,
+        status=command.status,
+        automation_status=command.automation_status,
+    )
 
 
 @workstation_router.post("/clients/from-lead/{lead_id}", response_model=WorkstationClientDetailResponse)
-async def create_workstation_client_from_lead(lead_id: str) -> WorkstationClientDetailResponse:
+async def create_workstation_client_from_lead(
+    lead_id: str,
+    work_type: str = WorkstationClientWorkType.PAGINA_ADS.value,
+    status: str = WorkstationClientStatus.PAID.value,
+    automation_status: str = WorkstationAutomationStatus.NEEDS_HUMAN.value,
+) -> WorkstationClientDetailResponse:
     """Convert a CRM lead into a paid Workstation client."""
     lead = get_required_lead(lead_id)
     existing = WorkstationClient.get_by_lead_id(lead.id)
-    client = existing or WorkstationClient.create_for_lead(lead)
+    client = existing or WorkstationClient.create_for_lead(
+        lead,
+        work_type=work_type,
+        status=status,
+        automation_status=automation_status,
+    )
     if existing is None:
         ContadoresLead.update_flow_state(
             lead.id,

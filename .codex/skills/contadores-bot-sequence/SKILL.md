@@ -50,6 +50,8 @@ override the built-in Contadores definition.
 9. The bot must return one structured action:
    - `send_reply`
    - `ask_scheduling_details`
+   - `send_page_example_video`
+   - `start_workstation_solo_page`
    - `handoff_human`
    - `handoff_scheduling`
    - `close_lead`
@@ -190,6 +192,33 @@ Both actions record `calendly_sent_at` and keep the lead in Manual.
 Automation must not send Calendly automatically in the conversational bot flow;
 it asks for email, day, and time, then hands the scheduling details to Facu.
 The Calendly URL is fixed across Contadores, Abogados, and every other funnel.
+
+## Promo solo pagina automation
+
+The low-ticket page promo uses the active-offer outbound steps with a
+deterministic fast path before normal scheduling:
+
+- If a positive inbound arrives after a `promo_` or `offer_` outbound and no page
+  example has been sent after that offer, queue `send_page_example_video`.
+- Choose the example video by funnel: accountants get
+  `data/contadores/videos/cliente-pagina.mp4` with
+  `sequence_step=auto_accountant_page_example_video`; lawyers get
+  `data/contadores/videos/pagina-abogado.mp4` with
+  `sequence_step=auto_lawyer_page_example_video`.
+- If the lead responds positively after that example, queue
+  `start_workstation_solo_page`. The backend creates or reuses one
+  `WorkstationClient` with `work_type=solo_pagina`, `status=pending_payment`,
+  and `automation_status=intake`.
+- Once Workstation starts, the CRM lead is `booked`, automation is paused with
+  `automation_paused_reason=workstation_solo_page_started`, and future replies
+  are handled by `/api/workstation/automation/tick`.
+- Do not ask for email/day/time for this promo path unless the user is asking
+  for a separate call instead of accepting the page workflow.
+
+Workstation outbound sequence steps are:
+`workstation_intake`, `workstation_preview_video`,
+`workstation_revision_video`, `workstation_ping_1`, `workstation_ping_2`, and
+`workstation_handoff`.
 
 ## Manual reply ownership
 
