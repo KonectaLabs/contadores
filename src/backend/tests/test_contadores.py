@@ -954,6 +954,38 @@ def test_manual_ping_action_queues_template_and_pauses_automation(monkeypatch, t
     assert lead_payload["automation_paused"] is True
 
 
+def test_page_example_video_action_queues_reusable_video(monkeypatch, tmp_path) -> None:
+    """Operators should be able to send the reused client page example video."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-page-example",
+        phone="+5491888888898",
+        full_name="Example Lead",
+    )
+    add_recent_inbound(lead.id, text="me podes mandar un ejemplo?")
+
+    with TestClient(app) as client:
+        action_response = client.post(f"/api/contadores/leads/{lead.id}/actions/send-page-example-video")
+        pending_response = client.get("/api/contadores/messages/pending-delivery")
+        detail_response = client.get(f"/api/contadores/leads/{lead.id}")
+
+    assert action_response.status_code == 200
+    assert pending_response.status_code == 200
+    messages = pending_response.json()["messages"]
+    assert len(messages) == 1
+    assert messages[0]["text"] == "Esta es una pagina de un cliente nuestro, asi podria verse tu pagina"
+    assert messages[0]["sequence_step"] == "manual_page_example_video"
+    assert messages[0]["media_type"] == "video"
+    assert messages[0]["media_path"] == "data/contadores/videos/cliente-pagina.mp4"
+    assert messages[0]["media_filename"] == "cliente-pagina.mp4"
+
+    assert detail_response.status_code == 200
+    lead_payload = detail_response.json()["lead"]
+    assert lead_payload["stage"] == "needs_human"
+    assert lead_payload["automation_paused"] is True
+    assert lead_payload["automation_paused_reason"] == "manual_send-page-example-video"
+
+
 def test_pending_delivery_uses_message_template_params(monkeypatch, tmp_path) -> None:
     """One-off campaign rows should carry their own WhatsApp template variables."""
     configure_contadores_db(monkeypatch, tmp_path)

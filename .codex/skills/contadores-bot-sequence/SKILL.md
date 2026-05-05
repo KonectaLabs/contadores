@@ -172,10 +172,13 @@ marks the lead as `booked` and pauses automation.
 
 ## Manual Calendly actions
 
-Operators have two backoffice actions:
+Operators have these backoffice actions:
 
 - `send-calendly`: send the configured Calendly intro text and then `https://calendly.com/facundogoiriz/crecimiento`.
 - `send-calendly-link`: send only the Calendly URL.
+- `send-page-example-video`: send the reusable client-page example MP4
+  `data/contadores/videos/cliente-pagina.mp4` with the copy
+  `Esta es una pagina de un cliente nuestro, asi podria verse tu pagina`.
 
 Both actions record `calendly_sent_at` and keep the lead in Manual.
 Automation must not send Calendly automatically in the conversational bot flow;

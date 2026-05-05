@@ -69,6 +69,9 @@ SCHEDULING_HANDOFF_SEQUENCE_STEP = "scheduling_handoff_confirmation"
 AUDIO_TRANSCRIPT_SEQUENCE_STEP = "audio_transcript"
 BOOKING_DETAILS_COLLECTED_REASON = "booking_details_collected"
 ACTIVE_OFFER_SEQUENCE_PREFIXES = ("promo_", "offer_")
+PAGE_EXAMPLE_VIDEO_SEQUENCE_STEP = "manual_page_example_video"
+PAGE_EXAMPLE_VIDEO_PATH = "data/contadores/videos/cliente-pagina.mp4"
+PAGE_EXAMPLE_VIDEO_TEXT = "Esta es una pagina de un cliente nuestro, asi podria verse tu pagina"
 OPENER_FOLLOWUP_DELAY = timedelta(hours=24)
 WHATSAPP_CUSTOM_MESSAGE_WINDOW = timedelta(hours=24)
 CONTADORES_DELIVERY_MAX_ATTEMPTS = max(1, int(os.getenv("CONTADORES_DELIVERY_MAX_ATTEMPTS", "3")))
@@ -1896,6 +1899,19 @@ def send_video_check(*, lead: ContadoresLead) -> list[ContadoresMessage]:
     return [row]
 
 
+def send_page_example_video(*, lead: ContadoresLead) -> list[ContadoresMessage]:
+    """Queue the reusable client page example video."""
+    row = enqueue_lead_outbound(
+        lead=lead,
+        text=PAGE_EXAMPLE_VIDEO_TEXT,
+        sequence_step=PAGE_EXAMPLE_VIDEO_SEQUENCE_STEP,
+        media_type="video",
+        media_path=PAGE_EXAMPLE_VIDEO_PATH,
+        media_filename="cliente-pagina.mp4",
+    )
+    return [row]
+
+
 def send_calendly_sequence(*, lead: ContadoresLead, config: ContadoresConfig) -> list[ContadoresMessage]:
     """Queue the Calendly explanation text + configured URL."""
     intro = enqueue_lead_outbound(
@@ -2364,7 +2380,13 @@ def run_quick_action_for_lead(
     """Run one operator quick action and return the refreshed lead plus queued rows."""
     queued_rows: list[ContadoresMessage] = []
     normalized_action = (action or "").strip().lower()
-    pausing_send_actions = {"send-opener", "send-loom", "send-video-check", "send-manual-ping"}
+    pausing_send_actions = {
+        "send-opener",
+        "send-loom",
+        "send-video-check",
+        "send-manual-ping",
+        "send-page-example-video",
+    }
 
     if normalized_action == "send-opener":
         queued_rows = send_opener_sequence(lead=lead)
@@ -2385,6 +2407,8 @@ def run_quick_action_for_lead(
         queued_rows = send_loom_sequence(lead=lead, config=config, assigned_by="operator")
     elif normalized_action == "send-video-check":
         queued_rows = send_video_check(lead=lead)
+    elif normalized_action == "send-page-example-video":
+        queued_rows = send_page_example_video(lead=lead)
     elif normalized_action == "send-calendly":
         queued_rows = send_calendly_sequence(lead=lead, config=config)
         if queued_rows:
@@ -3474,6 +3498,7 @@ async def run_followup_lead_action(
         "send-loom",
         "send-video-check",
         "send-manual-ping",
+        "send-page-example-video",
         "send-calendly",
         "send-calendly-link",
     }
