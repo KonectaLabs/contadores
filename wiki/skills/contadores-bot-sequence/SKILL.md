@@ -176,9 +176,10 @@ Operators have these backoffice actions:
 
 - `send-calendly`: send the configured Calendly intro text and then `https://calendly.com/facundogoiriz/crecimiento`.
 - `send-calendly-link`: send only the Calendly URL.
-- `send-page-example-video`: send the reusable client-page example MP4
-  `data/contadores/videos/cliente-pagina.mp4` with the copy
-  `Esta es una pagina de un cliente nuestro, asi podria verse tu pagina`.
+- `send-accountant-page-example-video`: send the reusable client-page example
+  MP4 `data/contadores/videos/cliente-pagina.mp4` with the accountant copy.
+- `send-lawyer-page-example-video`: send the same reusable client-page example
+  MP4 with the lawyer copy.
 
 Both actions record `calendly_sent_at` and keep the lead in Manual.
 Automation must not send Calendly automatically in the conversational bot flow;

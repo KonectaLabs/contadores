@@ -954,8 +954,8 @@ def test_manual_ping_action_queues_template_and_pauses_automation(monkeypatch, t
     assert lead_payload["automation_paused"] is True
 
 
-def test_page_example_video_action_queues_reusable_video(monkeypatch, tmp_path) -> None:
-    """Operators should be able to send the reused client page example video."""
+def test_accountant_page_example_video_action_queues_reusable_video(monkeypatch, tmp_path) -> None:
+    """Operators should be able to send the reused accountant page example video."""
     configure_contadores_db(monkeypatch, tmp_path)
     lead = ContadoresLead.upsert(
         external_lead_id="sheet-row-page-example",
@@ -965,7 +965,7 @@ def test_page_example_video_action_queues_reusable_video(monkeypatch, tmp_path) 
     add_recent_inbound(lead.id, text="me podes mandar un ejemplo?")
 
     with TestClient(app) as client:
-        action_response = client.post(f"/api/contadores/leads/{lead.id}/actions/send-page-example-video")
+        action_response = client.post(f"/api/contadores/leads/{lead.id}/actions/send-accountant-page-example-video")
         pending_response = client.get("/api/contadores/messages/pending-delivery")
         detail_response = client.get(f"/api/contadores/leads/{lead.id}")
 
@@ -973,8 +973,8 @@ def test_page_example_video_action_queues_reusable_video(monkeypatch, tmp_path) 
     assert pending_response.status_code == 200
     messages = pending_response.json()["messages"]
     assert len(messages) == 1
-    assert messages[0]["text"] == "Esta es una pagina de un cliente nuestro, asi podria verse tu pagina"
-    assert messages[0]["sequence_step"] == "manual_page_example_video"
+    assert messages[0]["text"] == "Esta es una pagina de un cliente contador nuestro, asi podria verse tu pagina"
+    assert messages[0]["sequence_step"] == "manual_accountant_page_example_video"
     assert messages[0]["media_type"] == "video"
     assert messages[0]["media_path"] == "data/contadores/videos/cliente-pagina.mp4"
     assert messages[0]["media_filename"] == "cliente-pagina.mp4"
@@ -983,7 +983,32 @@ def test_page_example_video_action_queues_reusable_video(monkeypatch, tmp_path) 
     lead_payload = detail_response.json()["lead"]
     assert lead_payload["stage"] == "needs_human"
     assert lead_payload["automation_paused"] is True
-    assert lead_payload["automation_paused_reason"] == "manual_send-page-example-video"
+    assert lead_payload["automation_paused_reason"] == "manual_send-accountant-page-example-video"
+
+
+def test_lawyer_page_example_video_action_queues_reusable_video(monkeypatch, tmp_path) -> None:
+    """Operators should be able to send the reused lawyer page example video."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-lawyer-page-example",
+        phone="+5491888888897",
+        full_name="Lawyer Example Lead",
+        funnel_id="abogados",
+    )
+    add_recent_inbound(lead.id, text="me podes mandar un ejemplo?")
+
+    with TestClient(app) as client:
+        action_response = client.post(f"/api/contadores/leads/{lead.id}/actions/send-lawyer-page-example-video")
+        pending_response = client.get("/api/contadores/messages/pending-delivery")
+
+    assert action_response.status_code == 200
+    assert pending_response.status_code == 200
+    messages = pending_response.json()["messages"]
+    assert len(messages) == 1
+    assert messages[0]["text"] == "Esta es una pagina de un cliente abogado nuestro, asi podria verse tu pagina"
+    assert messages[0]["sequence_step"] == "manual_lawyer_page_example_video"
+    assert messages[0]["media_type"] == "video"
+    assert messages[0]["media_path"] == "data/contadores/videos/cliente-pagina.mp4"
 
 
 def test_pending_delivery_uses_message_template_params(monkeypatch, tmp_path) -> None:

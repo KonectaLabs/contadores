@@ -127,7 +127,8 @@ const sendOptions = [
   { value: "send-manual-ping", title: "Manual ping", help: "Send the approved ping template to reopen WhatsApp." },
   { value: "send-opener", title: "Opener", help: "Queue the default opener template." },
   { value: "send-loom", title: "Loom sequence", help: "Queue the Loom video introduction messages." },
-  { value: "send-page-example-video", title: "Page example video", help: "Send the client page example video." },
+  { value: "send-accountant-page-example-video", title: "Pagina contador", help: "Send the accountant page example video." },
+  { value: "send-lawyer-page-example-video", title: "Pagina abogado", help: "Send the lawyer page example video." },
   { value: "send-video-check", title: "Video check", help: "Ask if they watched the Loom." },
   { value: "send-calendly", title: "Calendly with intro", help: "Send the booking instructions and then the Calendly link." },
   { value: "send-calendly-link", title: "Calendly link only", help: "Send only the Calendly link and mark Calendly sent." },
@@ -149,7 +150,8 @@ type QuickActionName =
   | "send-opener"
   | "send-manual-ping"
   | "send-loom"
-  | "send-page-example-video"
+  | "send-accountant-page-example-video"
+  | "send-lawyer-page-example-video"
   | "send-video-check"
   | "send-calendly"
   | "send-calendly-link"
@@ -4058,7 +4060,8 @@ function sendOptionPreview(kind: SendKind, funnel: FunnelDefinition | null): str
     "send-manual-ping": funnel.manual_ping_text,
     "send-opener": funnel.opener_text,
     "send-loom": funnel.loom_intro_text,
-    "send-page-example-video": "Esta es una pagina de un cliente nuestro, asi podria verse tu pagina",
+    "send-accountant-page-example-video": "Esta es una pagina de un cliente contador nuestro, asi podria verse tu pagina",
+    "send-lawyer-page-example-video": "Esta es una pagina de un cliente abogado nuestro, asi podria verse tu pagina",
     "send-video-check": funnel.video_check_text,
     "send-calendly": `${funnel.calendly_intro_text}\n${funnel.calendly_base_url}`,
     "send-calendly-link": funnel.calendly_base_url,

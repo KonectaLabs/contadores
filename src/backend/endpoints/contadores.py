@@ -71,6 +71,10 @@ BOOKING_DETAILS_COLLECTED_REASON = "booking_details_collected"
 ACTIVE_OFFER_SEQUENCE_PREFIXES = ("promo_", "offer_")
 PAGE_EXAMPLE_VIDEO_SEQUENCE_STEP = "manual_page_example_video"
 PAGE_EXAMPLE_VIDEO_PATH = "data/contadores/videos/cliente-pagina.mp4"
+ACCOUNTANT_PAGE_EXAMPLE_VIDEO_SEQUENCE_STEP = "manual_accountant_page_example_video"
+LAWYER_PAGE_EXAMPLE_VIDEO_SEQUENCE_STEP = "manual_lawyer_page_example_video"
+ACCOUNTANT_PAGE_EXAMPLE_VIDEO_TEXT = "Esta es una pagina de un cliente contador nuestro, asi podria verse tu pagina"
+LAWYER_PAGE_EXAMPLE_VIDEO_TEXT = "Esta es una pagina de un cliente abogado nuestro, asi podria verse tu pagina"
 PAGE_EXAMPLE_VIDEO_TEXT = "Esta es una pagina de un cliente nuestro, asi podria verse tu pagina"
 OPENER_FOLLOWUP_DELAY = timedelta(hours=24)
 WHATSAPP_CUSTOM_MESSAGE_WINDOW = timedelta(hours=24)
@@ -1899,12 +1903,17 @@ def send_video_check(*, lead: ContadoresLead) -> list[ContadoresMessage]:
     return [row]
 
 
-def send_page_example_video(*, lead: ContadoresLead) -> list[ContadoresMessage]:
+def send_page_example_video(
+    *,
+    lead: ContadoresLead,
+    text: str = PAGE_EXAMPLE_VIDEO_TEXT,
+    sequence_step: str = PAGE_EXAMPLE_VIDEO_SEQUENCE_STEP,
+) -> list[ContadoresMessage]:
     """Queue the reusable client page example video."""
     row = enqueue_lead_outbound(
         lead=lead,
-        text=PAGE_EXAMPLE_VIDEO_TEXT,
-        sequence_step=PAGE_EXAMPLE_VIDEO_SEQUENCE_STEP,
+        text=text,
+        sequence_step=sequence_step,
         media_type="video",
         media_path=PAGE_EXAMPLE_VIDEO_PATH,
         media_filename="cliente-pagina.mp4",
@@ -2386,6 +2395,8 @@ def run_quick_action_for_lead(
         "send-video-check",
         "send-manual-ping",
         "send-page-example-video",
+        "send-accountant-page-example-video",
+        "send-lawyer-page-example-video",
     }
 
     if normalized_action == "send-opener":
@@ -2409,6 +2420,18 @@ def run_quick_action_for_lead(
         queued_rows = send_video_check(lead=lead)
     elif normalized_action == "send-page-example-video":
         queued_rows = send_page_example_video(lead=lead)
+    elif normalized_action == "send-accountant-page-example-video":
+        queued_rows = send_page_example_video(
+            lead=lead,
+            text=ACCOUNTANT_PAGE_EXAMPLE_VIDEO_TEXT,
+            sequence_step=ACCOUNTANT_PAGE_EXAMPLE_VIDEO_SEQUENCE_STEP,
+        )
+    elif normalized_action == "send-lawyer-page-example-video":
+        queued_rows = send_page_example_video(
+            lead=lead,
+            text=LAWYER_PAGE_EXAMPLE_VIDEO_TEXT,
+            sequence_step=LAWYER_PAGE_EXAMPLE_VIDEO_SEQUENCE_STEP,
+        )
     elif normalized_action == "send-calendly":
         queued_rows = send_calendly_sequence(lead=lead, config=config)
         if queued_rows:
@@ -3499,6 +3522,8 @@ async def run_followup_lead_action(
         "send-video-check",
         "send-manual-ping",
         "send-page-example-video",
+        "send-accountant-page-example-video",
+        "send-lawyer-page-example-video",
         "send-calendly",
         "send-calendly-link",
     }
