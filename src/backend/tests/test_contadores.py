@@ -1008,7 +1008,8 @@ def test_lawyer_page_example_video_action_queues_reusable_video(monkeypatch, tmp
     assert messages[0]["text"] == "Esta es una pagina de un cliente abogado nuestro, asi podria verse tu pagina"
     assert messages[0]["sequence_step"] == "manual_lawyer_page_example_video"
     assert messages[0]["media_type"] == "video"
-    assert messages[0]["media_path"] == "data/contadores/videos/cliente-pagina.mp4"
+    assert messages[0]["media_path"] == "data/contadores/videos/pagina-abogado.mp4"
+    assert messages[0]["media_filename"] == "pagina-abogado.mp4"
 
 
 def test_pending_delivery_uses_message_template_params(monkeypatch, tmp_path) -> None:

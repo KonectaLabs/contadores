@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import csv
+import asyncio
 import json
 import logging
 import mimetypes
@@ -71,6 +72,7 @@ BOOKING_DETAILS_COLLECTED_REASON = "booking_details_collected"
 ACTIVE_OFFER_SEQUENCE_PREFIXES = ("promo_", "offer_")
 PAGE_EXAMPLE_VIDEO_SEQUENCE_STEP = "manual_page_example_video"
 PAGE_EXAMPLE_VIDEO_PATH = "data/contadores/videos/cliente-pagina.mp4"
+LAWYER_PAGE_EXAMPLE_VIDEO_PATH = "data/contadores/videos/pagina-abogado.mp4"
 ACCOUNTANT_PAGE_EXAMPLE_VIDEO_SEQUENCE_STEP = "manual_accountant_page_example_video"
 LAWYER_PAGE_EXAMPLE_VIDEO_SEQUENCE_STEP = "manual_lawyer_page_example_video"
 ACCOUNTANT_PAGE_EXAMPLE_VIDEO_TEXT = "Esta es una pagina de un cliente contador nuestro, asi podria verse tu pagina"
@@ -97,6 +99,7 @@ LOOM_RECAP_SEQUENCE_STEP = "loom_intro"
 WATCHED_VIDEO_CONFIRMATION_LABEL = "watched_video_confirmation"
 VENEZUELA_MOBILE_PREFIXES = ("412", "414", "416", "424", "426")
 PHONE_DIGITS_RE = re.compile(r"\D+")
+CONVERSATION_BOT_LOCKS: dict[str, asyncio.Lock] = {}
 
 WHATSAPP_DELIVERY_ERROR_BY_CODE = {
     130472: (
@@ -1908,6 +1911,8 @@ def send_page_example_video(
     lead: ContadoresLead,
     text: str = PAGE_EXAMPLE_VIDEO_TEXT,
     sequence_step: str = PAGE_EXAMPLE_VIDEO_SEQUENCE_STEP,
+    media_path: str = PAGE_EXAMPLE_VIDEO_PATH,
+    media_filename: str = "cliente-pagina.mp4",
 ) -> list[ContadoresMessage]:
     """Queue the reusable client page example video."""
     row = enqueue_lead_outbound(
@@ -1915,8 +1920,8 @@ def send_page_example_video(
         text=text,
         sequence_step=sequence_step,
         media_type="video",
-        media_path=PAGE_EXAMPLE_VIDEO_PATH,
-        media_filename="cliente-pagina.mp4",
+        media_path=media_path,
+        media_filename=media_filename,
     )
     return [row]
 
@@ -2345,6 +2350,76 @@ def has_quiet_window(*, last_message_at: datetime | None, quiet_seconds: int, no
     return now >= resolved_last_message_at + timedelta(seconds=quiet_seconds)
 
 
+def get_conversation_bot_lock(lead_id: str) -> asyncio.Lock:
+    """Return the in-process lock for one lead conversation."""
+    if lead_id not in CONVERSATION_BOT_LOCKS:
+        CONVERSATION_BOT_LOCKS[lead_id] = asyncio.Lock()
+    return CONVERSATION_BOT_LOCKS[lead_id]
+
+
+def get_quiet_reply_batch_since(
+    lead_id: str,
+    *,
+    start_at: datetime | None,
+    quiet_seconds: int,
+    now: datetime,
+) -> list[ContadoresMessage]:
+    """Return the current inbound batch only after the silence backoff elapsed."""
+    replies = get_reply_batch_since(lead_id, start_at=start_at)
+    if not replies:
+        return []
+    last_reply_at = ensure_utc_datetime(replies[-1].created_at)
+    if not has_quiet_window(
+        last_message_at=last_reply_at,
+        quiet_seconds=quiet_seconds,
+        now=now,
+    ):
+        return []
+    return replies
+
+
+def conversation_batch_already_handled(
+    *,
+    lead_id: str,
+    latest_inbound: ContadoresMessage,
+) -> bool:
+    """Return True when this inbound already has a bot decision after it."""
+    latest_inbound_at = ensure_utc_datetime(latest_inbound.created_at)
+    if latest_inbound_at is None:
+        return True
+    fresh_lead = ContadoresLead.get_by_id(lead_id)
+    if fresh_lead is None:
+        return True
+    return get_latest_conversation_handled_at(fresh_lead, anchor_at=latest_inbound_at) is not None
+
+
+def conversation_reply_batch_still_current(
+    *,
+    lead_id: str,
+    reply_window_start: datetime | None,
+    latest_inbound: ContadoresMessage,
+    quiet_seconds: int,
+    now: datetime,
+) -> bool:
+    """Return True when no newer inbound or bot decision superseded this batch."""
+    if latest_inbound.id is None:
+        return False
+    current_replies = get_quiet_reply_batch_since(
+        lead_id,
+        start_at=reply_window_start,
+        quiet_seconds=quiet_seconds,
+        now=now,
+    )
+    if not current_replies:
+        return False
+    if current_replies[-1].id != latest_inbound.id:
+        return False
+    return not conversation_batch_already_handled(
+        lead_id=lead_id,
+        latest_inbound=latest_inbound,
+    )
+
+
 def queue_manual_message_for_lead(
     *,
     lead: ContadoresLead,
@@ -2431,6 +2506,8 @@ def run_quick_action_for_lead(
             lead=lead,
             text=LAWYER_PAGE_EXAMPLE_VIDEO_TEXT,
             sequence_step=LAWYER_PAGE_EXAMPLE_VIDEO_SEQUENCE_STEP,
+            media_path=LAWYER_PAGE_EXAMPLE_VIDEO_PATH,
+            media_filename="pagina-abogado.mp4",
         )
     elif normalized_action == "send-calendly":
         queued_rows = send_calendly_sequence(lead=lead, config=config)
