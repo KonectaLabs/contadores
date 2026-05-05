@@ -169,6 +169,71 @@ def test_run_codex_creates_codex_home(monkeypatch, tmp_path):
     assert calls["config"]["env"]["CODEX_HOME"] == str(codex_home)
 
 
+def test_run_codex_accepts_codex_home_override(monkeypatch, tmp_path):
+    """Conversation fallbacks can isolate ChatGPT and API-key auth homes."""
+    calls = {}
+    env_codex_home = tmp_path / "env-home"
+    override_codex_home = tmp_path / "override-home"
+
+    class FakeAskForApprovalValue:
+        never = "never"
+
+    class FakeValue:
+        def __init__(self, value):
+            self.value = value
+
+    class FakeWrapper:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    class FakeResult:
+        final_response = "done"
+        items = []
+
+    class FakeThread:
+        def run(self, prompt, **kwargs):
+            return FakeResult()
+
+    class FakeCodex:
+        def __init__(self, config):
+            calls["config"] = config
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def thread_start(self, *, model):
+            return FakeThread()
+
+    monkeypatch.setenv("CODEX_HOME", str(env_codex_home))
+    monkeypatch.setattr(
+        codex_utils,
+        "_load_codex_sdk",
+        lambda: {
+            "AppServerConfig": lambda **kwargs: kwargs,
+            "AskForApproval": lambda **kwargs: FakeWrapper(**kwargs),
+            "AskForApprovalValue": FakeAskForApprovalValue,
+            "Codex": FakeCodex,
+            "DangerFullAccessSandboxPolicy": lambda **kwargs: FakeWrapper(**kwargs),
+            "ReasoningEffort": FakeValue,
+            "SandboxPolicy": lambda **kwargs: FakeWrapper(**kwargs),
+            "ServiceTier": FakeValue,
+        },
+    )
+
+    codex_utils.run_codex(
+        "do the thing",
+        cwd=tmp_path,
+        codex_home=override_codex_home,
+        prefer_chatgpt_login=False,
+    )
+
+    assert override_codex_home.is_dir()
+    assert calls["config"]["env"]["CODEX_HOME"] == str(override_codex_home)
+
+
 def test_run_codex_accepts_effort_and_service_tier(monkeypatch, tmp_path):
     """The SDK exposes effort and service tier as run-level controls."""
     calls = {}

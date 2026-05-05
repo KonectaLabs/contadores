@@ -4266,8 +4266,10 @@ async def list_pending_contadores_alerts(
                 automation_paused_reason=alert.alert_type,
                 latest_inbound_text=alert.latest_inbound_text,
                 reason=(
-                    "Codex fallo en el bot conversacional y se uso fallback. "
-                    f"Accion fallback: {alert.fallback_action or '-'}."
+                    "Codex ChatGPT fallo en el bot conversacional y se uso fallback. "
+                    f"Accion fallback: {alert.fallback_action or '-'}. "
+                    "Reautenticar en https://auth.openai.com/codex/device "
+                    "generando un codigo con `env -u OPENAI_API_KEY codex login --device-auth`."
                 ),
                 alert_emails=config.alert_emails,
                 alert_kind="runtime",

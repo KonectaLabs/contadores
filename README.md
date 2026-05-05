@@ -266,11 +266,13 @@ Bot conversacional post-video y post-Calendly:
   Puede inspeccionar archivos del repo y usar herramientas read-only para
   resolver dudas de source of truth; no debe modificar archivos ni estado
   externo durante una decision runtime.
-- Si Codex falla, el lead no se pausa por eso: se crea una alerta runtime por
-  email y se responde con fallback DSPy/Grok. El fallback usa
+- Orden de fallback: primero ChatGPT Codex, despues Codex autenticado con API
+  key, y recien despues DSPy/Grok. Si falla ChatGPT Codex, el lead no se pausa
+  por eso: se crea una alerta runtime por email con link/comando para
+  reautenticar y se responde con el siguiente fallback disponible. El fallback usa
   `OPENROUTER_GROK_4_3_MODEL=openrouter/x-ai/grok-4.3` cuando hay
-  `OPENROUTER_API_KEY`; si no, usa `gpt-5.4-mini`. Si Codex y fallback fallan,
-  ahi si pasa a `needs_human`.
+  `OPENROUTER_API_KEY`; si no, usa `gpt-5.4-mini`. Si todos fallan, ahi si
+  pasa a `needs_human`.
 - El bot devuelve una accion estructurada:
   `send_reply`, `ask_scheduling_details`, `handoff_human`,
   `handoff_scheduling`, `close_lead` o `no_action`.

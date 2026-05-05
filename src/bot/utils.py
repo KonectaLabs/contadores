@@ -40,6 +40,19 @@ BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "http://backend:8000").strip().
 CONTADORES_REVIEW_BASE_URL = (
     os.getenv("CONTADORES_REVIEW_BASE_URL", "https://chatterface.fgoiriz.com").strip().rstrip("/")
 )
+CODEX_CHATGPT_REAUTH_URL = os.getenv(
+    "CODEX_CHATGPT_REAUTH_URL",
+    "https://auth.openai.com/codex/device",
+).strip()
+CODEX_CHATGPT_REAUTH_COMMAND = os.getenv(
+    "CODEX_CHATGPT_REAUTH_COMMAND",
+    (
+        "cd /root/projects/contadores && "
+        "docker compose exec -it -e OPENAI_API_KEY= "
+        "-e CODEX_HOME=/app/data/codex-home-chatgpt "
+        "backend codex login --device-auth"
+    ),
+).strip()
 INTERNAL_API_TOKEN_HEADER = "X-Internal-Token"
 INTERNAL_API_TOKEN = os.getenv("INTERNAL_API_TOKEN", "").strip()
 BOT_TICK_SECONDS = max(5, int(os.getenv("BOT_TICK_SECONDS", "5")))
@@ -756,6 +769,11 @@ async def send_contadores_pending_alerts(
                     f"Error Codex: {item.codex_error or '-'}",
                     f"Accion fallback usada: {item.fallback_action or '-'}",
                     f"Motivo: {item.reason or '-'}",
+                    "",
+                    "Reautenticacion ChatGPT Codex:",
+                    f"Link: {CODEX_CHATGPT_REAUTH_URL or '-'}",
+                    "Comando para generar el codigo de 15 minutos:",
+                    CODEX_CHATGPT_REAUTH_COMMAND or "-",
                 ]
             )
         else:

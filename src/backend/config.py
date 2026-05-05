@@ -28,6 +28,17 @@ AUDIO_TRANSCRIPTION_PROMPT = os.getenv(
 CONVERSATION_BOT_CODEX_MODEL = os.getenv("CONVERSATION_BOT_CODEX_MODEL", "gpt-5.5")
 CONVERSATION_BOT_CODEX_EFFORT = os.getenv("CONVERSATION_BOT_CODEX_EFFORT", "medium")
 CONVERSATION_BOT_CODEX_SERVICE_TIER = (os.getenv("CONVERSATION_BOT_CODEX_SERVICE_TIER", "") or "").strip() or None
+_CODEX_HOME = (os.getenv("CODEX_HOME", "") or "").strip()
+CONVERSATION_BOT_CODEX_CHATGPT_HOME = (
+    os.getenv("CONVERSATION_BOT_CODEX_CHATGPT_HOME", _CODEX_HOME) or ""
+).strip()
+CONVERSATION_BOT_CODEX_API_KEY_HOME = (
+    os.getenv(
+        "CONVERSATION_BOT_CODEX_API_KEY_HOME",
+        f"{_CODEX_HOME}-api-key" if _CODEX_HOME else "",
+    )
+    or ""
+).strip()
 
 
 # Instantly configuration

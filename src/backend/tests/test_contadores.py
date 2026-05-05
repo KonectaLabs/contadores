@@ -1545,7 +1545,12 @@ def test_conversation_bot_codex_failure_records_runtime_alert_without_handoff(mo
                 classification_label="answered_price",
                 reason="Fallback respondio precio.",
                 runtime_provider="dspy_fallback",
-                runtime_error="Codex failed: RuntimeError: boom",
+                runtime_error=(
+                    "Codex ChatGPT failed: RuntimeError: boom. "
+                    "Para reautenticar ChatGPT Codex, generar un codigo nuevo con "
+                    "`env -u OPENAI_API_KEY codex login --device-auth` y abrir "
+                    "https://auth.openai.com/codex/device."
+                ),
             )
 
     monkeypatch.setattr(contadores_endpoints, "ContadoresConversationBotProgram", FakeConversationBot)
@@ -1567,9 +1572,12 @@ def test_conversation_bot_codex_failure_records_runtime_alert_without_handoff(mo
     assert len(alerts.json()["items"]) == 1
     alert = alerts.json()["items"][0]
     assert alert["alert_kind"] == "runtime"
-    assert alert["codex_error"] == "Codex failed: RuntimeError: boom"
+    assert alert["codex_error"].startswith("Codex ChatGPT failed: RuntimeError: boom")
+    assert "https://auth.openai.com/codex/device" in alert["codex_error"]
     assert alert["fallback_action"] == "send_reply"
     assert alert["latest_inbound_text"] == "Cuanto cuesta?"
+    assert "Codex ChatGPT fallo" in alert["reason"]
+    assert "codex login --device-auth" in alert["reason"]
 
 
 def test_conversation_bot_handoffs_complete_scheduling_details(monkeypatch, tmp_path) -> None:

@@ -73,6 +73,7 @@ def ask_codex(
     effort: ReasoningEffortName = DEFAULT_EFFORT,
     service_tier: ServiceTierName | None = None,
     cwd: str | Path | None = None,
+    codex_home: str | Path | None = None,
     codex_bin: str = DEFAULT_CODEX_BIN,
     prefer_chatgpt_login: bool = DEFAULT_PREFER_CHATGPT_LOGIN,
 ) -> str:
@@ -83,6 +84,7 @@ def ask_codex(
         effort=effort,
         service_tier=service_tier,
         cwd=cwd,
+        codex_home=codex_home,
         codex_bin=codex_bin,
         prefer_chatgpt_login=prefer_chatgpt_login,
     ).final_response
@@ -96,6 +98,7 @@ def ask_codex_with_mentions(
     effort: ReasoningEffortName = DEFAULT_EFFORT,
     service_tier: ServiceTierName | None = None,
     cwd: str | Path | None = None,
+    codex_home: str | Path | None = None,
     codex_bin: str = DEFAULT_CODEX_BIN,
     prefer_chatgpt_login: bool = DEFAULT_PREFER_CHATGPT_LOGIN,
 ) -> str:
@@ -107,6 +110,7 @@ def ask_codex_with_mentions(
         effort=effort,
         service_tier=service_tier,
         cwd=cwd,
+        codex_home=codex_home,
         codex_bin=codex_bin,
         prefer_chatgpt_login=prefer_chatgpt_login,
     ).final_response
@@ -122,6 +126,7 @@ def ask_codex_with_context(
     effort: ReasoningEffortName = DEFAULT_EFFORT,
     service_tier: ServiceTierName | None = None,
     cwd: str | Path | None = None,
+    codex_home: str | Path | None = None,
     codex_bin: str = DEFAULT_CODEX_BIN,
     prefer_chatgpt_login: bool = DEFAULT_PREFER_CHATGPT_LOGIN,
 ) -> str:
@@ -135,6 +140,7 @@ def ask_codex_with_context(
         effort=effort,
         service_tier=service_tier,
         cwd=cwd,
+        codex_home=codex_home,
         codex_bin=codex_bin,
         prefer_chatgpt_login=prefer_chatgpt_login,
     ).final_response
@@ -147,6 +153,7 @@ def run_codex(
     effort: ReasoningEffortName = DEFAULT_EFFORT,
     service_tier: ServiceTierName | None = None,
     cwd: str | Path | None = None,
+    codex_home: str | Path | None = None,
     codex_bin: str = DEFAULT_CODEX_BIN,
     prefer_chatgpt_login: bool = DEFAULT_PREFER_CHATGPT_LOGIN,
 ) -> CodexRunResult:
@@ -171,6 +178,7 @@ def run_codex(
         effort=effort,
         service_tier=service_tier,
         cwd=cwd,
+        codex_home=codex_home,
         codex_bin=codex_bin,
         prefer_chatgpt_login=prefer_chatgpt_login,
     )
@@ -184,6 +192,7 @@ def run_codex_with_mentions(
     effort: ReasoningEffortName = DEFAULT_EFFORT,
     service_tier: ServiceTierName | None = None,
     cwd: str | Path | None = None,
+    codex_home: str | Path | None = None,
     codex_bin: str = DEFAULT_CODEX_BIN,
     prefer_chatgpt_login: bool = DEFAULT_PREFER_CHATGPT_LOGIN,
 ) -> CodexRunResult:
@@ -195,6 +204,7 @@ def run_codex_with_mentions(
             effort=effort,
             service_tier=service_tier,
             cwd=cwd,
+            codex_home=codex_home,
             codex_bin=codex_bin,
             prefer_chatgpt_login=prefer_chatgpt_login,
         )
@@ -213,6 +223,7 @@ def run_codex_with_mentions(
         effort=effort,
         service_tier=service_tier,
         cwd=cwd,
+        codex_home=codex_home,
         codex_bin=codex_bin,
         prefer_chatgpt_login=prefer_chatgpt_login,
     )
@@ -228,6 +239,7 @@ def run_codex_with_context(
     effort: ReasoningEffortName = DEFAULT_EFFORT,
     service_tier: ServiceTierName | None = None,
     cwd: str | Path | None = None,
+    codex_home: str | Path | None = None,
     codex_bin: str = DEFAULT_CODEX_BIN,
     prefer_chatgpt_login: bool = DEFAULT_PREFER_CHATGPT_LOGIN,
 ) -> CodexRunResult:
@@ -257,6 +269,7 @@ def run_codex_with_context(
         effort=effort,
         service_tier=service_tier,
         cwd=cwd,
+        codex_home=codex_home,
         codex_bin=codex_bin,
         prefer_chatgpt_login=prefer_chatgpt_login,
     )
@@ -348,11 +361,15 @@ def _run_codex_input(
     effort: ReasoningEffortName,
     service_tier: ServiceTierName | None,
     cwd: str | Path | None,
+    codex_home: str | Path | None,
     codex_bin: str,
     prefer_chatgpt_login: bool,
 ) -> CodexRunResult:
     run_cwd = Path(cwd).expanduser().resolve() if cwd is not None else REPO_ROOT
-    env = _build_child_env(prefer_chatgpt_login=prefer_chatgpt_login)
+    env = _build_child_env(
+        prefer_chatgpt_login=prefer_chatgpt_login,
+        codex_home=codex_home,
+    )
 
     config = sdk["AppServerConfig"](
         codex_bin=codex_bin,
@@ -384,11 +401,19 @@ def _run_codex_input(
     )
 
 
-def _build_child_env(*, prefer_chatgpt_login: bool) -> dict[str, str]:
+def _build_child_env(
+    *,
+    prefer_chatgpt_login: bool,
+    codex_home: str | Path | None = None,
+) -> dict[str, str]:
     env = dict(os.environ)
-    codex_home = env.get("CODEX_HOME")
-    if codex_home:
-        Path(codex_home).expanduser().mkdir(parents=True, exist_ok=True)
+    if codex_home is not None:
+        clean_codex_home = str(codex_home).strip()
+        if clean_codex_home:
+            env["CODEX_HOME"] = clean_codex_home
+    resolved_codex_home = env.get("CODEX_HOME")
+    if resolved_codex_home:
+        Path(resolved_codex_home).expanduser().mkdir(parents=True, exist_ok=True)
     if prefer_chatgpt_login:
         env.pop("OPENAI_API_KEY", None)
     return env

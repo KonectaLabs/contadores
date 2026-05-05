@@ -625,6 +625,9 @@ def test_send_contadores_pending_alerts_handles_runtime_fallback_alert(monkeypat
     assert sent_calls[0]["subject"] == "[Abogados] codex_fallback +5491153484587"
     assert "Error Codex: Codex failed: timeout" in sent_calls[0]["text"]
     assert "Accion fallback usada: send_reply" in sent_calls[0]["text"]
+    assert "Reautenticacion ChatGPT Codex:" in sent_calls[0]["text"]
+    assert "Link: https://auth.openai.com/codex/device" in sent_calls[0]["text"]
+    assert "codex login --device-auth" in sent_calls[0]["text"]
     assert "Lead link: https://chatterface.fgoiriz.com/?section=contadores&contadores_lead=runtime-lead-1" in sent_calls[0]["text"]
 
 

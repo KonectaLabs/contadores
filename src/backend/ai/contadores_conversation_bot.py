@@ -20,6 +20,8 @@ from backend.ai.contadores_conversation_prompt import (
 from backend.base import Program
 from backend.codex_utils import CodexSkill, REPO_ROOT, run_codex_with_context
 from backend.config import (
+    CONVERSATION_BOT_CODEX_API_KEY_HOME,
+    CONVERSATION_BOT_CODEX_CHATGPT_HOME,
     CONVERSATION_BOT_CODEX_EFFORT,
     CONVERSATION_BOT_CODEX_MODEL,
     CONVERSATION_BOT_CODEX_SERVICE_TIER,
@@ -49,6 +51,13 @@ CODEX_RUNTIME_NOTE = (
     "attached skills, and use read-only tools or shell commands when that helps "
     "resolve source-of-truth questions. Do not modify repository files, external "
     "systems, or production state. Return JSON only."
+)
+
+CODEX_CHATGPT_REAUTH_URL = "https://auth.openai.com/codex/device"
+CODEX_CHATGPT_REAUTH_HELP = (
+    "Para reautenticar ChatGPT Codex, generar un codigo nuevo con "
+    "`env -u OPENAI_API_KEY codex login --device-auth` y abrir "
+    f"{CODEX_CHATGPT_REAUTH_URL}."
 )
 
 CODEX_CONVERSATION_SKILLS = [
@@ -448,10 +457,16 @@ class CodexConversationBotProgram:
         model: str = CONVERSATION_BOT_CODEX_MODEL,
         effort: str = CONVERSATION_BOT_CODEX_EFFORT,
         service_tier: str | None = CONVERSATION_BOT_CODEX_SERVICE_TIER,
+        prefer_chatgpt_login: bool = True,
+        codex_home: str | None = CONVERSATION_BOT_CODEX_CHATGPT_HOME,
+        runtime_provider: str = "codex_chatgpt",
     ):
         self.model = model
         self.effort = effort
         self.service_tier = service_tier
+        self.prefer_chatgpt_login = prefer_chatgpt_login
+        self.codex_home = (codex_home or "").strip() or None
+        self.runtime_provider = runtime_provider
 
     async def aforward(
         self,
@@ -491,9 +506,11 @@ class CodexConversationBotProgram:
             effort=self.effort,  # type: ignore[arg-type]
             service_tier=self.service_tier,  # type: ignore[arg-type]
             cwd=REPO_ROOT,
+            codex_home=self.codex_home,
+            prefer_chatgpt_login=self.prefer_chatgpt_login,
         )
         payload = _extract_json_payload(result.final_response)
-        normalized = _normalize_result(payload, runtime_provider="codex")
+        normalized = _normalize_result(payload, runtime_provider=self.runtime_provider)
         return _apply_company_source_truth_guard(
             normalized,
             latest_inbound=latest_inbound,
@@ -502,18 +519,33 @@ class CodexConversationBotProgram:
 
 
 class ContadoresConversationBotProgram(Program):
-    """Primary Codex bot with a Grok/DSPy fallback."""
+    """ChatGPT Codex primary, API-key Codex fallback, then Grok/DSPy fallback."""
 
     def __init__(
         self,
         lm: dspy.LM | None = None,
         *,
         codex_program: CodexConversationBotProgram | None = None,
+        codex_api_key_program: CodexConversationBotProgram | None = None,
         dspy_program: DspyConversationBotProgram | None = None,
     ):
         self.dspy_fallback = dspy_program or DspyConversationBotProgram(lm=lm)
         super().__init__(lm=self.dspy_fallback.lm)
-        self.codex_program = codex_program or CodexConversationBotProgram()
+        self.codex_program = codex_program or CodexConversationBotProgram(
+            prefer_chatgpt_login=True,
+            codex_home=CONVERSATION_BOT_CODEX_CHATGPT_HOME,
+            runtime_provider="codex_chatgpt",
+        )
+        if codex_api_key_program is not None:
+            self.codex_api_key_program = codex_api_key_program
+        elif codex_program is None:
+            self.codex_api_key_program = CodexConversationBotProgram(
+                prefer_chatgpt_login=False,
+                codex_home=CONVERSATION_BOT_CODEX_API_KEY_HOME,
+                runtime_provider="codex_api_key",
+            )
+        else:
+            self.codex_api_key_program = None
 
     async def aforward(
         self,
@@ -547,13 +579,35 @@ class ContadoresConversationBotProgram(Program):
                 latest_inbound=latest_inbound,
                 funnel_id=funnel_id,
             )
-        except Exception as codex_error:
-            codex_error_text = f"{codex_error.__class__.__name__}: {codex_error}"
+        except Exception as chatgpt_error:
+            chatgpt_error_text = f"{chatgpt_error.__class__.__name__}: {chatgpt_error}"
+
+        chatgpt_runtime_error = (
+            f"Codex ChatGPT failed: {chatgpt_error_text}. {CODEX_CHATGPT_REAUTH_HELP}"
+        )
+
+        api_key_error_text = ""
+        if self.codex_api_key_program is not None:
+            try:
+                api_key_result = await self.codex_api_key_program.aforward(**kwargs)
+                api_key_result.runtime_provider = "codex_api_key_fallback"
+                api_key_result.runtime_error = chatgpt_runtime_error
+                return _apply_company_source_truth_guard(
+                    api_key_result,
+                    latest_inbound=latest_inbound,
+                    funnel_id=funnel_id,
+                )
+            except Exception as api_key_error:
+                api_key_error_text = f"{api_key_error.__class__.__name__}: {api_key_error}"
 
         try:
             fallback = await self.dspy_fallback.aforward(**kwargs)
             fallback.runtime_provider = "dspy_fallback"
-            fallback.runtime_error = f"Codex failed: {codex_error_text}"
+            fallback.runtime_error = (
+                f"{chatgpt_runtime_error}; Codex API key failed: {api_key_error_text}"
+                if api_key_error_text
+                else chatgpt_runtime_error
+            )
             return _apply_company_source_truth_guard(
                 fallback,
                 latest_inbound=latest_inbound,
@@ -566,7 +620,8 @@ class ContadoresConversationBotProgram(Program):
                 reason="Codex y el fallback DSPy fallaron.",
                 runtime_provider="failed",
                 runtime_error=(
-                    f"Codex failed: {codex_error_text}; "
+                    f"{chatgpt_runtime_error}; "
+                    f"Codex API key failed: {api_key_error_text or 'not configured'}; "
                     f"DSPy failed: {fallback_error.__class__.__name__}: {fallback_error}"
                 ),
             )

@@ -40,11 +40,14 @@ OpenAI speech-to-text, and the env should keep
 `OPENAI_AUDIO_TRANSCRIPTION_MODEL=gpt-4o-transcribe` unless deliberately
 overridden.
 
-The conversational bot uses Codex SDK as primary runtime
-(`CONVERSATION_BOT_CODEX_MODEL=gpt-5.5`, medium effort) and Grok/DSPy as fallback.
-Deploys must preserve `CODEX_HOME` in the data volume so Codex auth persists.
-Codex fallback errors create runtime email alerts but should not pause leads
-when the fallback answered safely.
+The conversational bot uses ChatGPT-authenticated Codex SDK as primary runtime
+(`CONVERSATION_BOT_CODEX_MODEL=gpt-5.5`, medium effort), Codex API-key auth as
+the first fallback, and Grok/DSPy after that. Deploys must preserve both
+`CONVERSATION_BOT_CODEX_CHATGPT_HOME` and
+`CONVERSATION_BOT_CODEX_API_KEY_HOME` in the data volume so auth persists.
+ChatGPT Codex failures create runtime email alerts with the device-login link
+and reauth command, but should not pause leads when the API-key Codex fallback
+or Grok/DSPy answered safely.
 
 Outbound WhatsApp send failures are persisted on `contadores_messages`. The bot
 reports send exceptions to the backend, the backend requeues until
