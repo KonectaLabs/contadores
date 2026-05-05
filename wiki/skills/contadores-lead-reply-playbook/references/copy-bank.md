@@ -453,6 +453,30 @@ los hacemos en instagram y Facebook
 y los anuncios atraeran clientes asi como nuestro anuncio lo trajo a usted a estar hablando hoy con nosotros
 ```
 
+Lead asks where Konecta is from:
+
+```text
+De donde son ?
+```
+
+Use:
+
+```text
+Escribo desde Argentina.
+
+Somos Konecta Labs y trabajamos remoto para toda Latinoamerica.
+```
+
+If they ask how remote work applies locally:
+
+```text
+Si, entiendo la duda.
+
+Escribo desde Argentina y trabajamos remoto para toda Latinoamerica.
+
+Las campanas igual se configuran para atraer personas de su zona y que le escriban directo a su WhatsApp.
+```
+
 Lead questions foreign number, Bolivia presence, and refund guarantee:
 
 ```text

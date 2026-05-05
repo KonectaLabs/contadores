@@ -12,6 +12,7 @@ from backend.ai.contadores_conversation_bot import (
     ContadoresConversationBotResult,
     DspyConversationBotProgram,
 )
+from backend.ai.contadores_conversation_prompt import build_conversation_bot_prompt
 from backend.config import CONVERSATION_BOT_CODEX_EFFORT, CONVERSATION_BOT_CODEX_MODEL
 
 
@@ -133,6 +134,21 @@ def test_dspy_conversation_bot_removes_inverted_opening_punctuation(monkeypatch)
     assert result.message_text == "Que dia le queda mejor? Perfecto!"
 
 
+def test_prompt_includes_konecta_source_of_truth() -> None:
+    prompt = build_conversation_bot_prompt(**bot_kwargs(latest_inbound="De donde son?"))
+
+    assert "KONECTA SOURCE OF TRUTH" in prompt
+    assert "KonectaLabs is the trade name of Octopy LLC" in prompt
+    assert "Escribo desde Argentina" in prompt
+    assert "CURRENT WHATSAPP FUNNEL SERVICE" in prompt
+    assert "professional custom page + 3 advertising campaigns" in prompt
+    assert "Contadores ICP" in prompt
+    assert "Abogados ICP" in prompt
+    assert "DELIVERY OPERATION" in prompt
+    assert "GUARANTEE AND CLAIM LIMITS" in prompt
+    assert "Do not say we are from the lead's country" in prompt
+
+
 def test_codex_conversation_bot_parses_strict_json(monkeypatch) -> None:
     calls: list[dict[str, object]] = []
 
@@ -157,6 +173,66 @@ def test_codex_conversation_bot_parses_strict_json(monkeypatch) -> None:
     assert calls[0]["model"] == CONVERSATION_BOT_CODEX_MODEL
     assert calls[0]["effort"] == CONVERSATION_BOT_CODEX_EFFORT
     assert "Return only valid JSON" in str(calls[0]["prompt"])
+
+
+def test_codex_conversation_bot_overrides_wrong_origin_claim(monkeypatch) -> None:
+    def fake_run_codex_with_context(prompt, **kwargs):
+        del prompt, kwargs
+        return SimpleNamespace(
+            final_response=(
+                '{"action":"send_reply","message_text":"Somos de Ecuador. Mire el video.",'
+                '"classification_label":"answered_origin","reason":"Respondio origen.",'
+                '"missing_fields":[],"scheduling_email":"","scheduling_day":"",'
+                '"scheduling_time":"","timezone":""}'
+            )
+        )
+
+    monkeypatch.setattr(conversation_bot_module, "run_codex_with_context", fake_run_codex_with_context)
+
+    result = asyncio.run(
+        CodexConversationBotProgram().aforward(
+            **bot_kwargs(
+                phone="+593984649452",
+                inferred_timezone="America/Guayaquil",
+                latest_inbound="De donde son?",
+                conversation="LEAD: De donde son?",
+            )
+        )
+    )
+
+    assert result.action == "send_reply"
+    assert result.classification_label == "answered_company_origin"
+    assert "Escribo desde Argentina" in result.message_text
+    assert "Ecuador" not in result.message_text
+
+
+def test_codex_conversation_bot_answers_italian_number_from_source_truth(monkeypatch) -> None:
+    def fake_run_codex_with_context(prompt, **kwargs):
+        del prompt, kwargs
+        return SimpleNamespace(
+            final_response=(
+                '{"action":"send_reply","message_text":"Somos de Italia.",'
+                '"classification_label":"answered_origin","reason":"Respondio origen.",'
+                '"missing_fields":[],"scheduling_email":"","scheduling_day":"",'
+                '"scheduling_time":"","timezone":""}'
+            )
+        )
+
+    monkeypatch.setattr(conversation_bot_module, "run_codex_with_context", fake_run_codex_with_context)
+
+    result = asyncio.run(
+        CodexConversationBotProgram().aforward(
+            **bot_kwargs(
+                latest_inbound="El numero es de Italia?",
+                conversation="LEAD: El numero es de Italia?",
+            )
+        )
+    )
+
+    assert result.action == "send_reply"
+    assert result.classification_label == "answered_italian_number"
+    assert "Alan" in result.message_text
+    assert "Yo escribo desde Argentina" in result.message_text
 
 
 def test_orchestrator_uses_dspy_fallback_when_codex_fails() -> None:

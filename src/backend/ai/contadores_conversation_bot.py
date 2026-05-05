@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import unicodedata
 from typing import Any, Literal
 
 import dspy
@@ -13,6 +14,7 @@ from pydantic import BaseModel, Field
 from backend.ai.contadores_conversation_prompt import (
     CONVERSATION_BOT_FEW_SHOTS,
     GLOBAL_CONVERSATION_BOT_PROMPT,
+    KONECTA_SOURCE_OF_TRUTH,
     build_conversation_bot_prompt,
 )
 from backend.base import Program
@@ -59,6 +61,47 @@ CODEX_CONVERSATION_SKILLS = [
     ),
 ]
 
+COMPANY_ORIGIN_REPLY = (
+    "Escribo desde Argentina.\n\n"
+    "Somos Konecta Labs y trabajamos remoto para toda Latinoamerica."
+)
+
+ITALIAN_NUMBER_REPLY = (
+    "Si, el numero es italiano porque Alan, mi socio, vivio mucho tiempo en Italia "
+    "y conserva ese numero.\n\n"
+    "Yo escribo desde Argentina y trabajamos remoto para toda Latinoamerica."
+)
+
+WRONG_LOCAL_ORIGIN_PATTERN = re.compile(
+    r"\b(somos|soy|estamos|la empresa es|somos una empresa)\s+"
+    r"(de|en|ecuatorianos|bolivianos|paraguayos|mexicanos|colombianos|chilenos|"
+    r"uruguayos|peruanos|venezolanos|espanoles)\b",
+    flags=re.IGNORECASE,
+)
+
+WRONG_ORIGIN_TERMS = {
+    "bolivia",
+    "bolivianos",
+    "chile",
+    "chilenos",
+    "colombia",
+    "colombianos",
+    "ecuador",
+    "ecuatorianos",
+    "espana",
+    "espanoles",
+    "mexico",
+    "mexicanos",
+    "paraguay",
+    "paraguayos",
+    "peru",
+    "peruanos",
+    "uruguay",
+    "uruguayos",
+    "venezuela",
+    "venezolanos",
+}
+
 
 class ContadoresConversationBotResult(BaseModel):
     """Structured next action for one WhatsApp conversation."""
@@ -103,6 +146,101 @@ def _normalize_action(value: Any) -> ConversationBotAction:
 def _normalize_message_text(value: Any) -> str:
     """Normalize bot copy to the house WhatsApp writing style."""
     return str(value or "").strip().replace("¿", "").replace("¡", "")
+
+
+def _normalize_text_for_rules(value: str) -> str:
+    """Normalize Spanish copy for simple guardrail checks."""
+    ascii_text = unicodedata.normalize("NFKD", value or "").encode("ascii", "ignore").decode("ascii")
+    return " ".join(ascii_text.lower().split())
+
+
+def _asks_about_italian_number(value: str) -> bool:
+    """Return True when the lead is asking about the Italian WhatsApp number."""
+    normalized = _normalize_text_for_rules(value)
+    return (
+        ("italia" in normalized or "italiano" in normalized)
+        and any(word in normalized for word in ("numero", "whatsapp", "telefono", "celular"))
+    )
+
+
+def _asks_about_company_origin(value: str) -> bool:
+    """Return True when the lead asks where Konecta is from or located."""
+    normalized = _normalize_text_for_rules(value)
+    phrases = (
+        "de donde son",
+        "de donde eres",
+        "de donde escriben",
+        "de donde escribes",
+        "de que pais",
+        "que pais son",
+        "donde estan",
+        "donde se ubican",
+        "son de aqui",
+        "no son de aqui",
+        "ustedes no son",
+        "empresa local",
+    )
+    return any(phrase in normalized for phrase in phrases)
+
+
+def _claims_wrong_company_origin(value: str) -> bool:
+    """Return True when generated copy claims Konecta is from the lead's country."""
+    normalized = _normalize_text_for_rules(value)
+    if "somos de argentina" in normalized or "escribo desde argentina" in normalized:
+        return False
+    if WRONG_LOCAL_ORIGIN_PATTERN.search(normalized) and any(
+        term in normalized for term in WRONG_ORIGIN_TERMS
+    ):
+        return True
+    return any(
+        f"somos de {term}" in normalized
+        or f"estamos en {term}" in normalized
+        or f"somos una empresa {term}" in normalized
+        or f"somos {term}" in normalized
+        for term in WRONG_ORIGIN_TERMS
+    )
+
+
+def _apply_company_source_truth_guard(
+    result: ContadoresConversationBotResult,
+    *,
+    latest_inbound: str,
+) -> ContadoresConversationBotResult:
+    """Prevent the model from inventing Konecta's origin or copying the lead country."""
+    if result.action in {"close_lead", "no_action", "handoff_scheduling"}:
+        return result
+
+    if _asks_about_italian_number(latest_inbound):
+        return result.model_copy(
+            update={
+                "action": "send_reply",
+                "message_text": ITALIAN_NUMBER_REPLY,
+                "classification_label": "answered_italian_number",
+                "reason": "Respondio el numero italiano segun source of truth.",
+                "missing_fields": [],
+                "scheduling_email": "",
+                "scheduling_day": "",
+                "scheduling_time": "",
+                "timezone": "",
+            }
+        )
+
+    if _asks_about_company_origin(latest_inbound) or _claims_wrong_company_origin(result.message_text):
+        return result.model_copy(
+            update={
+                "action": "send_reply",
+                "message_text": COMPANY_ORIGIN_REPLY,
+                "classification_label": "answered_company_origin",
+                "reason": "Respondio origen de Konecta segun source of truth.",
+                "missing_fields": [],
+                "scheduling_email": "",
+                "scheduling_day": "",
+                "scheduling_time": "",
+                "timezone": "",
+            }
+        )
+
+    return result
 
 
 def _prediction_value(payload: Any, field_name: str, default: Any = "") -> Any:
@@ -203,7 +341,7 @@ class DspyConversationBotProgram(Program):
     ) -> ContadoresConversationBotResult:
         """Return one structured fallback action for the current lead state."""
         prediction = await self.predict.acall(
-            global_rules=GLOBAL_CONVERSATION_BOT_PROMPT,
+            global_rules=f"{KONECTA_SOURCE_OF_TRUTH}\n\n{GLOBAL_CONVERSATION_BOT_PROMPT}",
             few_shot_examples=CONVERSATION_BOT_FEW_SHOTS,
             funnel_info=funnel_info.strip(),
             funnel_id=funnel_id.strip(),
@@ -215,7 +353,8 @@ class DspyConversationBotProgram(Program):
             latest_inbound=latest_inbound.strip(),
             conversation=conversation.strip(),
         )
-        return _normalize_result(prediction, runtime_provider="dspy")
+        result = _normalize_result(prediction, runtime_provider="dspy")
+        return _apply_company_source_truth_guard(result, latest_inbound=latest_inbound)
 
 
 class CodexConversationBotProgram:
@@ -272,7 +411,8 @@ class CodexConversationBotProgram:
             cwd=REPO_ROOT,
         )
         payload = _extract_json_payload(result.final_response)
-        return _normalize_result(payload, runtime_provider="codex")
+        normalized = _normalize_result(payload, runtime_provider="codex")
+        return _apply_company_source_truth_guard(normalized, latest_inbound=latest_inbound)
 
 
 class ContadoresConversationBotProgram(Program):
@@ -315,7 +455,8 @@ class ContadoresConversationBotProgram(Program):
             "conversation": conversation,
         }
         try:
-            return await self.codex_program.aforward(**kwargs)
+            result = await self.codex_program.aforward(**kwargs)
+            return _apply_company_source_truth_guard(result, latest_inbound=latest_inbound)
         except Exception as codex_error:
             codex_error_text = f"{codex_error.__class__.__name__}: {codex_error}"
 
@@ -323,7 +464,7 @@ class ContadoresConversationBotProgram(Program):
             fallback = await self.dspy_fallback.aforward(**kwargs)
             fallback.runtime_provider = "dspy_fallback"
             fallback.runtime_error = f"Codex failed: {codex_error_text}"
-            return fallback
+            return _apply_company_source_truth_guard(fallback, latest_inbound=latest_inbound)
         except Exception as fallback_error:
             return ContadoresConversationBotResult(
                 action="handoff_human",

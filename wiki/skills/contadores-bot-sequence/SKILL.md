@@ -64,6 +64,62 @@ override the built-in Contadores definition.
     `needs_human` when both Codex and fallback fail or when the action itself
     requires human/scheduling handoff.
 
+## Company source of truth
+
+The bot must never infer Konecta's identity or origin from the lead country,
+phone timezone, or CRM country field.
+
+Use this source of truth before any dynamic context:
+
+- Company: Konecta Labs.
+- Legal/trade fact from the Konecta Labs repo: KonectaLabs is the trade name of
+  Octopy LLC.
+- Positioning: small founder-led applied AI / product studio focused on concrete
+  systems, fast delivery, and production use.
+- Founders: Facundo Goiriz and Alan Kravchuk.
+- Operating mode: remote team working with clients across Latin America and
+  other markets.
+- Origin answer for leads: `Escribo desde Argentina. Somos Konecta Labs y
+  trabajamos remoto para toda Latinoamerica.`
+- Do not claim local offices in Ecuador, Bolivia, Paraguay, Mexico, Colombia,
+  Chile, Uruguay, Peru, Venezuela, Spain, or any other country unless the source
+  of truth is explicitly updated.
+- Italian WhatsApp number: Alan lived in Italy and keeps that number. It does
+  not mean the service is only for Italy.
+- Broader Konecta context: applied AI/product studio with work across education
+  course generation, AI avatar learning, conversational audits, WhatsApp/voice
+  operations, editorial automation, real estate training, and custom web/AI
+  systems. Use this only for trust/context questions, not in every sales reply.
+- Current funnel service: a client-acquisition system for professionals.
+  Outcome first: more opportunities/inquiries/potential clients writing directly
+  to the lead's WhatsApp.
+- Mechanism: professional page/landing plus tailored campaigns.
+- Current code-level offer: custom professional page + 3 advertising campaigns.
+  Manual examples use Facebook/Instagram/Meta. Do not invent Google Ads, TikTok,
+  LinkedIn, SEO deliverables, CRM integrations, calendar automation, or monthly
+  management unless the funnel/operator explicitly says so.
+- Contadores ICP: accountants, accounting firms, tax advisors, and similar
+  professionals who want prospects for accounting/tax/business services.
+- Abogados ICP: lawyers, law firms, and legal professionals who want inquiries
+  for the practice areas they choose to prioritize.
+- Delivery: define the target client, service area, geography, and message;
+  prepare the page/landing and campaigns; send interested people to the
+  professional's WhatsApp. Konecta does not close the client's sales/cases for
+  them.
+- Runtime price: 300 USD, pago unico. Do not invent monthly fees, installments,
+  taxes, invoices, or payment rails unless already provided in the conversation.
+- Guarantee: if there are no new consultations/prospects to review in 30 days,
+  money back. Never promise closed clients, legal cases, revenue, guaranteed
+  appointments, ad approval, exact lead volume, rankings, or exact ROI.
+- Scheduling v1: no automatic Calendly. Collect email, day, time, and timezone
+  for a 15-minute call, then hand off to a human.
+- If a factual question falls outside this source of truth and `funnel_info`,
+  use `handoff_human` instead of inventing.
+
+For `De donde son?`, `De que pais escriben?`, `ustedes no son de aca?`, or
+similar, answer from this section first. Never answer `Somos de Ecuador` or copy
+the lead's country as Konecta's origin.
+
 ## Manual-only template
 
 Operators can send `contadores_manual_ping_es_v1` from the backoffice to reopen

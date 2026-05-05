@@ -274,6 +274,16 @@ Bot conversacional post-video y post-Calendly:
 - Preguntas conocidas de precio, pais/cobertura, garantia, proceso, dominio,
   pagina existente, "no vi el video", "lo analizo" o confirmaciones simples se
   responden con `sequence_step=ai_reply` sin mover el lead a `needs_human`.
+- El origen/identidad de Konecta no se infiere del pais del lead. El prompt y
+  un guardrail post-modelo usan el source of truth del repo `konecta-labs`:
+  Konecta Labs, trade name de Octopy LLC, equipo founder-led de IA aplicada,
+  fundado por Facundo Goiriz y Alan Kravchuk. Ese mismo bloque tambien fija la
+  operacion completa del funnel: ICP por Contadores/Abogados, objetivo,
+  mecanismo, entrega remota, precio, garantia, limites de promesa, paises,
+  scheduling y cosas que no se pueden inventar. Para `De donde son?` la
+  respuesta canonica es `Escribo desde Argentina. Somos Konecta Labs y
+  trabajamos remoto para toda Latinoamerica.` Nunca debe contestar `Somos de
+  Ecuador` ni copiar el pais del lead como origen nuestro.
 - El copy del bot debe sonar a WhatsApp real de Facu/operador: natural, corto,
   no robotizado, sin signos de apertura como `¿` o `¡`, y sin frases
   corporativas de asistente AI.

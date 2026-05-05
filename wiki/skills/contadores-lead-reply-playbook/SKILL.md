@@ -46,6 +46,69 @@ For reusable copy examples, read [references/copy-bank.md](references/copy-bank.
   missing scheduling detail, usually email or timezone, and escalate once email,
   day, and time are available.
 
+## Company Source Of Truth
+
+Use this before CRM country, phone timezone, inferred country, or old generated
+bot text. Do not infer where Konecta is from based on the lead's country.
+
+- Company: Konecta Labs.
+- Legal/trade fact from the Konecta Labs repo: KonectaLabs is the trade name of
+  Octopy LLC.
+- Positioning: small founder-led applied AI / product studio. The public
+  positioning is concrete AI systems, fast delivery, production use, and direct
+  founder involvement.
+- Founders: Facundo Goiriz and Alan Kravchuk.
+- Operating mode: remote team working across Latin America and other markets.
+- If a lead asks `De donde son?`, answer:
+
+```text
+Escribo desde Argentina.
+
+Somos Konecta Labs y trabajamos remoto para toda Latinoamerica.
+```
+
+- If a lead asks why the WhatsApp number is Italian, answer:
+
+```text
+Si, el numero es italiano porque Alan, mi socio, vivio mucho tiempo en Italia y conserva ese numero.
+
+Yo escribo desde Argentina y trabajamos remoto para toda Latinoamerica.
+```
+
+- Never answer `Somos de Ecuador`, `somos de Bolivia`, or any version that copies
+  the lead's country as Konecta's origin.
+- Never claim local offices in Ecuador, Bolivia, Paraguay, Mexico, Colombia,
+  Chile, Uruguay, Peru, Venezuela, Spain, or any other country unless this source
+  of truth is explicitly updated.
+- Broader Konecta context: applied AI/product studio with work across education
+  course generation, AI avatar learning, conversational audits, WhatsApp/voice
+  operations, editorial automation, real estate training, and custom web/AI
+  systems. Mention this only for trust/context questions.
+- Current funnel service: client-acquisition system for professionals.
+  Outcome: more opportunities/inquiries/potential clients writing directly to
+  the lead's WhatsApp.
+- Mechanism: professional page/landing plus tailored campaigns.
+- Current code-level offer: custom professional page + 3 advertising campaigns.
+  Manual examples use Facebook/Instagram/Meta. Do not invent Google Ads, TikTok,
+  LinkedIn, SEO deliverables, CRM integrations, calendar automation, or monthly
+  management unless the funnel/operator explicitly says so.
+- Contadores ICP: accountants, accounting firms, tax advisors, and similar
+  professionals who want prospects for accounting/tax/business services.
+- Abogados ICP: lawyers, law firms, and legal professionals who want inquiries
+  for the practice areas they choose to prioritize.
+- Delivery: define target client, service area, geography, and message; prepare
+  the page/landing and campaigns; send interested people to the professional's
+  WhatsApp. Konecta does not close the client's sales/cases for them.
+- Runtime price: 300 USD, pago unico. Do not invent monthly fees, installments,
+  taxes, invoices, or payment rails unless already provided in the conversation.
+- Guarantee: if there are no new consultations/prospects to review in 30 days,
+  money back. Never promise closed clients, legal cases, revenue, guaranteed
+  appointments, ad approval, exact lead volume, rankings, or exact ROI.
+- Scheduling v1: no automatic Calendly. Collect email, day, time, and timezone
+  for a 15-minute call, then hand off to a human.
+- If a factual question falls outside this source of truth and current
+  `funnel_info`, escalate instead of inventing.
+
 ## Context Checklist
 
 Before drafting or sending, inspect:
