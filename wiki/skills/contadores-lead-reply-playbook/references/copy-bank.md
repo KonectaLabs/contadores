@@ -384,7 +384,7 @@ Agendamos una reunion, nos conocemos, despejamos las ultimas dudas, definimos un
 Runtime rule:
 
 ```text
-Si WhatsApp trae un audio con `media_path`, primero transcribirlo y tratar el transcript como texto normal.
+Si WhatsApp trae un audio con `media_path`, primero guardar el audio reproducible, despues guardar el transcript como el siguiente inbound y tratar ese transcript como texto normal.
 Si el audio no se pudo descargar o transcribir, no inventar el contenido: pasa a humano como media sin transcript.
 Imagen, documento, sticker o video sin texto tambien pasan a humano.
 ```

@@ -53,8 +53,9 @@ override the built-in Contadores definition.
     and alert Facu with the scheduling details.
 13. Inbound audio should be transcribed first with OpenAI
     `gpt-4o-transcribe`; WhatsApp `.ogg` audio is converted with `ffmpeg`.
-    Store the transcript as message text and keep `media_type/media_path` so the
-    audio remains playable.
+    Store the original audio as a playable media message, then store the
+    transcript as the next inbound message with
+    `sequence_step=audio_transcript`.
 14. If the bot lacks real data to answer, receives media/audio without
     transcript, sees an exclusion, or hits an uncovered situation, pause in
     `needs_human` and alert the operators.

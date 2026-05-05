@@ -301,8 +301,10 @@ Bot conversacional post-video y post-Calendly:
 - Los audios inbound se transcriben antes de llegar al bot con
   `OPENAI_AUDIO_TRANSCRIPTION_MODEL=gpt-4o-transcribe` por defecto. Si WhatsApp
   entrega `.ogg`, Docker incluye `ffmpeg` para convertirlo a un formato aceptado
-  por OpenAI. Si descarga/transcripcion falla, se conserva el audio reproducible
-  y recien ahi pasa como media sin transcript.
+  por OpenAI. Si sale bien, el audio queda como mensaje reproducible y el
+  transcript se guarda como el siguiente inbound con
+  `sequence_step=audio_transcript`. Si descarga/transcripcion falla, se conserva
+  el audio reproducible y recien ahi pasa como media sin transcript.
 - El bot no inventa audio/media sin transcript. Imagen, video, documento,
   sticker o audio fallido sin texto pasan a humano.
 - Cerrados, booked, archivados, excluidos, Venezuela y Workstation siguen
@@ -334,8 +336,9 @@ Media en WhatsApp:
 - La media que envian los leads se descarga y se muestra en el backoffice
   cuando el proveedor la entrega.
 - Los audios inbound se guardan con `media_type/media_path` para poder
-  reproducirlos y, si la transcripcion sale bien, el transcript queda como
-  `ContadoresMessage.text` para que el bot siga el proceso como texto normal.
+  reproducirlos y, si la transcripcion sale bien, el transcript queda como un
+  mensaje inbound subsiguiente con `sequence_step=audio_transcript`, para que el
+  operador lea el chat sin escuchar el audio y el bot siga como texto normal.
 - La media o archivos que envia el operador desde `Manual outbound` se guardan
   en `data/contadores/outbound_media/{lead_id}/`, se muestran en el chat y el
   bot los despacha por WhatsApp como imagen, video, audio o documento.

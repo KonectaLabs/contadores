@@ -63,6 +63,7 @@ OPENER_FOLLOWUP_RETRY_SEQUENCE_STEP = "opener_followup_24h_template_retry_202604
 MANUAL_PING_SEQUENCE_STEP = "manual_ping_template"
 AI_REPLY_SEQUENCE_STEP = "ai_reply"
 SCHEDULING_HANDOFF_SEQUENCE_STEP = "scheduling_handoff_confirmation"
+AUDIO_TRANSCRIPT_SEQUENCE_STEP = "audio_transcript"
 BOOKING_DETAILS_COLLECTED_REASON = "booking_details_collected"
 OPENER_FOLLOWUP_DELAY = timedelta(hours=24)
 WHATSAPP_CUSTOM_MESSAGE_WINDOW = timedelta(hours=24)
@@ -2950,20 +2951,31 @@ def upsert_general_inbox_lead_from_inbound(
     return ContadoresLead.get_by_id(lead.id) or lead, existing is None
 
 
-def resolve_inbound_message_text(command: ContadoresWhatsAppInboundCommand) -> str:
-    """Return text to persist for inbound media, transcribing audio when possible."""
+def raw_inbound_message_text(command: ContadoresWhatsAppInboundCommand) -> str:
+    """Return the provider text to store on the original inbound message."""
+    clean_text = (command.text or "").strip()
+    clean_media_type = (command.media_type or "").strip().lower()
+    if clean_text:
+        return clean_text
+    if clean_media_type:
+        return f"[{clean_media_type}]"
+    return ""
+
+
+def resolve_inbound_audio_transcript(command: ContadoresWhatsAppInboundCommand) -> str | None:
+    """Return an audio transcript when available, without replacing the audio row."""
     media_type = (command.media_type or "").strip().lower()
     if media_type != "audio" or not command.media_path:
-        return command.text
+        return None
 
     try:
         return transcribe_audio_media(command.media_path, mime_type=command.media_mime_type)
     except AudioTranscriptionError as error:
         logger.warning("Could not transcribe inbound audio %s: %s", command.media_path, error)
-        return command.text
+        return None
     except Exception:
         logger.exception("Unexpected inbound audio transcription failure for %s.", command.media_path)
-        return command.text
+        return None
 
 
 def record_whatsapp_inbound_for_lead(
@@ -2971,12 +2983,11 @@ def record_whatsapp_inbound_for_lead(
     lead: ContadoresLead,
     command: ContadoresWhatsAppInboundCommand,
 ) -> tuple[ContadoresLead, ContadoresMessage]:
-    """Persist one inbound WhatsApp message."""
-    message_text = resolve_inbound_message_text(command)
+    """Persist one inbound WhatsApp message and a follow-up transcript for audio."""
     row = ContadoresMessage.add(
         lead_id=lead.id,
         from_me=False,
-        text=message_text,
+        text=raw_inbound_message_text(command),
         external_id=command.external_id,
         media_type=command.media_type,
         media_path=command.media_path,
@@ -2986,7 +2997,20 @@ def record_whatsapp_inbound_for_lead(
         media_sha256=command.media_sha256,
         media_id=command.media_id,
     )
-    return ContadoresLead.get_by_id(lead.id) or lead, row
+
+    transcript = resolve_inbound_audio_transcript(command)
+    if transcript is None:
+        return ContadoresLead.get_by_id(lead.id) or lead, row
+
+    transcript_created_at = row.created_at + timedelta(microseconds=1)
+    transcript_row = ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=False,
+        text=transcript,
+        sequence_step=AUDIO_TRANSCRIPT_SEQUENCE_STEP,
+        created_at=transcript_created_at,
+    )
+    return ContadoresLead.get_by_id(lead.id) or lead, transcript_row
 
 
 class ContadoresAutomationTickResponse(BaseModel):

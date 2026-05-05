@@ -40,7 +40,8 @@ For reusable copy examples, read [references/copy-bank.md](references/copy-bank.
   client leads unless the user explicitly asks to override and the system allows it.
 - If the latest inbound is audio/media only and there is no transcript, do not
   guess the content. The runtime should transcribe audio first when `media_path`
-  is available; otherwise ask for a transcript or inspect available media first.
+  is available and persist that transcript as the next inbound message; otherwise
+  ask for a transcript or inspect available media first.
 - If the lead gives a concrete day/time for a call, treat it as booking intent.
   Do not send a generic follow-up or Calendly automatically. Ask only for the
   missing scheduling detail, usually email or timezone, and escalate once email,

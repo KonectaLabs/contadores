@@ -38,7 +38,10 @@ description: >-
 12. Si ya estan email, dia y horario, confirmar por WhatsApp con
     `sequence_step=scheduling_handoff_confirmation`, pausar en `needs_human` con
     `automation_paused_reason=booking_details_collected` y alertar a Facu.
-13. Si falta informacion real para responder, hay audio/media sin transcript,
+13. Si llega audio con `media_path`, guardar primero el audio reproducible y
+    despues el transcript como inbound subsiguiente con
+    `sequence_step=audio_transcript`.
+14. Si falta informacion real para responder, hay audio/media sin transcript,
     exclusion, opt-out o caso no cubierto, pausar en `needs_human`.
 
 ## Reglas de contenido

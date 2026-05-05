@@ -1814,7 +1814,13 @@ def test_conversation_bot_answers_transcribed_audio(monkeypatch, tmp_path) -> No
     assert inbound.status_code == 200
     assert tick.status_code == 200
     assert tick.json()["ai_replies_sent"] == 1
-    assert detail.json()["messages"][0]["text"] == "Me interesa, cuanto cuesta?"
+    messages = detail.json()["messages"]
+    assert messages[0]["text"] == "[audio]"
+    assert messages[0]["media_type"] == "audio"
+    assert messages[0]["media_url"].startswith("/api/contadores/media/")
+    assert messages[1]["text"] == "Me interesa, cuanto cuesta?"
+    assert messages[1]["media_type"] is None
+    assert messages[1]["sequence_step"] == contadores_endpoints.AUDIO_TRANSCRIPT_SEQUENCE_STEP
     assert detail.json()["lead"]["stage"] == "awaiting_video_reply"
     assert pending.json()["messages"][0]["text"] == "La inversion es de 300 USD, pago unico."
 
@@ -2443,20 +2449,28 @@ def test_contadores_inbound_audio_payload_is_persisted_and_playable(monkeypatch,
             },
         )
         detail = client.get(f"/api/contadores/leads/{lead.id}")
-        message = detail.json()["messages"][0]
-        media = client.get(message["media_url"])
+        messages = detail.json()["messages"]
+        audio_message = messages[0]
+        transcript_message = messages[1]
+        media = client.get(audio_message["media_url"])
 
     assert response.status_code == 200
     assert response.json()["route"] == "contadores"
 
     assert detail.status_code == 200
-    assert message["text"] == "Me interesa, cuanto cuesta?"
-    assert message["media_type"] == "audio"
-    assert message["media_path"] == "data/contadores/inbound_media/lead-audio.ogg"
-    assert message["media_mime_type"] == "audio/ogg"
-    assert message["media_filename"] == "lead-audio.ogg"
-    assert message["media_id"] == "media-audio-1"
-    assert message["media_url"].startswith("/api/contadores/media/")
+    assert audio_message["text"] == "[audio]"
+    assert audio_message["external_id"] == "wamid.audio.1"
+    assert audio_message["media_type"] == "audio"
+    assert audio_message["media_path"] == "data/contadores/inbound_media/lead-audio.ogg"
+    assert audio_message["media_mime_type"] == "audio/ogg"
+    assert audio_message["media_filename"] == "lead-audio.ogg"
+    assert audio_message["media_id"] == "media-audio-1"
+    assert audio_message["media_url"].startswith("/api/contadores/media/")
+    assert transcript_message["text"] == "Me interesa, cuanto cuesta?"
+    assert transcript_message["media_type"] is None
+    assert transcript_message["media_path"] is None
+    assert transcript_message["media_url"] is None
+    assert transcript_message["sequence_step"] == contadores_endpoints.AUDIO_TRANSCRIPT_SEQUENCE_STEP
     assert media.status_code == 200
     assert media.content == b"audio-bytes"
     assert media.headers["content-type"] == "audio/ogg"
