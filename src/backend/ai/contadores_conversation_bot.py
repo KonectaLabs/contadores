@@ -72,6 +72,23 @@ ITALIAN_NUMBER_REPLY = (
     "Yo escribo desde Argentina y trabajamos remoto para toda Latinoamerica."
 )
 
+CONSULTATION_DEFINITION_REPLY_BY_FUNNEL = {
+    "contadores": (
+        "Si, exacto.\n\n"
+        "No lo contamos como cliente cerrado, porque el cierre depende de como se atiende despues.\n\n"
+        "Para nosotros una consulta valida es una oportunidad real: alguien que necesita un servicio contable, "
+        "tributario o de empresa, y le escribe directo a su WhatsApp.\n\n"
+        "La idea es no traer likes ni visitas vacias, sino conversaciones comerciales que tengan sentido para su estudio."
+    ),
+    "abogados": (
+        "Si, exacto.\n\n"
+        "No lo contamos como cliente cerrado, porque el cierre depende de como se atiende despues.\n\n"
+        "Para nosotros una consulta valida es una oportunidad real: alguien que tiene un tema legal relacionado "
+        "con las areas que usted quiere trabajar, y le escribe directo a su WhatsApp.\n\n"
+        "La idea es no traer likes ni visitas vacias, sino conversaciones comerciales que tengan sentido para su estudio."
+    ),
+}
+
 WRONG_LOCAL_ORIGIN_PATTERN = re.compile(
     r"\b(somos|soy|estamos|la empresa es|somos una empresa)\s+"
     r"(de|en|ecuatorianos|bolivianos|paraguayos|mexicanos|colombianos|chilenos|"
@@ -145,7 +162,13 @@ def _normalize_action(value: Any) -> ConversationBotAction:
 
 def _normalize_message_text(value: Any) -> str:
     """Normalize bot copy to the house WhatsApp writing style."""
-    return str(value or "").strip().replace("¿", "").replace("¡", "")
+    text = str(value or "").strip().replace("¿", "").replace("¡", "")
+    return re.sub(
+        r"^(para estar claros|para ser claros|en resumen|respondiendo a (tu|su) pregunta)\s*[:,]\s*",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    ).strip()
 
 
 def _normalize_text_for_rules(value: str) -> str:
@@ -183,6 +206,44 @@ def _asks_about_company_origin(value: str) -> bool:
     return any(phrase in normalized for phrase in phrases)
 
 
+def _asks_about_consultation_definition(value: str) -> bool:
+    """Return True when the lead asks what counts as a consultation/prospect."""
+    normalized = _normalize_text_for_rules(value)
+    if not any(term in normalized for term in ("consulta", "consultas", "prospecto", "prospectos")):
+        return False
+    markers = (
+        "como las defines",
+        "como defines",
+        "que cuenta",
+        "que consideran",
+        "que es una consulta",
+        "que seria una consulta",
+        "consulta seria",
+        "seria entonces",
+        "aunque no haya cierre",
+        "aunque no cierre",
+        "aunque solo pregunte",
+        "si me escriben pero no compran",
+        "prospecto calificado",
+        "consulta valida",
+    )
+    return any(marker in normalized for marker in markers)
+
+
+def _consultation_definition_reply(funnel_id: str) -> str:
+    """Return the canonical persuasive definition for consultation objections."""
+    return CONSULTATION_DEFINITION_REPLY_BY_FUNNEL.get(
+        (funnel_id or "").strip().lower(),
+        (
+            "Si, exacto.\n\n"
+            "No lo contamos como cliente cerrado, porque el cierre depende de como se atiende despues.\n\n"
+            "Para nosotros una consulta valida es una oportunidad real: alguien que tiene una necesidad concreta "
+            "y pregunta por un servicio que usted ofrece.\n\n"
+            "La idea es no traer likes ni visitas vacias, sino conversaciones comerciales que tengan sentido."
+        ),
+    )
+
+
 def _claims_wrong_company_origin(value: str) -> bool:
     """Return True when generated copy claims Konecta is from the lead's country."""
     normalized = _normalize_text_for_rules(value)
@@ -205,10 +266,26 @@ def _apply_company_source_truth_guard(
     result: ContadoresConversationBotResult,
     *,
     latest_inbound: str,
+    funnel_id: str,
 ) -> ContadoresConversationBotResult:
-    """Prevent the model from inventing Konecta's origin or copying the lead country."""
+    """Prevent the model from inventing facts or using robotic high-risk copy."""
     if result.action in {"close_lead", "no_action", "handoff_scheduling"}:
         return result
+
+    if _asks_about_consultation_definition(latest_inbound):
+        return result.model_copy(
+            update={
+                "action": "send_reply",
+                "message_text": _consultation_definition_reply(funnel_id),
+                "classification_label": "answered_consultation_definition",
+                "reason": "Definio consulta/prospecto segun source of truth sin apurar agenda.",
+                "missing_fields": [],
+                "scheduling_email": "",
+                "scheduling_day": "",
+                "scheduling_time": "",
+                "timezone": "",
+            }
+        )
 
     if _asks_about_italian_number(latest_inbound):
         return result.model_copy(
@@ -354,7 +431,11 @@ class DspyConversationBotProgram(Program):
             conversation=conversation.strip(),
         )
         result = _normalize_result(prediction, runtime_provider="dspy")
-        return _apply_company_source_truth_guard(result, latest_inbound=latest_inbound)
+        return _apply_company_source_truth_guard(
+            result,
+            latest_inbound=latest_inbound,
+            funnel_id=funnel_id,
+        )
 
 
 class CodexConversationBotProgram:
@@ -412,7 +493,11 @@ class CodexConversationBotProgram:
         )
         payload = _extract_json_payload(result.final_response)
         normalized = _normalize_result(payload, runtime_provider="codex")
-        return _apply_company_source_truth_guard(normalized, latest_inbound=latest_inbound)
+        return _apply_company_source_truth_guard(
+            normalized,
+            latest_inbound=latest_inbound,
+            funnel_id=funnel_id,
+        )
 
 
 class ContadoresConversationBotProgram(Program):
@@ -456,7 +541,11 @@ class ContadoresConversationBotProgram(Program):
         }
         try:
             result = await self.codex_program.aforward(**kwargs)
-            return _apply_company_source_truth_guard(result, latest_inbound=latest_inbound)
+            return _apply_company_source_truth_guard(
+                result,
+                latest_inbound=latest_inbound,
+                funnel_id=funnel_id,
+            )
         except Exception as codex_error:
             codex_error_text = f"{codex_error.__class__.__name__}: {codex_error}"
 
@@ -464,7 +553,11 @@ class ContadoresConversationBotProgram(Program):
             fallback = await self.dspy_fallback.aforward(**kwargs)
             fallback.runtime_provider = "dspy_fallback"
             fallback.runtime_error = f"Codex failed: {codex_error_text}"
-            return _apply_company_source_truth_guard(fallback, latest_inbound=latest_inbound)
+            return _apply_company_source_truth_guard(
+                fallback,
+                latest_inbound=latest_inbound,
+                funnel_id=funnel_id,
+            )
         except Exception as fallback_error:
             return ContadoresConversationBotResult(
                 action="handoff_human",

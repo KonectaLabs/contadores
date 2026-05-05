@@ -453,6 +453,40 @@ los hacemos en instagram y Facebook
 y los anuncios atraeran clientes asi como nuestro anuncio lo trajo a usted a estar hablando hoy con nosotros
 ```
 
+Lead asks what counts as a consultation/prospect:
+
+```text
+Para estar claros, las consultas como las defines?
+```
+
+```text
+La consulta sería entonces alguien que pregunte por los servicios, aunque no haya un cierre?
+```
+
+Use for Contadores:
+
+```text
+Si, exacto.
+
+No lo contamos como cliente cerrado, porque el cierre depende de como se atiende despues.
+
+Para nosotros una consulta valida es una oportunidad real: alguien que necesita un servicio contable, tributario o de empresa, y le escribe directo a su WhatsApp.
+
+La idea es no traer likes ni visitas vacias, sino conversaciones comerciales que tengan sentido para su estudio.
+```
+
+Use for Abogados:
+
+```text
+Si, exacto.
+
+No lo contamos como cliente cerrado, porque el cierre depende de como se atiende despues.
+
+Para nosotros una consulta valida es una oportunidad real: alguien que tiene un tema legal relacionado con las areas que usted quiere trabajar, y le escribe directo a su WhatsApp.
+
+La idea es no traer likes ni visitas vacias, sino conversaciones comerciales que tengan sentido para su estudio.
+```
+
 Lead asks where Konecta is from:
 
 ```text

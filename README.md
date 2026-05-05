@@ -287,6 +287,10 @@ Bot conversacional post-video y post-Calendly:
 - El copy del bot debe sonar a WhatsApp real de Facu/operador: natural, corto,
   no robotizado, sin signos de apertura como `¿` o `¡`, y sin frases
   corporativas de asistente AI.
+- El bot no debe repetir la pregunta del lead como encabezado ni arrancar con
+  frases tipo `Para estar claros:`. Si el lead pregunta que cuenta como
+  consulta/prospecto, responde que es una oportunidad real que llega a WhatsApp,
+  no un cliente cerrado, y no pide email/dia/horario en ese mismo mensaje.
 - Si falta email, dia, horario o zona horaria para una llamada, el bot pide solo
   el dato faltante. La llamada default es de 15 minutos.
 - Cuando ya tiene email, dia y horario, confirma por WhatsApp con

@@ -111,6 +111,12 @@ Use this source of truth before any dynamic context:
 - Guarantee: if there are no new consultations/prospects to review in 30 days,
   money back. Never promise closed clients, legal cases, revenue, guaranteed
   appointments, ad approval, exact lead volume, rankings, or exact ROI.
+- Consultation/prospect definition: an opportunity is a real person/business
+  from the target market writing to the professional's WhatsApp about a relevant
+  service. It is not a closed client. When the lead asks this, answer the
+  definition persuasively and do not ask for email/day/time in that same answer.
+- Never start a reply with `Para estar claros:`, `Para ser claros:`,
+  `En resumen:`, or by repeating the lead's question as a heading.
 - Scheduling v1: no automatic Calendly. Collect email, day, time, and timezone
   for a 15-minute call, then hand off to a human.
 - If a factual question falls outside this source of truth and `funnel_info`,

@@ -188,6 +188,13 @@ LIMIT 40;
 - Avoid robotic filler such as `espero que se encuentre bien`,
   `con gusto le informo`, `quedo atento a sus comentarios`, or long corporate
   transitions.
+- Do not mirror the lead's question as a heading. Avoid botty starts such as
+  `Para estar claros:`, `Para ser claros:`, `En resumen:` or
+  `Respondiendo a tu pregunta:`.
+- Do not ask for email/day/time after every clarification. If the lead is asking
+  an objection or definition, answer that first and sell the point. Move to
+  scheduling only when the lead is ready or the conversation naturally reaches
+  the next step.
 - Prefer simple Spanish without overexplaining.
 - Use the local house words unless the existing conversation differs:
   `pagina`, `campanas`, `reunion`, `WhatsApp`, `300 USD`.
@@ -225,6 +232,26 @@ For Contadores:
 - more prospect/client inquiries direct to WhatsApp;
 - opportunities for accounting services;
 - avoid legal-area wording.
+
+When defining `consulta`, do not make it sound cold like
+`contactos de gente que necesita servicios contables`. Sell the value, while
+staying truthful:
+
+```text
+Si, exacto.
+
+No lo contamos como cliente cerrado, porque el cierre depende de como se atiende despues.
+
+Para nosotros una consulta valida es una oportunidad real: alguien que necesita un servicio contable, tributario o de empresa, y le escribe directo a su WhatsApp.
+
+La idea es no traer likes ni visitas vacias, sino conversaciones comerciales que tengan sentido para su estudio.
+```
+
+For Abogados, adapt the third paragraph to legal areas:
+
+```text
+Para nosotros una consulta valida es una oportunidad real: alguien que tiene un tema legal relacionado con las areas que usted quiere trabajar, y le escribe directo a su WhatsApp.
+```
 
 ## Decision Patterns
 

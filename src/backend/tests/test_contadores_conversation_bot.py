@@ -117,7 +117,7 @@ def test_dspy_conversation_bot_removes_inverted_opening_punctuation(monkeypatch)
             del kwargs
             return SimpleNamespace(
                 action="send_reply",
-                message_text="¿Que dia le queda mejor? ¡Perfecto!",
+                message_text="Para estar claros: ¿Que dia le queda mejor? ¡Perfecto!",
                 classification_label="answered",
                 reason="Respondio con estilo de WhatsApp.",
                 missing_fields=[],
@@ -146,6 +146,8 @@ def test_prompt_includes_konecta_source_of_truth() -> None:
     assert "Abogados ICP" in prompt
     assert "DELIVERY OPERATION" in prompt
     assert "GUARANTEE AND CLAIM LIMITS" in prompt
+    assert "CONSULTATIONS / PROSPECTS DEFINITION" in prompt
+    assert "Do not immediately ask for email/day/time" in prompt
     assert "Do not say we are from the lead's country" in prompt
 
 
@@ -233,6 +235,50 @@ def test_codex_conversation_bot_answers_italian_number_from_source_truth(monkeyp
     assert result.classification_label == "answered_italian_number"
     assert "Alan" in result.message_text
     assert "Yo escribo desde Argentina" in result.message_text
+
+
+def test_codex_conversation_bot_answers_consultation_definition_without_forcing_schedule(
+    monkeypatch,
+) -> None:
+    def fake_run_codex_with_context(prompt, **kwargs):
+        del prompt, kwargs
+        return SimpleNamespace(
+            final_response=(
+                '{"action":"send_reply",'
+                '"message_text":"Para estar claros: las consultas son contactos de gente que necesita servicios contables. Que dia y horario te queda y cual es tu email?",'
+                '"classification_label":"answered_consultation","reason":"Respondio definicion.",'
+                '"missing_fields":["email","day","time"],"scheduling_email":"",'
+                '"scheduling_day":"","scheduling_time":"","timezone":""}'
+            )
+        )
+
+    monkeypatch.setattr(conversation_bot_module, "run_codex_with_context", fake_run_codex_with_context)
+
+    result = asyncio.run(
+        CodexConversationBotProgram().aforward(
+            **bot_kwargs(
+                funnel_id="contadores",
+                funnel_label="Contadores",
+                funnel_info="Publico: contadores. Objetivo: mas prospectos para servicios contables.",
+                latest_inbound="La consulta sería entonces alguien que pregunte por los servicios, aunque no haya un cierre?",
+                conversation=(
+                    "LEAD: Para estar claros, las consultas como las defines?\n"
+                    "KONECTA: Para estar claros: las consultas son contactos de gente que necesita servicios contables\n"
+                    "LEAD: La consulta sería entonces alguien que pregunte por los servicios, aunque no haya un cierre?"
+                ),
+            )
+        )
+    )
+
+    assert result.action == "send_reply"
+    assert result.classification_label == "answered_consultation_definition"
+    assert "No lo contamos como cliente cerrado" in result.message_text
+    assert "oportunidad real" in result.message_text
+    assert "likes ni visitas vacias" in result.message_text
+    assert "Para estar claros" not in result.message_text
+    assert "Que dia" not in result.message_text
+    assert "email" not in result.message_text.lower()
+    assert result.missing_fields == []
 
 
 def test_orchestrator_uses_dspy_fallback_when_codex_fails() -> None:
