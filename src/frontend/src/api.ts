@@ -13,6 +13,10 @@ const RETRY_DELAYS_MS = [350, 900];
 const MAX_RETRY_AFTER_MS = 5_000;
 const REQUEST_TIMEOUT_MS = 30_000;
 
+type ApiFetchOptions = RequestInit & {
+  timeoutMs?: number;
+};
+
 type TimedRequest = {
   options: RequestInit;
   cleanup: () => void;
@@ -48,20 +52,21 @@ function retryDelayMs(response: Response, attempt: number): number {
   return RETRY_DELAYS_MS[attempt];
 }
 
-function buildRequestOptions(options: RequestInit): RequestInit {
+function buildRequestOptions(options: ApiFetchOptions): RequestInit {
+  const { timeoutMs: _timeoutMs, ...requestOptions } = options;
   const headers = new Headers(options.headers);
   if (options.body && !(options.body instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
 
   return {
-    ...options,
+    ...requestOptions,
     headers,
     credentials: "same-origin",
   };
 }
 
-function buildTimedRequestOptions(options: RequestInit): TimedRequest {
+function buildTimedRequestOptions(options: ApiFetchOptions): TimedRequest {
   const controller = new AbortController();
   const baseOptions = buildRequestOptions(options);
   let timedOut = false;
@@ -78,7 +83,7 @@ function buildTimedRequestOptions(options: RequestInit): TimedRequest {
   const timeoutId = window.setTimeout(() => {
     timedOut = true;
     controller.abort();
-  }, REQUEST_TIMEOUT_MS);
+  }, options.timeoutMs ?? REQUEST_TIMEOUT_MS);
 
   return {
     options: {
@@ -93,7 +98,7 @@ function buildTimedRequestOptions(options: RequestInit): TimedRequest {
   };
 }
 
-async function fetchWithRetry(path: string, options: RequestInit): Promise<Response> {
+async function fetchWithRetry(path: string, options: ApiFetchOptions): Promise<Response> {
   let lastNetworkError: unknown = null;
 
   for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt += 1) {
@@ -142,7 +147,7 @@ async function readJsonResponse<T>(response: Response): Promise<T> {
   }
 }
 
-export async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
+export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): Promise<T> {
   const response = await fetchWithRetry(path, options);
 
   if (response.status === 401) {

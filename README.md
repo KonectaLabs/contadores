@@ -579,14 +579,18 @@ el proceso Codex conserva `OPENAI_API_KEY`.
 
 La automatizacion Workstation solo pagina usa `run_codex_with_context` con
 `gpt-5.5`, `medium`, la skill `.codex/skills/workstation-solo-page/SKILL.md` y
-un write scope limitado al folder del cliente. Antes de generar bocetos,
-revisiones o aprobaciones, espera 20 minutos de silencio desde el ultimo inbound
-para que el cliente pueda mandar fotos, audios y datos en tandas. Si Codex falla
-o no genera los archivos esperados, se marca `automation_status=failed` y se crea
-una alerta por email con el error y el comando/link de reauth. Ese fallo tambien
+acceso al repo desde el worker Codex. Primero intenta ChatGPT Codex con
+`CONVERSATION_BOT_CODEX_CHATGPT_HOME`; si ese runtime falla, reintenta Codex con
+`OPENAI_API_KEY` y `CONVERSATION_BOT_CODEX_API_KEY_HOME`. Antes de generar
+bocetos, revisiones o aprobaciones, espera 20 minutos de silencio desde el
+ultimo inbound para que el cliente pueda mandar fotos, audios y datos en tandas.
+Si ambos runtimes de Codex fallan o no generan los archivos esperados, se marca
+`automation_status=failed` y se crea una alerta por email con el error real de
+ChatGPT Codex, el fallback API-key y el comando/link de reauth. Ese fallo tambien
 debe quedar visible en el detalle del cliente de Workstation: el endpoint
 devuelve `runtime_alerts` y la UI muestra la alerta con el estado de email
-pendiente, enviado o resuelto. No debe existir un `failed` silencioso.
+pendiente, enviado o resuelto. No debe existir un `failed` silencioso ni un
+timeout generico que tape el error real.
 Los errores posteriores a un preview ya generado y enviado, como problemas al
 evaluar pings o estados secundarios, no deben marcar el cliente como failed ni
 mandar email: se registran en `progress.md` y el cliente sigue esperando review.

@@ -53,6 +53,13 @@ ChatGPT Codex failures create runtime email alerts with the device-login link
 and reauth command, but should not pause leads when the API-key Codex fallback
 or Grok/DSPy answered safely.
 
+Workstation solo-page generation follows the same first two Codex auth paths:
+ChatGPT Codex with `CONVERSATION_BOT_CODEX_CHATGPT_HOME`, then Codex with
+`OPENAI_API_KEY` and `CONVERSATION_BOT_CODEX_API_KEY_HOME`. If both fail, the
+Workstation client moves to `failed` with an operator-visible alert containing
+both underlying errors; the UI should not hide those errors behind a generic
+request timeout.
+
 Outbound WhatsApp send failures are persisted on `contadores_messages`. The bot
 reports send exceptions to the backend, the backend requeues until
 `CONTADORES_DELIVERY_MAX_ATTEMPTS`, and after the retry budget is exhausted the

@@ -4680,6 +4680,100 @@ def test_workstation_solo_page_codex_runs_from_repo_root(monkeypatch, tmp_path) 
     assert "Preview media registered in Workstation." in progress
 
 
+def test_workstation_solo_page_codex_falls_back_to_api_key(monkeypatch, tmp_path) -> None:
+    """Solo-page generation should retry with OPENAI_API_KEY when ChatGPT Codex fails."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    data_dir = tmp_path / "data"
+    monkeypatch.setattr(database_module, "DATA_DIR", data_dir)
+    monkeypatch.setattr(workstation_endpoints, "OPENAI_API_KEY", "sk-test")
+    monkeypatch.setattr(workstation_endpoints, "CONVERSATION_BOT_CODEX_CHATGPT_HOME", "/chatgpt-home")
+    monkeypatch.setattr(workstation_endpoints, "CONVERSATION_BOT_CODEX_API_KEY_HOME", "/api-key-home")
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-workstation-codex-fallback",
+        phone="+5491777777718",
+        full_name="Cliente Fallback",
+    )
+    workstation = WorkstationClient.create_for_lead(
+        lead,
+        work_type=WorkstationClientWorkType.SOLO_PAGINA,
+        status=WorkstationClientStatus.PENDING_PAYMENT,
+        automation_status=WorkstationAutomationStatus.INTAKE,
+    )
+    calls: list[dict[str, object]] = []
+
+    def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
+        calls.append({"prompt": prompt, **kwargs})
+        if kwargs["prefer_chatgpt_login"]:
+            raise RuntimeError("chatgpt codex tokens unavailable")
+        output_marker = "Required output folder:\n"
+        output_dir = Path(prompt.split(output_marker, 1)[1].splitlines()[0].strip())
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "index.html").write_text("<html><body>Draft</body></html>", encoding="utf-8")
+        (output_dir / "styles.css").write_text("body{font-family:sans-serif}", encoding="utf-8")
+        (output_dir / "script.js").write_text("", encoding="utf-8")
+        return SimpleNamespace(final_response="created with api key", items=[])
+
+    def fake_render_landing_page_video_sync(*, index_path: Path, output_path: Path) -> None:
+        assert index_path.name == "index.html"
+        output_path.write_bytes(b"mp4")
+
+    monkeypatch.setattr(workstation_endpoints, "run_codex_with_context", fake_run_codex_with_context)
+    monkeypatch.setattr(workstation_endpoints, "render_landing_page_video_sync", fake_render_landing_page_video_sync)
+
+    version_dir = workstation_endpoints.generate_solo_page_version_sync(
+        client=workstation,
+        lead=lead,
+        replies=[],
+        revision=False,
+    )
+
+    assert (version_dir / "metadata.json").exists()
+    assert [call["prefer_chatgpt_login"] for call in calls] == [True, False]
+    assert [call["codex_home"] for call in calls] == ["/chatgpt-home", "/api-key-home"]
+
+
+def test_workstation_solo_page_codex_reports_both_auth_errors(monkeypatch, tmp_path) -> None:
+    """Operator alerts should show the real Codex auth failures, not a generic timeout."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setattr(database_module, "DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr(workstation_endpoints, "OPENAI_API_KEY", "sk-test")
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-workstation-codex-auth-errors",
+        phone="+5491777777719",
+        full_name="Cliente Auth Error",
+    )
+    workstation = WorkstationClient.create_for_lead(
+        lead,
+        work_type=WorkstationClientWorkType.SOLO_PAGINA,
+        status=WorkstationClientStatus.PENDING_PAYMENT,
+        automation_status=WorkstationAutomationStatus.INTAKE,
+    )
+
+    def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
+        del prompt
+        if kwargs["prefer_chatgpt_login"]:
+            raise RuntimeError("ChatGPT tokens exhausted")
+        raise RuntimeError("OPENAI_API_KEY quota exceeded")
+
+    monkeypatch.setattr(workstation_endpoints, "run_codex_with_context", fake_run_codex_with_context)
+
+    try:
+        workstation_endpoints.generate_solo_page_version_sync(
+            client=workstation,
+            lead=lead,
+            replies=[],
+            revision=False,
+        )
+    except RuntimeError as error:
+        message = str(error)
+    else:
+        raise AssertionError("Expected Codex auth failures to be reported.")
+
+    assert "Codex ChatGPT failed: RuntimeError: ChatGPT tokens exhausted" in message
+    assert "Codex API key failed: RuntimeError: OPENAI_API_KEY quota exceeded" in message
+    assert "https://auth.openai.com/codex/device" in message
+
+
 def test_manual_workstation_solo_page_work_uses_operator_prompt(monkeypatch, tmp_path) -> None:
     """Operator-triggered page work should pass the typed prompt into Codex."""
     configure_contadores_db(monkeypatch, tmp_path)

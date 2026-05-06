@@ -24,6 +24,12 @@ from pydantic import BaseModel, Field
 import backend.database as database_module
 from backend.codex_utils import CodexSkill, run_codex_with_context
 from backend.config import (
+    CONVERSATION_BOT_CODEX_API_KEY_HOME,
+    CONVERSATION_BOT_CODEX_CHATGPT_HOME,
+    CONVERSATION_BOT_CODEX_EFFORT,
+    CONVERSATION_BOT_CODEX_MODEL,
+    CONVERSATION_BOT_CODEX_SERVICE_TIER,
+    OPENAI_API_KEY,
     WORKSTATION_HANDOFF_TEMPLATE_NAME,
     WORKSTATION_HUMAN_HANDOFF_TEXT,
     WORKSTATION_PING_1_TEXT,
@@ -75,6 +81,12 @@ WORKSTATION_BACKOFF_SECONDS = 20 * 60
 WORKSTATION_PING_1_DELAY_SECONDS = 24 * 60 * 60
 WORKSTATION_PING_2_DELAY_SECONDS = 48 * 60 * 60
 WORKSTATION_HANDOFF_DELAY_SECONDS = 72 * 60 * 60
+CODEX_CHATGPT_REAUTH_URL = "https://auth.openai.com/codex/device"
+CODEX_CHATGPT_REAUTH_HELP = (
+    "Para reautenticar ChatGPT Codex, generar un codigo nuevo con "
+    "`env -u OPENAI_API_KEY codex login --device-auth` y abrir "
+    f"{CODEX_CHATGPT_REAUTH_URL}."
+)
 SOLO_PAGE_CONTEXT_MIN_CHARS = 35
 WORKSTATION_PROGRESS_MAX_CHARS = 12000
 WORKSTATION_WORKING_STALE_SECONDS = 2 * 60 * 60
@@ -1345,6 +1357,53 @@ Revision mode: {"yes" if revision else "no"}
 """.strip()
 
 
+def run_solo_page_codex_with_fallback(
+    *,
+    prompt: str,
+    on_turn_started,
+):
+    """Run solo-page Codex with ChatGPT auth first, then API-key auth."""
+    skill = CodexSkill(
+        name="workstation-solo-page",
+        path=str((REPO_ROOT / SOLO_PAGE_SKILL).resolve()),
+    )
+    common_kwargs = {
+        "skills": [skill],
+        "model": CONVERSATION_BOT_CODEX_MODEL,
+        "effort": CONVERSATION_BOT_CODEX_EFFORT,
+        "service_tier": CONVERSATION_BOT_CODEX_SERVICE_TIER,
+        "cwd": REPO_ROOT,
+        "on_turn_started": on_turn_started,
+    }
+    try:
+        return run_codex_with_context(
+            prompt,
+            codex_home=CONVERSATION_BOT_CODEX_CHATGPT_HOME,
+            prefer_chatgpt_login=True,
+            **common_kwargs,
+        )
+    except Exception as chatgpt_error:
+        chatgpt_error_text = f"{chatgpt_error.__class__.__name__}: {chatgpt_error}"
+
+    api_key_error_text = "OPENAI_API_KEY is not configured"
+    if OPENAI_API_KEY.strip():
+        try:
+            return run_codex_with_context(
+                prompt,
+                codex_home=CONVERSATION_BOT_CODEX_API_KEY_HOME,
+                prefer_chatgpt_login=False,
+                **common_kwargs,
+            )
+        except Exception as api_key_error:
+            api_key_error_text = f"{api_key_error.__class__.__name__}: {api_key_error}"
+
+    raise RuntimeError(
+        "Codex ChatGPT failed: "
+        f"{chatgpt_error_text}. {CODEX_CHATGPT_REAUTH_HELP}; "
+        f"Codex API key failed: {api_key_error_text}"
+    )
+
+
 def generate_solo_page_version_sync(
     *,
     client: WorkstationClient,
@@ -1378,15 +1437,8 @@ def generate_solo_page_version_sync(
     try:
         append_workstation_progress(client, "Prompt prepared. Codex is writing the static page files.")
         try:
-            result = run_codex_with_context(
-                prompt,
-                skills=[
-                    CodexSkill(
-                        name="workstation-solo-page",
-                        path=str((REPO_ROOT / SOLO_PAGE_SKILL).resolve()),
-                    )
-                ],
-                cwd=REPO_ROOT,
+            result = run_solo_page_codex_with_fallback(
+                prompt=prompt,
                 on_turn_started=register_turn,
             )
         except Exception as error:

@@ -857,10 +857,13 @@ export function App() {
         {
           method: "POST",
           body: JSON.stringify({ prompt }),
+          timeoutMs: 120_000,
         },
       );
       setWorkstationDetail(payload);
-      await loadWorkstation();
+      loadWorkstation().catch((reason) => {
+        setError(reason instanceof Error ? reason.message : "Could not refresh Workstation status.");
+      });
       return true;
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not start Codex for this page.");
