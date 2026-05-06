@@ -2003,6 +2003,45 @@ def try_mirror_workstation_inbound_image(
         logger.exception("Could not mirror inbound image %s into Workstation.", message.id)
 
 
+def reopen_failed_solo_page_workstation_after_inbound(
+    *,
+    lead: ContadoresLead,
+    message: ContadoresMessage,
+) -> None:
+    """Let a stuck solo-page preview continue when the lead replies after the failure."""
+    client = WorkstationClient.get_by_lead_id(lead.id)
+    if client is None:
+        return
+    if client.work_type != WorkstationClientWorkType.SOLO_PAGINA:
+        return
+    if client.automation_status != WorkstationAutomationStatus.FAILED:
+        return
+
+    preview_sent_at = ensure_utc_datetime(client.last_preview_sent_at)
+    message_created_at = ensure_utc_datetime(message.created_at)
+    if preview_sent_at is None or message_created_at is None:
+        return
+    if message_created_at <= preview_sent_at:
+        return
+
+    WorkstationClient.update_automation_state(
+        client.id,
+        automation_status=WorkstationAutomationStatus.AWAITING_REVIEW,
+    )
+
+
+def try_reopen_failed_solo_page_workstation_after_inbound(
+    *,
+    lead: ContadoresLead,
+    message: ContadoresMessage,
+) -> None:
+    """Best-effort recovery for solo-page automations; never blocks WhatsApp intake."""
+    try:
+        reopen_failed_solo_page_workstation_after_inbound(lead=lead, message=message)
+    except Exception:
+        logger.exception("Could not reopen failed Workstation automation for inbound %s.", message.id)
+
+
 def classify_message_media_type(content_type: str | None, filename: str) -> str:
     """Map an uploaded file to the WhatsApp media family used by the bot."""
     media_type = (content_type or mimetypes.guess_type(filename)[0] or "").lower()
@@ -3787,6 +3826,7 @@ def record_whatsapp_inbound_for_lead(
         media_id=command.media_id,
     )
     try_mirror_workstation_inbound_image(lead=lead, message=row)
+    try_reopen_failed_solo_page_workstation_after_inbound(lead=lead, message=row)
 
     transcript = resolve_inbound_audio_transcript(command)
     if transcript is None:
@@ -3817,6 +3857,7 @@ def duplicate_inbound_response(command: ContadoresWhatsAppInboundCommand) -> Con
     lead = ContadoresLead.get_by_id(existing_message.lead_id)
     if lead is not None:
         try_mirror_workstation_inbound_image(lead=lead, message=existing_message)
+        try_reopen_failed_solo_page_workstation_after_inbound(lead=lead, message=existing_message)
     return ContadoresWhatsAppInboundResponse(
         status="processed",
         route=lead.funnel_id if lead else None,

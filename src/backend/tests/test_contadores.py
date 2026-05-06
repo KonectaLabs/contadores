@@ -4311,6 +4311,43 @@ def test_workstation_tick_approval_marks_needs_human(monkeypatch, tmp_path) -> N
     assert detail.json()["lead"]["automation_paused_reason"] == "workstation_solo_page_approved"
 
 
+def test_failed_solo_page_reopens_when_lead_replies_after_preview(monkeypatch, tmp_path) -> None:
+    """A failed solo-page preview should not stay stuck after the lead replies."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setattr(database_module, "DATA_DIR", tmp_path / "data")
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-workstation-failed-reopen",
+        phone="+5491777777799",
+        full_name="Cliente Reabre",
+    )
+    workstation = WorkstationClient.create_for_lead(
+        lead,
+        work_type=WorkstationClientWorkType.SOLO_PAGINA,
+        status=WorkstationClientStatus.PENDING_PAYMENT,
+        automation_status=WorkstationAutomationStatus.FAILED,
+    )
+    preview_at = now_utc() - timedelta(minutes=5)
+    WorkstationClient.update_automation_state(
+        workstation.id,
+        automation_status=WorkstationAutomationStatus.FAILED,
+        last_preview_sent_at=preview_at,
+        last_automation_handled_at=preview_at + timedelta(seconds=5),
+    )
+
+    contadores_endpoints.record_whatsapp_inbound_for_lead(
+        lead=lead,
+        command=contadores_endpoints.ContadoresWhatsAppInboundCommand(
+            phone=lead.phone,
+            text="Me gusta, asi esta bien",
+            external_id="wamid.reopen-solo-page",
+        ),
+    )
+
+    updated = WorkstationClient.get_by_lead_id(lead.id)
+    assert updated.automation_status == WorkstationAutomationStatus.AWAITING_REVIEW
+    assert updated.last_preview_sent_at is not None
+
+
 def test_workstation_clients_can_be_filtered_by_funnel(monkeypatch, tmp_path) -> None:
     """Workstation lists should stay separated by funnel."""
     configure_contadores_db(monkeypatch, tmp_path)

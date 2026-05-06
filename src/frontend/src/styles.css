@@ -4659,6 +4659,17 @@ body {
   width: max-content;
 }
 
+#contadoresView .workstation-chat-panel {
+  min-height: 360px;
+}
+
+#contadoresView .workstation-chat-thread {
+  min-height: 260px;
+  max-height: 620px;
+  overflow-y: auto;
+  padding: 4px 2px 2px 0;
+}
+
 #contadoresView .workstation-action-menu {
   position: relative;
 }

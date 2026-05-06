@@ -996,7 +996,8 @@ export function App() {
   }
 
   async function acknowledgeDeliveryError(message: MessageItem) {
-    if (!selectedLeadId || acknowledgingDeliveryErrorIds.includes(message.id)) {
+    const leadId = message.lead_id || selectedLeadId;
+    if (!leadId || acknowledgingDeliveryErrorIds.includes(message.id)) {
       return;
     }
     const deliveryStatus = String(message.delivery_status || "").toLowerCase();
@@ -1010,7 +1011,10 @@ export function App() {
         method: "POST",
       });
       await loadDashboard();
-      await loadDetail(selectedLeadId);
+      await loadDetail(leadId);
+      if (selectedWorkstationClientId) {
+        await loadWorkstationDetail(selectedWorkstationClientId);
+      }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not mark the delivery error as seen.");
     } finally {
@@ -1285,6 +1289,8 @@ export function App() {
           onCopyNotes={() => copyWorkstationNotes().catch((reason) => setError(reason instanceof Error ? reason.message : "Could not copy notes."))}
           onCopyAll={() => copyWorkstationAll().catch((reason) => setError(reason instanceof Error ? reason.message : "Could not copy client context."))}
           onOpenCrmLead={openCrmLeadFromWorkstation}
+          acknowledgingDeliveryErrorIds={acknowledgingDeliveryErrorIds}
+          onAcknowledgeDeliveryError={acknowledgeDeliveryError}
           onFileTitleChange={setWorkstationFileTitle}
           onFileChange={setWorkstationFile}
           onUploadMedia={uploadWorkstationMedia}
@@ -2051,6 +2057,8 @@ function WorkstationView({
   onCopyNotes,
   onCopyAll,
   onOpenCrmLead,
+  acknowledgingDeliveryErrorIds,
+  onAcknowledgeDeliveryError,
   onFileTitleChange,
   onFileChange,
   onUploadMedia,
@@ -2087,6 +2095,8 @@ function WorkstationView({
   onCopyNotes: () => void;
   onCopyAll: () => void;
   onOpenCrmLead: (lead: LeadSummary | null | undefined) => void;
+  acknowledgingDeliveryErrorIds: number[];
+  onAcknowledgeDeliveryError: (message: MessageItem) => void | Promise<void>;
   onFileTitleChange: (value: string) => void;
   onFileChange: (file: File | null) => void;
   onUploadMedia: (event: FormEvent<HTMLFormElement>) => void;
@@ -2104,6 +2114,7 @@ function WorkstationView({
   const selectedLead = detailClient?.lead ?? null;
   const activeClient = detailClient ?? clients.find((client) => client.id === selectedClientId) ?? null;
   const funnelLabel = funnel?.label ?? activeClient?.funnel_id ?? "selected funnel";
+  const workstationMessages = detailClient ? detail?.messages ?? [] : [];
   const imageAssets = (detail?.media ?? []).filter((asset) => asset.content_type?.startsWith("image/"));
   const professionalPhotos = detail?.professional_photos ?? [];
   const [mediaDropActive, setMediaDropActive] = useState(false);
@@ -2529,17 +2540,26 @@ function WorkstationView({
                 </div>
               </section>
 
-              <section className="workstation-panel">
+              <section className="workstation-panel workstation-chat-panel">
                 <div className="workstation-panel-head">
                   <div>
                     <span>Conversation</span>
-                    <strong>CRM chat</strong>
+                    <strong>WhatsApp chat</strong>
                   </div>
+                  <button type="button" className="ct-btn ct-btn-ghost workstation-crm-link" onClick={() => onOpenCrmLead(selectedLead)}>
+                    <ArrowSquareOut size={15} weight="bold" />
+                    Open CRM chat
+                  </button>
                 </div>
-                <button type="button" className="ct-btn ct-btn-ghost workstation-crm-link" onClick={() => onOpenCrmLead(selectedLead)}>
-                  <ArrowSquareOut size={15} weight="bold" />
-                  Open CRM chat
-                </button>
+                <div className="workstation-chat-thread">
+                  <MessageTimeline
+                    messages={workstationMessages}
+                    loading={loading}
+                    hasLead={Boolean(selectedLead)}
+                    acknowledgingIds={acknowledgingDeliveryErrorIds}
+                    onAcknowledgeDeliveryError={onAcknowledgeDeliveryError}
+                  />
+                </div>
               </section>
             </>
           )}
