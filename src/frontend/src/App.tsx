@@ -870,6 +870,26 @@ export function App() {
     }
   }
 
+  async function stopSoloPageCodexWork() {
+    const clientId = workstationDetail?.client.id ?? selectedWorkstationClientId;
+    if (!clientId) {
+      return;
+    }
+    setActionBusy("solo-page-stop");
+    try {
+      const payload = await apiFetch<WorkstationClientDetailResponse>(
+        `/api/workstation/clients/${clientId}/solo-page/stop`,
+        { method: "POST" },
+      );
+      setWorkstationDetail(payload);
+      await loadWorkstation();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not stop Codex for this page.");
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
   function updateProfessionalPhotoEditPrompt(version: string, prompt: string) {
     setProfessionalPhotoEditPrompts((current) => ({ ...current, [version]: prompt }));
   }
@@ -1378,6 +1398,7 @@ export function App() {
           onProfessionalPhotoContextChange={setProfessionalPhotoContext}
           onCreateProfessionalPhoto={createProfessionalPhoto}
           onStartSoloPageCodexWork={startSoloPageCodexWork}
+          onStopSoloPageCodexWork={stopSoloPageCodexWork}
           onProfessionalPhotoEditPromptChange={updateProfessionalPhotoEditPrompt}
           onEditProfessionalPhoto={(version) => editProfessionalPhoto(version)}
         />
@@ -2147,6 +2168,7 @@ function WorkstationView({
   onProfessionalPhotoContextChange,
   onCreateProfessionalPhoto,
   onStartSoloPageCodexWork,
+  onStopSoloPageCodexWork,
   onProfessionalPhotoEditPromptChange,
   onEditProfessionalPhoto,
 }: {
@@ -2182,6 +2204,7 @@ function WorkstationView({
   onProfessionalPhotoContextChange: (value: string) => void;
   onCreateProfessionalPhoto: (mediaAssetIds?: string[], context?: string) => boolean | Promise<boolean>;
   onStartSoloPageCodexWork: (operatorPrompt: string) => boolean | Promise<boolean>;
+  onStopSoloPageCodexWork: () => void | Promise<void>;
   onProfessionalPhotoEditPromptChange: (version: string, prompt: string) => void;
   onEditProfessionalPhoto: (version: string) => void;
 }) {
@@ -2210,6 +2233,7 @@ function WorkstationView({
   const currentProfessionalPhotoJob = professionalPhotoJob?.client_id === activeClient?.id ? professionalPhotoJob : null;
   const professionalPhotoJobBusy = currentProfessionalPhotoJob?.status === "queued" || currentProfessionalPhotoJob?.status === "running";
   const soloPageBusy = actionBusy === "solo-page-work" || Boolean(automationState?.is_working);
+  const canStopSoloPageWork = activeClient?.work_type === "solo_pagina" && Boolean(automationState?.is_working);
   const canStartSoloPageWork = activeClient?.work_type === "solo_pagina" && !soloPageBusy;
   const workstationStateIsReady = (automationState?.label ?? "").toLowerCase().includes("ready");
   const workstationStatePillLabel = automationState?.is_working
@@ -2446,6 +2470,18 @@ function WorkstationView({
                         >
                           <Robot size={16} weight="bold" />
                           <span>Poner Codex a trabajar</span>
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            setActionsOpen(false);
+                            onStopSoloPageCodexWork();
+                          }}
+                          disabled={!canStopSoloPageWork || actionBusy === "solo-page-stop"}
+                        >
+                          <X size={16} weight="bold" />
+                          <span>Stop Codex</span>
                         </button>
                         <button
                           type="button"

@@ -469,6 +469,10 @@ La foto profesional se dispara desde el boton `Actions` del cliente. La accion
 `Hacer foto profesional` abre un modal para seleccionar imagenes de `media/`,
 arranca un job async en el backend y la UI hace polling hasta mostrar el
 resultado o el error.
+Para clientes `solo_pagina`, `Actions` tambien permite arrancar Codex con un
+prompt manual del operador y detener un run activo con `Stop Codex`. El stop
+interrumpe el turn activo de Codex, marca el cliente como `needs_human` sin
+crear alerta de fallo y deja el evento visible en `progress.md`.
 
 ## WhatsApp delivery failures
 

@@ -63,6 +63,11 @@ was not caused by explicit approval, Workstation resumes preview review: it show
 the 20-minute backoff and then starts a Codex revision on the next tick. Handoffs
 caused by approval stay human-owned.
 
+Operators can stop a running solo-page Codex draft or revision from the
+Workstation `Actions` menu. Stop interrupts the active Codex turn for that
+client, moves the client to `needs_human`, and records the stop in `progress.md`
+without creating a failure alert.
+
 ## Operating Rules
 
 - Do not call GPT Image or other paid image APIs unless the user explicitly asks.

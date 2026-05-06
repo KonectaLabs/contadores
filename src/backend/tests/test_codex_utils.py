@@ -529,3 +529,95 @@ def test_run_codex_rejects_empty_prompt():
     """Empty prompts are almost always caller bugs."""
     with pytest.raises(ValueError, match="prompt"):
         codex_utils.run_codex("   ")
+
+
+def test_run_codex_exposes_turn_handle_when_requested(monkeypatch, tmp_path):
+    """Callers that need cancellation should be able to keep the active turn handle."""
+    seen_turns = []
+
+    class FakeAskForApprovalValue:
+        never = "never"
+
+    class FakeAskForApproval:
+        def __init__(self, *, root):
+            self.root = root
+
+    class FakeDangerFullAccessSandboxPolicy:
+        def __init__(self, *, type):
+            self.type = type
+
+    class FakeSandboxPolicy:
+        def __init__(self, *, root):
+            self.root = root
+
+    class FakeReasoningEffort:
+        def __init__(self, value):
+            self.value = value
+
+    class FakeStream:
+        def __iter__(self):
+            return iter(())
+
+        def close(self):
+            pass
+
+    class FakeTurn:
+        id = "turn-123"
+
+        def stream(self):
+            return FakeStream()
+
+        def interrupt(self):
+            pass
+
+    class FakeThread:
+        def turn(self, prompt, **kwargs):
+            return FakeTurn()
+
+    class FakeCodex:
+        def __init__(self, config):
+            self.config = config
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def thread_start(self, *, model):
+            return FakeThread()
+
+    class FakeAppServerConfig:
+        def __init__(self, *, codex_bin, cwd, env):
+            self.codex_bin = codex_bin
+            self.cwd = cwd
+            self.env = env
+
+    class FakeResult:
+        final_response = "done"
+        items = ["item"]
+
+    monkeypatch.setattr(
+        codex_utils,
+        "_load_codex_sdk",
+        lambda: {
+            "AppServerConfig": FakeAppServerConfig,
+            "AskForApproval": FakeAskForApproval,
+            "AskForApprovalValue": FakeAskForApprovalValue,
+            "Codex": FakeCodex,
+            "DangerFullAccessSandboxPolicy": FakeDangerFullAccessSandboxPolicy,
+            "ReasoningEffort": FakeReasoningEffort,
+            "SandboxPolicy": FakeSandboxPolicy,
+            "collect_run_result": lambda stream, *, turn_id: FakeResult(),
+        },
+    )
+
+    result = codex_utils.run_codex(
+        "do the thing",
+        cwd=tmp_path,
+        on_turn_started=seen_turns.append,
+    )
+
+    assert result.final_response == "done"
+    assert len(seen_turns) == 1
+    assert seen_turns[0].id == "turn-123"

@@ -85,6 +85,12 @@ WORKSTATION_INTAKE_TEXT = (
 )
 workstation_automation_tick_lock = asyncio.Lock()
 manual_solo_page_work_client_ids: set[str] = set()
+active_solo_page_codex_turns: dict[str, object] = {}
+solo_page_stop_requested_client_ids: set[str] = set()
+
+
+class WorkstationCodexStopped(RuntimeError):
+    """Raised when an operator stops an active Workstation Codex run."""
 
 
 def workstation_root() -> Path:
@@ -1340,6 +1346,8 @@ def generate_solo_page_version_sync(
     operator_prompt: str = "",
 ) -> Path:
     """Run Codex to create one landing-page version and render its preview video."""
+    if client.id in solo_page_stop_requested_client_ids:
+        raise WorkstationCodexStopped("Codex was stopped by the operator.")
     version_dir = next_landing_page_version_dir(client)
     operation = "revision" if revision else "draft"
     append_workstation_progress(client, f"Starting {operation} generation in {relative_data_path(version_dir)}.")
@@ -1351,18 +1359,36 @@ def generate_solo_page_version_sync(
         revision=revision,
         operator_prompt=operator_prompt,
     )
+
+    def register_turn(turn: object) -> None:
+        active_solo_page_codex_turns[client.id] = turn
+        if client.id in solo_page_stop_requested_client_ids:
+            interrupt = getattr(turn, "interrupt", None)
+            if callable(interrupt):
+                interrupt()
+
     try:
         append_workstation_progress(client, "Prompt prepared. Codex is writing the static page files.")
-        result = run_codex_with_context(
-            prompt,
-            skills=[
-                CodexSkill(
-                    name="workstation-solo-page",
-                    path=str((REPO_ROOT / SOLO_PAGE_SKILL).resolve()),
-                )
-            ],
-            cwd=REPO_ROOT,
-        )
+        try:
+            result = run_codex_with_context(
+                prompt,
+                skills=[
+                    CodexSkill(
+                        name="workstation-solo-page",
+                        path=str((REPO_ROOT / SOLO_PAGE_SKILL).resolve()),
+                    )
+                ],
+                cwd=REPO_ROOT,
+                on_turn_started=register_turn,
+            )
+        except Exception as error:
+            if client.id in solo_page_stop_requested_client_ids:
+                raise WorkstationCodexStopped("Codex was stopped by the operator.") from error
+            raise
+        finally:
+            active_solo_page_codex_turns.pop(client.id, None)
+        if client.id in solo_page_stop_requested_client_ids:
+            raise WorkstationCodexStopped("Codex was stopped by the operator.")
         append_workstation_progress(client, "Codex finished. Validating generated files.")
         index_path = version_dir / "index.html"
         if not index_path.exists():
@@ -1398,6 +1424,10 @@ def generate_solo_page_version_sync(
         )
         append_workstation_progress(client, "Preview media registered in Workstation.")
         return version_dir
+    except WorkstationCodexStopped as error:
+        append_workstation_progress(client, str(error))
+        shutil.rmtree(version_dir, ignore_errors=True)
+        raise
     except Exception as error:
         append_workstation_progress(client, f"Failed: {error.__class__.__name__}: {error}")
         shutil.rmtree(version_dir, ignore_errors=True)
@@ -1453,6 +1483,20 @@ def record_workstation_nonblocking_issue(
 ) -> None:
     """Log an internal Workstation issue that should not stop a delivered preview."""
     append_workstation_progress(client, f"Nonblocking automation issue: {error}")
+
+
+def mark_workstation_stopped_by_operator(client: WorkstationClient, *, clear_stop_request: bool = True) -> None:
+    """Stop automation cleanly without creating a failure alert."""
+    active_solo_page_codex_turns.pop(client.id, None)
+    if clear_stop_request:
+        solo_page_stop_requested_client_ids.discard(client.id)
+    manual_solo_page_work_client_ids.discard(client.id)
+    WorkstationClient.update_automation_state(
+        client.id,
+        automation_status=WorkstationAutomationStatus.NEEDS_HUMAN,
+        last_automation_handled_at=now_utc(),
+    )
+    append_workstation_progress(client, "Codex stopped by operator.")
 
 
 def workstation_handoff_can_resume(client: WorkstationClient) -> bool:
@@ -1555,6 +1599,9 @@ async def run_manual_solo_page_work(client_id: str, operator_prompt: str) -> Non
                     else WORKSTATION_PREVIEW_SEQUENCE_STEP
                 ),
             )
+        except WorkstationCodexStopped:
+            mark_workstation_stopped_by_operator(fresh_client)
+            return
         except Exception as error:
             mark_workstation_failed(
                 client=fresh_client,
@@ -1576,6 +1623,8 @@ async def run_manual_solo_page_work(client_id: str, operator_prompt: str) -> Non
         )
     finally:
         manual_solo_page_work_client_ids.discard(client_id)
+        solo_page_stop_requested_client_ids.discard(client_id)
+        active_solo_page_codex_turns.pop(client_id, None)
 
 
 def process_workstation_pings(
@@ -1747,6 +1796,9 @@ async def advance_solo_page_client(client: WorkstationClient, *, now: datetime) 
                 version_dir=version_dir,
                 sequence_step=WORKSTATION_PREVIEW_SEQUENCE_STEP,
             )
+        except WorkstationCodexStopped:
+            mark_workstation_stopped_by_operator(fresh_client)
+            return metrics
         except Exception as error:
             mark_workstation_failed(
                 client=fresh_client,
@@ -1836,6 +1888,9 @@ async def advance_solo_page_client(client: WorkstationClient, *, now: datetime) 
                 version_dir=version_dir,
                 sequence_step=WORKSTATION_REVISION_SEQUENCE_STEP,
             )
+        except WorkstationCodexStopped:
+            mark_workstation_stopped_by_operator(fresh_client)
+            return metrics
         except Exception as error:
             mark_workstation_failed(
                 client=fresh_client,
@@ -1892,6 +1947,9 @@ async def advance_solo_page_client(client: WorkstationClient, *, now: datetime) 
                 version_dir=version_dir,
                 sequence_step=WORKSTATION_REVISION_SEQUENCE_STEP,
             )
+        except WorkstationCodexStopped:
+            mark_workstation_stopped_by_operator(fresh_client)
+            return metrics
         except Exception as error:
             mark_workstation_failed(
                 client=fresh_client,
@@ -2315,6 +2373,31 @@ async def start_workstation_solo_page_work(
     except Exception:
         manual_solo_page_work_client_ids.discard(client.id)
         raise
+    return build_client_detail(WorkstationClient.get_by_id(client.id) or client)
+
+
+@workstation_router.post(
+    "/clients/{client_id}/solo-page/stop",
+    response_model=WorkstationClientDetailResponse,
+)
+async def stop_workstation_solo_page_work(client_id: str) -> WorkstationClientDetailResponse:
+    """Interrupt an active Workstation Codex solo-page run for one client."""
+    client = get_required_client(client_id)
+    if client.work_type != WorkstationClientWorkType.SOLO_PAGINA:
+        raise HTTPException(status_code=400, detail="This action is only available for solo-page clients.")
+    if client.automation_status not in {
+        WorkstationAutomationStatus.DRAFTING,
+        WorkstationAutomationStatus.REVISION_REQUESTED,
+    } and client.id not in active_solo_page_codex_turns:
+        raise HTTPException(status_code=409, detail="Codex is not working for this client.")
+
+    solo_page_stop_requested_client_ids.add(client.id)
+    turn = active_solo_page_codex_turns.get(client.id)
+    if turn is not None:
+        interrupt = getattr(turn, "interrupt", None)
+        if callable(interrupt):
+            interrupt()
+    mark_workstation_stopped_by_operator(client, clear_stop_request=False)
     return build_client_detail(WorkstationClient.get_by_id(client.id) or client)
 
 

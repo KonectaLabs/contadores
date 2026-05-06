@@ -6,7 +6,7 @@ import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -157,6 +157,7 @@ def run_codex(
     codex_home: str | Path | None = None,
     codex_bin: str = DEFAULT_CODEX_BIN,
     prefer_chatgpt_login: bool = DEFAULT_PREFER_CHATGPT_LOGIN,
+    on_turn_started: Callable[[Any], None] | None = None,
 ) -> CodexRunResult:
     """
     Run Codex through app-server with no approval prompts and full filesystem access.
@@ -183,6 +184,7 @@ def run_codex(
         codex_home=codex_home,
         codex_bin=codex_bin,
         prefer_chatgpt_login=prefer_chatgpt_login,
+        on_turn_started=on_turn_started,
     )
 
 
@@ -198,6 +200,7 @@ def run_codex_with_mentions(
     codex_home: str | Path | None = None,
     codex_bin: str = DEFAULT_CODEX_BIN,
     prefer_chatgpt_login: bool = DEFAULT_PREFER_CHATGPT_LOGIN,
+    on_turn_started: Callable[[Any], None] | None = None,
 ) -> CodexRunResult:
     """Run Codex with app mentions such as app://connector_... paths."""
     if not mentions:
@@ -211,6 +214,7 @@ def run_codex_with_mentions(
             codex_home=codex_home,
             codex_bin=codex_bin,
             prefer_chatgpt_login=prefer_chatgpt_login,
+            on_turn_started=on_turn_started,
         )
 
     sdk = _load_codex_sdk()
@@ -231,6 +235,7 @@ def run_codex_with_mentions(
         codex_home=codex_home,
         codex_bin=codex_bin,
         prefer_chatgpt_login=prefer_chatgpt_login,
+        on_turn_started=on_turn_started,
     )
 
 
@@ -248,6 +253,7 @@ def run_codex_with_context(
     codex_home: str | Path | None = None,
     codex_bin: str = DEFAULT_CODEX_BIN,
     prefer_chatgpt_login: bool = DEFAULT_PREFER_CHATGPT_LOGIN,
+    on_turn_started: Callable[[Any], None] | None = None,
 ) -> CodexRunResult:
     """Run Codex with structured skill, mention, and local image input items."""
     if not prompt.strip():
@@ -279,6 +285,7 @@ def run_codex_with_context(
         codex_home=codex_home,
         codex_bin=codex_bin,
         prefer_chatgpt_login=prefer_chatgpt_login,
+        on_turn_started=on_turn_started,
     )
 
 
@@ -372,6 +379,7 @@ def _run_codex_input(
     codex_home: str | Path | None,
     codex_bin: str,
     prefer_chatgpt_login: bool,
+    on_turn_started: Callable[[Any], None] | None,
 ) -> CodexRunResult:
     run_cwd = Path(cwd).expanduser().resolve() if cwd is not None else REPO_ROOT
     env = _build_child_env(
@@ -387,15 +395,24 @@ def _run_codex_input(
 
     with sdk["Codex"](config) as codex:
         thread = codex.thread_start(model=model)
-        result = thread.run(
-            input_value,
-            approval_policy=sdk["AskForApproval"](
+        run_kwargs = {
+            "approval_policy": sdk["AskForApproval"](
                 root=sdk["AskForApprovalValue"].never
             ),
-            effort=sdk["ReasoningEffort"](effort),
-            sandbox_policy=_build_sandbox_policy(sdk, sandbox_writable_roots=sandbox_writable_roots),
-            service_tier=sdk["ServiceTier"](service_tier) if service_tier else None,
-        )
+            "effort": sdk["ReasoningEffort"](effort),
+            "sandbox_policy": _build_sandbox_policy(sdk, sandbox_writable_roots=sandbox_writable_roots),
+            "service_tier": sdk["ServiceTier"](service_tier) if service_tier else None,
+        }
+        if on_turn_started is None:
+            result = thread.run(input_value, **run_kwargs)
+        else:
+            turn = thread.turn(input_value, **run_kwargs)
+            on_turn_started(turn)
+            stream = turn.stream()
+            try:
+                result = sdk["collect_run_result"](stream, turn_id=turn.id)
+            finally:
+                stream.close()
 
     return CodexRunResult(
         final_response=result.final_response or "",
@@ -477,6 +494,7 @@ def _load_codex_sdk() -> dict[str, Any]:
             SkillInput,
             TextInput,
         )
+        from codex_app_server.api import _collect_run_result
         from codex_app_server import ReasoningEffort, ServiceTier
         from codex_app_server.generated.v2_all import (
             AppsListResponse,
@@ -498,6 +516,7 @@ def _load_codex_sdk() -> dict[str, Any]:
         "AskForApproval": AskForApproval,
         "AskForApprovalValue": AskForApprovalValue,
         "Codex": Codex,
+        "collect_run_result": _collect_run_result,
         "DangerFullAccessSandboxPolicy": DangerFullAccessSandboxPolicy,
         "WorkspaceWriteSandboxPolicy": WorkspaceWriteSandboxPolicy,
         "LocalImageInput": LocalImageInput,
