@@ -19,7 +19,7 @@ from urllib.parse import parse_qs, unquote, urlsplit, urlunsplit
 import phonenumbers
 from pydantic import BaseModel, Field as PydanticField, field_serializer
 from phonenumbers import NumberParseException
-from sqlalchemy import Column, Enum as SQLAlchemyEnum, String, UniqueConstraint, event, inspect
+from sqlalchemy import Column, Enum as SQLAlchemyEnum, String, UniqueConstraint, and_, event, inspect, or_
 from sqlalchemy.orm import aliased
 from sqlmodel import Field, Session, SQLModel, create_engine, select
 
@@ -2348,7 +2348,6 @@ class WorkstationClient(SQLModel, table=True):
         """List Workstation clients whose automation can still advance."""
         terminal_statuses = {
             WorkstationAutomationStatus.APPROVED,
-            WorkstationAutomationStatus.NEEDS_HUMAN,
             WorkstationAutomationStatus.FAILED,
         }
         with Session(engine) as session:
@@ -2357,6 +2356,12 @@ class WorkstationClient(SQLModel, table=True):
                 .where(cls.work_type == normalize_workstation_work_type(work_type))
                 .where(cls.status != WorkstationClientStatus.ARCHIVED)
                 .where(cls.automation_status.not_in(terminal_statuses))
+                .where(
+                    or_(
+                        cls.automation_status != WorkstationAutomationStatus.NEEDS_HUMAN,
+                        and_(cls.approved_at.is_(None), cls.handoff_sent_at.is_not(None)),
+                    )
+                )
                 .order_by(cls.updated_at, cls.created_at, cls.id)
                 .limit(limit)
             )

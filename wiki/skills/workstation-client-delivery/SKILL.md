@@ -58,6 +58,11 @@ alert/email instead of leaving it silent. The Workstation tick endpoint has a
 process lock: while a long Codex generation tick is still running, retry ticks
 return `status=busy` and do not evaluate stale working clients.
 
+If a client replies after the no-response `workstation_handoff`, and the handoff
+was not caused by explicit approval, Workstation resumes preview review: it shows
+the 20-minute backoff and then starts a Codex revision on the next tick. Handoffs
+caused by approval stay human-owned.
+
 ## Operating Rules
 
 - Do not call GPT Image or other paid image APIs unless the user explicitly asks.

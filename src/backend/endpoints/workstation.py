@@ -1455,6 +1455,17 @@ def record_workstation_nonblocking_issue(
     append_workstation_progress(client, f"Nonblocking automation issue: {error}")
 
 
+def workstation_handoff_can_resume(client: WorkstationClient) -> bool:
+    """Return True when a human-handoff client can resume from a late reply."""
+    return (
+        client.work_type == WorkstationClientWorkType.SOLO_PAGINA
+        and client.automation_status == WorkstationAutomationStatus.NEEDS_HUMAN
+        and client.approved_at is None
+        and client.handoff_sent_at is not None
+        and client.last_preview_sent_at is not None
+    )
+
+
 def queue_workstation_preview(
     *,
     client: WorkstationClient,
@@ -1844,6 +1855,62 @@ async def advance_solo_page_client(client: WorkstationClient, *, now: datetime) 
         metrics["revision_videos_sent"] = 1
         return metrics
 
+    if workstation_handoff_can_resume(fresh_client):
+        replies = inbound_after(messages, fresh_client.last_preview_sent_at)
+        if not replies:
+            return metrics
+        if not latest_inbound_is_quiet(replies, now=now):
+            return metrics
+        reply_text = "\n".join(message.text for message in replies if message.text.strip())
+        if text_shows_workstation_approval(reply_text):
+            append_workstation_progress(fresh_client, "Client replied after handoff and approved the preview.")
+            WorkstationClient.update_automation_state(
+                fresh_client.id,
+                approved_at=now,
+                last_automation_handled_at=now,
+            )
+            metrics["approvals"] = 1
+            return metrics
+
+        append_workstation_progress(fresh_client, "Client replied after handoff. Starting revision.")
+        WorkstationClient.update_automation_state(
+            fresh_client.id,
+            automation_status=WorkstationAutomationStatus.REVISION_REQUESTED,
+            last_automation_handled_at=now,
+        )
+        try:
+            version_dir = await run_in_threadpool(
+                generate_solo_page_version_sync,
+                client=fresh_client,
+                lead=lead,
+                replies=replies,
+                revision=True,
+            )
+            row = queue_workstation_preview(
+                client=fresh_client,
+                lead=lead,
+                version_dir=version_dir,
+                sequence_step=WORKSTATION_REVISION_SEQUENCE_STEP,
+            )
+        except Exception as error:
+            mark_workstation_failed(
+                client=fresh_client,
+                lead=lead,
+                error=f"{error.__class__.__name__}: {error}",
+                latest_inbound_text=replies[-1].text if replies else "",
+            )
+            metrics["failures"] = 1
+            return metrics
+        WorkstationClient.update_automation_state(
+            fresh_client.id,
+            automation_status=WorkstationAutomationStatus.AWAITING_REVIEW,
+            last_automation_handled_at=now,
+            last_preview_sent_at=row.created_at,
+        )
+        append_workstation_progress(fresh_client, "Queued post-handoff revision preview video for WhatsApp.")
+        metrics["revision_videos_sent"] = 1
+        return metrics
+
     return metrics
 
 
@@ -1961,6 +2028,36 @@ def build_workstation_automation_state(
             detail=f"Codex is generating the {operation} and rendering the preview video.",
             is_working=True,
         )
+    if workstation_handoff_can_resume(client):
+        replies = inbound_after(messages, client.last_preview_sent_at)
+        if not replies:
+            return WorkstationAutomationStateResponse(
+                **base,
+                label="Human handoff",
+                detail="Automation handed this job to an operator after no preview response.",
+            )
+        if not latest_inbound_is_quiet(replies, now=now):
+            return build_waiting_backoff_state(
+                client=client,
+                status=status,
+                replies=replies,
+                detail="The client replied after human handoff. Workstation waits 20 minutes before processing it.",
+            )
+        reply_text = "\n".join(message.text for message in replies if message.text.strip())
+        if text_shows_workstation_approval(reply_text):
+            return WorkstationAutomationStateResponse(
+                **base,
+                label="Approval ready",
+                detail="The client replied after handoff and appears to approve the preview.",
+                latest_inbound_at=format_timestamp_seconds(latest_message_at(replies)),
+            )
+        return WorkstationAutomationStateResponse(
+            **base,
+            label="Revision ready",
+            detail="The client replied after handoff. The next tick will start a Codex revision.",
+            latest_inbound_at=format_timestamp_seconds(latest_message_at(replies)),
+        )
+
     if client.automation_status == WorkstationAutomationStatus.NEEDS_HUMAN:
         approved = "approved by the client" if client.approved_at else "waiting for an operator"
         return WorkstationAutomationStateResponse(

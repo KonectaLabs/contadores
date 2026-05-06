@@ -610,6 +610,10 @@ aprobados. Los nombres son configurables por `.env`:
 La cadencia es 24h, 48h y 72h desde el ultimo preview. Si faltan templates o
 falla WhatsApp/Codex, se alerta por email y no se manda texto custom fuera de la
 ventana de 24 horas.
+Si el cliente responde despues del `workstation_handoff`, y ese handoff no fue
+por aprobacion explicita, Workstation vuelve a tratarlo como review del preview:
+primero muestra backoff de 20 minutos y luego el tick arranca una revision de
+Codex automaticamente. Los handoffs por aprobacion quedan en humano.
 
 El backend tambien expone un endpoint publico, sin cookie ni token, para generar
 una imagen con Codex desde un prompt y referencias visuales opcionales:

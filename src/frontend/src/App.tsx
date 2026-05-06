@@ -2211,6 +2211,18 @@ function WorkstationView({
   const professionalPhotoJobBusy = currentProfessionalPhotoJob?.status === "queued" || currentProfessionalPhotoJob?.status === "running";
   const soloPageBusy = actionBusy === "solo-page-work" || Boolean(automationState?.is_working);
   const canStartSoloPageWork = activeClient?.work_type === "solo_pagina" && !soloPageBusy;
+  const workstationStateIsReady = (automationState?.label ?? "").toLowerCase().includes("ready");
+  const workstationStatePillLabel = automationState?.is_working
+    ? "Working"
+    : automationState?.is_stale
+      ? "Stale"
+      : automationState?.is_waiting_backoff
+        ? "Backoff"
+        : workstationFailed
+          ? "Failed"
+          : workstationStateIsReady
+            ? "Ready"
+            : "Idle";
   const activeOffer = formatWorkstationOffer(activeClient);
   const automationTone = workstationFailed
     ? "failed"
@@ -2539,7 +2551,7 @@ function WorkstationView({
                     ) : (
                       <CheckCircle size={14} weight="bold" />
                     )}
-                    {automationState?.is_working ? "Working" : automationState?.is_stale ? "Stale" : automationState?.is_waiting_backoff ? "Backoff" : workstationFailed ? "Failed" : "Idle"}
+                    {workstationStatePillLabel}
                   </span>
                 </div>
                 <p className="workstation-automation-detail">

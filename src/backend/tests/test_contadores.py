@@ -4290,6 +4290,102 @@ def test_workstation_detail_shows_backoff_state_and_progress(monkeypatch, tmp_pa
     assert "Operator-visible progress line." in state["progress_markdown"]
 
 
+def test_workstation_handoff_reply_shows_backoff_instead_of_idle(monkeypatch, tmp_path) -> None:
+    """A late reply after human handoff should be visible as backoff, not generic idle."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setattr(database_module, "DATA_DIR", tmp_path / "data")
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-workstation-handoff-backoff",
+        phone="+5491777777815",
+        full_name="Cliente Handoff Backoff",
+    )
+    workstation = WorkstationClient.create_for_lead(
+        lead,
+        work_type=WorkstationClientWorkType.SOLO_PAGINA,
+        status=WorkstationClientStatus.PENDING_PAYMENT,
+        automation_status=WorkstationAutomationStatus.NEEDS_HUMAN,
+    )
+    preview_at = now_utc() - timedelta(days=4)
+    handoff_at = now_utc() - timedelta(days=1)
+    WorkstationClient.update_automation_state(
+        workstation.id,
+        automation_status=WorkstationAutomationStatus.NEEDS_HUMAN,
+        last_preview_sent_at=preview_at,
+        handoff_sent_at=handoff_at,
+        last_automation_handled_at=handoff_at,
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=False,
+        text="Recien pude verlo, cambiemos el color.",
+        created_at=now_utc() - timedelta(minutes=4),
+    )
+
+    with TestClient(app) as client:
+        detail = client.get(f"/api/workstation/clients/{workstation.id}")
+
+    assert detail.status_code == 200
+    state = detail.json()["automation_state"]
+    assert state["status"] == "needs_human"
+    assert state["label"] == "Waiting backoff"
+    assert state["is_waiting_backoff"] is True
+    assert state["backoff_until"]
+
+
+def test_workstation_tick_revises_after_handoff_reply(monkeypatch, tmp_path) -> None:
+    """Late replies after no-response handoff should resume Codex revision automatically."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setattr(database_module, "DATA_DIR", tmp_path / "data")
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-workstation-handoff-revision",
+        phone="+5491777777816",
+        full_name="Cliente Handoff Revision",
+    )
+    workstation = WorkstationClient.create_for_lead(
+        lead,
+        work_type=WorkstationClientWorkType.SOLO_PAGINA,
+        status=WorkstationClientStatus.PENDING_PAYMENT,
+        automation_status=WorkstationAutomationStatus.NEEDS_HUMAN,
+    )
+    preview_at = now_utc() - timedelta(days=4)
+    handoff_at = now_utc() - timedelta(days=1)
+    WorkstationClient.update_automation_state(
+        workstation.id,
+        automation_status=WorkstationAutomationStatus.NEEDS_HUMAN,
+        last_preview_sent_at=preview_at,
+        handoff_sent_at=handoff_at,
+        last_automation_handled_at=handoff_at,
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=False,
+        text="Cambiale el color y agregale mi especialidad.",
+        created_at=now_utc() - timedelta(minutes=25),
+    )
+    generated_calls: list[dict[str, object]] = []
+
+    def fake_generate_solo_page_version_sync(**kwargs) -> Path:
+        generated_calls.append(kwargs)
+        version_dir = workstation_endpoints.next_landing_page_version_dir(kwargs["client"])
+        (version_dir / "index.html").write_text("<html><body>Revision</body></html>", encoding="utf-8")
+        (version_dir / "styles.css").write_text("body{font-family:sans-serif}", encoding="utf-8")
+        (version_dir / "script.js").write_text("", encoding="utf-8")
+        (version_dir / "preview.mp4").write_bytes(b"mp4")
+        return version_dir
+
+    monkeypatch.setattr(workstation_endpoints, "generate_solo_page_version_sync", fake_generate_solo_page_version_sync)
+
+    with TestClient(app) as client:
+        tick = client.post("/api/workstation/automation/tick")
+
+    assert tick.status_code == 200
+    assert tick.json()["revision_videos_sent"] == 1
+    assert len(generated_calls) == 1
+    assert generated_calls[0]["revision"] is True
+    updated = WorkstationClient.get_by_lead_id(lead.id)
+    assert updated.automation_status == WorkstationAutomationStatus.AWAITING_REVIEW
+
+
 def test_workstation_tick_fails_stale_working_state(monkeypatch, tmp_path) -> None:
     """A server restart during Codex should not leave Workstation silently working forever."""
     configure_contadores_db(monkeypatch, tmp_path)
