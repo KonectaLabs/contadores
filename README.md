@@ -570,7 +570,9 @@ El detalle de Workstation tambien devuelve `automation_state`, que explica si el
 cliente esta idle, esperando backoff, trabajando con Codex, listo para revision o
 fallado. La UI hace polling del cliente abierto cada pocos segundos sin pisar las
 notas que el operador este editando y muestra el contenido de `progress.md` como
-progreso casi en tiempo real.
+progreso casi en tiempo real. Si un draft o revision queda en estado working por
+mas de 30 minutos, el detalle lo marca como stale y el proximo tick lo convierte
+en fallo visible con alerta/email.
 
 El preview que recibe el cliente es solo MP4. El backend renderiza el HTML
 estatico con Playwright en desktop `1440x900`, graba un scroll y normaliza el

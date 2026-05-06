@@ -4725,6 +4725,11 @@ body {
   border-color: color-mix(in srgb, #b45309 36%, var(--ct-line));
 }
 
+#contadoresView .workstation-automation-panel.stale {
+  border-color: color-mix(in srgb, #b45309 42%, var(--ct-line));
+  background: #fffbeb;
+}
+
 #contadoresView .workstation-automation-panel.failed {
   border-color: rgba(190, 18, 60, 0.32);
   background: #fff1f2;
@@ -4751,6 +4756,11 @@ body {
 
 #contadoresView .workstation-automation-panel.waiting .workstation-state-pill {
   border-color: rgba(180, 83, 9, 0.28);
+  color: #92400e;
+}
+
+#contadoresView .workstation-automation-panel.stale .workstation-state-pill {
+  border-color: rgba(180, 83, 9, 0.34);
   color: #92400e;
 }
 

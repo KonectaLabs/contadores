@@ -4224,6 +4224,46 @@ def test_workstation_detail_shows_backoff_state_and_progress(monkeypatch, tmp_pa
     assert "Operator-visible progress line." in state["progress_markdown"]
 
 
+def test_workstation_tick_fails_stale_working_state(monkeypatch, tmp_path) -> None:
+    """A server restart during Codex should not leave Workstation silently working forever."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    ContadoresConfig.update(enabled=True, alert_emails=["facu@example.com"])
+    monkeypatch.setattr(database_module, "DATA_DIR", tmp_path / "data")
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-workstation-stale",
+        phone="+5491777777790",
+        full_name="Cliente Stale",
+    )
+    workstation = WorkstationClient.create_for_lead(
+        lead,
+        work_type=WorkstationClientWorkType.SOLO_PAGINA,
+        status=WorkstationClientStatus.PENDING_PAYMENT,
+        automation_status=WorkstationAutomationStatus.DRAFTING,
+    )
+    started_at = now_utc() - timedelta(minutes=31)
+    WorkstationClient.update_automation_state(
+        workstation.id,
+        automation_status=WorkstationAutomationStatus.DRAFTING,
+        last_automation_handled_at=started_at,
+    )
+
+    with TestClient(app) as client:
+        detail_before = client.get(f"/api/workstation/clients/{workstation.id}")
+        tick = client.post("/api/workstation/automation/tick")
+        detail_after = client.get(f"/api/workstation/clients/{workstation.id}")
+
+    assert detail_before.status_code == 200
+    assert detail_before.json()["automation_state"]["is_stale"] is True
+    assert tick.status_code == 200
+    assert tick.json()["failures"] == 1
+    after_payload = detail_after.json()
+    assert after_payload["client"]["automation_status"] == "failed"
+    assert after_payload["runtime_alerts"][0]["alert_type"] == "workstation_codex_failure"
+    assert "more than 30 minutes" in after_payload["runtime_alerts"][0]["error"]
+    progress = workstation_endpoints.workstation_progress_path(workstation).read_text(encoding="utf-8")
+    assert "Automation failed" in progress
+
+
 def test_manual_solo_page_conversion_uses_existing_chat_context(monkeypatch, tmp_path) -> None:
     """Manual solo-page starts should generate when the old chat already has page details."""
     configure_contadores_db(monkeypatch, tmp_path)

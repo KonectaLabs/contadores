@@ -2178,6 +2178,8 @@ function WorkstationView({
   const activeOffer = formatWorkstationOffer(activeClient);
   const automationTone = workstationFailed
     ? "failed"
+    : automationState?.is_stale
+      ? "stale"
     : automationState?.is_working
       ? "working"
       : automationState?.is_waiting_backoff
@@ -2463,6 +2465,8 @@ function WorkstationView({
                   <span className="workstation-state-pill">
                     {automationState?.is_working ? (
                       <SpinnerGap className="workstation-spinner" size={14} weight="bold" />
+                    ) : automationState?.is_stale ? (
+                      <WarningCircle size={14} weight="bold" />
                     ) : automationState?.is_waiting_backoff ? (
                       <ClockCountdown size={14} weight="bold" />
                     ) : workstationFailed ? (
@@ -2470,7 +2474,7 @@ function WorkstationView({
                     ) : (
                       <CheckCircle size={14} weight="bold" />
                     )}
-                    {automationState?.is_working ? "Working" : automationState?.is_waiting_backoff ? "Backoff" : workstationFailed ? "Failed" : "Idle"}
+                    {automationState?.is_working ? "Working" : automationState?.is_stale ? "Stale" : automationState?.is_waiting_backoff ? "Backoff" : workstationFailed ? "Failed" : "Idle"}
                   </span>
                 </div>
                 <p className="workstation-automation-detail">

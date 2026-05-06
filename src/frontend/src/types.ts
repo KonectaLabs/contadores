@@ -394,6 +394,7 @@ export interface WorkstationAutomationState {
   detail: string;
   is_working: boolean;
   is_waiting_backoff: boolean;
+  is_stale: boolean;
   backoff_until: string | null;
   latest_inbound_at: string | null;
   progress_path: string | null;

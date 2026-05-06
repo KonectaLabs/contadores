@@ -75,6 +75,7 @@ WORKSTATION_PING_2_DELAY_SECONDS = 48 * 60 * 60
 WORKSTATION_HANDOFF_DELAY_SECONDS = 72 * 60 * 60
 SOLO_PAGE_CONTEXT_MIN_CHARS = 35
 WORKSTATION_PROGRESS_MAX_CHARS = 12000
+WORKSTATION_WORKING_STALE_SECONDS = 30 * 60
 WORKSTATION_INTAKE_TEXT = (
     "Perfecto, entonces arrancamos con la pagina.\n\n"
     "Mandeme por aca lo basico que quiere que aparezca: nombre del estudio, ciudad/pais, "
@@ -406,6 +407,7 @@ class WorkstationAutomationStateResponse(BaseModel):
     detail: str
     is_working: bool = False
     is_waiting_backoff: bool = False
+    is_stale: bool = False
     backoff_until: str | None = None
     latest_inbound_at: str | None = None
     progress_path: str | None = None
@@ -1048,6 +1050,19 @@ def backoff_until_for(messages: list[ContadoresMessage]) -> datetime | None:
     return latest_at + timedelta(seconds=WORKSTATION_BACKOFF_SECONDS)
 
 
+def workstation_working_status_is_stale(client: WorkstationClient, *, now: datetime) -> bool:
+    """Return True when a working state is too old to trust."""
+    if client.automation_status not in {
+        WorkstationAutomationStatus.DRAFTING,
+        WorkstationAutomationStatus.REVISION_REQUESTED,
+    }:
+        return False
+    started_at = normalize_utc(client.last_automation_handled_at)
+    if started_at is None:
+        return True
+    return normalize_utc(now) >= started_at + timedelta(seconds=WORKSTATION_WORKING_STALE_SECONDS)
+
+
 def latest_inbound_is_quiet(messages: list[ContadoresMessage], *, now: datetime) -> bool:
     """Return True when the latest inbound has passed the Workstation backoff."""
     if not messages:
@@ -1539,6 +1554,24 @@ async def advance_solo_page_client(client: WorkstationClient, *, now: datetime) 
     mirror_workstation_message_media(client, messages)
     fresh_client = WorkstationClient.get_by_id(client.id) or client
 
+    if fresh_client.automation_status in {
+        WorkstationAutomationStatus.DRAFTING,
+        WorkstationAutomationStatus.REVISION_REQUESTED,
+    }:
+        if workstation_working_status_is_stale(fresh_client, now=now):
+            operation = (
+                "draft"
+                if fresh_client.automation_status == WorkstationAutomationStatus.DRAFTING
+                else "revision"
+            )
+            mark_workstation_failed(
+                client=fresh_client,
+                lead=lead,
+                error=f"Workstation {operation} stayed in progress for more than 30 minutes.",
+            )
+            metrics["failures"] = 1
+        return metrics
+
     if fresh_client.automation_status == WorkstationAutomationStatus.INTAKE:
         intake_was_sent = any(
             message.from_me and message.sequence_step == WORKSTATION_INTAKE_SEQUENCE_STEP
@@ -1797,8 +1830,19 @@ def build_workstation_automation_state(
             label="Failed",
             detail="Automation stopped. The failure alert and email status are shown on this client.",
         )
+    now = now_utc()
     if client.automation_status in {WorkstationAutomationStatus.DRAFTING, WorkstationAutomationStatus.REVISION_REQUESTED}:
         operation = "first draft" if client.automation_status == WorkstationAutomationStatus.DRAFTING else "revision"
+        if workstation_working_status_is_stale(client, now=now):
+            return WorkstationAutomationStateResponse(
+                **base,
+                label="Stale working state",
+                detail=(
+                    f"The {operation} has been marked as working for more than 30 minutes. "
+                    "The next Workstation tick will fail it and create an operator alert."
+                ),
+                is_stale=True,
+            )
         return WorkstationAutomationStateResponse(
             **base,
             label="Codex working",
@@ -1819,7 +1863,6 @@ def build_workstation_automation_state(
             detail="Automation is idle because the page was approved.",
         )
 
-    now = now_utc()
     if client.automation_status == WorkstationAutomationStatus.INTAKE:
         intake_was_sent = any(
             message.from_me and message.sequence_step == WORKSTATION_INTAKE_SEQUENCE_STEP
