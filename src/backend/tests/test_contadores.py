@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from io import BytesIO
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -4163,6 +4164,11 @@ def test_workstation_tick_generates_preview_without_blocking_on_missing_photo(mo
         (version_dir / "index.html").write_text("<html><body>Draft</body></html>", encoding="utf-8")
         (version_dir / "styles.css").write_text("body{font-family:sans-serif}", encoding="utf-8")
         (version_dir / "script.js").write_text("", encoding="utf-8")
+        (version_dir / "preview-message.txt").write_text(
+            "Molina, le dejo el primer recorrido de la pagina. "
+            "Digame que ajustamos o si avanzamos asi.",
+            encoding="utf-8",
+        )
         (version_dir / "preview.mp4").write_bytes(b"mp4")
         return version_dir
 
@@ -4179,6 +4185,9 @@ def test_workstation_tick_generates_preview_without_blocking_on_missing_photo(mo
     assert generated_calls[0]["revision"] is False
     messages = pending.json()["messages"]
     assert [item["sequence_step"] for item in messages] == ["workstation_preview_video"]
+    assert messages[0]["text"] == (
+        "Molina, le dejo el primer recorrido de la pagina. Digame que ajustamos o si avanzamos asi."
+    )
     assert messages[0]["media_type"] == "video"
     assert messages[0]["media_path"].endswith("landing-page/v001/preview.mp4")
     updated = WorkstationClient.get_by_lead_id(lead.id)
@@ -4646,6 +4655,10 @@ def test_workstation_solo_page_codex_runs_from_repo_root(monkeypatch, tmp_path) 
         (output_dir / "index.html").write_text("<html><body>Draft</body></html>", encoding="utf-8")
         (output_dir / "styles.css").write_text("body{font-family:sans-serif}", encoding="utf-8")
         (output_dir / "script.js").write_text("", encoding="utf-8")
+        (output_dir / "preview-message.txt").write_text(
+            "Cliente Cwd, le comparto el primer boceto para revisar ajustes.",
+            encoding="utf-8",
+        )
         calls.append({"prompt": prompt, **kwargs})
         return SimpleNamespace(final_response="created", items=[])
 
@@ -4664,6 +4677,8 @@ def test_workstation_solo_page_codex_runs_from_repo_root(monkeypatch, tmp_path) 
     )
 
     assert (version_dir / "preview.mp4").read_bytes() == b"mp4"
+    metadata = json.loads((version_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert metadata["preview_message"] == "Cliente Cwd, le comparto el primer boceto para revisar ajustes."
     media_assets = WorkstationMediaAsset.list_by_client(workstation.id)
     preview_assets = [asset for asset in media_assets if asset.content_type == "video/mp4"]
     assert len(preview_assets) == 1
@@ -4674,6 +4689,7 @@ def test_workstation_solo_page_codex_runs_from_repo_root(monkeypatch, tmp_path) 
     assert "sandbox_writable_roots" not in calls[0]
     assert "Progress file:" in str(calls[0]["prompt"])
     assert "progress.md" in str(calls[0]["prompt"])
+    assert "preview-message.txt" in str(calls[0]["prompt"])
     progress = workstation_endpoints.workstation_progress_path(workstation).read_text(encoding="utf-8")
     assert "Starting draft generation" in progress
     assert "Codex finished. Validating generated files." in progress
@@ -4804,6 +4820,10 @@ def test_manual_workstation_solo_page_work_uses_operator_prompt(monkeypatch, tmp
         (version_dir / "index.html").write_text("<html><body>Draft</body></html>", encoding="utf-8")
         (version_dir / "styles.css").write_text("body{font-family:sans-serif}", encoding="utf-8")
         (version_dir / "script.js").write_text("", encoding="utf-8")
+        (version_dir / "preview-message.txt").write_text(
+            "Marielis, le envio una version mas premium para que me diga si refleja el tono que queria.",
+            encoding="utf-8",
+        )
         (version_dir / "preview.mp4").write_bytes(b"mp4")
         return version_dir
 
@@ -4824,6 +4844,9 @@ def test_manual_workstation_solo_page_work_uses_operator_prompt(monkeypatch, tmp
     ]
     pending = ContadoresMessage.list_pending_delivery(limit=10)
     assert [message.sequence_step for message in pending] == ["workstation_preview_video"]
+    assert pending[0].text == (
+        "Marielis, le envio una version mas premium para que me diga si refleja el tono que queria."
+    )
     updated = WorkstationClient.get_by_id(workstation.id)
     assert updated.automation_status == WorkstationAutomationStatus.AWAITING_REVIEW
 

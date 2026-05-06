@@ -81,6 +81,10 @@ WORKSTATION_BACKOFF_SECONDS = 20 * 60
 WORKSTATION_PING_1_DELAY_SECONDS = 24 * 60 * 60
 WORKSTATION_PING_2_DELAY_SECONDS = 48 * 60 * 60
 WORKSTATION_HANDOFF_DELAY_SECONDS = 72 * 60 * 60
+WORKSTATION_DEFAULT_PREVIEW_MESSAGE = (
+    "Le mando un video con el boceto de su pagina. "
+    "Digame que le gustaria cambiar o si asi esta bien."
+)
 CODEX_CHATGPT_REAUTH_URL = "https://auth.openai.com/codex/device"
 CODEX_CHATGPT_REAUTH_HELP = (
     "Para reautenticar ChatGPT Codex, generar un codigo nuevo con "
@@ -1402,6 +1406,9 @@ Operator instruction for this run:
 
 Requirements:
 - Create only static files: index.html, styles.css, script.js, assets/.
+- Write preview-message.txt with the exact WhatsApp message to send alongside
+  the preview video. Choose copy that fits this client and this run. Ask for
+  changes or approval clearly, but do not hardcode a generic template.
 - Use easy-to-read HTML/CSS/JS. Avoid build tools.
 - Treat the operator instruction as the main direction for this run when it exists.
 - If this is a revision, apply the requested changes to the previous version.
@@ -1521,6 +1528,7 @@ def generate_solo_page_version_sync(
         preview_path = version_dir / "preview.mp4"
         render_landing_page_video_sync(index_path=index_path, output_path=preview_path)
         append_workstation_progress(client, "Preview video rendered.")
+        preview_message = read_workstation_preview_message(version_dir)
         metadata = {
             "created_at": datetime.now(timezone.utc).isoformat(),
             "operation": "revision" if revision else "draft",
@@ -1530,6 +1538,7 @@ def generate_solo_page_version_sync(
             "source_messages": [message.id for message in replies],
             "operator_prompt": operator_prompt.strip(),
             "preview_path": relative_data_path(preview_path),
+            "preview_message": preview_message,
         }
         (version_dir / "metadata.json").write_text(
             json.dumps(metadata, ensure_ascii=True, indent=2),
@@ -1630,6 +1639,37 @@ def workstation_handoff_can_resume(client: WorkstationClient) -> bool:
     )
 
 
+def clean_workstation_preview_message(text: object) -> str:
+    """Return a safe one-message caption for a Workstation preview video."""
+    clean_text = str(text or "").strip()
+    if not clean_text:
+        return ""
+    return " ".join(clean_text.split())[:900].strip()
+
+
+def read_workstation_preview_message(version_dir: Path) -> str:
+    """Read the Codex-chosen WhatsApp caption for one generated preview."""
+    message_path = version_dir / "preview-message.txt"
+    if message_path.exists():
+        text = clean_workstation_preview_message(message_path.read_text(encoding="utf-8"))
+        if text:
+            return text
+
+    metadata_path = version_dir / "metadata.json"
+    if metadata_path.exists():
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            metadata = {}
+        if isinstance(metadata, dict):
+            for key in ("preview_message", "whatsapp_preview_message", "outbound_text"):
+                text = clean_workstation_preview_message(metadata.get(key))
+                if text:
+                    return text
+
+    return WORKSTATION_DEFAULT_PREVIEW_MESSAGE
+
+
 def queue_workstation_preview(
     *,
     client: WorkstationClient,
@@ -1639,9 +1679,10 @@ def queue_workstation_preview(
 ) -> ContadoresMessage:
     """Queue one generated preview MP4 for WhatsApp delivery."""
     preview_path = version_dir / "preview.mp4"
+    preview_message = read_workstation_preview_message(version_dir)
     return enqueue_lead_outbound(
         lead=lead,
-        text="Le mando un video con el boceto de su pagina. Digame que le gustaria cambiar o si asi esta bien.",
+        text=preview_message,
         sequence_step=sequence_step,
         media_type="video",
         media_path=relative_data_path(preview_path),

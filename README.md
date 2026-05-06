@@ -554,7 +554,7 @@ Dentro de esa carpeta se refrescan estos archivos:
   profesional del cliente.
 - `landing-page/vNNN/`: bocetos estaticos generados por Codex para la promo
   solo pagina, con `index.html`, `styles.css`, `script.js`, `assets/`,
-  `preview.mp4` y `metadata.json`.
+  `preview-message.txt`, `preview.mp4` y `metadata.json`.
 - `progress.md`: log de progreso operativo que Codex y el backend van
   agregando durante drafts, revisiones, render y cola del preview.
 
@@ -568,6 +568,15 @@ professional-photo/v001/metadata.json
 
 Las modificaciones desde la UI crean `v002`, `v003`, etc. Nunca se sobrescriben
 las fotos fuente ni las versiones anteriores.
+
+La automatizacion de `landing-page` nunca debe usar fotos crudas de personas
+desde `media/` como retratos publicos. Si el cliente mando fotos de una o varias
+personas, primero se generan las fotos profesionales faltantes y la siguiente
+web incluye todas las fotos profesionales correspondientes.
+
+Cada version de `landing-page` tambien debe traer `preview-message.txt`: Codex
+elige ahi el texto exacto que acompana al MP4 por WhatsApp. El backend solo usa
+un texto generico como fallback cuando ese archivo falta o esta vacio.
 
 El backend usa el Codex SDK para Workstation, generacion de imagenes y el bot
 conversacional. En Docker, la imagen instala `@openai/codex` y usa
