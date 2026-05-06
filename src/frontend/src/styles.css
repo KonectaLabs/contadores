@@ -3455,10 +3455,9 @@ body {
 
 #contadoresView .ct-detail-head {
   flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
   padding: 14px 16px;
   border-bottom: 1px solid var(--ct-line-soft);
 }
@@ -3520,11 +3519,23 @@ body {
 }
 
 #contadoresView .ct-detail-head-actions {
-  flex: 0 0 auto;
   display: flex;
   flex-wrap: wrap;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+#contadoresView .ct-detail-head-actions .ct-btn {
+  height: 34px;
+  min-width: 0;
+  padding: 0 12px;
+  white-space: nowrap;
+}
+
+#contadoresView .ct-detail-head-actions .ct-btn-primary {
+  padding-inline: 14px;
 }
 
 #contadoresView .ct-lead-copy-status {

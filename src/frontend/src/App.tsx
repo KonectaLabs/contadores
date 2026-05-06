@@ -3603,10 +3603,13 @@ function LeadDetailHeader({
         </div>
       </div>
       <div className="ct-detail-head-actions">
-        <button type="button" className="ct-btn ct-btn-primary" disabled={!lead || closed || Boolean(actionBusy)} onClick={onOpenSend}>Send message...</button>
-        <button type="button" className="ct-btn ct-btn-ghost" disabled={!lead} onClick={onCopyContext}>
+        <button type="button" className="ct-btn ct-btn-primary" disabled={!lead || closed || Boolean(actionBusy)} onClick={onOpenSend}>
+          <PaperPlaneTilt size={15} weight="bold" />
+          Send
+        </button>
+        <button type="button" className="ct-btn ct-btn-ghost" disabled={!lead} onClick={onCopyContext} title="Copy context">
           <Copy size={15} weight="bold" />
-          Copy context
+          Copy
         </button>
         {converted && lead?.workstation_client_id ? (
           <button
@@ -3641,21 +3644,27 @@ function LeadDetailHeader({
           </>
         )}
         {!inboxMode ? (
-          <button type="button" className="ct-btn ct-btn-ghost" disabled={!lead || closed || booked || Boolean(actionBusy)} onClick={onManualBooked}>Mark booked</button>
+          <button type="button" className="ct-btn ct-btn-ghost" disabled={!lead || closed || booked || Boolean(actionBusy)} onClick={onManualBooked}>
+            <CheckCircle size={15} weight="bold" />
+            Booked
+          </button>
         ) : null}
         {!inboxMode ? (
           <button type="button" className="ct-btn ct-btn-ghost" disabled={!lead || closed || paused || Boolean(actionBusy)} onClick={onManualHandoff}>
             <NotePencil size={15} weight="bold" />
-            Manual mode
+            Manual
           </button>
         ) : null}
         {canMarkAnswered && !inboxMode ? (
-          <button type="button" className="ct-btn ct-btn-ghost" disabled={Boolean(actionBusy)} onClick={onMarkAnswered}>Mark answered</button>
+          <button type="button" className="ct-btn ct-btn-ghost" disabled={Boolean(actionBusy)} onClick={onMarkAnswered}>
+            <Check size={15} weight="bold" />
+            Answered
+          </button>
         ) : null}
         <button type="button" className={`ct-btn ct-btn-ghost ${closed ? "" : "btn-destructive"}`} disabled={!lead || Boolean(actionBusy)} onClick={onToggleClosed}>
-          {closed ? "Reopen lead" : "Close lead"}
+          {closed ? "Reopen" : "Close"}
         </button>
-        <button type="button" className="ct-btn ct-btn-ghost btn-destructive" disabled={!lead || Boolean(actionBusy)} onClick={onDelete}>Delete chat</button>
+        <button type="button" className="ct-btn ct-btn-ghost btn-destructive" disabled={!lead || Boolean(actionBusy)} onClick={onDelete}>Delete</button>
         {copyStatus ? <span className="ct-lead-copy-status" aria-live="polite">{copyStatus}</span> : null}
       </div>
     </header>
