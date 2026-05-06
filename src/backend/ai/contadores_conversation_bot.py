@@ -30,6 +30,7 @@ from backend.config import (
 
 ConversationBotAction = Literal[
     "send_reply",
+    "offer_solo_page_promo",
     "send_page_example_video",
     "start_workstation_solo_page",
     "ask_scheduling_details",
@@ -41,6 +42,7 @@ ConversationBotAction = Literal[
 
 ALLOWED_ACTIONS = {
     "send_reply",
+    "offer_solo_page_promo",
     "send_page_example_video",
     "start_workstation_solo_page",
     "ask_scheduling_details",

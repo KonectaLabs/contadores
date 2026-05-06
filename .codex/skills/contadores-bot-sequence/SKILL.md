@@ -56,6 +56,7 @@ override the built-in Contadores definition.
      live conversation.
 9. The bot must return one structured action:
    - `send_reply`
+   - `offer_solo_page_promo`
    - `ask_scheduling_details`
    - `send_page_example_video`
    - `start_workstation_solo_page`
@@ -210,6 +211,14 @@ The Calendly URL is fixed across Contadores, Abogados, and every other funnel.
 The low-ticket page promo uses the active-offer outbound steps with a
 deterministic fast path before normal scheduling:
 
+- If a post-video lead is not fully ready to proceed with the default page +
+  campaigns offer but shows light interest (`lo analizo`, `te aviso`,
+  `les estare comunicando`, `lo consulto`, polite thanks without rejection),
+  the conversation bot may choose `offer_solo_page_promo`.
+- `offer_solo_page_promo` queues `sequence_step=offer_solo_page_promo`, keeps
+  automation active, and offers only the professional web page.
+- Prices for bot-offered page-only promos are deterministic but weighted toward
+  expensive values: `99` and `49` USD.
 - If a positive inbound arrives after a `promo_` or `offer_` outbound and no page
   example has been sent after that offer, queue `send_page_example_video`.
 - Choose the example video by funnel: accountants get
@@ -232,7 +241,7 @@ deterministic fast path before normal scheduling:
   for a separate call instead of accepting the page workflow.
 
 Workstation outbound sequence steps are:
-`workstation_intake`, `workstation_preview_video`,
+`offer_solo_page_promo`, `workstation_intake`, `workstation_preview_video`,
 `workstation_revision_video`, `workstation_ping_1`, `workstation_ping_2`, and
 `workstation_handoff`.
 
@@ -280,6 +289,9 @@ conversation bot as an active-offer conversation. The bot should infer the
 active offer from the transcript, keep selling that offer instead of the default
 300 USD offer, ask interested leads for email/day/time for a 15-minute meeting,
 and use the normal scheduling handoff path once those details are complete.
+When the bot itself offers the page-only promo to a warm but undecided post-video
+lead, it uses `offer_solo_page_promo` rather than the batch template and weights
+the price toward `99` and `49` USD.
 
 ## Runtime rule
 

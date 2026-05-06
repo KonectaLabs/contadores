@@ -307,10 +307,22 @@ WhatsApp that Facu will coordinate and the CRM alert must carry the details.
 
 ### Lead says "lo analizo", "consulto", "retornamos", "te aviso"
 
-The user prefers not to answer only "ok". Add useful conversion context, then
-move toward a short call.
+The user prefers not to answer only "ok". For post-video leads who are not
+fully ready for the full page + campaigns offer but still show light interest,
+the bot should usually choose `offer_solo_page_promo` instead of moving the
+lead to Manual or only asking for a call.
 
-Use this structure:
+Use the page-only promo when the lead says things like `lo analizo`, `te aviso`,
+`les estare comunicando`, `lo consulto`, or gives polite thanks without a clear
+rejection. The backend sends the canonical promo copy and weights the price
+toward `99` and `49` USD.
+
+If the lead is clearly ready for the full offer, collect scheduling details. If
+the lead asks a concrete question, answer it first. If the lead rejects, close
+with the rejection survey.
+
+For manual/operator replies that are not using the structured bot action, use
+this structure:
 
 1. Acknowledge.
 2. Add one concrete reason/value point.

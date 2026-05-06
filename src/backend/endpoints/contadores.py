@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import csv
+import hashlib
 import json
 import logging
 import mimetypes
@@ -83,6 +84,8 @@ AUDIO_TRANSCRIPT_SEQUENCE_STEP = "audio_transcript"
 BOOKING_DETAILS_COLLECTED_REASON = "booking_details_collected"
 ACTIVE_OFFER_SEQUENCE_PREFIXES = ("promo_", "offer_")
 SOLO_PAGE_OFFER_PRICE_RE = re.compile(r"(?<!\d)(19|29|49|99)\s*(?:usd|dolares)?", re.IGNORECASE)
+SOLO_PAGE_PROMO_SEQUENCE_STEP = "offer_solo_page_promo"
+SOLO_PAGE_PROMO_PRICE_WEIGHTS = ((49, 40), (99, 60))
 PAGE_EXAMPLE_VIDEO_SEQUENCE_STEP = "manual_page_example_video"
 PAGE_EXAMPLE_VIDEO_PATH = "data/contadores/videos/cliente-pagina.mp4"
 LAWYER_PAGE_EXAMPLE_VIDEO_PATH = "data/contadores/videos/pagina-abogado.mp4"
@@ -93,6 +96,13 @@ AUTO_LAWYER_PAGE_EXAMPLE_VIDEO_SEQUENCE_STEP = "auto_lawyer_page_example_video"
 ACCOUNTANT_PAGE_EXAMPLE_VIDEO_TEXT = "Esta es una pagina de un cliente contador nuestro, asi podria verse tu pagina"
 LAWYER_PAGE_EXAMPLE_VIDEO_TEXT = "Esta es una pagina de un cliente abogado nuestro, asi podria verse tu pagina"
 PAGE_EXAMPLE_VIDEO_TEXT = "Esta es una pagina de un cliente nuestro, asi podria verse tu pagina"
+SOLO_PAGE_PROMO_TEXT_TEMPLATE = (
+    "Entiendo, gracias por verlo.\n\n"
+    "Si la propuesta completa todavia la quiere analizar, le puedo mostrar una opcion mas simple: "
+    "solo la pagina web profesional para su estudio.\n\n"
+    "Serian {price} USD y la paga solo cuando este terminada y le guste.\n\n"
+    "Si le interesa esa opcion, le mando un ejemplo."
+)
 WORKSTATION_SOLO_PAGE_STARTED_REASON = "workstation_solo_page_started"
 UNANSWERED_LEAD_QUESTION_REASON = "unanswered_lead_question"
 OPENER_FOLLOWUP_DELAY = timedelta(hours=24)
@@ -557,6 +567,51 @@ def choose_auto_page_example_for_lead(lead: ContadoresLead) -> tuple[str, str, s
         PAGE_EXAMPLE_VIDEO_PATH,
         "cliente-pagina.mp4",
     )
+
+
+def choose_solo_page_promo_price_usd(lead_id: str) -> int:
+    """Choose a stable bot-offered solo-page promo price, weighted toward 99/49."""
+    digest = hashlib.sha256(f"solo-page-promo:{lead_id}".encode("utf-8")).hexdigest()
+    slot = int(digest[:8], 16) % sum(weight for _, weight in SOLO_PAGE_PROMO_PRICE_WEIGHTS)
+    cumulative = 0
+    for price, weight in SOLO_PAGE_PROMO_PRICE_WEIGHTS:
+        cumulative += weight
+        if slot < cumulative:
+            return price
+    return SOLO_PAGE_PROMO_PRICE_WEIGHTS[-1][0]
+
+
+def build_solo_page_promo_text(*, price_usd: int) -> str:
+    """Return the canonical bot-offered page-only promo copy."""
+    return SOLO_PAGE_PROMO_TEXT_TEMPLATE.format(price=price_usd)
+
+
+def send_solo_page_promo_offer(lead: ContadoresLead, *, now: datetime | None = None) -> list[ContadoresMessage]:
+    """Queue the bot's page-only promo offer and keep automation ready for the reply."""
+    current_time = now or now_utc()
+    price_usd = choose_solo_page_promo_price_usd(lead.id)
+    row = enqueue_lead_outbound(
+        lead=lead,
+        text=build_solo_page_promo_text(price_usd=price_usd),
+        sequence_step=SOLO_PAGE_PROMO_SEQUENCE_STEP,
+    )
+    stage = (
+        ContadoresLeadStage.AWAITING_VIDEO_REPLY
+        if derive_effective_lead_stage(lead) == ContadoresLeadStage.NEEDS_HUMAN
+        else derive_effective_lead_stage(lead)
+    )
+    ContadoresLead.update_flow_state(
+        lead.id,
+        stage=stage,
+        automation_paused=False,
+        classification_completed_at=current_time,
+        manual_reply_handled_at=current_time,
+        last_classification_label="solo_page_promo_offered",
+        last_classification_reason=(
+            "El lead mostro interes tibio en la oferta principal; se ofrecio promo de solo pagina."
+        ),
+    )
+    return [row]
 
 
 def build_funnel_info_for_bot(funnel: Any) -> str:
@@ -2440,6 +2495,11 @@ def apply_conversation_bot_result(
         )
         metrics["codex_fallback_alerts"] += 1
 
+    if result.action == "offer_solo_page_promo":
+        queued_rows = send_solo_page_promo_offer(lead, now=now)
+        metrics["ai_replies_sent"] += 1 if queued_rows else 0
+        return metrics
+
     if result.action == "send_page_example_video":
         text, sequence_step, media_path, media_filename = choose_auto_page_example_for_lead(lead)
         queued_rows = send_page_example_video(
@@ -3037,7 +3097,9 @@ def run_quick_action_for_lead(
         "send-lawyer-page-example-video",
     }
 
-    if normalized_action == "send-opener":
+    if normalized_action == "offer-solo-page-promo":
+        queued_rows = send_solo_page_promo_offer(lead)
+    elif normalized_action == "send-opener":
         queued_rows = send_opener_sequence(lead=lead)
     elif normalized_action == "send-manual-ping":
         if not resolve_funnel(lead.funnel_id).manual_ping_template_name:
@@ -4201,6 +4263,7 @@ async def run_followup_lead_action(
         raise HTTPException(status_code=404, detail="Lead not found")
     normalized_action = command.action.strip().lower()
     send_actions = {
+        "offer-solo-page-promo",
         "send-opener",
         "send-loom",
         "send-video-check",

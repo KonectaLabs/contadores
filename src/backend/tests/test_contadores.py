@@ -2026,6 +2026,72 @@ def test_contadores_automation_tick_answers_simple_video_confirmation(monkeypatc
     ]
 
 
+def test_conversation_bot_can_offer_solo_page_promo_for_warm_deferral(monkeypatch, tmp_path) -> None:
+    """A warm post-video deferral can receive the page-only promo and stay automated."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-warm-deferral-promo",
+        phone="+593991111111",
+        full_name="Luis Gerardo",
+        funnel_id="abogados",
+    )
+    loom_sent_at = now_utc() - timedelta(minutes=11)
+    ContadoresLead.update_flow_state(
+        lead.id,
+        stage=ContadoresLeadStage.AWAITING_VIDEO_REPLY,
+        opener_sent_at=loom_sent_at - timedelta(minutes=1),
+        first_reply_received_at=loom_sent_at - timedelta(minutes=1),
+        loom_sent_at=loom_sent_at,
+        last_inbound_at=now_utc() - timedelta(seconds=45),
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=True,
+        text="Perfecto, mirelo tranquilo.\n\nEs corto, son 60 segundos. Cualquier duda me escribe por aca.",
+        delivery_status=MessageDeliveryStatus.DELIVERED,
+        sequence_step="ai_reply",
+        created_at=now_utc() - timedelta(minutes=1),
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=False,
+        text="Si ya lo vi yo les estaré comunicando muchas gracias",
+        created_at=now_utc() - timedelta(seconds=45),
+    )
+
+    class FakeConversationBot:
+        async def aforward(self, **kwargs):
+            assert kwargs["funnel_id"] == "abogados"
+            assert kwargs["latest_inbound"] == "Si ya lo vi yo les estaré comunicando muchas gracias"
+            return ContadoresConversationBotResult(
+                action="offer_solo_page_promo",
+                classification_label="warm_deferral_solo_page_promo",
+                reason="El lead mostro interes tibio despues del video.",
+            )
+
+    monkeypatch.setattr(contadores_endpoints, "ContadoresConversationBotProgram", FakeConversationBot)
+    monkeypatch.setattr(contadores_endpoints, "choose_solo_page_promo_price_usd", lambda lead_id: 99)
+
+    with TestClient(app) as client:
+        create_funnel = client.post("/api/funnels", json=build_abogados_test_funnel())
+        tick = client.post("/api/contadores/automation/tick", params={"funnel_id": "abogados"})
+        pending = client.get("/api/contadores/messages/pending-delivery")
+        detail = client.get(f"/api/contadores/leads/{lead.id}")
+
+    assert create_funnel.status_code == 200
+    assert tick.status_code == 200
+    assert tick.json()["ai_replies_sent"] == 1
+    assert pending.status_code == 200
+    messages = pending.json()["messages"]
+    assert [item["sequence_step"] for item in messages] == ["offer_solo_page_promo"]
+    assert "solo la pagina web profesional" in messages[0]["text"]
+    assert "99 USD" in messages[0]["text"]
+    assert detail.status_code == 200
+    assert detail.json()["lead"]["stage"] == "awaiting_video_reply"
+    assert detail.json()["lead"]["automation_paused"] is False
+    assert detail.json()["lead"]["last_classification_label"] == "solo_page_promo_offered"
+
+
 def test_conversation_bot_answers_common_questions_without_human_handoff(monkeypatch, tmp_path) -> None:
     """Known objections should get AI replies and move the conversation to Manual."""
     configure_contadores_db(monkeypatch, tmp_path)

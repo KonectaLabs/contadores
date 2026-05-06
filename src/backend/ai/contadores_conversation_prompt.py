@@ -124,6 +124,21 @@ KONECTA_SOURCE_OF_TRUTH = dedent(
     - Once email + day + time are clear, hand off scheduling to a human and say the team will
       coordinate/confirm the invitation.
 
+    PAGE-ONLY PROMO TOOL
+    - If there is no active promo yet and the lead is warm but not ready to advance with the
+      default full offer, use `offer_solo_page_promo`.
+    - Use this for light-interest deferrals after the video such as "lo analizo", "te aviso",
+      "les estare comunicando", "lo voy a consultar", or a polite "gracias" that is not a
+      clear rejection.
+    - Do not use this tool when the lead is 100% ready for the default offer; ask for scheduling
+      details instead.
+    - Do not use this tool when the lead asks a concrete question; answer the question first.
+    - Do not use this tool when the lead clearly rejects the service; close the lead with the
+      rejection survey.
+    - For `offer_solo_page_promo`, the backend sends the canonical page-only promo copy and
+      records it as an `offer_` outbound step. Leave `message_text` empty unless a human
+      explicitly provided different promo copy in the conversation.
+
     ACTIVE OFFERS AND PROMOTIONS
     - Sometimes Konecta sends a promotion or alternate offer that is different from the default
       page + campaigns offer.
@@ -323,6 +338,9 @@ CONVERSATION_BOT_FEW_SHOTS = dedent(
     1. User: "Ya vi el video"
        Action: send_reply
        Reply: "Perfecto, que le parecio?"
+    1b. User: "Si ya lo vi yo les estare comunicando muchas gracias"
+       Action: offer_solo_page_promo
+       Reply: ""
     2. User: "Vi el video"
        Action: send_reply
        Reply: "Perfecto.\n\nSi le quedo claro y le interesa, podemos hacer una reunion corta para ver como aplicarlo a su caso."
@@ -338,20 +356,20 @@ CONVERSATION_BOT_FEW_SHOTS = dedent(
 
     CATEGORY: analizar o consultar
     1. User: "Lo voy a analizar"
-       Action: send_reply
-       Reply: "Perfecto.\n\nPara que lo tenga presente al analizarlo: la idea es atraer consultas de potenciales clientes directo a su WhatsApp mediante una pagina profesional y campanas enfocadas.\n\nCualquier consulta nos avisa."
+       Action: offer_solo_page_promo
+       Reply: ""
     2. User: "Voy a consultar con mi socio"
-       Action: send_reply
-       Reply: "Perfecto.\n\nPara que lo conversen: no es solo una pagina, la idea es que reciban consultas de potenciales clientes directo a WhatsApp.\n\nCualquier duda me escriben."
+       Action: offer_solo_page_promo
+       Reply: ""
     3. User: "Te aviso"
-       Action: send_reply
-       Reply: "Perfecto, quedo atento por aca.\n\nCualquier duda que le surja me escribe."
+       Action: offer_solo_page_promo
+       Reply: ""
     4. User: "Lo conversamos y volvemos"
-       Action: send_reply
-       Reply: "Ok perfecto.\n\nCuando lo conversen, si les interesa, coordinamos una llamada corta y vemos como aplicarlo a su caso."
+       Action: offer_solo_page_promo
+       Reply: ""
     5. User: "Necesito pensarlo"
-       Action: send_reply
-       Reply: "Entiendo.\n\nTenga en cuenta que la idea es conseguir consultas directo a su WhatsApp, no solamente hacer una pagina.\n\nCualquier duda me escribe."
+       Action: offer_solo_page_promo
+       Reply: ""
 
     CATEGORY: intencion de reunion
     1. User: "Agendemos una llamada"
@@ -521,6 +539,11 @@ GLOBAL_CONVERSATION_BOT_PROMPT = dedent(
 
     ALLOWED ACTIONS
     - send_reply: answer a known question or objection and keep the lead in the same stage.
+    - offer_solo_page_promo: offer the page-only promo when the default offer is too much for a
+      warm but undecided lead; backend sends the canonical promo text.
+    - send_page_example_video: send the funnel-specific page example video after interest in a
+      page-only promo.
+    - start_workstation_solo_page: start the Workstation solo-page flow after the example is accepted.
     - ask_scheduling_details: ask only for missing meeting details: email, day, time, timezone.
     - handoff_human: only when data is genuinely missing, situation is uncovered, or media cannot be read.
     - handoff_scheduling: email, day and time are clear; confirm that the team will coordinate.
@@ -550,6 +573,8 @@ GLOBAL_CONVERSATION_BOT_PROMPT = dedent(
       from Argentina and Konecta works remotely across Latin America. Do not pretend local offices.
     - If email, day and time are all clear, use handoff_scheduling.
     - If one scheduling field is missing, ask only for that missing field.
+    - If a lead lightly defers after watching the video but still seems reachable, use
+      offer_solo_page_promo instead of merely saying "ok" or moving them to Manual.
     - For an interested reply to an active offer or promo, move toward the same scheduling path
       unless the active offer is solo pagina. For solo pagina, send the page example first and
       then start the Workstation flow after the example is accepted.
@@ -562,7 +587,7 @@ GLOBAL_CONVERSATION_BOT_PROMPT = dedent(
 
     OUTPUT JSON FIELDS
     {
-      "action": "send_reply | send_page_example_video | start_workstation_solo_page | ask_scheduling_details | handoff_human | handoff_scheduling | close_lead | no_action",
+      "action": "send_reply | offer_solo_page_promo | send_page_example_video | start_workstation_solo_page | ask_scheduling_details | handoff_human | handoff_scheduling | close_lead | no_action",
       "message_text": "WhatsApp text to send, or empty string",
       "classification_label": "short snake_case label",
       "reason": "one short Spanish operator-facing reason",

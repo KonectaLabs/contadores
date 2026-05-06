@@ -134,6 +134,24 @@ def test_active_offer_prompt_overrides_default_offer() -> None:
     assert "Ask for email, day and time" in prompt
 
 
+def test_prompt_offers_solo_page_promo_for_warm_deferral() -> None:
+    """Light post-video interest should have a dedicated promo action."""
+    prompt = build_conversation_bot_prompt(
+        **bot_kwargs(
+            latest_inbound="Si ya lo vi yo les estare comunicando muchas gracias",
+            conversation=(
+                "2026-05-06T02:17:00Z KONECTA step=loom_intro: Perfecto, te cuento rapido.\n"
+                "2026-05-06T02:23:00Z KONECTA step=ai_reply: Perfecto, mirelo tranquilo.\n"
+                "2026-05-06T02:24:00Z LEAD: Si ya lo vi yo les estare comunicando muchas gracias"
+            ),
+        )
+    )
+
+    assert "offer_solo_page_promo" in prompt
+    assert "warm but not ready to advance" in prompt
+    assert "Si ya lo vi yo les estare comunicando muchas gracias" in prompt
+
+
 def test_active_offer_rejection_does_not_send_default_300_survey() -> None:
     """Rejecting a promo should not receive the default 300 USD rejection survey."""
     program = ContadoresConversationBotProgram(

@@ -130,6 +130,7 @@ const moveStageOptions: Array<{ value: LeadStage; label: string }> = [
 const sendOptions = [
   { value: "custom", title: "Custom message", help: "Write your own WhatsApp reply." },
   { value: "send-manual-ping", title: "Manual ping", help: "Send the approved ping template to reopen WhatsApp." },
+  { value: "offer-solo-page-promo", title: "Promo solo pagina", help: "Offer the page-only promo and let automation handle the reply." },
   { value: "send-opener", title: "Opener", help: "Queue the default opener template." },
   { value: "send-loom", title: "Loom sequence", help: "Queue the Loom video introduction messages." },
   { value: "send-accountant-page-example-video", title: "Pagina contador", help: "Send the accountant page example video." },
@@ -154,6 +155,7 @@ type TemplateChoice = {
 type QuickActionName =
   | "send-opener"
   | "send-manual-ping"
+  | "offer-solo-page-promo"
   | "send-loom"
   | "send-accountant-page-example-video"
   | "send-lawyer-page-example-video"
@@ -4251,6 +4253,7 @@ function sendOptionPreview(kind: SendKind, funnel: FunnelDefinition | null): str
   }
   const previews: Partial<Record<SendKind, string>> = {
     "send-manual-ping": funnel.manual_ping_text,
+    "offer-solo-page-promo": "Solo pagina web profesional. Precio ponderado hacia 99/49 USD.",
     "send-opener": funnel.opener_text,
     "send-loom": funnel.loom_intro_text,
     "send-accountant-page-example-video": "Esta es una pagina de un cliente contador nuestro, asi podria verse tu pagina",

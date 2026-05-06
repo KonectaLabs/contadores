@@ -299,14 +299,20 @@ Bot conversacional post-video y post-Calendly:
   `OPENROUTER_API_KEY`; si no, usa `gpt-5.4-mini`. Si todos fallan, ahi si
   pasa a `needs_human`.
 - El bot devuelve una accion estructurada:
-  `send_reply`, `ask_scheduling_details`, `handoff_human`,
+  `send_reply`, `offer_solo_page_promo`, `send_page_example_video`,
+  `start_workstation_solo_page`, `ask_scheduling_details`, `handoff_human`,
   `handoff_scheduling`, `close_lead` o `no_action`.
 - Preguntas conocidas de precio, pais/cobertura, garantia, proceso, dominio,
-  pagina existente, "no vi el video", "lo analizo" o confirmaciones simples se
-  responden con `sequence_step=ai_reply` y, si vienen del post-Loom, mueven el
-  lead a `needs_human`/Manual con
-  `automation_paused_reason=ai_reply_conversation`. Como la AI ya contesto, el
-  `manual_reply_status` queda `answered`.
+  pagina existente, "no vi el video" o confirmaciones simples se responden con
+  `sequence_step=ai_reply` y, si vienen del post-Loom, mueven el lead a
+  `needs_human`/Manual con `automation_paused_reason=ai_reply_conversation`.
+  Como la AI ya contesto, el `manual_reply_status` queda `answered`.
+- Si el lead vio el video, no esta decidido a avanzar con la oferta principal,
+  pero muestra interes tibio ("lo analizo", "te aviso", "les estare
+  comunicando", "lo consulto"), el bot puede usar `offer_solo_page_promo`. Esa
+  accion encola `sequence_step=offer_solo_page_promo`, mantiene la automatizacion
+  activa y ofrece solo la pagina web. El precio se elige de forma deterministica
+  con peso fuerte hacia `99` y `49` USD.
 - Cada batch inbound se reclama en SQLite antes de llamar al bot, con
   `conversation_processing_started_at` y
   `conversation_processing_latest_inbound_id`. Esto evita que dos ticks/procesos
@@ -374,6 +380,12 @@ Acciones manuales de Calendly:
 
 Promo solo pagina:
 
+- Si un lead post-video no esta 100% decidido por la oferta completa de pagina +
+  campanas pero muestra interes tibio, el bot puede ofrecer automaticamente la
+  promo de solo pagina con `sequence_step=offer_solo_page_promo`.
+- Esa promo ofrecida por el bot usa precios ponderados hacia valores altos:
+  `99` y `49` USD. El precio queda escrito en el outbound para que Workstation
+  lo fije luego en `offer_price_usd`.
 - Si un lead responde positivamente a la promo de pagina barata, el bot manda
   automaticamente un video de ejemplo reutilizable segun funnel:
   `data/contadores/videos/cliente-pagina.mp4` para contadores o
@@ -390,8 +402,8 @@ Promo solo pagina:
   `automation_paused_reason=workstation_solo_page_started`; desde ese punto
   responde el tick de Workstation, no el bot comercial.
 - Los pasos nuevos de secuencia son
-  `auto_accountant_page_example_video`, `auto_lawyer_page_example_video`,
-  `workstation_intake`, `workstation_preview_video`,
+  `offer_solo_page_promo`, `auto_accountant_page_example_video`,
+  `auto_lawyer_page_example_video`, `workstation_intake`, `workstation_preview_video`,
   `workstation_revision_video`, `workstation_ping_1`,
   `workstation_ping_2` y `workstation_handoff`.
 
@@ -513,6 +525,10 @@ en `contadores_messages`. Las respuestas posteriores entran por la ruta de
 oferta activa (`promo_`/`offer_`), pero esta promo tiene un atajo
 deterministico: primer interes manda el video de ejemplo y el segundo interes
 crea Workstation de `solo_pagina` para intake y boceto.
+
+La promo de solo pagina ofrecida por el bot conversacional, no por el batch,
+usa `sequence_step=offer_solo_page_promo` y pondera el precio hacia `99` y
+`49` USD para leads tibios que no avanzan con la oferta completa.
 
 La carpeta canonica por cliente queda en:
 
