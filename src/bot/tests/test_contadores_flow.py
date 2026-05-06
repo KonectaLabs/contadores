@@ -664,6 +664,10 @@ def test_send_contadores_pending_alerts_includes_direct_lead_link(monkeypatch) -
                 email=None,
                 stage="needs_human",
                 latest_inbound_text="Ok ya lo vi, pero tengo dudas",
+                conversation_transcript=(
+                    "2026-05-06T12:50:00Z - Konecta: Te paso el video\n"
+                    "2026-05-06T13:04:00Z - Lead: Ok ya lo vi, pero tengo dudas"
+                ),
                 reason="Tiene dudas, pregunta si sirve para consultoras y si hacen página.",
                 alert_emails=["ops@example.com"],
             )
@@ -701,6 +705,9 @@ def test_send_contadores_pending_alerts_includes_direct_lead_link(monkeypatch) -
         "Lead link: "
         "https://chatterface.fgoiriz.com/?section=contadores&contadores_lead=7bc8899e-f7ed-4c0b-90f4-ce9739b9b4fe"
     ) in sent_calls[0]["text"]
+    assert "Conversacion reciente:" in sent_calls[0]["text"]
+    assert "2026-05-06T12:50:00Z - Konecta: Te paso el video" in sent_calls[0]["text"]
+    assert "2026-05-06T13:04:00Z - Lead: Ok ya lo vi, pero tengo dudas" in sent_calls[0]["text"]
 
 
 def test_send_contadores_pending_alerts_handles_runtime_fallback_alert(monkeypatch) -> None:

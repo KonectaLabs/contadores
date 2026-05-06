@@ -149,6 +149,7 @@ class PendingContadoresAlertItem(BaseModel):
     stage: str
     automation_paused_reason: str | None = None
     latest_inbound_text: str | None = None
+    conversation_transcript: str | None = None
     reason: str | None = None
     alert_emails: list[str] = Field(default_factory=list)
     alert_kind: str = "needs_human"
@@ -836,6 +837,9 @@ async def send_contadores_pending_alerts(
                     "Pregunta del lead:",
                     item.latest_inbound_text or "-",
                     "",
+                    "Conversacion reciente:",
+                    item.conversation_transcript or item.latest_inbound_text or "-",
+                    "",
                     "Responde este email con el texto exacto para mandar por WhatsApp.",
                     "El sistema va a enviar esa respuesta tal cual y guardarla como aprendizaje para preguntas parecidas.",
                     "Si queres ser explicito, empeza con `Respuesta:`.",
@@ -883,7 +887,16 @@ async def send_contadores_pending_alerts(
         else:
             body_parts.append(f"Motivo / datos para Facu: {item.reason or '-'}")
         if item.automation_paused_reason != "unanswered_lead_question":
-            body_parts.extend(["", "Ultimo mensaje inbound:", item.latest_inbound_text or "-"])
+            body_parts.extend(
+                [
+                    "",
+                    "Ultimo mensaje inbound:",
+                    item.latest_inbound_text or "-",
+                    "",
+                    "Conversacion reciente:",
+                    item.conversation_transcript or item.latest_inbound_text or "-",
+                ]
+            )
         body = "\n".join(body_parts)
         first_receipt: DeliveryReceipt | None = None
         for recipient in recipients:

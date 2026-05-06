@@ -105,6 +105,8 @@ SOLO_PAGE_PROMO_TEXT_TEMPLATE = (
 )
 WORKSTATION_SOLO_PAGE_STARTED_REASON = "workstation_solo_page_started"
 UNANSWERED_LEAD_QUESTION_REASON = "unanswered_lead_question"
+ALERT_TRANSCRIPT_MAX_MESSAGES = 80
+ALERT_TRANSCRIPT_MAX_CHARS = 20000
 OPENER_FOLLOWUP_DELAY = timedelta(hours=24)
 WHATSAPP_CUSTOM_MESSAGE_WINDOW = timedelta(hours=24)
 CONVERSATION_PROCESSING_STALE_SECONDS = max(
@@ -795,6 +797,57 @@ def append_operator_learned_answer(
             path.write_text("# Operator Learned Answers\n\n", encoding="utf-8")
         with path.open("a", encoding="utf-8") as handle:
             handle.write(entry)
+
+
+def build_alert_conversation_transcript(
+    messages: list[ContadoresMessage],
+    *,
+    max_messages: int = ALERT_TRANSCRIPT_MAX_MESSAGES,
+    max_chars: int = ALERT_TRANSCRIPT_MAX_CHARS,
+) -> str:
+    """Build a readable chronological transcript for operator alert emails."""
+    if not messages:
+        return "-"
+
+    recent_messages = messages[-max_messages:]
+    omitted_count = len(messages) - len(recent_messages)
+    lines: list[str] = []
+    if omitted_count > 0:
+        lines.append(f"[{omitted_count} mensajes anteriores omitidos]")
+
+    for message in recent_messages:
+        speaker = "Konecta" if message.from_me else "Lead"
+        timestamp = format_timestamp_seconds(message.created_at) or "-"
+        text = (message.text or "").strip()
+        if not text and message.media_type:
+            text = f"[{message.media_type}]"
+        lines.append(f"{timestamp} - {speaker}: {text or '-'}")
+
+    transcript = "\n".join(lines).strip()
+    if len(transcript) <= max_chars:
+        return transcript
+    return "[transcript muy largo; se muestran los mensajes mas recientes]\n" + transcript[-max_chars:].lstrip()
+
+
+def lead_already_answered_unanswered_alert(
+    *,
+    lead: ContadoresLead,
+    alert: ContadoresRuntimeAlert,
+) -> bool:
+    """Return True when a CRM/operator answer already handled this teachable alert."""
+    if derive_manual_reply_status(lead) == "answered":
+        return True
+
+    latest_outbound = ContadoresMessage.get_latest_outbound_message(lead.id)
+    if latest_outbound is None:
+        return False
+
+    alert_created_at = ensure_utc_datetime(alert.created_at)
+    outbound_created_at = ensure_utc_datetime(latest_outbound.created_at)
+    if alert_created_at is not None and outbound_created_at is not None and outbound_created_at > alert_created_at:
+        return True
+
+    return False
 
 
 def create_unanswered_question_alert(
@@ -4014,6 +4067,7 @@ class PendingContadoresAlertItem(BaseModel):
     stage: str
     automation_paused_reason: str | None = None
     latest_inbound_text: str | None = None
+    conversation_transcript: str | None = None
     reason: str | None = None
     alert_emails: list[str] = Field(default_factory=list)
     alert_kind: str = "needs_human"
@@ -5325,6 +5379,7 @@ async def list_pending_contadores_alerts(
         is_scheduling_handoff = lead.automation_paused_reason == BOOKING_DETAILS_COLLECTED_REASON
         if derive_manual_reply_status(lead) == "answered" and not is_scheduling_handoff:
             continue
+        messages = ContadoresMessage.list_by_lead(lead.id)
         latest_inbound = ContadoresMessage.get_latest_inbound_message(lead.id)
         items.append(
             PendingContadoresAlertItem(
@@ -5335,6 +5390,7 @@ async def list_pending_contadores_alerts(
                 stage=derive_effective_lead_stage(lead).value,
                 automation_paused_reason=lead.automation_paused_reason,
                 latest_inbound_text=latest_inbound.text if latest_inbound else None,
+                conversation_transcript=build_alert_conversation_transcript(messages),
                 reason=lead.last_classification_reason,
                 alert_emails=config.alert_emails,
             )
@@ -5369,6 +5425,9 @@ async def list_pending_contadores_alerts(
                 stage="runtime_alert",
                 automation_paused_reason=alert.alert_type,
                 latest_inbound_text=alert.latest_inbound_text,
+                conversation_transcript=build_alert_conversation_transcript(
+                    ContadoresMessage.list_by_lead(alert.lead_id)
+                ),
                 reason=alert_reason,
                 alert_emails=config.alert_emails,
                 alert_kind="runtime",
@@ -5444,12 +5503,31 @@ async def handle_contadores_runtime_alert_email_reply(
         )
         return {"status": "ignored", "reason": "lead_not_found"}
 
+    resolved_at = now_utc()
+    if lead_already_answered_unanswered_alert(lead=lead, alert=alert):
+        ContadoresRuntimeAlert.mark_resolved(
+            alert_id=alert.id or 0,
+            operator_reply_text=message_text,
+            resolved_at=resolved_at,
+        )
+        append_operator_learned_answer(
+            alert=alert,
+            operator_reply_text=message_text,
+            resolved_at=resolved_at,
+        )
+        return {
+            "status": "learned_no_send",
+            "reason": "lead_already_answered",
+            "lead_id": lead.id,
+            "runtime_alert_id": alert.id,
+            "queued_message_ids": [],
+        }
+
     queued_rows = queue_ai_bot_message(
         lead=lead,
         text=message_text,
         sequence_step=AI_REPLY_SEQUENCE_STEP,
     )
-    resolved_at = now_utc()
     previous_stage = ContadoresLead.normalize_stage(alert.previous_stage)
     ContadoresLead.update_flow_state(
         lead.id,

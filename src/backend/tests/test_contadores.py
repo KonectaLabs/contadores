@@ -2418,12 +2418,101 @@ def test_unanswered_question_email_reply_sends_whatsapp_and_teaches_playbook(mon
     assert alerts.status_code == 200
     assert alerts.json()["items"][0]["automation_paused_reason"] == "unanswered_lead_question"
     assert "NO SE COMO RESPONDER" in alerts.json()["items"][0]["reason"]
+    assert "Promo solo pagina por 19 USD." in alerts.json()["items"][0]["conversation_transcript"]
+    assert "hasta cuando es la promo?" in alerts.json()["items"][0]["conversation_transcript"]
     assert marked.status_code == 200
     assert reply.status_code == 200
     assert reply.json()["queued_message_ids"] == [pending_after.json()["messages"][0]["message_id"]]
     assert detail.json()["lead"]["stage"] == "awaiting_initial_reply"
     assert detail.json()["lead"]["automation_paused"] is False
     assert pending_after.json()["messages"][0]["text"].startswith("La promo esta disponible")
+    assert "hasta cuando es la promo?" in learned_codex.read_text(encoding="utf-8")
+    assert "La promo esta disponible hasta el viernes." in learned_wiki.read_text(encoding="utf-8")
+
+
+def test_unanswered_question_email_reply_only_teaches_when_crm_already_answered(monkeypatch, tmp_path) -> None:
+    """A late operator email reply should not duplicate a CRM answer already sent."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("INTERNAL_API_TOKEN", "test-internal-token")
+    ContadoresConfig.update(enabled=True, post_loom_quiet_seconds=1, alert_emails=["facu@example.com"])
+    learned_codex = tmp_path / ".codex" / "operator-learned-answers.md"
+    learned_wiki = tmp_path / "wiki" / "operator-learned-answers.md"
+    monkeypatch.setattr(
+        contadores_endpoints,
+        "OPERATOR_LEARNED_ANSWER_PATHS",
+        [learned_codex, learned_wiki],
+    )
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-late-email-answer",
+        phone="+593991111115",
+        full_name="Late Email Answer",
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=True,
+        text="Promo solo pagina por 19 USD.",
+        delivery_status=MessageDeliveryStatus.DELIVERED,
+        sequence_step="promo_web_profesional_20260505",
+        created_at=now_utc() - timedelta(minutes=2),
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=False,
+        text="hasta cuando es la promo?",
+        created_at=now_utc() - timedelta(seconds=10),
+    )
+
+    class UnknownConversationBot:
+        async def aforward(self, **kwargs):
+            return ContadoresConversationBotResult(
+                action="handoff_human",
+                message_text="",
+                classification_label="unknown_promo_deadline",
+                reason="No hay fecha de vencimiento de promo en source of truth.",
+            )
+
+    monkeypatch.setattr(contadores_endpoints, "ContadoresConversationBotProgram", UnknownConversationBot)
+
+    with TestClient(app) as client:
+        tick = client.post("/api/contadores/automation/tick")
+        alerts = client.get("/api/contadores/alerts/pending")
+        alert_id = alerts.json()["items"][0]["runtime_alert_id"]
+        marked = client.post(
+            f"/api/contadores/runtime-alerts/{alert_id}/mark-alerted",
+            json={
+                "email_thread_id": "thread-late-promo-deadline",
+                "email_message_id": "email-alert-1",
+                "email_inbox_id": "alerts-inbox",
+                "email_inbox_address": "alerts@example.com",
+            },
+        )
+        manual_answer = client.post(
+            f"/api/contadores/followup/leads/{lead.id}/messages",
+            headers={"X-Internal-Token": "test-internal-token"},
+            json={"text": "La promo esta disponible hasta el viernes.", "dedupe_hours": 24},
+        )
+        reply = client.post(
+            "/api/contadores/runtime-alerts/email-reply",
+            json={
+                "inbox_id": "alerts-inbox",
+                "message_id": "email-reply-1",
+                "from_email": "facu@example.com",
+                "thread_id": "thread-late-promo-deadline",
+                "plain_text": "Respuesta: La promo esta disponible hasta el viernes.",
+            },
+        )
+        pending_after = client.get("/api/contadores/messages/pending-delivery")
+        detail = client.get(f"/api/contadores/leads/{lead.id}")
+
+    assert tick.status_code == 200
+    assert marked.status_code == 200
+    assert manual_answer.status_code == 200
+    assert reply.status_code == 200
+    assert reply.json()["status"] == "learned_no_send"
+    assert reply.json()["reason"] == "lead_already_answered"
+    assert reply.json()["queued_message_ids"] == []
+    assert [item["text"] for item in pending_after.json()["messages"]] == ["La promo esta disponible hasta el viernes."]
+    assert detail.json()["lead"]["manual_reply_status"] == "answered"
     assert "hasta cuando es la promo?" in learned_codex.read_text(encoding="utf-8")
     assert "La promo esta disponible hasta el viernes." in learned_wiki.read_text(encoding="utf-8")
 

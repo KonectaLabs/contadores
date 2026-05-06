@@ -326,6 +326,10 @@ Bot conversacional post-video y post-Calendly:
   `.codex/skills/contadores-lead-reply-playbook/references/operator-learned-answers.md`
   y `wiki/skills/contadores-lead-reply-playbook/references/operator-learned-answers.md`
   para futuras preguntas parecidas.
+- Si el operador ya respondio por CRM antes de contestar el email de aprendizaje,
+  esa respuesta de email solo se guarda como conocimiento y resuelve el ticket:
+  no se encola otro WhatsApp duplicado. Los emails de alerta incluyen la
+  conversacion reciente en orden cronologico, no solamente el ultimo inbound.
 - Si el lead rechaza el servicio o dice que no quiere avanzar, el bot envia
   exactamente `1) Muy caros los 300 dolares`, `2) No me sirve la pagina web +
   publicidades`, `3) No es mi momento para invertir`, `4) Otro motivo`, con

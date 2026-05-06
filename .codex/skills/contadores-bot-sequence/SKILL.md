@@ -70,6 +70,9 @@ override the built-in Contadores definition.
     answered, `manual_reply_status` should be `answered`, not `needs_reply`.
     - Copy must follow Facu/operator WhatsApp style: natural, short, not
       AI-polished, and no inverted opening punctuation like `¿` or `¡`.
+    - If the chronological conversation already shows that Konecta or a human
+      operator answered the latest lead question, return `no_action`; do not
+      send a duplicate answer.
 11. If the lead clearly rejects the service, says they do not want to continue,
     or says the investment/service is not for them, queue exactly:
     `1) Muy caros los 300 dolares`
@@ -97,6 +100,9 @@ override the built-in Contadores definition.
     `contadores-lead-reply-playbook/references/operator-learned-answers.md`,
     and resumes the lead stage. Media/exclusions still pause in `needs_human`
     and alert the operators.
+    If the CRM conversation was already answered before the operator email
+    reply arrives, the backend only saves the answer as learning and resolves
+    the ticket; it must not send another WhatsApp message.
 16. If Codex fails but DSPy/Grok answers safely, send the fallback reply,
     create a runtime email alert with the Codex error, fallback action, latest
     inbound, and CRM link, and still apply the normal post-Loom AI reply rule:
