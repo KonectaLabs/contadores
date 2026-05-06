@@ -4603,6 +4603,50 @@ def test_workstation_tick_approval_marks_needs_human(monkeypatch, tmp_path) -> N
     assert detail.json()["lead"]["automation_paused_reason"] == "workstation_solo_page_approved"
 
 
+def test_workstation_pings_tolerate_naive_preview_timestamp(monkeypatch, tmp_path) -> None:
+    """SQLite can return naive datetimes; pings should normalize before subtracting."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setattr(database_module, "DATA_DIR", tmp_path / "data")
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-workstation-naive-preview",
+        phone="+5491777777792",
+        full_name="Cliente Preview Naive",
+    )
+    workstation = WorkstationClient.create_for_lead(
+        lead,
+        work_type=WorkstationClientWorkType.SOLO_PAGINA,
+        status=WorkstationClientStatus.PENDING_PAYMENT,
+        automation_status=WorkstationAutomationStatus.AWAITING_REVIEW,
+    )
+    preview_at = (now_utc() - timedelta(hours=25)).replace(tzinfo=None)
+    WorkstationClient.update_automation_state(
+        workstation.id,
+        automation_status=WorkstationAutomationStatus.AWAITING_REVIEW,
+        last_preview_sent_at=preview_at,
+        last_automation_handled_at=preview_at,
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=True,
+        text="Le mando un video con el boceto de su pagina.",
+        sequence_step="workstation_preview_video",
+        media_type="video",
+        media_path="data/workstation/clients/demo/landing-page/v001/preview.mp4",
+        delivery_status=MessageDeliveryStatus.DELIVERED,
+        created_at=preview_at,
+    )
+
+    with TestClient(app) as client:
+        tick = client.post("/api/workstation/automation/tick")
+
+    assert tick.status_code == 200
+    assert tick.json()["pings_sent"] == 1
+    assert tick.json()["failures"] == 0
+    updated = WorkstationClient.get_by_lead_id(lead.id)
+    assert updated.automation_status == WorkstationAutomationStatus.AWAITING_REVIEW
+    assert updated.ping_1_sent_at is not None
+
+
 def test_failed_solo_page_reopens_when_lead_replies_after_preview(monkeypatch, tmp_path) -> None:
     """A failed solo-page preview should not stay stuck after the lead replies."""
     configure_contadores_db(monkeypatch, tmp_path)

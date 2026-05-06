@@ -1480,7 +1480,12 @@ def process_workstation_pings(
     if inbound_after(messages, client.last_preview_sent_at):
         return 0
 
-    elapsed = now - client.last_preview_sent_at
+    preview_sent_at = normalize_utc(client.last_preview_sent_at)
+    current_time = normalize_utc(now) or now
+    if preview_sent_at is None:
+        return 0
+
+    elapsed = current_time - preview_sent_at
     if client.handoff_sent_at is None and elapsed >= timedelta(seconds=WORKSTATION_HANDOFF_DELAY_SECONDS):
         queue_workstation_template(
             lead=lead,
@@ -1659,9 +1664,11 @@ async def advance_solo_page_client(client: WorkstationClient, *, now: datetime) 
                     messages=messages,
                     now=now,
                 )
+                preview_sent_at = normalize_utc(fresh_client.last_preview_sent_at)
+                current_time = normalize_utc(now) or now
                 handoff_due = (
-                    fresh_client.last_preview_sent_at is not None
-                    and now - fresh_client.last_preview_sent_at >= timedelta(seconds=WORKSTATION_HANDOFF_DELAY_SECONDS)
+                    preview_sent_at is not None
+                    and current_time - preview_sent_at >= timedelta(seconds=WORKSTATION_HANDOFF_DELAY_SECONDS)
                 )
                 metrics["human_handoffs"] = 1 if metrics["pings_sent"] and handoff_due else 0
             except Exception as error:
