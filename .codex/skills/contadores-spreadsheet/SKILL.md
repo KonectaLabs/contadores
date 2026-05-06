@@ -28,6 +28,12 @@ shared funnel config file (`FUNNELS_CONFIG_PATH` or `data/funnels.json`).
 There is no runtime source switch. Enabled campaign funnels poll their configured
 sheet directly.
 
+The spreadsheet is not the execution layer for autonomous Codex tools. Agent
+tool side effects are persisted in the backend database (`contadores_messages`,
+Workstation tables, `agent_runs`, `agent_tool_calls`, and
+`scheduled_agent_tasks`) and may later be reflected in UI/status views. Do not
+add spreadsheet columns as a substitute for the DB-backed tool audit.
+
 ## What It Is For
 
 - It stores inbound leads coming from Meta lead forms.

@@ -21,18 +21,21 @@ from backend.audio_transcription import AudioTranscriptionError
 from backend.ai.contadores_conversation_bot import ContadoresConversationBotResult, REJECTION_SURVEY_REPLY
 from backend.contadores_strategies import get_contadores_strategy
 from backend.database import (
+    AgentToolCall,
     ContadoresConfig,
     ContadoresLead,
     ContadoresLeadStage,
     ContadoresMessage,
     ContadoresRuntimeAlert,
     MessageDeliveryStatus,
+    ScheduledAgentTask,
     WorkstationAutomationStatus,
     WorkstationClient,
     WorkstationClientStatus,
     WorkstationClientWorkType,
     WorkstationMediaAsset,
 )
+from backend.ai.codex_agent_tools import call_tool
 from backend.main import app
 
 
@@ -44,6 +47,10 @@ def now_utc() -> datetime:
 def configure_contadores_db(monkeypatch, tmp_path) -> None:
     """Point database and Contadores router state at a temporary SQLite file."""
     monkeypatch.setenv("FUNNELS_CONFIG_PATH", str(tmp_path / "funnels.json"))
+    monkeypatch.setattr(contadores_endpoints, "CODEX_AGENT_TOOLS_ENABLED", False)
+    monkeypatch.setattr(contadores_endpoints, "CODEX_AGENT_TOOLS_CONVERSATION_ENABLED", False)
+    monkeypatch.setattr(workstation_endpoints, "CODEX_AGENT_TOOLS_ENABLED", False)
+    monkeypatch.setattr(workstation_endpoints, "CODEX_AGENT_TOOLS_WORKSTATION_ENABLED", False)
     db_path = tmp_path / "contadores.sqlite"
     engine = create_engine(
         f"sqlite:///{db_path}",
@@ -86,6 +93,169 @@ def add_recent_inbound(lead_id: str, *, text: str = "Si, me interesa") -> Contad
         text=text,
         created_at=now_utc() - timedelta(minutes=5),
     )
+
+
+def test_codex_agent_tool_queues_whatsapp_text(monkeypatch, tmp_path) -> None:
+    """The Codex tool runner should queue audited outbound messages through existing guards."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-agent-tool-text",
+        phone="+5491777777791",
+        full_name="Cliente Agent Tool",
+    )
+    add_recent_inbound(lead.id, text="Como agrego mis trabajos?")
+
+    result = call_tool(
+        run_id="agent-run-text",
+        tool_name="send_whatsapp_text",
+        arguments={
+            "lead_id": lead.id,
+            "text": "Mandeme los trabajos por aca y yo los agrego a la pagina.",
+            "sequence_step": "codex_agent_test",
+            "dispatch_after_minutes": 5,
+        },
+    )
+
+    assert result["ok"] is True
+    rows = [message for message in ContadoresMessage.list_by_lead(lead.id) if message.from_me]
+    assert len(rows) == 1
+    assert rows[0].delivery_status == MessageDeliveryStatus.UNDELIVERED
+    assert rows[0].sequence_step == "codex_agent_test"
+    assert rows[0].dispatch_after.replace(tzinfo=timezone.utc) > now_utc()
+    calls = AgentToolCall.list_by_run("agent-run-text")
+    assert len(calls) == 1
+    assert calls[0].tool_name == "send_whatsapp_text"
+    assert calls[0].status == "succeeded"
+
+
+def test_codex_agent_tool_schedules_followup(monkeypatch, tmp_path) -> None:
+    """Codex follow-ups should be DB-backed scheduled tasks, not OS cron work."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-agent-tool-followup",
+        phone="+5491777777792",
+        full_name="Cliente Followup",
+    )
+
+    result = call_tool(
+        run_id="agent-run-followup",
+        tool_name="schedule_followup",
+        arguments={
+            "target_type": "lead",
+            "target_id": lead.id,
+            "run_after_minutes": 60,
+            "reason": "El cliente pidio que le escribamos mas tarde.",
+            "instruction": "Revisar si mando el contenido y responder con el siguiente paso.",
+            "idempotency_key": "followup-key",
+        },
+    )
+    duplicate = call_tool(
+        run_id="agent-run-followup",
+        tool_name="schedule_followup",
+        arguments={
+            "target_type": "lead",
+            "target_id": lead.id,
+            "run_after_minutes": 60,
+            "reason": "duplicado",
+            "instruction": "duplicado",
+            "idempotency_key": "followup-key",
+        },
+    )
+
+    assert result["ok"] is True
+    assert duplicate["ok"] is True
+    assert result["result"]["task_id"] == duplicate["result"]["task_id"]
+    due = ScheduledAgentTask.list_due(now=now_utc() + timedelta(minutes=61))
+    assert [task.id for task in due] == [result["result"]["task_id"]]
+
+
+def test_workstation_tool_agent_short_circuits_legacy_decision(monkeypatch, tmp_path) -> None:
+    """When enabled and a tool succeeds, Workstation should not ask legacy JSON decisioning."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setattr(database_module, "DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr(workstation_endpoints, "CODEX_AGENT_TOOLS_ENABLED", True)
+    monkeypatch.setattr(workstation_endpoints, "CODEX_AGENT_TOOLS_WORKSTATION_ENABLED", True)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-agent-tool-workstation",
+        phone="+5491777777793",
+        full_name="Cliente Tool Workstation",
+    )
+    workstation = WorkstationClient.create_for_lead(
+        lead,
+        work_type=WorkstationClientWorkType.SOLO_PAGINA,
+        status=WorkstationClientStatus.PENDING_PAYMENT,
+        automation_status=WorkstationAutomationStatus.AWAITING_REVIEW,
+    )
+    reply = ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=False,
+        text="Como hago para mandarte mis trabajos?",
+    )
+
+    def fake_run_codex_agent(**kwargs):
+        AgentToolCall.add(
+            run_id="fake-workstation-agent-run",
+            tool_name="send_whatsapp_text",
+            arguments={"lead_id": lead.id, "text": "Mandemelos por aca."},
+            result={"queued": True},
+            status="succeeded",
+            target_type="lead",
+            target_id=lead.id,
+        )
+        return SimpleNamespace(
+            run_id="fake-workstation-agent-run",
+            tool_calls=AgentToolCall.list_by_run("fake-workstation-agent-run"),
+            final_response="sent text",
+            side_effect_count=1,
+        )
+
+    monkeypatch.setattr(workstation_endpoints, "run_codex_agent", fake_run_codex_agent)
+
+    decision = workstation_endpoints.decide_workstation_next_action_sync(
+        client=workstation,
+        lead=lead,
+        replies=[reply],
+    )
+
+    assert decision.action == "no_action"
+    assert "already acted" in decision.reason
+
+
+def test_contadores_tick_processes_due_agent_followup(monkeypatch, tmp_path) -> None:
+    """Lead follow-ups scheduled by Codex should wake up through the normal tick."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setattr(contadores_endpoints, "CODEX_AGENT_TOOLS_ENABLED", True)
+    monkeypatch.setattr(contadores_endpoints, "CODEX_AGENT_TOOLS_CONVERSATION_ENABLED", True)
+    ContadoresConfig.update(enabled=True)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-agent-tool-due-followup",
+        phone="+5491777777794",
+        full_name="Cliente Due Followup",
+    )
+    ScheduledAgentTask.create(
+        target_type="lead",
+        target_id=lead.id,
+        due_at=now_utc() - timedelta(minutes=1),
+        reason="follow-up test",
+        instruction="send a useful next message",
+    )
+
+    def fake_run_codex_agent(**kwargs):
+        return SimpleNamespace(
+            run_id="fake-due-followup-run",
+            tool_calls=[],
+            final_response="checked followup",
+            side_effect_count=0,
+        )
+
+    monkeypatch.setattr(contadores_endpoints, "run_codex_agent", fake_run_codex_agent)
+
+    with TestClient(app) as client:
+        response = client.post("/api/contadores/automation/tick")
+
+    assert response.status_code == 200
+    assert response.json()["scheduled_agent_tasks_processed"] == 1
+    assert ScheduledAgentTask.list_due(now=now_utc()) == []
 
 
 def build_abogados_test_funnel(
@@ -4300,6 +4470,17 @@ def test_workstation_tick_generates_preview_without_blocking_on_missing_photo(mo
         return version_dir
 
     monkeypatch.setattr(workstation_endpoints, "generate_solo_page_version_sync", fake_generate_solo_page_version_sync)
+    monkeypatch.setattr(
+        workstation_endpoints,
+        "decide_workstation_next_action",
+        lambda **kwargs: asyncio.sleep(
+            0,
+            result=workstation_endpoints.WorkstationAgentDecision(
+                action="generate_or_revise_page",
+                reason="Concrete revision request.",
+            ),
+        ),
+    )
 
     with TestClient(app) as client:
         tick = client.post("/api/workstation/automation/tick")
@@ -4510,6 +4691,17 @@ def test_workstation_tick_revises_after_handoff_reply(monkeypatch, tmp_path) -> 
         return version_dir
 
     monkeypatch.setattr(workstation_endpoints, "generate_solo_page_version_sync", fake_generate_solo_page_version_sync)
+    monkeypatch.setattr(
+        workstation_endpoints,
+        "decide_workstation_next_action",
+        lambda **kwargs: asyncio.sleep(
+            0,
+            result=workstation_endpoints.WorkstationAgentDecision(
+                action="generate_or_revise_page",
+                reason="Concrete revision request.",
+            ),
+        ),
+    )
 
     with TestClient(app) as client:
         tick = client.post("/api/workstation/automation/tick")

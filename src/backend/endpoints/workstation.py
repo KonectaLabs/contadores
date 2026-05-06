@@ -21,9 +21,13 @@ from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
+from backend.ai.codex_agent_runtime import run_codex_agent
+from backend.ai.codex_agent_tools import tool_specs as codex_agent_tool_specs
 import backend.database as database_module
 from backend.codex_utils import CodexSkill, run_codex_with_context
 from backend.config import (
+    CODEX_AGENT_TOOLS_ENABLED,
+    CODEX_AGENT_TOOLS_WORKSTATION_ENABLED,
     CONVERSATION_BOT_CODEX_API_KEY_HOME,
     CONVERSATION_BOT_CODEX_CHATGPT_HOME,
     CONVERSATION_BOT_CODEX_EFFORT,
@@ -42,6 +46,7 @@ from backend.database import (
     ContadoresLead,
     ContadoresMessage,
     ContadoresRuntimeAlert,
+    ScheduledAgentTask,
     WorkstationAutomationStatus,
     WorkstationClient,
     WorkstationMediaAsset,
@@ -656,6 +661,7 @@ class WorkstationAutomationTickResponse(BaseModel):
     pings_sent: int = 0
     human_handoffs: int = 0
     failures: int = 0
+    scheduled_agent_tasks_processed: int = 0
 
 
 WorkstationClientDetailResponse.model_rebuild()
@@ -686,6 +692,45 @@ async def run_workstation_automation_tick() -> WorkstationAutomationTickResponse
     async with workstation_automation_tick_lock:
         summary = WorkstationAutomationTickResponse()
         now = now_utc()
+        if CODEX_AGENT_TOOLS_ENABLED and CODEX_AGENT_TOOLS_WORKSTATION_ENABLED:
+            for task in ScheduledAgentTask.list_due(now=now, limit=20):
+                if task.target_type != "workstation_client":
+                    continue
+                ScheduledAgentTask.mark_status(task.id, status="running", timestamp=now)
+                client = WorkstationClient.get_by_id(task.target_id)
+                if client is None:
+                    ScheduledAgentTask.mark_status(
+                        task.id,
+                        status="failed",
+                        error="Workstation client not found.",
+                    )
+                    summary.failures += 1
+                    continue
+                lead = ContadoresLead.get_by_id(client.lead_id)
+                if lead is None:
+                    ScheduledAgentTask.mark_status(task.id, status="failed", error="Lead not found.")
+                    summary.failures += 1
+                    continue
+                try:
+                    decision = await decide_workstation_next_action(
+                        client=client,
+                        lead=lead,
+                        replies=[],
+                        handoff_resume=True,
+                    )
+                    ScheduledAgentTask.mark_status(
+                        task.id,
+                        status="completed",
+                        error=decision.reason,
+                    )
+                    summary.scheduled_agent_tasks_processed += 1
+                except Exception as error:
+                    ScheduledAgentTask.mark_status(
+                        task.id,
+                        status="failed",
+                        error=f"{error.__class__.__name__}: {error}",
+                    )
+                    summary.failures += 1
         for client in WorkstationClient.list_active_automation(
             work_type=WorkstationClientWorkType.SOLO_PAGINA,
             limit=100,
@@ -1490,6 +1535,109 @@ handoff_resume: {"yes" if handoff_resume else "no"}
 """.strip()
 
 
+def build_workstation_tool_agent_context(
+    *,
+    client: WorkstationClient,
+    lead: ContadoresLead,
+    replies: list[ContadoresMessage],
+    handoff_resume: bool = False,
+) -> str:
+    """Build decision context for the tool-capable Workstation employee."""
+    write_client_files(client)
+    previous_version = latest_landing_page_version_dir(client)
+    reply_lines = [
+        f"- id={message.id} at={format_timestamp_seconds(message.created_at) or '-'}: {message.text or '[media]'}"
+        for message in replies
+    ]
+    return f"""
+# Workstation Client
+- client_id: {client.id}
+- lead_id: {lead.id}
+- name: {lead.full_name or client.display_name or '-'}
+- funnel: {client.funnel_id}
+- phone: {lead.phone or lead.normalized_phone or '-'}
+- automation_status: {client.automation_status.value}
+- client_folder: {client_folder(client)}
+- previous_page_version: {previous_version or '(none)'}
+- handoff_resume: {"yes" if handoff_resume else "no"}
+
+# Latest Client Replies
+{chr(10).join(reply_lines) if reply_lines else "(none)"}
+
+# Operating Judgment
+- If the client asks a question, answer with send_whatsapp_text. Do not generate a page for that.
+- If the client asks how to send content, ask them to send it and say you will add it.
+- If the client gave concrete page changes or useful assets, use generate_or_revise_solo_page and then queue_workstation_deliverables.
+- If the client approves the preview, use mark_preview_approved.
+- If the situation needs a person, use handoff_human.
+- If the right move is to wait, use schedule_followup.
+- Keep the current page design stable across revisions unless the client explicitly asks for a redesign.
+""".strip()
+
+
+def run_workstation_tool_agent_sync(
+    *,
+    client: WorkstationClient,
+    lead: ContadoresLead,
+    replies: list[ContadoresMessage],
+    handoff_resume: bool = False,
+) -> WorkstationAgentDecision | None:
+    """Let Codex act through product tools and return no fallback decision if it acted."""
+    if not (CODEX_AGENT_TOOLS_ENABLED and CODEX_AGENT_TOOLS_WORKSTATION_ENABLED):
+        return None
+
+    context_md = build_workstation_tool_agent_context(
+        client=client,
+        lead=lead,
+        replies=replies,
+        handoff_resume=handoff_resume,
+    )
+
+    def register_turn(turn: object) -> None:
+        active_solo_page_codex_turns[client.id] = turn
+        active_solo_page_codex_started_at.setdefault(client.id, now_utc())
+
+    try:
+        result = run_codex_agent(
+            target_type="workstation_client",
+            target_id=client.id,
+            objective=(
+                "Handle the client's latest Workstation solo-page turn with full judgment. "
+                "Use tools for any product action. Do not return a JSON decision."
+            ),
+            context_md=context_md,
+            tool_specs=codex_agent_tool_specs(),
+            skills=[
+                CodexSkill(
+                    name="workstation-solo-page",
+                    path=str((REPO_ROOT / SOLO_PAGE_SKILL).resolve()),
+                )
+            ],
+            prompt_version="workstation-agent-tools-v1",
+            on_turn_started=register_turn,
+        )
+    except Exception as error:
+        append_workstation_progress(
+            client,
+            f"Tool agent failed before completing action; falling back to legacy decision: {error.__class__.__name__}: {error}",
+        )
+        return None
+    finally:
+        active_solo_page_codex_turns.pop(client.id, None)
+
+    successful_calls = [call for call in result.tool_calls if call.status == "succeeded"]
+    append_workstation_progress(
+        client,
+        f"Tool agent run {result.run_id} completed with {len(successful_calls)} successful tool call(s).",
+    )
+    if successful_calls:
+        return WorkstationAgentDecision(
+            action="no_action",
+            reason=f"Codex tool agent already acted in run {result.run_id}.",
+        )
+    return None
+
+
 def decide_workstation_next_action_sync(
     *,
     client: WorkstationClient,
@@ -1499,6 +1647,14 @@ def decide_workstation_next_action_sync(
 ) -> WorkstationAgentDecision:
     """Let Codex choose whether to reply, ask, revise, approve, or hand off."""
     reply_text = "\n".join(message.text for message in replies if message.text.strip())
+    tool_decision = run_workstation_tool_agent_sync(
+        client=client,
+        lead=lead,
+        replies=replies,
+        handoff_resume=handoff_resume,
+    )
+    if tool_decision is not None:
+        return tool_decision
     prompt = build_workstation_agent_decision_prompt(
         client=client,
         lead=lead,

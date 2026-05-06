@@ -31,6 +31,13 @@ Read these files first:
 The Workstation UI can also export the same folder as a ZIP, but Codex should
 prefer reading the current folder directly when running inside this repo.
 
+When Workstation is running with `CODEX_AGENT_TOOLS_ENABLED=true` and
+`CODEX_AGENT_TOOLS_WORKSTATION_ENABLED=true`, Codex acts through approved tools
+instead of only writing files and letting the backend infer intent. It may send
+short text replies, schedule DB-backed follow-ups, generate/revise a page,
+queue deliverables, mark approval, or hand off to a human. Every tool call is
+validated and audited; direct DB writes are not part of the employee contract.
+
 Professional portraits are started from the Workstation client's `Actions`
 button. The UI opens a media-selection modal, starts an async backend job, then
 polls the job until the generated version appears under `professional-photo/`.

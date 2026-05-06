@@ -39,6 +39,30 @@ CONVERSATION_BOT_CODEX_API_KEY_HOME = (
     )
     or ""
 ).strip()
+CODEX_AGENT_TOOLS_ENABLED = os.getenv("CODEX_AGENT_TOOLS_ENABLED", "false").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+CODEX_AGENT_TOOLS_WORKSTATION_ENABLED = os.getenv(
+    "CODEX_AGENT_TOOLS_WORKSTATION_ENABLED",
+    "false",
+).lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+CODEX_AGENT_TOOLS_CONVERSATION_ENABLED = os.getenv(
+    "CODEX_AGENT_TOOLS_CONVERSATION_ENABLED",
+    "false",
+).lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 WORKSTATION_PING_TEMPLATE_1_NAME = os.getenv(
     "WORKSTATION_PING_TEMPLATE_1_NAME",
     "konecta_workstation_ping_1_es_v1",

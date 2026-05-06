@@ -30,6 +30,12 @@ For operator-taught answers to previously unknown runtime questions, read
 ## Non-Negotiables
 
 - Treat the real production CRM as source of truth for live leads.
+- When running inside the Codex agent-tools runtime, act like an internal
+  employee: decide the best next step and call the approved tool for any product
+  side effect. Do not force every situation into one reply or one JSON action.
+- Agent tools may queue multiple short WhatsApp messages, send media, schedule a
+  DB-backed future follow-up, start Workstation, update lead state, or hand off
+  to a human. Respect tool errors; they encode WhatsApp and product guardrails.
 - When the user asks "que le respondo", draft only.
 - Send only when the user explicitly says "responde", "mandalo", "responde a
   todos", or otherwise clearly asks for live action.

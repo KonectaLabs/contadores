@@ -47,6 +47,11 @@ configuration. The automation will render `preview.mp4` after your files exist.
 
 - Use judgment. If the latest client message is a question, answer the question;
   do not send a page/video just because you can.
+- When this skill is loaded by the Codex agent-tools runtime, use the approved
+  tools to act: `send_whatsapp_text`, `schedule_followup`,
+  `generate_or_revise_solo_page`, `queue_workstation_deliverables`,
+  `mark_preview_approved`, or `handoff_human`. Do not return a JSON plan when a
+  tool call is the right action.
 - If the client asks how to give you content, ask them to send the content and
   say you will add it. Do not generate a new preview for that.
 - If the client is unclear, ask one short clarifying question.

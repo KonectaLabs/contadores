@@ -1998,6 +1998,258 @@ class ContadoresMessage(SQLModel, table=True):
             return row
 
 
+class AgentRun(SQLModel, table=True):
+    """One autonomous Codex employee run and its audited outcome."""
+
+    __tablename__ = "agent_runs"
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    agent_kind: str = Field(default="codex", index=True)
+    target_type: str = Field(index=True)
+    target_id: str = Field(index=True)
+    status: str = Field(default="running", index=True)
+    prompt_version: str = Field(default="")
+    context_path: str = Field(default="")
+    final_response: str = Field(default="")
+    error: str = Field(default="")
+    started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
+    finished_at: datetime | None = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
+
+    @classmethod
+    def start(
+        cls,
+        *,
+        run_id: str,
+        agent_kind: str,
+        target_type: str,
+        target_id: str,
+        prompt_version: str = "",
+        context_path: str = "",
+    ) -> "AgentRun":
+        """Persist the start of one autonomous run."""
+        now = datetime.now(timezone.utc)
+        with Session(engine) as session:
+            row = cls(
+                id=run_id,
+                agent_kind=(agent_kind or "codex").strip() or "codex",
+                target_type=(target_type or "").strip(),
+                target_id=(target_id or "").strip(),
+                status="running",
+                prompt_version=(prompt_version or "").strip(),
+                context_path=(context_path or "").strip(),
+                started_at=now,
+                created_at=now,
+            )
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            session.expunge(row)
+            return row
+
+    @classmethod
+    def finish(
+        cls,
+        run_id: str,
+        *,
+        status: str,
+        final_response: str = "",
+        error: str = "",
+        finished_at: datetime | None = None,
+    ) -> Optional["AgentRun"]:
+        """Mark one autonomous run as completed or failed."""
+        with Session(engine) as session:
+            row = session.get(cls, run_id)
+            if row is None:
+                return None
+            row.status = (status or "").strip() or row.status
+            row.final_response = str(final_response or "")[:20000]
+            row.error = str(error or "")[:12000]
+            row.finished_at = finished_at or datetime.now(timezone.utc)
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            session.expunge(row)
+            return row
+
+
+class AgentToolCall(SQLModel, table=True):
+    """One tool call made by an autonomous Codex run."""
+
+    __tablename__ = "agent_tool_calls"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    run_id: str = Field(foreign_key="agent_runs.id", index=True)
+    tool_name: str = Field(index=True)
+    target_type: str = Field(default="", index=True)
+    target_id: str = Field(default="", index=True)
+    arguments_json: str = Field(default="{}")
+    result_json: str = Field(default="{}")
+    status: str = Field(default="succeeded", index=True)
+    idempotency_key: str | None = Field(default=None, index=True)
+    error: str = Field(default="")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
+
+    @classmethod
+    def add(
+        cls,
+        *,
+        run_id: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+        result: dict[str, Any] | None = None,
+        status: str = "succeeded",
+        target_type: str = "",
+        target_id: str = "",
+        idempotency_key: str | None = None,
+        error: str = "",
+    ) -> "AgentToolCall":
+        """Persist one audited tool call."""
+        with Session(engine) as session:
+            row = cls(
+                run_id=(run_id or "").strip(),
+                tool_name=(tool_name or "").strip(),
+                target_type=(target_type or "").strip(),
+                target_id=(target_id or "").strip(),
+                arguments_json=json.dumps(arguments or {}, ensure_ascii=True, default=str),
+                result_json=json.dumps(result or {}, ensure_ascii=True, default=str),
+                status=(status or "").strip() or "succeeded",
+                idempotency_key=(idempotency_key or "").strip() or None,
+                error=str(error or "")[:12000],
+            )
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            session.expunge(row)
+            return row
+
+    @classmethod
+    def list_by_run(cls, run_id: str) -> list["AgentToolCall"]:
+        """List audited tool calls for one run."""
+        with Session(engine) as session:
+            statement = select(cls).where(cls.run_id == run_id).order_by(cls.created_at, cls.id)
+            rows = list(session.exec(statement).all())
+            for row in rows:
+                session.expunge(row)
+            return rows
+
+
+class ScheduledAgentTask(SQLModel, table=True):
+    """A DB-backed wake-up task for a future autonomous Codex run."""
+
+    __tablename__ = "scheduled_agent_tasks"
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    run_id: str | None = Field(default=None, index=True)
+    target_type: str = Field(index=True)
+    target_id: str = Field(index=True)
+    status: str = Field(default="pending", index=True)
+    due_at: datetime = Field(index=True)
+    reason: str = Field(default="")
+    instruction: str = Field(default="")
+    idempotency_key: str | None = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
+    claimed_at: datetime | None = Field(default=None, index=True)
+    completed_at: datetime | None = Field(default=None, index=True)
+    last_error: str = Field(default="")
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        target_type: str,
+        target_id: str,
+        due_at: datetime,
+        reason: str,
+        instruction: str,
+        run_id: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> "ScheduledAgentTask":
+        """Create a pending wake-up unless the idempotency key already exists."""
+        clean_key = (idempotency_key or "").strip() or None
+        if clean_key:
+            existing = cls.get_by_idempotency_key(clean_key)
+            if existing is not None:
+                return existing
+        if due_at.tzinfo is None:
+            due_at = due_at.replace(tzinfo=timezone.utc)
+        with Session(engine) as session:
+            row = cls(
+                run_id=(run_id or "").strip() or None,
+                target_type=(target_type or "").strip(),
+                target_id=(target_id or "").strip(),
+                due_at=due_at,
+                reason=(reason or "").strip(),
+                instruction=(instruction or "").strip(),
+                idempotency_key=clean_key,
+            )
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            session.expunge(row)
+            return row
+
+    @classmethod
+    def get_by_idempotency_key(cls, idempotency_key: str) -> Optional["ScheduledAgentTask"]:
+        """Return one task by idempotency key."""
+        clean_key = (idempotency_key or "").strip()
+        if not clean_key:
+            return None
+        with Session(engine) as session:
+            statement = select(cls).where(cls.idempotency_key == clean_key).limit(1)
+            row = session.exec(statement).first()
+            if row:
+                session.expunge(row)
+            return row
+
+    @classmethod
+    def list_due(cls, *, now: datetime, limit: int = 20) -> list["ScheduledAgentTask"]:
+        """List pending wake-up tasks ready to run."""
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        with Session(engine) as session:
+            statement = (
+                select(cls)
+                .where(cls.status == "pending", cls.due_at <= now)
+                .order_by(cls.due_at, cls.created_at, cls.id)
+                .limit(limit)
+            )
+            rows = list(session.exec(statement).all())
+            for row in rows:
+                session.expunge(row)
+            return rows
+
+    @classmethod
+    def mark_status(
+        cls,
+        task_id: str,
+        *,
+        status: str,
+        run_id: str | None = None,
+        error: str = "",
+        timestamp: datetime | None = None,
+    ) -> Optional["ScheduledAgentTask"]:
+        """Update task lifecycle status."""
+        now = timestamp or datetime.now(timezone.utc)
+        with Session(engine) as session:
+            row = session.get(cls, task_id)
+            if row is None:
+                return None
+            row.status = (status or "").strip() or row.status
+            if run_id is not None:
+                row.run_id = (run_id or "").strip() or None
+            if row.status == "running":
+                row.claimed_at = now
+            if row.status in {"completed", "failed"}:
+                row.completed_at = now
+            row.last_error = str(error or "")[:12000]
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            session.expunge(row)
+            return row
+
+
 class ContadoresRuntimeAlert(SQLModel, table=True):
     """Lightweight operator alert that does not change the lead stage."""
 

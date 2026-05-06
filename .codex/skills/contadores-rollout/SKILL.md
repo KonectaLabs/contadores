@@ -53,6 +53,14 @@ ChatGPT Codex failures create runtime email alerts with the device-login link
 and reauth command, but should not pause leads when the API-key Codex fallback
 or Grok/DSPy answered safely.
 
+Autonomous Codex tools are rollout-gated. Keep
+`CODEX_AGENT_TOOLS_ENABLED=false` by default until a controlled server test
+passes. Enable Workstation first with `CODEX_AGENT_TOOLS_WORKSTATION_ENABLED`,
+then conversation with `CODEX_AGENT_TOOLS_CONVERSATION_ENABLED`. Tool runs write
+audits to `agent_runs`, `agent_tool_calls`, `scheduled_agent_tasks`, and
+`data/agent-runs/`; deploy verification should inspect those records for the
+first enabled lead/client.
+
 Workstation solo-page generation follows the same first two Codex auth paths:
 ChatGPT Codex with `CONVERSATION_BOT_CODEX_CHATGPT_HOME`, then Codex with
 `OPENAI_API_KEY` and `CONVERSATION_BOT_CODEX_API_KEY_HOME`. If both fail, the

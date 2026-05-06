@@ -25,6 +25,8 @@ from phonenumbers import NumberParseException, parse as parse_phone_number, time
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
+from backend.ai.codex_agent_runtime import run_codex_agent
+from backend.ai.codex_agent_tools import tool_specs as codex_agent_tool_specs
 from backend.calendly import normalize_calendly_url
 from backend.ai.contadores_conversation_bot import (
     ContadoresConversationBotProgram,
@@ -33,6 +35,8 @@ from backend.ai.contadores_conversation_bot import (
 )
 from backend.auth import INTERNAL_API_TOKEN_HEADER, has_valid_internal_api_token
 from backend.audio_transcription import AudioTranscriptionError, transcribe_audio_media
+from backend.codex_utils import CodexSkill
+from backend.config import CODEX_AGENT_TOOLS_CONVERSATION_ENABLED, CODEX_AGENT_TOOLS_ENABLED
 from backend.contadores_strategies import (
     LOOM_STEP,
     choose_contadores_strategy as choose_default_contadores_strategy,
@@ -49,6 +53,7 @@ from backend.database import (
     ContadoresStrategyAssignment,
     DATA_DIR,
     MessageDeliveryStatus,
+    ScheduledAgentTask,
     WorkstationAutomationStatus,
     WorkstationClient,
     WorkstationClientStatus,
@@ -2817,6 +2822,101 @@ async def process_conversation_reply_batch(
         messages = ContadoresMessage.list_by_lead(lead.id)
         funnel = resolve_funnel(lead.funnel_id)
         inferred_timezone = infer_timezone_from_phone(lead.phone, lead.normalized_phone)
+        if CODEX_AGENT_TOOLS_ENABLED and CODEX_AGENT_TOOLS_CONVERSATION_ENABLED:
+            context_md = f"""
+# Lead
+- lead_id: {lead.id}
+- funnel_id: {funnel.id}
+- funnel_label: {funnel.label}
+- name: {lead.full_name or '-'}
+- phone: {lead.phone or lead.normalized_phone or '-'}
+- current_stage: {lead.stage.value}
+- inferred_timezone: {inferred_timezone or '-'}
+
+# Funnel Info
+{build_funnel_info_for_bot(funnel)}
+
+# Latest Inbound
+{latest_inbound.text.strip()}
+
+# Conversation
+{format_conversation_for_bot(messages)}
+
+# Operating Judgment
+- Use tools to actually act: send text/media, schedule follow-up, start Workstation, update state, or hand off.
+- Do not force a one-message answer; send multiple short messages only when it helps.
+- If the lead asks a question, answer the question instead of sending a video by default.
+- If the lead wants to provide content for a page, ask them to send it and say you will add it.
+- Respect WhatsApp window/tool errors and use handoff_human when product rules block a safe reply.
+""".strip()
+            try:
+                agent_result = await asyncio.to_thread(
+                    run_codex_agent,
+                    target_type="lead",
+                    target_id=lead.id,
+                    objective=(
+                        "Handle this lead's latest WhatsApp reply as an internal Konecta employee. "
+                        "Use tools for product side effects instead of returning a JSON action."
+                    ),
+                    context_md=context_md,
+                    tool_specs=codex_agent_tool_specs(),
+                    skills=[
+                        CodexSkill(
+                            name="contadores-lead-reply-playbook",
+                            path=str(
+                                (
+                                    REPO_ROOT
+                                    / ".codex"
+                                    / "skills"
+                                    / "contadores-lead-reply-playbook"
+                                    / "SKILL.md"
+                                ).resolve()
+                            ),
+                        )
+                    ],
+                    prompt_version="conversation-agent-tools-v1",
+                )
+                if agent_result.side_effect_count:
+                    metrics["ai_replies_sent"] += len(
+                        [
+                            call
+                            for call in agent_result.tool_calls
+                            if call.status == "succeeded"
+                            and call.tool_name in {"send_whatsapp_text", "send_whatsapp_media"}
+                        ]
+                    )
+                    metrics["workstation_solo_page_started"] += len(
+                        [
+                            call
+                            for call in agent_result.tool_calls
+                            if call.status == "succeeded" and call.tool_name == "create_or_get_solo_page_client"
+                        ]
+                    )
+                    metrics["human_handoffs"] += len(
+                        [
+                            call
+                            for call in agent_result.tool_calls
+                            if call.status == "succeeded" and call.tool_name == "handoff_human"
+                        ]
+                    )
+                    metrics["no_actions"] += 1 if not any(metrics.values()) else 0
+                    ContadoresLead.update_flow_state(
+                        lead.id,
+                        classification_completed_at=now,
+                        last_classification_label="codex_agent_tools",
+                        last_classification_reason=f"Codex tool agent completed run {agent_result.run_id}.",
+                    )
+                    return metrics
+            except Exception as error:
+                ContadoresRuntimeAlert.add(
+                    lead=lead,
+                    funnel_label=funnel.label,
+                    alert_type="codex_agent_tools_fallback",
+                    error=f"{error.__class__.__name__}: {error}",
+                    fallback_action="legacy_conversation_bot",
+                    latest_inbound_text=latest_inbound.text,
+                )
+                metrics["codex_fallback_alerts"] += 1
         result = await conversation_bot.aforward(
             funnel_id=funnel.id,
             funnel_label=funnel.label,
@@ -4055,6 +4155,7 @@ class ContadoresAutomationTickResponse(BaseModel):
     classified_needs_human: int = 0
     calendly_sent: int = 0
     codex_fallback_alerts: int = 0
+    scheduled_agent_tasks_processed: int = 0
 
 
 class PendingContadoresAlertItem(BaseModel):
@@ -5122,6 +5223,73 @@ async def run_contadores_automation_tick(
     classified_needs_human = 0
     calendly_sent = 0
     codex_fallback_alerts = 0
+    scheduled_agent_tasks_processed = 0
+
+    if CODEX_AGENT_TOOLS_ENABLED and CODEX_AGENT_TOOLS_CONVERSATION_ENABLED:
+        for task in ScheduledAgentTask.list_due(now=now, limit=20):
+            if task.target_type != "lead":
+                continue
+            lead = ContadoresLead.get_by_id(task.target_id)
+            if lead is None or lead.funnel_id != funnel_id:
+                continue
+            ScheduledAgentTask.mark_status(task.id, status="running", timestamp=now)
+            messages = ContadoresMessage.list_by_lead(lead.id)
+            try:
+                agent_result = await asyncio.to_thread(
+                    run_codex_agent,
+                    target_type="lead",
+                    target_id=lead.id,
+                    objective=(
+                        "Run this scheduled follow-up as an internal Konecta employee. "
+                        "Use tools for any message, state update, new follow-up, Workstation action, or handoff."
+                    ),
+                    context_md=f"""
+# Scheduled Follow-Up
+- task_id: {task.id}
+- reason: {task.reason}
+- instruction: {task.instruction}
+
+# Lead
+- lead_id: {lead.id}
+- funnel_id: {lead.funnel_id}
+- name: {lead.full_name or '-'}
+- phone: {lead.phone or lead.normalized_phone or '-'}
+- stage: {lead.stage.value}
+- automation_paused: {lead.automation_paused}
+
+# Conversation
+{format_conversation_for_bot(messages)}
+""".strip(),
+                    tool_specs=codex_agent_tool_specs(),
+                    skills=[
+                        CodexSkill(
+                            name="contadores-lead-reply-playbook",
+                            path=str(
+                                (
+                                    REPO_ROOT
+                                    / ".codex"
+                                    / "skills"
+                                    / "contadores-lead-reply-playbook"
+                                    / "SKILL.md"
+                                ).resolve()
+                            ),
+                        )
+                    ],
+                    prompt_version="conversation-scheduled-agent-tools-v1",
+                )
+                ScheduledAgentTask.mark_status(
+                    task.id,
+                    status="completed",
+                    run_id=agent_result.run_id,
+                )
+                scheduled_agent_tasks_processed += 1
+            except Exception as error:
+                ScheduledAgentTask.mark_status(
+                    task.id,
+                    status="failed",
+                    error=f"{error.__class__.__name__}: {error}",
+                )
+                codex_fallback_alerts += 1
 
     for lead in leads:
         if lead.stage in {ContadoresLeadStage.ARCHIVED, ContadoresLeadStage.CLOSED, ContadoresLeadStage.BOOKED}:
@@ -5361,6 +5529,7 @@ async def run_contadores_automation_tick(
         classified_needs_human=classified_needs_human,
         calendly_sent=calendly_sent,
         codex_fallback_alerts=codex_fallback_alerts,
+        scheduled_agent_tasks_processed=scheduled_agent_tasks_processed,
     )
 
 

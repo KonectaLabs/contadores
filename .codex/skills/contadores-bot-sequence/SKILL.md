@@ -43,9 +43,18 @@ override the built-in Contadores definition.
    - Primary runtime: ChatGPT-authenticated Codex SDK `gpt-5.5` with medium
      effort, using this skill and `contadores-lead-reply-playbook` as
      structured context.
-   - Codex may inspect repository files and use read-only tools/shell commands
-     to resolve source-of-truth questions during the runtime decision. It must
-     not modify files, external systems, or production state.
+   - When `CODEX_AGENT_TOOLS_ENABLED=true` and
+     `CODEX_AGENT_TOOLS_CONVERSATION_ENABLED=true`, Codex runs first as an
+     autonomous internal employee with an approved toolbelt. It can queue one or
+     more WhatsApp messages, send media, schedule a future follow-up, create a
+     Workstation solo-page client, update lead state, or hand off to a human.
+     The backend validates every tool call and audits it in `agent_runs`,
+     `agent_tool_calls`, `scheduled_agent_tasks`, and `data/agent-runs/`.
+   - When agent tools are disabled or fail before side effects, Codex falls back
+     to the legacy structured-action contract. In that legacy mode Codex may
+     inspect repository files and use read-only tools/shell commands to resolve
+     source-of-truth questions, but must not modify files, external systems, or
+     production state.
    - Fallback order: Codex with API-key auth, then DSPy/Grok 4.3 through
      OpenRouter, or `gpt-5.4-mini` when OpenRouter is not configured.
    - If ChatGPT Codex auth fails, create a runtime email alert with
@@ -54,7 +63,7 @@ override the built-in Contadores definition.
      Codex fallback or Grok/DSPy answers safely.
    - Static few-shot examples live in code. Do not fetch CRM examples during a
      live conversation.
-9. The bot must return one structured action:
+9. In legacy mode, the bot must return one structured action:
    - `send_reply`
    - `offer_solo_page_promo`
    - `ask_scheduling_details`

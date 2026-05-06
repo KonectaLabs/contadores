@@ -291,6 +291,13 @@ Bot conversacional post-video y post-Calendly:
   Puede inspeccionar archivos del repo y usar herramientas read-only para
   resolver dudas de source of truth; no debe modificar archivos ni estado
   externo durante una decision runtime.
+- Si `CODEX_AGENT_TOOLS_ENABLED=true` y
+  `CODEX_AGENT_TOOLS_CONVERSATION_ENABLED=true`, antes del contrato JSON legacy
+  corre el runtime autonomo con tools internas auditadas. En ese modo Codex no
+  actua como clasificador: puede llamar tools para mandar uno o mas mensajes,
+  agendar un follow-up, iniciar Workstation, actualizar estado o pasar a humano.
+  Si ese runtime falla antes de ejecutar side effects, se conserva el fallback
+  legacy.
 - Orden de fallback: primero ChatGPT Codex, despues Codex autenticado con API
   key, y recien despues DSPy/Grok. Si falla ChatGPT Codex, el lead no se pausa
   por eso: se crea una alerta runtime por email con link/comando para
@@ -597,14 +604,18 @@ pueda persistir en el volumen `data/`. Si
 lanzar Codex para priorizar el login ChatGPT/Codex. Si se configura en `false`,
 el proceso Codex conserva `OPENAI_API_KEY`.
 
-La automatizacion Workstation solo pagina usa `run_codex_with_context` con
-`gpt-5.5`, `medium`, la skill `.codex/skills/workstation-solo-page/SKILL.md` y
-acceso al repo desde el worker Codex. Primero intenta ChatGPT Codex con
-`CONVERSATION_BOT_CODEX_CHATGPT_HOME`; si ese runtime falla, reintenta Codex con
-`OPENAI_API_KEY` y `CONVERSATION_BOT_CODEX_API_KEY_HOME`. Antes de generar
-bocetos, revisiones, respuestas o aprobaciones, espera 20 minutos de silencio
-desde el ultimo inbound para que el cliente pueda mandar fotos, audios y datos
-en tandas.
+La automatizacion Workstation solo pagina usa Codex GPT-5.5 con la skill
+`.codex/skills/workstation-solo-page/SKILL.md`. Si
+`CODEX_AGENT_TOOLS_ENABLED=true` y
+`CODEX_AGENT_TOOLS_WORKSTATION_ENABLED=true`, primero corre el agente autonomo
+con toolbelt interna: puede responder texto, agendar follow-up, crear/revisar la
+pagina, encolar entregables, marcar aprobacion o pasar a humano. Las tools
+quedan auditadas en `agent_runs`, `agent_tool_calls`,
+`scheduled_agent_tasks` y `data/agent-runs/`. Si el agente con tools falla antes
+de completar side effects, Workstation vuelve al decisionador JSON legacy.
+Antes de generar bocetos, revisiones, respuestas o aprobaciones, espera 20
+minutos de silencio desde el ultimo inbound para que el cliente pueda mandar
+fotos, audios y datos en tandas.
 Cuando un cliente responde durante intake o despues de un preview, Workstation
 ya no fuerza una revision con video ante cualquier mensaje. Primero corre una
 decision autonoma:
