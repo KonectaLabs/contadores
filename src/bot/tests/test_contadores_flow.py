@@ -720,14 +720,14 @@ def test_send_contadores_pending_alerts_handles_runtime_fallback_alert(monkeypat
                 email=None,
                 stage="runtime_alert",
                 automation_paused_reason="codex_fallback",
-                latest_inbound_text="Cuanto cuesta?",
+                latest_inbound_text="Gracias pero no estoy interesado en una pagina web",
                 reason="Codex fallo y se uso fallback.",
                 alert_emails=["ops@example.com"],
                 alert_kind="runtime",
                 runtime_alert_id=123,
                 funnel_label="Abogados",
                 codex_error="Codex failed: timeout",
-                fallback_action="send_reply",
+                fallback_action="close_lead",
             )
         ]
 
@@ -771,9 +771,16 @@ def test_send_contadores_pending_alerts_handles_runtime_fallback_alert(monkeypat
     assert marked_runtime_alerts == [123]
     assert marked_leads == []
     assert sent_calls[0]["subject"] == "[Abogados] codex_fallback +5491153484587"
-    assert "Error Codex: Codex failed: timeout" in sent_calls[0]["text"]
-    assert "Accion fallback usada: send_reply" in sent_calls[0]["text"]
+    assert "Resumen operativo:" in sent_calls[0]["text"]
+    assert "ChatGPT Codex se desconecto, pero el bot uso el fallback configurado." in sent_calls[0]["text"]
+    assert "Impacto en el lead:" in sent_calls[0]["text"]
+    assert "No se pauso solo por el error de Codex." in sent_calls[0]["text"]
+    assert "El fallback cerro el lead porque detecto rechazo o desinteres." in sent_calls[0]["text"]
+    assert "Accion aplicada: close_lead" in sent_calls[0]["text"]
+    assert "Que hacer ahora:" in sent_calls[0]["text"]
     assert "Reautenticacion ChatGPT Codex:" in sent_calls[0]["text"]
+    assert "Detalle tecnico:" in sent_calls[0]["text"]
+    assert "Error Codex: Codex failed: timeout" in sent_calls[0]["text"]
     assert "Link: https://auth.openai.com/codex/device" in sent_calls[0]["text"]
     assert "codex login --device-auth" in sent_calls[0]["text"]
     assert "Lead link: https://chatterface.fgoiriz.com/?section=contadores&contadores_lead=runtime-lead-1" in sent_calls[0]["text"]

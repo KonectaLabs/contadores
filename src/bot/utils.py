@@ -842,16 +842,42 @@ async def send_contadores_pending_alerts(
                 ]
             )
         elif runtime_alert:
+            fallback_action = item.fallback_action or "-"
+            if fallback_action == "close_lead":
+                operator_summary = "El fallback cerro el lead porque detecto rechazo o desinteres."
+            elif fallback_action == "handoff_human":
+                operator_summary = "El fallback pidio revision humana."
+            elif fallback_action == "handoff_scheduling":
+                operator_summary = "El fallback derivo el lead para coordinar agenda."
+            elif fallback_action in {"send_reply", "ask_scheduling_details"}:
+                operator_summary = "El fallback respondio por WhatsApp y dejo el lead procesado."
+            elif fallback_action == "no_action":
+                operator_summary = "El fallback decidio no mandar mensaje."
+            else:
+                operator_summary = "El fallback completo la accion indicada abajo."
+
             body_parts.extend(
                 [
-                    f"Error Codex: {item.codex_error or '-'}",
-                    f"Accion fallback usada: {item.fallback_action or '-'}",
-                    f"Motivo: {item.reason or '-'}",
+                    "Resumen operativo:",
+                    "ChatGPT Codex se desconecto, pero el bot uso el fallback configurado.",
+                    operator_summary,
+                    "",
+                    "Impacto en el lead:",
+                    "No se pauso solo por el error de Codex.",
+                    f"Accion aplicada: {fallback_action}",
+                    f"Motivo de la decision: {item.reason or '-'}",
+                    "",
+                    "Que hacer ahora:",
+                    "1. Revisar el lead solo si la accion aplicada no coincide con el mensaje inbound.",
+                    "2. Reautenticar ChatGPT Codex para volver al runtime primario.",
                     "",
                     "Reautenticacion ChatGPT Codex:",
                     f"Link: {CODEX_CHATGPT_REAUTH_URL or '-'}",
                     "Comando para generar el codigo de 15 minutos:",
                     CODEX_CHATGPT_REAUTH_COMMAND or "-",
+                    "",
+                    "Detalle tecnico:",
+                    f"Error Codex: {item.codex_error or '-'}",
                 ]
             )
         else:
