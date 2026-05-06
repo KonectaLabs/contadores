@@ -75,7 +75,7 @@ WORKSTATION_PING_2_DELAY_SECONDS = 48 * 60 * 60
 WORKSTATION_HANDOFF_DELAY_SECONDS = 72 * 60 * 60
 SOLO_PAGE_CONTEXT_MIN_CHARS = 35
 WORKSTATION_PROGRESS_MAX_CHARS = 12000
-WORKSTATION_WORKING_STALE_SECONDS = 30 * 60
+WORKSTATION_WORKING_STALE_SECONDS = 2 * 60 * 60
 WORKSTATION_INTAKE_TEXT = (
     "Perfecto, entonces arrancamos con la pagina.\n\n"
     "Mandeme por aca lo basico que quiere que aparezca: nombre del estudio, ciudad/pais, "
@@ -1577,7 +1577,7 @@ async def advance_solo_page_client(client: WorkstationClient, *, now: datetime) 
             mark_workstation_failed(
                 client=fresh_client,
                 lead=lead,
-                error=f"Workstation {operation} stayed in progress for more than 30 minutes.",
+                error=f"Workstation {operation} stayed in progress for more than 2 hours.",
             )
             metrics["failures"] = 1
         return metrics
@@ -1850,7 +1850,7 @@ def build_workstation_automation_state(
                 **base,
                 label="Stale working state",
                 detail=(
-                    f"The {operation} has been marked as working for more than 30 minutes. "
+                    f"The {operation} has been marked as working for more than 2 hours. "
                     "The next Workstation tick will fail it and create an operator alert."
                 ),
                 is_stale=True,

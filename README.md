@@ -587,7 +587,7 @@ cliente esta idle, esperando backoff, trabajando con Codex, listo para revision 
 fallado. La UI hace polling del cliente abierto cada pocos segundos sin pisar las
 notas que el operador este editando y muestra el contenido de `progress.md` como
 progreso casi en tiempo real. Si un draft o revision queda en estado working por
-mas de 30 minutos, el detalle lo marca como stale y el proximo tick lo convierte
+mas de 2 horas, el detalle lo marca como stale y el proximo tick lo convierte
 en fallo visible con alerta/email. El endpoint de tick usa un lock de proceso:
 si otro tick llega mientras una generacion larga de Codex sigue activa, responde
 `status=busy` y no reevalua estados stale hasta que termine el tick en curso.
