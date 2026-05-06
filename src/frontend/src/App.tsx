@@ -57,6 +57,7 @@ import type {
 } from "./types";
 
 const REFRESH_MS = 12000;
+const WORKSTATION_DETAIL_REFRESH_MS = 4000;
 const WHATSAPP_CUSTOM_WINDOW_MS = 24 * 60 * 60 * 1000;
 const DASHBOARD_FUNNEL_STORAGE_KEY = "contadores.dashboard.selectedFunnelId";
 const DASHBOARD_STAGE_STORAGE_KEY = "contadores.dashboard.stageFilter";
@@ -64,6 +65,10 @@ const DASHBOARD_SECTION_STORAGE_KEY = "contadores.dashboard.activeSection";
 
 type StageFilterValue = LeadStage | "all" | "manual_attention";
 type ActiveSection = "crm" | "workstation" | "runner";
+type LoadWorkstationDetailOptions = {
+  syncNotes?: boolean;
+  showLoading?: boolean;
+};
 
 const stageFilters: Array<{
   value: StageFilterValue;
@@ -373,14 +378,23 @@ export function App() {
     }
   }, []);
 
-  const loadWorkstationDetail = useCallback(async (clientId: string) => {
-    setWorkstationLoading(true);
+  const loadWorkstationDetail = useCallback(async (clientId: string, options: LoadWorkstationDetailOptions = {}) => {
+    const syncNotes = options.syncNotes ?? true;
+    const showLoading = options.showLoading ?? true;
+    if (showLoading) {
+      setWorkstationLoading(true);
+    }
     try {
       const payload = await apiFetch<WorkstationClientDetailResponse>(`/api/workstation/clients/${clientId}`);
       setWorkstationDetail(payload);
-      setWorkstationNotesDraft(payload.notes ?? "");
+      if (syncNotes) {
+        setWorkstationNotesDraft(payload.notes ?? "");
+      }
+      return payload;
     } finally {
-      setWorkstationLoading(false);
+      if (showLoading) {
+        setWorkstationLoading(false);
+      }
     }
   }, []);
 
@@ -497,6 +511,35 @@ export function App() {
       setError(reason instanceof Error ? reason.message : "Could not load the Workstation client.");
     });
   }, [loadWorkstationDetail, selectedWorkstationClientId]);
+
+  useEffect(() => {
+    if (activeSection !== "workstation" || !selectedWorkstationClientId) {
+      return;
+    }
+    let cancelled = false;
+    const pollWorkstation = async () => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+      try {
+        await Promise.all([
+          loadWorkstation(),
+          loadWorkstationDetail(selectedWorkstationClientId, { syncNotes: false, showLoading: false }),
+        ]);
+      } catch (reason) {
+        if (!cancelled) {
+          setError(reason instanceof Error ? reason.message : "Could not refresh Workstation status.");
+        }
+      }
+    };
+    const timer = window.setInterval(() => {
+      pollWorkstation();
+    }, WORKSTATION_DETAIL_REFRESH_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [activeSection, loadWorkstation, loadWorkstationDetail, selectedWorkstationClientId]);
 
   useEffect(() => {
     if (!professionalPhotoJob || !["queued", "running"].includes(professionalPhotoJob.status)) {
@@ -2116,6 +2159,7 @@ function WorkstationView({
   const funnelLabel = funnel?.label ?? activeClient?.funnel_id ?? "selected funnel";
   const workstationMessages = detailClient ? detail?.messages ?? [] : [];
   const runtimeAlerts = detailClient ? detail?.runtime_alerts ?? [] : [];
+  const automationState = detailClient ? detail?.automation_state ?? null : null;
   const openRuntimeAlerts = runtimeAlerts.filter((alert) => !alert.resolved_at);
   const latestRuntimeAlert = openRuntimeAlerts[0] ?? runtimeAlerts[0] ?? null;
   const workstationFailed = activeClient?.automation_status === "failed";
@@ -2132,6 +2176,13 @@ function WorkstationView({
   const currentProfessionalPhotoJob = professionalPhotoJob?.client_id === activeClient?.id ? professionalPhotoJob : null;
   const professionalPhotoJobBusy = currentProfessionalPhotoJob?.status === "queued" || currentProfessionalPhotoJob?.status === "running";
   const activeOffer = formatWorkstationOffer(activeClient);
+  const automationTone = workstationFailed
+    ? "failed"
+    : automationState?.is_working
+      ? "working"
+      : automationState?.is_waiting_backoff
+        ? "waiting"
+        : "idle";
 
   useEffect(() => {
     setNotesOpen(false);
@@ -2402,6 +2453,47 @@ function WorkstationView({
                   </div>
                 </section>
               ) : null}
+
+              <section className={`workstation-panel workstation-automation-panel ${automationTone}`}>
+                <div className="workstation-panel-head">
+                  <div>
+                    <span>Automation state</span>
+                    <strong>{automationState?.label ?? humanize(activeClient.automation_status)}</strong>
+                  </div>
+                  <span className="workstation-state-pill">
+                    {automationState?.is_working ? (
+                      <SpinnerGap className="workstation-spinner" size={14} weight="bold" />
+                    ) : automationState?.is_waiting_backoff ? (
+                      <ClockCountdown size={14} weight="bold" />
+                    ) : workstationFailed ? (
+                      <WarningCircle size={14} weight="bold" />
+                    ) : (
+                      <CheckCircle size={14} weight="bold" />
+                    )}
+                    {automationState?.is_working ? "Working" : automationState?.is_waiting_backoff ? "Backoff" : workstationFailed ? "Failed" : "Idle"}
+                  </span>
+                </div>
+                <p className="workstation-automation-detail">
+                  {automationState?.detail ?? "No automation state loaded yet."}
+                </p>
+                <div className="workstation-automation-meta">
+                  {automationState?.latest_inbound_at ? <span>Latest inbound: {shortDate(automationState.latest_inbound_at)}</span> : null}
+                  {automationState?.backoff_until ? <span>Backoff until: {shortDate(automationState.backoff_until)}</span> : null}
+                  {automationState?.progress_updated_at ? <span>Progress updated: {shortDate(automationState.progress_updated_at)}</span> : null}
+                  {automationState?.progress_path ? <code>{automationState.progress_path}</code> : null}
+                </div>
+                <div className="workstation-progress">
+                  <div className="workstation-progress-head">
+                    <Robot size={15} weight="bold" />
+                    <span>Codex progress</span>
+                  </div>
+                  {automationState?.progress_markdown?.trim() ? (
+                    <pre>{automationState.progress_markdown}</pre>
+                  ) : (
+                    <p>No progress has been written for this client yet.</p>
+                  )}
+                </div>
+              </section>
 
               <section
                 className={`workstation-panel workstation-media-panel ${mediaDropActive ? "drag-active" : ""}`}

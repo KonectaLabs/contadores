@@ -74,6 +74,7 @@ WORKSTATION_PING_1_DELAY_SECONDS = 24 * 60 * 60
 WORKSTATION_PING_2_DELAY_SECONDS = 48 * 60 * 60
 WORKSTATION_HANDOFF_DELAY_SECONDS = 72 * 60 * 60
 SOLO_PAGE_CONTEXT_MIN_CHARS = 35
+WORKSTATION_PROGRESS_MAX_CHARS = 12000
 WORKSTATION_INTAKE_TEXT = (
     "Perfecto, entonces arrancamos con la pagina.\n\n"
     "Mandeme por aca lo basico que quiere que aparezca: nombre del estudio, ciudad/pais, "
@@ -96,6 +97,41 @@ def client_folder(client: WorkstationClient) -> Path:
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "media").mkdir(parents=True, exist_ok=True)
     return folder
+
+
+def workstation_progress_path(client: WorkstationClient) -> Path:
+    """Return the operator-visible progress log for one Workstation client."""
+    return client_folder(client) / "progress.md"
+
+
+def append_workstation_progress(client: WorkstationClient, message: str) -> None:
+    """Append one short timestamped progress event without blocking automation."""
+    clean_message = " ".join((message or "").strip().split())
+    if not clean_message:
+        return
+    try:
+        path = workstation_progress_path(client)
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(f"- `{timestamp}` {clean_message}\n")
+    except Exception as error:
+        logger.warning("Could not write Workstation progress for %s: %s", client.id, error)
+
+
+def read_workstation_progress(client: WorkstationClient) -> tuple[str, str | None, str | None]:
+    """Return progress markdown plus stable path and mtime for the detail UI."""
+    path = workstation_progress_path(client)
+    if not path.exists():
+        return "", relative_data_path(path), None
+    try:
+        markdown = path.read_text(encoding="utf-8")
+    except Exception as error:
+        logger.warning("Could not read Workstation progress for %s: %s", client.id, error)
+        return "", relative_data_path(path), None
+    if len(markdown) > WORKSTATION_PROGRESS_MAX_CHARS:
+        markdown = "... older progress omitted ...\n" + markdown[-WORKSTATION_PROGRESS_MAX_CHARS:]
+    updated_at = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
+    return markdown, relative_data_path(path), format_timestamp_seconds(updated_at)
 
 
 def professional_photo_root(client: WorkstationClient) -> Path:
@@ -362,6 +398,21 @@ class WorkstationRuntimeAlertResponse(BaseModel):
     created_at: str
 
 
+class WorkstationAutomationStateResponse(BaseModel):
+    """Operator-facing status for the Workstation automation loop."""
+
+    status: str
+    label: str
+    detail: str
+    is_working: bool = False
+    is_waiting_backoff: bool = False
+    backoff_until: str | None = None
+    latest_inbound_at: str | None = None
+    progress_path: str | None = None
+    progress_markdown: str = ""
+    progress_updated_at: str | None = None
+
+
 class WorkstationClientDetailResponse(BaseModel):
     """Full Workstation client profile payload."""
 
@@ -370,6 +421,7 @@ class WorkstationClientDetailResponse(BaseModel):
     messages: list[ContadoresMessageResponse] = Field(default_factory=list)
     media: list[WorkstationMediaAssetResponse] = Field(default_factory=list)
     runtime_alerts: list[WorkstationRuntimeAlertResponse] = Field(default_factory=list)
+    automation_state: WorkstationAutomationStateResponse
     professional_photos: list["WorkstationProfessionalPhotoVersion"] = Field(default_factory=list)
 
 
@@ -970,15 +1022,39 @@ def inbound_after(messages: list[ContadoresMessage], timestamp: datetime | None)
     return replies
 
 
+def normalize_utc(value: datetime | None) -> datetime | None:
+    """Return a UTC-aware datetime when a value exists."""
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def latest_message_at(messages: list[ContadoresMessage]) -> datetime | None:
+    """Return the latest usable message timestamp."""
+    for message in reversed(messages):
+        created_at = normalize_utc(message.created_at)
+        if created_at is not None:
+            return created_at
+    return None
+
+
+def backoff_until_for(messages: list[ContadoresMessage]) -> datetime | None:
+    """Return when the current inbound quiet window ends."""
+    latest_at = latest_message_at(messages)
+    if latest_at is None:
+        return None
+    return latest_at + timedelta(seconds=WORKSTATION_BACKOFF_SECONDS)
+
+
 def latest_inbound_is_quiet(messages: list[ContadoresMessage], *, now: datetime) -> bool:
     """Return True when the latest inbound has passed the Workstation backoff."""
     if not messages:
         return False
-    latest_at = messages[-1].created_at
+    latest_at = latest_message_at(messages)
     if latest_at is None:
         return False
-    if latest_at.tzinfo is None:
-        latest_at = latest_at.replace(tzinfo=timezone.utc)
     return now >= latest_at + timedelta(seconds=WORKSTATION_BACKOFF_SECONDS)
 
 
@@ -1171,6 +1247,7 @@ def build_solo_page_codex_prompt(
     )
     professional_photos = list_professional_photo_versions(client)
     photo_paths = "\n".join(item.image_path for item in professional_photos) or "(none)"
+    progress_path = workstation_progress_path(client)
     return f"""
 Use the workstation-solo-page skill to create a static website draft for this client.
 
@@ -1179,6 +1256,9 @@ Client folder:
 
 Required output folder:
 {version_dir}
+
+Progress file:
+{progress_path}
 
 Base template folder to reuse:
 {base_template}
@@ -1205,6 +1285,8 @@ Requirements:
 - If this is a revision, apply the requested changes to the previous version.
 - If client information is incomplete, still create a credible first draft with honest placeholders.
 - Save all files inside the required output folder only.
+- Append short progress updates to progress.md after each meaningful step: context read, files written, checks done.
+- Do not delete or rewrite old progress.md entries.
 - Do not modify source templates, repo files, or other client folders.
 - Respond with a short confirmation and the created paths.
 
@@ -1220,8 +1302,9 @@ def generate_solo_page_version_sync(
     revision: bool,
 ) -> Path:
     """Run Codex to create one landing-page version and render its preview video."""
-    client_workdir = client_folder(client)
     version_dir = next_landing_page_version_dir(client)
+    operation = "revision" if revision else "draft"
+    append_workstation_progress(client, f"Starting {operation} generation in {relative_data_path(version_dir)}.")
     prompt = build_solo_page_codex_prompt(
         client=client,
         lead=lead,
@@ -1230,6 +1313,7 @@ def generate_solo_page_version_sync(
         revision=revision,
     )
     try:
+        append_workstation_progress(client, "Prompt prepared. Codex is writing the static page files.")
         result = run_codex_with_context(
             prompt,
             skills=[
@@ -1240,6 +1324,7 @@ def generate_solo_page_version_sync(
             ],
             cwd=REPO_ROOT,
         )
+        append_workstation_progress(client, "Codex finished. Validating generated files.")
         index_path = version_dir / "index.html"
         if not index_path.exists():
             raise RuntimeError(f"Codex did not create {index_path}")
@@ -1247,8 +1332,10 @@ def generate_solo_page_version_sync(
             raise RuntimeError(f"Codex did not create {version_dir / 'styles.css'}")
         if not (version_dir / "script.js").exists():
             (version_dir / "script.js").write_text("", encoding="utf-8")
+        append_workstation_progress(client, "Static files are valid. Rendering preview video.")
         preview_path = version_dir / "preview.mp4"
         render_landing_page_video_sync(index_path=index_path, output_path=preview_path)
+        append_workstation_progress(client, "Preview video rendered.")
         metadata = {
             "created_at": datetime.now(timezone.utc).isoformat(),
             "operation": "revision" if revision else "draft",
@@ -1269,8 +1356,10 @@ def generate_solo_page_version_sync(
             stored_filename=f"generated-page-preview-{version_dir.name}.mp4",
             content_type="video/mp4",
         )
+        append_workstation_progress(client, "Preview media registered in Workstation.")
         return version_dir
-    except Exception:
+    except Exception as error:
+        append_workstation_progress(client, f"Failed: {error.__class__.__name__}: {error}")
         shutil.rmtree(version_dir, ignore_errors=True)
         raise
 
@@ -1303,6 +1392,7 @@ def mark_workstation_failed(
     latest_inbound_text: str = "",
 ) -> None:
     """Stop Workstation automation and alert operators."""
+    append_workstation_progress(client, f"Automation failed: {error}")
     WorkstationClient.update_automation_state(
         client.id,
         automation_status=WorkstationAutomationStatus.FAILED,
@@ -1436,6 +1526,7 @@ async def advance_solo_page_client(client: WorkstationClient, *, now: datetime) 
     }
     lead = ContadoresLead.get_by_id(client.lead_id)
     if lead is None:
+        append_workstation_progress(client, "Automation failed: source lead was not found.")
         WorkstationClient.update_automation_state(
             client.id,
             automation_status=WorkstationAutomationStatus.FAILED,
@@ -1464,6 +1555,7 @@ async def advance_solo_page_client(client: WorkstationClient, *, now: datetime) 
                 text=WORKSTATION_INTAKE_TEXT,
                 sequence_step=WORKSTATION_INTAKE_SEQUENCE_STEP,
             )
+            append_workstation_progress(fresh_client, "Sent intake question to the client.")
             WorkstationClient.update_automation_state(
                 fresh_client.id,
                 automation_status=WorkstationAutomationStatus.INTAKE,
@@ -1478,6 +1570,7 @@ async def advance_solo_page_client(client: WorkstationClient, *, now: datetime) 
         )
         if not replies or not latest_inbound_is_quiet(replies, now=now):
             return metrics
+        append_workstation_progress(fresh_client, "Quiet window complete. Starting first draft.")
         WorkstationClient.update_automation_state(
             fresh_client.id,
             automation_status=WorkstationAutomationStatus.DRAFTING,
@@ -1513,6 +1606,7 @@ async def advance_solo_page_client(client: WorkstationClient, *, now: datetime) 
             last_automation_handled_at=now,
             last_preview_sent_at=row.created_at,
         )
+        append_workstation_progress(fresh_client, "Queued draft preview video for WhatsApp.")
         metrics["drafts_generated"] = 1
         metrics["revision_videos_sent"] = 1
         return metrics
@@ -1544,6 +1638,7 @@ async def advance_solo_page_client(client: WorkstationClient, *, now: datetime) 
             return metrics
         reply_text = "\n".join(message.text for message in replies if message.text.strip())
         if text_shows_workstation_approval(reply_text):
+            append_workstation_progress(fresh_client, "Client approved the preview. Handing off to operator.")
             WorkstationClient.update_automation_state(
                 fresh_client.id,
                 automation_status=WorkstationAutomationStatus.NEEDS_HUMAN,
@@ -1565,6 +1660,7 @@ async def advance_solo_page_client(client: WorkstationClient, *, now: datetime) 
             metrics["human_handoffs"] = 1
             return metrics
 
+        append_workstation_progress(fresh_client, "Quiet window complete. Starting revision.")
         WorkstationClient.update_automation_state(
             fresh_client.id,
             automation_status=WorkstationAutomationStatus.REVISION_REQUESTED,
@@ -1599,6 +1695,7 @@ async def advance_solo_page_client(client: WorkstationClient, *, now: datetime) 
             last_automation_handled_at=now,
             last_preview_sent_at=row.created_at,
         )
+        append_workstation_progress(fresh_client, "Queued revision preview video for WhatsApp.")
         metrics["revision_videos_sent"] = 1
         return metrics
 
@@ -1651,6 +1748,155 @@ def build_runtime_alert_response(alert: ContadoresRuntimeAlert) -> WorkstationRu
     )
 
 
+def build_waiting_backoff_state(
+    *,
+    client: WorkstationClient,
+    status: str,
+    replies: list[ContadoresMessage],
+    detail: str,
+) -> WorkstationAutomationStateResponse:
+    """Build the repeated backoff status shape for the UI."""
+    progress_markdown, progress_path, progress_updated_at = read_workstation_progress(client)
+    backoff_until = backoff_until_for(replies)
+    return WorkstationAutomationStateResponse(
+        status=status,
+        label="Waiting backoff",
+        detail=detail,
+        is_waiting_backoff=True,
+        backoff_until=format_timestamp_seconds(backoff_until),
+        latest_inbound_at=format_timestamp_seconds(latest_message_at(replies)),
+        progress_path=progress_path,
+        progress_markdown=progress_markdown,
+        progress_updated_at=progress_updated_at,
+    )
+
+
+def build_workstation_automation_state(
+    client: WorkstationClient,
+    messages: list[ContadoresMessage],
+) -> WorkstationAutomationStateResponse:
+    """Describe what the Workstation automation is doing right now."""
+    progress_markdown, progress_path, progress_updated_at = read_workstation_progress(client)
+    status = client.automation_status.value
+    base = {
+        "status": status,
+        "progress_path": progress_path,
+        "progress_markdown": progress_markdown,
+        "progress_updated_at": progress_updated_at,
+    }
+    if client.work_type != WorkstationClientWorkType.SOLO_PAGINA:
+        return WorkstationAutomationStateResponse(
+            **base,
+            label="Manual workspace",
+            detail="This client does not have solo-page automation assigned.",
+        )
+
+    if client.automation_status == WorkstationAutomationStatus.FAILED:
+        return WorkstationAutomationStateResponse(
+            **base,
+            label="Failed",
+            detail="Automation stopped. The failure alert and email status are shown on this client.",
+        )
+    if client.automation_status in {WorkstationAutomationStatus.DRAFTING, WorkstationAutomationStatus.REVISION_REQUESTED}:
+        operation = "first draft" if client.automation_status == WorkstationAutomationStatus.DRAFTING else "revision"
+        return WorkstationAutomationStateResponse(
+            **base,
+            label="Codex working",
+            detail=f"Codex is generating the {operation} and rendering the preview video.",
+            is_working=True,
+        )
+    if client.automation_status == WorkstationAutomationStatus.NEEDS_HUMAN:
+        approved = "approved by the client" if client.approved_at else "waiting for an operator"
+        return WorkstationAutomationStateResponse(
+            **base,
+            label="Human handoff",
+            detail=f"Automation is idle because this job is {approved}.",
+        )
+    if client.automation_status == WorkstationAutomationStatus.APPROVED:
+        return WorkstationAutomationStateResponse(
+            **base,
+            label="Approved",
+            detail="Automation is idle because the page was approved.",
+        )
+
+    now = now_utc()
+    if client.automation_status == WorkstationAutomationStatus.INTAKE:
+        intake_was_sent = any(
+            message.from_me and message.sequence_step == WORKSTATION_INTAKE_SEQUENCE_STEP
+            for message in messages
+        )
+        use_existing_context = (
+            not intake_was_sent
+            and client.last_automation_handled_at is None
+            and has_existing_solo_page_context(client, messages)
+        )
+        if not intake_was_sent and not use_existing_context:
+            return WorkstationAutomationStateResponse(
+                **base,
+                label="Ready to send intake",
+                detail="The next Workstation tick will ask the client for page details.",
+            )
+        replies = inbound_after(messages, None) if use_existing_context else inbound_after(
+            messages,
+            client.last_automation_handled_at,
+        )
+        if not replies:
+            return WorkstationAutomationStateResponse(
+                **base,
+                label="Waiting for client info",
+                detail="The intake question was sent and no page details have arrived yet.",
+            )
+        if not latest_inbound_is_quiet(replies, now=now):
+            return build_waiting_backoff_state(
+                client=client,
+                status=status,
+                replies=replies,
+                detail="The client sent information recently. Workstation waits 20 minutes of silence before drafting.",
+            )
+        return WorkstationAutomationStateResponse(
+            **base,
+            label="Ready to draft",
+            detail="The quiet window is complete. The next Workstation tick will start Codex.",
+            latest_inbound_at=format_timestamp_seconds(latest_message_at(replies)),
+        )
+
+    if client.automation_status == WorkstationAutomationStatus.AWAITING_REVIEW:
+        replies = inbound_after(messages, client.last_preview_sent_at)
+        if not replies:
+            return WorkstationAutomationStateResponse(
+                **base,
+                label="Waiting for lead review",
+                detail="The preview was sent and Workstation is waiting for the client's reply.",
+            )
+        if not latest_inbound_is_quiet(replies, now=now):
+            return build_waiting_backoff_state(
+                client=client,
+                status=status,
+                replies=replies,
+                detail="The client sent replies or files after the preview. Workstation waits 20 minutes before processing them.",
+            )
+        reply_text = "\n".join(message.text for message in replies if message.text.strip())
+        if text_shows_workstation_approval(reply_text):
+            return WorkstationAutomationStateResponse(
+                **base,
+                label="Approval ready",
+                detail="The client appears to have approved the preview. The next tick will hand this to an operator.",
+                latest_inbound_at=format_timestamp_seconds(latest_message_at(replies)),
+            )
+        return WorkstationAutomationStateResponse(
+            **base,
+            label="Revision ready",
+            detail="The quiet window is complete. The next tick will start a Codex revision.",
+            latest_inbound_at=format_timestamp_seconds(latest_message_at(replies)),
+        )
+
+    return WorkstationAutomationStateResponse(
+        **base,
+        label="Idle",
+        detail="No active Workstation automation step is running.",
+    )
+
+
 def build_client_detail(client: WorkstationClient) -> WorkstationClientDetailResponse:
     """Build one complete Workstation client response."""
     lead = get_required_lead(client.lead_id)
@@ -1664,6 +1910,7 @@ def build_client_detail(client: WorkstationClient) -> WorkstationClientDetailRes
         messages=[build_message_response(message) for message in messages],
         media=[build_media_response(asset) for asset in media],
         runtime_alerts=[build_runtime_alert_response(alert) for alert in runtime_alerts],
+        automation_state=build_workstation_automation_state(client, messages),
         professional_photos=list_professional_photo_versions(client),
     )
 

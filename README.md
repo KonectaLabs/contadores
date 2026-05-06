@@ -533,6 +533,8 @@ Dentro de esa carpeta se refrescan estos archivos:
 - `landing-page/vNNN/`: bocetos estaticos generados por Codex para la promo
   solo pagina, con `index.html`, `styles.css`, `script.js`, `assets/`,
   `preview.mp4` y `metadata.json`.
+- `progress.md`: log de progreso operativo que Codex y el backend van
+  agregando durante drafts, revisiones, render y cola del preview.
 
 La foto profesional se crea desde imagenes seleccionadas en `media/` y se guarda
 siempre con versionado determinista:
@@ -563,6 +565,12 @@ una alerta por email con el error y el comando/link de reauth. Ese fallo tambien
 debe quedar visible en el detalle del cliente de Workstation: el endpoint
 devuelve `runtime_alerts` y la UI muestra la alerta con el estado de email
 pendiente, enviado o resuelto. No debe existir un `failed` silencioso.
+
+El detalle de Workstation tambien devuelve `automation_state`, que explica si el
+cliente esta idle, esperando backoff, trabajando con Codex, listo para revision o
+fallado. La UI hace polling del cliente abierto cada pocos segundos sin pisar las
+notas que el operador este editando y muestra el contenido de `progress.md` como
+progreso casi en tiempo real.
 
 El preview que recibe el cliente es solo MP4. El backend renderiza el HTML
 estatico con Playwright en desktop `1440x900`, graba un scroll y normaliza el

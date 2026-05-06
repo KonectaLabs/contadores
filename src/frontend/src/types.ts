@@ -388,12 +388,26 @@ export interface WorkstationRuntimeAlert {
   created_at: string;
 }
 
+export interface WorkstationAutomationState {
+  status: string;
+  label: string;
+  detail: string;
+  is_working: boolean;
+  is_waiting_backoff: boolean;
+  backoff_until: string | null;
+  latest_inbound_at: string | null;
+  progress_path: string | null;
+  progress_markdown: string;
+  progress_updated_at: string | null;
+}
+
 export interface WorkstationClientDetailResponse {
   client: WorkstationClientSummary;
   notes: string;
   messages: MessageItem[];
   media: WorkstationMediaAsset[];
   runtime_alerts: WorkstationRuntimeAlert[];
+  automation_state: WorkstationAutomationState;
   professional_photos: WorkstationProfessionalPhotoVersion[];
 }
 

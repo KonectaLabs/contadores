@@ -25,6 +25,8 @@ Read these files first:
 - `landing-page/vNNN/`: versioned static page drafts for `work_type=solo_pagina`,
   including `index.html`, `styles.css`, `script.js`, `assets/`, `preview.mp4`,
   and `metadata.json`.
+- `progress.md`: operator-visible progress log for solo-page drafts, revisions,
+  preview rendering, and WhatsApp preview queueing.
 
 The Workstation UI can also export the same folder as a ZIP, but Codex should
 prefer reading the current folder directly when running inside this repo.
@@ -42,6 +44,12 @@ Solo-page automation waits for 20 minutes of silence after the latest inbound
 message before drafting, revising, or treating the preview as approved. This
 gives clients time to send photos, audio, and business details in multiple
 messages.
+
+The Workstation detail API exposes `automation_state` with the current logical
+state (`idle`, backoff wait, Codex working, ready for next tick, failed, or human
+handoff) plus the latest `progress.md` content. The frontend polls the selected
+client every few seconds and shows that progress without overwriting notes in
+progress.
 
 ## Operating Rules
 

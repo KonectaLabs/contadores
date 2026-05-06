@@ -4170,6 +4170,60 @@ def test_workstation_tick_waits_twenty_minutes_before_generating_preview(monkeyp
     assert updated.automation_status == WorkstationAutomationStatus.INTAKE
 
 
+def test_workstation_detail_shows_backoff_state_and_progress(monkeypatch, tmp_path) -> None:
+    """The Workstation detail should explain quiet-window waits and show progress.md."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setattr(database_module, "DATA_DIR", tmp_path / "data")
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-workstation-status",
+        phone="+5491777777789",
+        full_name="Cliente Estado",
+    )
+    workstation = WorkstationClient.create_for_lead(
+        lead,
+        work_type=WorkstationClientWorkType.SOLO_PAGINA,
+        status=WorkstationClientStatus.PENDING_PAYMENT,
+        automation_status=WorkstationAutomationStatus.AWAITING_REVIEW,
+    )
+    preview_at = now_utc() - timedelta(minutes=40)
+    WorkstationClient.update_automation_state(
+        workstation.id,
+        automation_status=WorkstationAutomationStatus.AWAITING_REVIEW,
+        last_preview_sent_at=preview_at,
+        last_automation_handled_at=preview_at,
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=True,
+        text="Le mando un video con el boceto de su pagina.",
+        sequence_step="workstation_preview_video",
+        media_type="video",
+        media_path="data/workstation/clients/demo/landing-page/v001/preview.mp4",
+        delivery_status=MessageDeliveryStatus.DELIVERED,
+        created_at=preview_at,
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=False,
+        text="Ahora le mando mas fotos y cambios.",
+        created_at=now_utc() - timedelta(minutes=5),
+    )
+    workstation_endpoints.append_workstation_progress(workstation, "Operator-visible progress line.")
+
+    with TestClient(app) as client:
+        detail = client.get(f"/api/workstation/clients/{workstation.id}")
+
+    assert detail.status_code == 200
+    state = detail.json()["automation_state"]
+    assert state["status"] == "awaiting_review"
+    assert state["label"] == "Waiting backoff"
+    assert state["is_waiting_backoff"] is True
+    assert state["backoff_until"]
+    assert state["latest_inbound_at"]
+    assert state["progress_path"].endswith("progress.md")
+    assert "Operator-visible progress line." in state["progress_markdown"]
+
+
 def test_manual_solo_page_conversion_uses_existing_chat_context(monkeypatch, tmp_path) -> None:
     """Manual solo-page starts should generate when the old chat already has page details."""
     configure_contadores_db(monkeypatch, tmp_path)
@@ -4344,6 +4398,12 @@ def test_workstation_solo_page_codex_runs_from_repo_root(monkeypatch, tmp_path) 
     assert len(calls) == 1
     assert Path(calls[0]["cwd"]).resolve() == workstation_endpoints.REPO_ROOT.resolve()
     assert "sandbox_writable_roots" not in calls[0]
+    assert "Progress file:" in str(calls[0]["prompt"])
+    assert "progress.md" in str(calls[0]["prompt"])
+    progress = workstation_endpoints.workstation_progress_path(workstation).read_text(encoding="utf-8")
+    assert "Starting draft generation" in progress
+    assert "Codex finished. Validating generated files." in progress
+    assert "Preview media registered in Workstation." in progress
 
 
 def test_workstation_tick_approval_marks_needs_human(monkeypatch, tmp_path) -> None:

@@ -4713,6 +4713,118 @@ body {
   color: #9f1239;
 }
 
+#contadoresView .workstation-automation-panel {
+  background: var(--ct-surface);
+}
+
+#contadoresView .workstation-automation-panel.working {
+  border-color: color-mix(in srgb, var(--ct-accent) 34%, var(--ct-line));
+}
+
+#contadoresView .workstation-automation-panel.waiting {
+  border-color: color-mix(in srgb, #b45309 36%, var(--ct-line));
+}
+
+#contadoresView .workstation-automation-panel.failed {
+  border-color: rgba(190, 18, 60, 0.32);
+  background: #fff1f2;
+}
+
+#contadoresView .workstation-state-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 9px;
+  border: 1px solid var(--ct-line);
+  border-radius: var(--ct-radius-sm);
+  background: var(--ct-surface-2);
+  color: var(--ct-ink-muted);
+  font: 800 10px/1 var(--font-mono);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+#contadoresView .workstation-automation-panel.working .workstation-state-pill {
+  border-color: color-mix(in srgb, var(--ct-accent) 34%, var(--ct-line));
+  color: var(--ct-accent-strong);
+}
+
+#contadoresView .workstation-automation-panel.waiting .workstation-state-pill {
+  border-color: rgba(180, 83, 9, 0.28);
+  color: #92400e;
+}
+
+#contadoresView .workstation-automation-panel.failed .workstation-state-pill {
+  border-color: rgba(190, 18, 60, 0.32);
+  color: #be123c;
+}
+
+#contadoresView .workstation-automation-detail {
+  margin: 0;
+  color: var(--ct-ink);
+  font: 500 13px/1.45 var(--font-sans);
+}
+
+#contadoresView .workstation-automation-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+}
+
+#contadoresView .workstation-automation-meta span,
+#contadoresView .workstation-automation-meta code {
+  max-width: 100%;
+  padding: 5px 7px;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--ct-line-soft);
+  border-radius: var(--ct-radius-sm);
+  background: var(--ct-surface-2);
+  color: var(--ct-ink-muted);
+  font: 700 10px/1.25 var(--font-mono);
+}
+
+#contadoresView .workstation-progress {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--ct-line-soft);
+}
+
+#contadoresView .workstation-progress-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ct-ink-muted);
+  font: 800 10px/1 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+#contadoresView .workstation-progress pre,
+#contadoresView .workstation-progress p {
+  margin: 0;
+  max-height: 300px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--ct-line-soft);
+  border-radius: var(--ct-radius-sm);
+  background: var(--ct-surface-2);
+  color: var(--ct-ink);
+  font: 500 12px/1.45 var(--font-mono);
+}
+
+#contadoresView .workstation-progress pre {
+  padding: 10px;
+}
+
+#contadoresView .workstation-progress p {
+  padding: 10px;
+  color: var(--ct-ink-muted);
+}
+
 #contadoresView .workstation-crm-link {
   width: max-content;
 }
