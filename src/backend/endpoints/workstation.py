@@ -113,6 +113,19 @@ class WorkstationCodexStopped(RuntimeError):
     """Raised when an operator stops an active Workstation Codex run."""
 
 
+@dataclass
+class WorkstationOutboundMessageSpec:
+    """One WhatsApp message that Codex asked Workstation to queue."""
+
+    text: str
+    sequence_step: str
+    media_type: str | None = None
+    media_path: str | None = None
+    media_caption: str | None = None
+    media_mime_type: str | None = None
+    media_filename: str | None = None
+
+
 def register_solo_page_task(client_id: str, task: object) -> None:
     """Track the real asyncio task currently working on a client."""
     active_solo_page_codex_tasks[client_id] = task
@@ -1409,6 +1422,14 @@ Requirements:
 - Write preview-message.txt with the exact WhatsApp message to send alongside
   the preview video. Choose copy that fits this client and this run. Ask for
   changes or approval clearly, but do not hardcode a generic template.
+- When the client should receive more than one WhatsApp item, also write
+  outbound-messages.json with a {{"messages": [...]}} object. Each message can be
+  text-only or include media_type plus media_path. Use this for deliverables
+  such as the preview video, professional-photo images, documents, or separate
+  follow-up text. Keep the order exactly as the client should receive it.
+- For outbound-messages.json media_path values, use paths under the client
+  folder such as landing-page/vNNN/preview.mp4 or
+  professional-photo/vNNN/professional-photo.jpg.
 - Use easy-to-read HTML/CSS/JS. Avoid build tools.
 - Treat the operator instruction as the main direction for this run when it exists.
 - If this is a revision, apply the requested changes to the previous version.
@@ -1670,24 +1691,199 @@ def read_workstation_preview_message(version_dir: Path) -> str:
     return WORKSTATION_DEFAULT_PREVIEW_MESSAGE
 
 
+def normalize_workstation_outbound_media_type(media_type: object) -> str | None:
+    """Return a WhatsApp media type supported by the dispatcher."""
+    clean_type = str(media_type or "").strip().lower()
+    if clean_type in {"image", "video", "audio", "document"}:
+        return clean_type
+    return None
+
+
+def resolve_workstation_outbound_media_path(
+    *,
+    client: WorkstationClient,
+    version_dir: Path,
+    media_path: object,
+) -> Path | None:
+    """Resolve a Codex-written outbound media path inside this Workstation client."""
+    clean_path = str(media_path or "").strip()
+    if not clean_path:
+        return None
+
+    client_root = client_folder(client).resolve()
+    version_root = version_dir.resolve()
+    data_root = database_module.DATA_DIR.expanduser().resolve()
+    candidate = Path(clean_path).expanduser()
+
+    candidates: list[Path] = []
+    if candidate.is_absolute():
+        candidates.append(candidate)
+    else:
+        parts = candidate.parts
+        if parts and parts[0] == "data":
+            candidates.append(data_root.joinpath(*parts[1:]))
+        candidates.append(version_root / candidate)
+        candidates.append(client_root / candidate)
+
+    for path in candidates:
+        resolved = path.resolve()
+        try:
+            resolved.relative_to(client_root)
+        except ValueError:
+            continue
+        if resolved.is_file():
+            return resolved
+    return None
+
+
+def build_fallback_workstation_outbound_message(
+    *,
+    client: WorkstationClient,
+    version_dir: Path,
+    sequence_step: str,
+) -> WorkstationOutboundMessageSpec:
+    """Return the legacy single preview-video message."""
+    preview_path = version_dir / "preview.mp4"
+    return WorkstationOutboundMessageSpec(
+        text=read_workstation_preview_message(version_dir),
+        sequence_step=sequence_step,
+        media_type="video",
+        media_path=relative_data_path(preview_path),
+        media_filename=f"{client.folder_name}-{version_dir.name}.mp4",
+    )
+
+
+def parse_workstation_outbound_message(
+    *,
+    client: WorkstationClient,
+    version_dir: Path,
+    item: object,
+    sequence_step: str,
+) -> WorkstationOutboundMessageSpec | None:
+    """Parse one Codex-written outbound message object."""
+    if not isinstance(item, dict):
+        return None
+
+    text = clean_workstation_preview_message(item.get("text") or item.get("message"))
+    media_type = normalize_workstation_outbound_media_type(item.get("media_type"))
+    media_path: str | None = None
+    media_mime_type: str | None = None
+    media_filename: str | None = None
+
+    if media_type:
+        resolved_path = resolve_workstation_outbound_media_path(
+            client=client,
+            version_dir=version_dir,
+            media_path=item.get("media_path") or item.get("path"),
+        )
+        if resolved_path is None:
+            return None
+        media_path = relative_data_path(resolved_path)
+        media_mime_type = clean_workstation_preview_message(item.get("media_mime_type"))
+        media_filename = clean_workstation_preview_message(item.get("media_filename")) or resolved_path.name
+
+    media_caption = clean_workstation_preview_message(item.get("media_caption") or item.get("caption"))
+    if media_type and not media_caption:
+        media_caption = text or None
+
+    if not text and not media_type:
+        return None
+
+    clean_sequence_step = clean_workstation_preview_message(item.get("sequence_step")) or sequence_step
+    return WorkstationOutboundMessageSpec(
+        text=text or (f"[{media_type}] {media_filename or 'attachment'}" if media_type else ""),
+        sequence_step=clean_sequence_step,
+        media_type=media_type,
+        media_path=media_path,
+        media_caption=media_caption,
+        media_mime_type=media_mime_type,
+        media_filename=media_filename,
+    )
+
+
+def read_workstation_outbound_messages(
+    *,
+    client: WorkstationClient,
+    version_dir: Path,
+    sequence_step: str,
+) -> list[WorkstationOutboundMessageSpec]:
+    """Read the flexible Codex-written WhatsApp delivery plan for a page version."""
+    plan_path = version_dir / "outbound-messages.json"
+    if not plan_path.exists():
+        return [
+            build_fallback_workstation_outbound_message(
+                client=client,
+                version_dir=version_dir,
+                sequence_step=sequence_step,
+            )
+        ]
+
+    try:
+        payload = json.loads(plan_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        payload = {}
+
+    raw_messages = payload.get("messages") if isinstance(payload, dict) else payload
+    if not isinstance(raw_messages, list):
+        raw_messages = []
+
+    messages: list[WorkstationOutboundMessageSpec] = []
+    for item in raw_messages:
+        parsed = parse_workstation_outbound_message(
+            client=client,
+            version_dir=version_dir,
+            item=item,
+            sequence_step=sequence_step,
+        )
+        if parsed is not None:
+            messages.append(parsed)
+    if messages:
+        return messages
+
+    return [
+        build_fallback_workstation_outbound_message(
+            client=client,
+            version_dir=version_dir,
+            sequence_step=sequence_step,
+        )
+    ]
+
+
 def queue_workstation_preview(
     *,
     client: WorkstationClient,
     lead: ContadoresLead,
     version_dir: Path,
     sequence_step: str,
-) -> ContadoresMessage:
-    """Queue one generated preview MP4 for WhatsApp delivery."""
-    preview_path = version_dir / "preview.mp4"
-    preview_message = read_workstation_preview_message(version_dir)
-    return enqueue_lead_outbound(
-        lead=lead,
-        text=preview_message,
+) -> list[ContadoresMessage]:
+    """Queue the generated Workstation deliverables for WhatsApp delivery."""
+    rows: list[ContadoresMessage] = []
+    outbound_messages = read_workstation_outbound_messages(
+        client=client,
+        version_dir=version_dir,
         sequence_step=sequence_step,
-        media_type="video",
-        media_path=relative_data_path(preview_path),
-        media_filename=f"{client.folder_name}-{version_dir.name}.mp4",
     )
+    for message in outbound_messages:
+        rows.append(
+            enqueue_lead_outbound(
+                lead=lead,
+                text=message.text,
+                sequence_step=message.sequence_step,
+                media_type=message.media_type,
+                media_path=message.media_path,
+                media_caption=message.media_caption,
+                media_mime_type=message.media_mime_type,
+                media_filename=message.media_filename,
+            )
+        )
+    return rows
+
+
+def latest_preview_queue_timestamp(rows: list[ContadoresMessage]) -> datetime:
+    """Return the timestamp to use for Workstation review timers."""
+    if not rows:
+        return now_utc()
+    return max(row.created_at for row in rows)
 
 
 def queue_workstation_template(
@@ -1750,7 +1946,7 @@ async def run_manual_solo_page_work(client_id: str, operator_prompt: str) -> Non
                 revision=revision,
                 operator_prompt=operator_prompt,
             )
-            row = queue_workstation_preview(
+            rows = queue_workstation_preview(
                 client=fresh_client,
                 lead=lead,
                 version_dir=version_dir,
@@ -1776,11 +1972,11 @@ async def run_manual_solo_page_work(client_id: str, operator_prompt: str) -> Non
             fresh_client.id,
             automation_status=WorkstationAutomationStatus.AWAITING_REVIEW,
             last_automation_handled_at=now_utc(),
-            last_preview_sent_at=row.created_at,
+            last_preview_sent_at=latest_preview_queue_timestamp(rows),
         )
         append_workstation_progress(
             fresh_client,
-            "Queued manual Codex preview video for WhatsApp.",
+            f"Queued {len(rows)} manual Codex deliverable(s) for WhatsApp.",
         )
     finally:
         manual_solo_page_work_client_ids.discard(client_id)
@@ -1963,7 +2159,7 @@ async def advance_solo_page_client(client: WorkstationClient, *, now: datetime) 
                 replies=replies,
                 revision=False,
             )
-            row = queue_workstation_preview(
+            rows = queue_workstation_preview(
                 client=fresh_client,
                 lead=lead,
                 version_dir=version_dir,
@@ -1985,9 +2181,9 @@ async def advance_solo_page_client(client: WorkstationClient, *, now: datetime) 
             fresh_client.id,
             automation_status=WorkstationAutomationStatus.AWAITING_REVIEW,
             last_automation_handled_at=now,
-            last_preview_sent_at=row.created_at,
+            last_preview_sent_at=latest_preview_queue_timestamp(rows),
         )
-        append_workstation_progress(fresh_client, "Queued draft preview video for WhatsApp.")
+        append_workstation_progress(fresh_client, f"Queued {len(rows)} draft deliverable(s) for WhatsApp.")
         metrics["drafts_generated"] = 1
         metrics["revision_videos_sent"] = 1
         return metrics
@@ -2054,7 +2250,7 @@ async def advance_solo_page_client(client: WorkstationClient, *, now: datetime) 
                 replies=replies,
                 revision=True,
             )
-            row = queue_workstation_preview(
+            rows = queue_workstation_preview(
                 client=fresh_client,
                 lead=lead,
                 version_dir=version_dir,
@@ -2076,9 +2272,9 @@ async def advance_solo_page_client(client: WorkstationClient, *, now: datetime) 
             fresh_client.id,
             automation_status=WorkstationAutomationStatus.AWAITING_REVIEW,
             last_automation_handled_at=now,
-            last_preview_sent_at=row.created_at,
+            last_preview_sent_at=latest_preview_queue_timestamp(rows),
         )
-        append_workstation_progress(fresh_client, "Queued revision preview video for WhatsApp.")
+        append_workstation_progress(fresh_client, f"Queued {len(rows)} revision deliverable(s) for WhatsApp.")
         metrics["revision_videos_sent"] = 1
         return metrics
 
@@ -2112,7 +2308,7 @@ async def advance_solo_page_client(client: WorkstationClient, *, now: datetime) 
                 replies=replies,
                 revision=True,
             )
-            row = queue_workstation_preview(
+            rows = queue_workstation_preview(
                 client=fresh_client,
                 lead=lead,
                 version_dir=version_dir,
@@ -2134,9 +2330,12 @@ async def advance_solo_page_client(client: WorkstationClient, *, now: datetime) 
             fresh_client.id,
             automation_status=WorkstationAutomationStatus.AWAITING_REVIEW,
             last_automation_handled_at=now,
-            last_preview_sent_at=row.created_at,
+            last_preview_sent_at=latest_preview_queue_timestamp(rows),
         )
-        append_workstation_progress(fresh_client, "Queued post-handoff revision preview video for WhatsApp.")
+        append_workstation_progress(
+            fresh_client,
+            f"Queued {len(rows)} post-handoff revision deliverable(s) for WhatsApp.",
+        )
         metrics["revision_videos_sent"] = 1
         return metrics
 

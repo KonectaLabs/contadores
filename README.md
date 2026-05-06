@@ -554,7 +554,8 @@ Dentro de esa carpeta se refrescan estos archivos:
   profesional del cliente.
 - `landing-page/vNNN/`: bocetos estaticos generados por Codex para la promo
   solo pagina, con `index.html`, `styles.css`, `script.js`, `assets/`,
-  `preview-message.txt`, `preview.mp4` y `metadata.json`.
+  `preview-message.txt`, `outbound-messages.json` opcional, `preview.mp4` y
+  `metadata.json`.
 - `progress.md`: log de progreso operativo que Codex y el backend van
   agregando durante drafts, revisiones, render y cola del preview.
 
@@ -577,6 +578,12 @@ web incluye todas las fotos profesionales correspondientes.
 Cada version de `landing-page` tambien debe traer `preview-message.txt`: Codex
 elige ahi el texto exacto que acompana al MP4 por WhatsApp. El backend solo usa
 un texto generico como fallback cuando ese archivo falta o esta vacio.
+Si Codex necesita mandar mas de un item al cliente, tambien puede escribir
+`outbound-messages.json` con una lista ordenada de mensajes y adjuntos
+(`image`, `video`, `audio` o `document`). Eso permite, por ejemplo, mandar el
+video de la nueva version de la pagina y despues la foto profesional como imagen
+separada. Si el archivo no existe o no tiene mensajes validos, se mantiene el
+fallback historico de un solo MP4 con `preview-message.txt`.
 
 El backend usa el Codex SDK para Workstation, generacion de imagenes y el bot
 conversacional. En Docker, la imagen instala `@openai/codex` y usa
@@ -620,10 +627,12 @@ en fallo visible con alerta/email. El endpoint de tick usa un lock de proceso:
 si otro tick llega mientras una generacion larga de Codex sigue activa, responde
 `status=busy` y no reevalua estados stale hasta que termine el tick en curso.
 
-El preview que recibe el cliente es solo MP4. El backend renderiza el HTML
-estatico con Playwright en desktop `1440x900`, graba un scroll y normaliza el
-archivo con `ffmpeg` a H.264. El scroll usa una animacion lineal y continua
-para evitar saltos en paginas largas. No se manda link temporal al cliente.
+El preview principal se renderiza como MP4. El backend renderiza el HTML estatico
+con Playwright en desktop `1440x900`, graba un scroll y normaliza el archivo con
+`ffmpeg` a H.264. El scroll usa una animacion lineal y continua para evitar
+saltos en paginas largas. No se manda link temporal al cliente. Cuando Codex
+escribe `outbound-messages.json`, Workstation respeta esa lista y puede encolar
+varios WhatsApp seguidos, incluyendo el MP4 y otros entregables generados.
 
 Cuando la ventana de WhatsApp esta cerrada, Workstation solo usa templates Meta
 aprobados. Los nombres son configurables por `.env`:

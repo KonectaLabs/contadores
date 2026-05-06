@@ -33,6 +33,7 @@ landing-page/vNNN/index.html
 landing-page/vNNN/styles.css
 landing-page/vNNN/script.js
 landing-page/vNNN/preview-message.txt
+landing-page/vNNN/outbound-messages.json
 landing-page/vNNN/assets/
 ```
 
@@ -70,6 +71,19 @@ into `landing-page/vNNN/assets/` and reference those copies from the HTML.
 - Write `preview-message.txt` with the exact WhatsApp caption that should be
   sent with the preview video. Choose the text for the specific client and
   version. Do not rely on a hardcoded generic caption.
+- If the client should receive multiple WhatsApp items, write
+  `outbound-messages.json` with a `messages` array. This gives Codex freedom to
+  send separate text messages and media attachments, for example the page
+  preview video plus a standalone professional photo.
+- Each `outbound-messages.json` item can include `text`, `media_type`,
+  `media_path`, `media_caption`, `media_filename`, and optionally
+  `sequence_step`. Supported media types are `image`, `video`, `audio`, and
+  `document`.
+- Use client-folder-relative media paths such as `preview.mp4` from the version
+  folder or `professional-photo/v001/professional-photo.jpg` from the client
+  folder. Keep the array order in the exact order the client should receive.
+- If `outbound-messages.json` is missing or empty, the backend falls back to one
+  preview video using `preview-message.txt`.
 - Personalize the page with the client's name, profession, city/country,
   services, WhatsApp contact, and any references they sent.
 - Treat `profile.json.client.offer_price_usd` as commercial context only. Do not

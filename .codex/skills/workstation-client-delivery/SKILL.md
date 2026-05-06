@@ -24,7 +24,7 @@ Read these files first:
 - `media/`: uploaded client files such as logos, photos, screenshots, or visual references. Operators can add these from the Workstation file selector, by dropping a file on the `Media` panel, or by pasting a clipboard file while that panel is active. Images sent by the client in the WhatsApp conversation are mirrored here automatically when a Workstation client exists, and existing conversation images are mirrored when the lead is converted. Operators can rename the media title and download filename from the UI; the physical stored filename remains stable.
 - `landing-page/vNNN/`: versioned static page drafts for `work_type=solo_pagina`,
   including `index.html`, `styles.css`, `script.js`, `assets/`, `preview.mp4`,
-  and `metadata.json`.
+  optional `outbound-messages.json`, and `metadata.json`.
 - `progress.md`: operator-visible progress log for solo-page drafts, revisions,
   preview rendering, and WhatsApp preview queueing.
 
@@ -84,6 +84,11 @@ restarting the job, and records the instruction in `progress.md`.
 - Static page drafts belong under `landing-page/vNNN/`. Do not overwrite prior
   page versions; create the next version and let the automation render
   `preview.mp4` from that folder.
+- If the client should receive more than the page preview, create
+  `outbound-messages.json` in the page version with an ordered `messages` array.
+  Use it for separate text/media sends such as a preview video followed by a
+  standalone professional photo. If it is absent, Workstation sends the legacy
+  single preview video.
 - Preserve the original `notes.txt`, `conversation.txt`, and uploaded `media/`
   files; create new files instead of overwriting source material.
 - When a client is ambiguous, list matching folders and ask for the exact one.

@@ -4696,6 +4696,88 @@ def test_workstation_solo_page_codex_runs_from_repo_root(monkeypatch, tmp_path) 
     assert "Preview media registered in Workstation." in progress
 
 
+def test_workstation_solo_page_can_queue_multiple_codex_deliverables(monkeypatch, tmp_path) -> None:
+    """Codex can ask Workstation to send more than the preview video."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    data_dir = tmp_path / "data"
+    monkeypatch.setattr(database_module, "DATA_DIR", data_dir)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-workstation-multi-delivery",
+        phone="+5491777777724",
+        full_name="Cliente Multi",
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=False,
+        text="Mandame la nueva version y la foto profesional sola.",
+        created_at=now_utc() - timedelta(minutes=1),
+    )
+    workstation = WorkstationClient.create_for_lead(
+        lead,
+        work_type=WorkstationClientWorkType.SOLO_PAGINA,
+        status=WorkstationClientStatus.PENDING_PAYMENT,
+        automation_status=WorkstationAutomationStatus.INTAKE,
+    )
+    photo_dir = workstation_endpoints.professional_photo_root(workstation) / "v001"
+    photo_dir.mkdir(parents=True, exist_ok=True)
+    (photo_dir / "professional-photo.jpg").write_bytes(b"jpg")
+
+    def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
+        output_marker = "Required output folder:\n"
+        output_dir = Path(prompt.split(output_marker, 1)[1].splitlines()[0].strip())
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "index.html").write_text("<html><body>Revision</body></html>", encoding="utf-8")
+        (output_dir / "styles.css").write_text("body{font-family:sans-serif}", encoding="utf-8")
+        (output_dir / "script.js").write_text("", encoding="utf-8")
+        (output_dir / "preview-message.txt").write_text("Le mando la nueva version.", encoding="utf-8")
+        (output_dir / "outbound-messages.json").write_text(
+            json.dumps(
+                {
+                    "messages": [
+                        {
+                            "text": "Le mando la nueva version de la pagina.",
+                            "media_type": "video",
+                            "media_path": "preview.mp4",
+                            "media_filename": "pagina-revision.mp4",
+                        },
+                        {
+                            "text": "Y aca va la foto profesional sola.",
+                            "media_type": "image",
+                            "media_path": "professional-photo/v001/professional-photo.jpg",
+                            "media_filename": "foto-profesional.jpg",
+                        },
+                    ]
+                },
+                ensure_ascii=True,
+            ),
+            encoding="utf-8",
+        )
+        return SimpleNamespace(final_response="created", items=[])
+
+    def fake_render_landing_page_video_sync(*, index_path: Path, output_path: Path) -> None:
+        output_path.write_bytes(b"mp4")
+
+    monkeypatch.setattr(workstation_endpoints, "run_codex_with_context", fake_run_codex_with_context)
+    monkeypatch.setattr(workstation_endpoints, "render_landing_page_video_sync", fake_render_landing_page_video_sync)
+
+    version_dir = workstation_endpoints.generate_solo_page_version_sync(
+        client=workstation,
+        lead=lead,
+        replies=ContadoresMessage.list_by_lead(lead.id),
+        revision=True,
+    )
+    rows = workstation_endpoints.queue_workstation_preview(
+        client=workstation,
+        lead=lead,
+        version_dir=version_dir,
+        sequence_step=workstation_endpoints.WORKSTATION_REVISION_SEQUENCE_STEP,
+    )
+
+    assert [row.media_type for row in rows] == ["video", "image"]
+    assert [row.media_filename for row in rows] == ["pagina-revision.mp4", "foto-profesional.jpg"]
+    assert rows[1].media_path.endswith("professional-photo/v001/professional-photo.jpg")
+
+
 def test_workstation_solo_page_codex_falls_back_to_api_key(monkeypatch, tmp_path) -> None:
     """Solo-page generation should retry with OPENAI_API_KEY when ChatGPT Codex fails."""
     configure_contadores_db(monkeypatch, tmp_path)
