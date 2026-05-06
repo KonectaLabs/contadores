@@ -19,6 +19,7 @@ try:
     from .providers import (
         AgentMailProvider,
         DeliveryReceipt,
+        EmailInboundEvent,
         WhatsAppInboundEvent,
         WhatsAppMessageStatusEvent,
         WhatsAppProvider,
@@ -27,6 +28,7 @@ except ImportError:
     from providers import (
         AgentMailProvider,
         DeliveryReceipt,
+        EmailInboundEvent,
         WhatsAppInboundEvent,
         WhatsAppMessageStatusEvent,
         WhatsAppProvider,
@@ -715,13 +717,47 @@ async def mark_backend_contadores_runtime_alert_sent(
     client: httpx.AsyncClient,
     *,
     runtime_alert_id: int,
+    receipt: DeliveryReceipt | None = None,
 ) -> None:
     """Mark one pending runtime alert as sent."""
+    payload: dict[str, Any] = {}
+    if receipt is not None:
+        payload.update(
+            {
+                "email_thread_id": receipt.thread_id,
+                "email_message_id": receipt.external_id,
+                "email_inbox_id": receipt.inbox_id,
+                "email_inbox_address": receipt.inbox_address or receipt.from_email,
+            }
+        )
     response = await client.post(
         backend_url(f"/api/contadores/runtime-alerts/{runtime_alert_id}/mark-alerted"),
-        json={},
+        json=payload,
     )
     response.raise_for_status()
+
+
+async def process_contadores_alert_email_reply(
+    client: httpx.AsyncClient,
+    *,
+    event: EmailInboundEvent,
+) -> dict[str, Any]:
+    """Forward one AgentMail reply to the backend runtime-alert resolver."""
+    response = await client.post(
+        backend_url("/api/contadores/runtime-alerts/email-reply"),
+        json={
+            "inbox_id": event.inbox_id,
+            "message_id": event.message_id,
+            "from_email": event.from_email,
+            "plain_text": event.plain_text,
+            "thread_id": event.thread_id,
+            "in_reply_to": event.in_reply_to,
+            "references": event.references,
+            "subject": event.subject,
+        },
+    )
+    response.raise_for_status()
+    return response.json()
 
 
 async def send_contadores_pending_alerts(
@@ -766,6 +802,9 @@ async def send_contadores_pending_alerts(
             if (item.automation_paused_reason or "").startswith("workstation_"):
                 first_line = f"{effective_funnel_label}: fallo la automatizacion de Workstation."
                 subject_prefix = "workstation_alert"
+            elif item.automation_paused_reason == "unanswered_lead_question":
+                first_line = f"{effective_funnel_label}: NO SE COMO RESPONDER A ESTO."
+                subject_prefix = "no se responder"
             else:
                 first_line = (
                     f"{effective_funnel_label}: Codex fallo en el bot conversacional y se uso fallback "
@@ -789,7 +828,20 @@ async def send_contadores_pending_alerts(
             f"Email: {item.email or '-'}",
             f"Stage: {item.stage}",
         ]
-        if runtime_alert:
+        if item.automation_paused_reason == "unanswered_lead_question":
+            body_parts.extend(
+                [
+                    f"Motivo: {item.reason or '-'}",
+                    "",
+                    "Pregunta del lead:",
+                    item.latest_inbound_text or "-",
+                    "",
+                    "Responde este email con el texto exacto para mandar por WhatsApp.",
+                    "El sistema va a enviar esa respuesta tal cual y guardarla como aprendizaje para preguntas parecidas.",
+                    "Si queres ser explicito, empeza con `Respuesta:`.",
+                ]
+            )
+        elif runtime_alert:
             body_parts.extend(
                 [
                     f"Error Codex: {item.codex_error or '-'}",
@@ -804,10 +856,12 @@ async def send_contadores_pending_alerts(
             )
         else:
             body_parts.append(f"Motivo / datos para Facu: {item.reason or '-'}")
-        body_parts.extend(["", "Ultimo mensaje inbound:", item.latest_inbound_text or "-"])
+        if item.automation_paused_reason != "unanswered_lead_question":
+            body_parts.extend(["", "Ultimo mensaje inbound:", item.latest_inbound_text or "-"])
         body = "\n".join(body_parts)
+        first_receipt: DeliveryReceipt | None = None
         for recipient in recipients:
-            await email_provider.send_message(
+            receipt = await email_provider.send_message(
                 inbox_id=alert_inbox.inbox_id,
                 inbox_address=alert_inbox.inbox_address,
                 recipient=recipient,
@@ -818,10 +872,13 @@ async def send_contadores_pending_alerts(
                 in_reply_to=None,
                 references=None,
             )
+            if first_receipt is None:
+                first_receipt = receipt
         if runtime_alert and item.runtime_alert_id is not None:
             await mark_backend_contadores_runtime_alert_sent(
                 client,
                 runtime_alert_id=item.runtime_alert_id,
+                receipt=first_receipt,
             )
         else:
             await mark_backend_contadores_alert_sent(client, lead_id=item.lead_id)

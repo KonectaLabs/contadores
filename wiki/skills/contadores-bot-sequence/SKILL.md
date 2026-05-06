@@ -82,8 +82,13 @@ override the built-in Contadores definition.
     transcript as the next inbound message with
     `sequence_step=audio_transcript`.
 15. If the bot lacks real data to answer, receives media/audio without
-    transcript, sees an exclusion, or hits an uncovered situation, pause in
-    `needs_human` and alert the operators.
+    transcript, sees an exclusion, or hits an uncovered situation, do not guess.
+    For an ordinary unanswered factual/commercial question, create an
+    `unanswered_lead_question` email ticket. When an operator replies to that
+    email with the exact WhatsApp text, the backend sends it, stores it in
+    `contadores-lead-reply-playbook/references/operator-learned-answers.md`,
+    and resumes the lead stage. Media/exclusions still pause in `needs_human`
+    and alert the operators.
 16. If Codex fails but DSPy/Grok answers safely, send the fallback reply,
     create a runtime email alert with the Codex error, fallback action, latest
     inbound, and CRM link, and still apply the normal post-Loom AI reply rule:

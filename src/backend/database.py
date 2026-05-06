@@ -1022,6 +1022,8 @@ class ContadoresLead(SQLModel, table=True):
     manual_reply_handled_at: datetime | None = Field(default=None)
     last_inbound_at: datetime | None = Field(default=None, index=True)
     last_outbound_at: datetime | None = Field(default=None, index=True)
+    conversation_processing_started_at: datetime | None = Field(default=None, index=True)
+    conversation_processing_latest_inbound_id: int | None = Field(default=None, index=True)
     archived_at: datetime | None = Field(default=None, index=True)
     automation_paused: bool = Field(default=False, index=True)
     automation_paused_reason: str | None = Field(default=None)
@@ -1257,6 +1259,79 @@ class ContadoresLead(SQLModel, table=True):
             session.refresh(item)
             session.expunge(item)
             return item
+
+    @classmethod
+    def claim_conversation_processing(
+        cls,
+        *,
+        lead_id: str,
+        latest_inbound_id: int,
+        latest_inbound_at: datetime,
+        claimed_at: datetime,
+        stale_after_seconds: int,
+    ) -> bool:
+        """Claim one lead conversation batch across processes."""
+        stale_before = claimed_at - timedelta(seconds=max(1, int(stale_after_seconds)))
+        with engine.begin() as connection:
+            result = connection.exec_driver_sql(
+                """
+                UPDATE contadores_leads
+                SET conversation_processing_started_at = ?,
+                    conversation_processing_latest_inbound_id = ?,
+                    updated_at = ?
+                WHERE id = ?
+                  AND (
+                    classification_completed_at IS NULL
+                    OR classification_completed_at < ?
+                  )
+                  AND (
+                    conversation_processing_started_at IS NULL
+                    OR conversation_processing_started_at <= ?
+                  )
+                """,
+                (
+                    claimed_at,
+                    latest_inbound_id,
+                    claimed_at,
+                    lead_id,
+                    latest_inbound_at,
+                    stale_before,
+                ),
+            )
+            return result.rowcount == 1
+
+    @classmethod
+    def clear_conversation_processing(
+        cls,
+        *,
+        lead_id: str,
+        latest_inbound_id: int | None = None,
+    ) -> None:
+        """Release one conversation-processing claim if it still belongs to this batch."""
+        with engine.begin() as connection:
+            if latest_inbound_id is None:
+                connection.exec_driver_sql(
+                    """
+                    UPDATE contadores_leads
+                    SET conversation_processing_started_at = NULL,
+                        conversation_processing_latest_inbound_id = NULL,
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (datetime.now(timezone.utc), lead_id),
+                )
+                return
+            connection.exec_driver_sql(
+                """
+                UPDATE contadores_leads
+                SET conversation_processing_started_at = NULL,
+                    conversation_processing_latest_inbound_id = NULL,
+                    updated_at = ?
+                WHERE id = ?
+                  AND conversation_processing_latest_inbound_id = ?
+                """,
+                (datetime.now(timezone.utc), lead_id, latest_inbound_id),
+            )
 
     @classmethod
     def set_tags(cls, lead_id: str, *, tags: list[str]) -> Optional["ContadoresLead"]:
@@ -1937,7 +2012,14 @@ class ContadoresRuntimeAlert(SQLModel, table=True):
     alert_type: str = Field(default="codex_fallback", index=True)
     error: str = ""
     fallback_action: str = ""
+    previous_stage: str | None = Field(default=None, index=True)
     latest_inbound_text: str = ""
+    email_thread_id: str | None = Field(default=None, index=True)
+    email_message_id: str | None = Field(default=None, index=True)
+    email_inbox_id: str | None = Field(default=None, index=True)
+    email_inbox_address: str | None = Field(default=None)
+    resolved_at: datetime | None = Field(default=None, index=True)
+    operator_reply_text: str | None = Field(default=None)
     notified_at: datetime | None = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
 
@@ -1951,6 +2033,7 @@ class ContadoresRuntimeAlert(SQLModel, table=True):
         error: str,
         fallback_action: str,
         latest_inbound_text: str,
+        previous_stage: str | None = None,
     ) -> "ContadoresRuntimeAlert":
         """Persist one runtime alert for later email notification."""
         with Session(engine) as session:
@@ -1963,6 +2046,7 @@ class ContadoresRuntimeAlert(SQLModel, table=True):
                 alert_type=(alert_type or "runtime_alert").strip() or "runtime_alert",
                 error=" ".join(str(error or "").split()).strip()[:2000],
                 fallback_action=(fallback_action or "").strip(),
+                previous_stage=(previous_stage or "").strip() or None,
                 latest_inbound_text=(latest_inbound_text or "").strip()[:2000],
             )
             session.add(row)
@@ -1982,7 +2066,7 @@ class ContadoresRuntimeAlert(SQLModel, table=True):
         with Session(engine) as session:
             statement = (
                 select(cls)
-                .where(cls.notified_at.is_(None))
+                .where(cls.notified_at.is_(None), cls.resolved_at.is_(None))
                 .order_by(cls.created_at, cls.id)
                 .limit(limit)
             )
@@ -1999,6 +2083,10 @@ class ContadoresRuntimeAlert(SQLModel, table=True):
         *,
         alert_id: int,
         notified_at: datetime | None = None,
+        email_thread_id: str | None = None,
+        email_message_id: str | None = None,
+        email_inbox_id: str | None = None,
+        email_inbox_address: str | None = None,
     ) -> Optional["ContadoresRuntimeAlert"]:
         """Mark one runtime alert as emailed."""
         with Session(engine) as session:
@@ -2006,6 +2094,60 @@ class ContadoresRuntimeAlert(SQLModel, table=True):
             if row is None:
                 return None
             row.notified_at = notified_at or datetime.now(timezone.utc)
+            if email_thread_id is not None:
+                row.email_thread_id = (email_thread_id or "").strip() or None
+            if email_message_id is not None:
+                row.email_message_id = (email_message_id or "").strip() or None
+            if email_inbox_id is not None:
+                row.email_inbox_id = (email_inbox_id or "").strip() or None
+            if email_inbox_address is not None:
+                row.email_inbox_address = (email_inbox_address or "").strip() or None
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            session.expunge(row)
+            return row
+
+    @classmethod
+    def get_unresolved_by_email_thread(
+        cls,
+        *,
+        thread_id: str,
+    ) -> Optional["ContadoresRuntimeAlert"]:
+        """Return one unresolved runtime alert by AgentMail thread id."""
+        clean_thread_id = (thread_id or "").strip()
+        if not clean_thread_id:
+            return None
+        with Session(engine) as session:
+            statement = (
+                select(cls)
+                .where(
+                    cls.email_thread_id == clean_thread_id,
+                    cls.resolved_at.is_(None),
+                )
+                .order_by(cls.created_at.desc(), cls.id.desc())
+                .limit(1)
+            )
+            row = session.exec(statement).first()
+            if row:
+                session.expunge(row)
+            return row
+
+    @classmethod
+    def mark_resolved(
+        cls,
+        *,
+        alert_id: int,
+        operator_reply_text: str,
+        resolved_at: datetime | None = None,
+    ) -> Optional["ContadoresRuntimeAlert"]:
+        """Mark one runtime alert as resolved by an operator email reply."""
+        with Session(engine) as session:
+            row = session.get(cls, alert_id)
+            if row is None:
+                return None
+            row.resolved_at = resolved_at or datetime.now(timezone.utc)
+            row.operator_reply_text = " ".join(str(operator_reply_text or "").split()).strip()[:4000] or None
             session.add(row)
             session.commit()
             session.refresh(row)
@@ -4179,11 +4321,13 @@ def init_db() -> None:
     ensure_contadores_automation_paused_columns()
     ensure_contadores_closed_state_columns()
     ensure_contadores_manual_reply_columns()
+    ensure_contadores_conversation_processing_columns()
     ensure_contadores_funnel_columns()
     ensure_contadores_tags_column()
     ensure_contadores_strategy_columns()
     ensure_contadores_message_delivery_columns()
     ensure_contadores_message_template_columns()
+    ensure_contadores_runtime_alert_columns()
     ensure_contadores_config_strategy_weights_column()
     ensure_workstation_client_automation_columns()
     logger.info(f"Database initialized at {DATABASE_URL}")
@@ -4287,6 +4431,61 @@ def ensure_contadores_manual_reply_columns() -> None:
                 "ALTER TABLE contadores_leads ADD COLUMN manual_reply_handled_at TIMESTAMP"
             )
             logger.info("Added missing contadores_leads.manual_reply_handled_at column.")
+
+
+def ensure_contadores_conversation_processing_columns() -> None:
+    """Add cross-process conversation processing claim columns."""
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        if "contadores_leads" not in inspector.get_table_names():
+            return
+        lead_columns = {column["name"] for column in inspector.get_columns("contadores_leads")}
+        column_definitions = {
+            "conversation_processing_started_at": "TIMESTAMP",
+            "conversation_processing_latest_inbound_id": "INTEGER",
+        }
+        for column_name, column_type in column_definitions.items():
+            if column_name in lead_columns:
+                continue
+            connection.exec_driver_sql(
+                f"ALTER TABLE contadores_leads ADD COLUMN {column_name} {column_type}"
+            )
+            logger.info("Added missing contadores_leads.%s column.", column_name)
+        for column_name in column_definitions:
+            connection.exec_driver_sql(
+                f"CREATE INDEX IF NOT EXISTS ix_contadores_leads_{column_name} "
+                f"ON contadores_leads ({column_name})"
+            )
+
+
+def ensure_contadores_runtime_alert_columns() -> None:
+    """Add email-thread and resolution metadata to runtime alerts."""
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        if "contadores_runtime_alerts" not in inspector.get_table_names():
+            return
+        columns = {column["name"] for column in inspector.get_columns("contadores_runtime_alerts")}
+        column_definitions = {
+            "previous_stage": "TEXT",
+            "email_thread_id": "TEXT",
+            "email_message_id": "TEXT",
+            "email_inbox_id": "TEXT",
+            "email_inbox_address": "TEXT",
+            "resolved_at": "TIMESTAMP",
+            "operator_reply_text": "TEXT",
+        }
+        for column_name, column_type in column_definitions.items():
+            if column_name in columns:
+                continue
+            connection.exec_driver_sql(
+                f"ALTER TABLE contadores_runtime_alerts ADD COLUMN {column_name} {column_type}"
+            )
+            logger.info("Added missing contadores_runtime_alerts.%s column.", column_name)
+        for column_name in ["previous_stage", "email_thread_id", "email_message_id", "email_inbox_id", "resolved_at"]:
+            connection.exec_driver_sql(
+                f"CREATE INDEX IF NOT EXISTS ix_contadores_runtime_alerts_{column_name} "
+                f"ON contadores_runtime_alerts ({column_name})"
+            )
 
 
 def ensure_workstation_client_automation_columns() -> None:

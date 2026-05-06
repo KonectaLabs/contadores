@@ -299,6 +299,19 @@ Bot conversacional post-video y post-Calendly:
   lead a `needs_human`/Manual con
   `automation_paused_reason=ai_reply_conversation`. Como la AI ya contesto, el
   `manual_reply_status` queda `answered`.
+- Cada batch inbound se reclama en SQLite antes de llamar al bot, con
+  `conversation_processing_started_at` y
+  `conversation_processing_latest_inbound_id`. Esto evita que dos ticks/procesos
+  encolen dos `ai_reply` distintos para la misma pregunta. Un claim se considera
+  abandonado despues de `CONVERSATION_PROCESSING_STALE_SECONDS`.
+- Si el bot no sabe responder una pregunta factual/comercial, no manda una
+  respuesta insegura ni corta el flujo permanentemente: crea un runtime alert
+  `unanswered_lead_question` por AgentMail. El operador responde ese mismo
+  thread con el texto exacto para WhatsApp; el backend lo manda, restaura el
+  stage anterior, y guarda la respuesta en
+  `.codex/skills/contadores-lead-reply-playbook/references/operator-learned-answers.md`
+  y `wiki/skills/contadores-lead-reply-playbook/references/operator-learned-answers.md`
+  para futuras preguntas parecidas.
 - Si el lead rechaza el servicio o dice que no quiere avanzar, el bot envia
   exactamente `1) Muy caros los 300 dolares`, `2) No me sirve la pagina web +
   publicidades`, `3) No es mi momento para invertir`, `4) Otro motivo`, con

@@ -24,6 +24,8 @@ Read these when the task touches their area:
   for price, value, and stronger follow-up copy.
 
 For reusable copy examples, read [references/copy-bank.md](references/copy-bank.md).
+For operator-taught answers to previously unknown runtime questions, read
+[references/operator-learned-answers.md](references/operator-learned-answers.md).
 
 ## Non-Negotiables
 
@@ -291,6 +293,13 @@ conversation is genuinely outside the bank.
 Use `needs_human` only when there is an uncovered situation, missing real data,
 an exclusion, an explicit opt-out, audio/media without transcript, or complete
 scheduling details that Facu must coordinate.
+
+When the runtime cannot answer a factual/commercial lead question safely, it
+creates an `unanswered_lead_question` email ticket instead of guessing. The
+operator replies to that email with the exact WhatsApp text to send; the backend
+sends that text to the lead and appends it to
+`references/operator-learned-answers.md` so similar questions can be answered
+next time.
 
 The bot does not book Google Calendar or Calendly in v1. It collects email, day,
 time, and timezone when needed. Once those details are complete, it confirms by

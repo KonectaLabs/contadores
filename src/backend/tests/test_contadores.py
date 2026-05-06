@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from io import BytesIO
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -23,6 +24,7 @@ from backend.database import (
     ContadoresLead,
     ContadoresLeadStage,
     ContadoresMessage,
+    ContadoresRuntimeAlert,
     MessageDeliveryStatus,
     WorkstationAutomationStatus,
     WorkstationClient,
@@ -1308,6 +1310,75 @@ def test_active_offer_reply_waits_when_new_inbound_arrives_during_ai(monkeypatch
     assert [item["sequence_step"] for item in pending_after_second_tick.json()["messages"]] == ["ai_reply"]
 
 
+def test_conversation_batch_claim_prevents_duplicate_ai_replies(monkeypatch, tmp_path) -> None:
+    """Two concurrent processors should not queue two different AI replies for one inbound."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    ContadoresConfig.update(enabled=True, post_loom_quiet_seconds=1)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-claim-dedupe",
+        phone="+593991111113",
+        full_name="Claim Dedupe",
+    )
+    offer = ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=True,
+        text="Promo solo pagina por 19 USD.",
+        delivery_status=MessageDeliveryStatus.DELIVERED,
+        sequence_step="promo_web_profesional_20260505",
+        created_at=now_utc() - timedelta(minutes=2),
+    )
+    inbound = ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=False,
+        text="hasta cuando es la promo?",
+        created_at=now_utc() - timedelta(seconds=10),
+    )
+    calls = 0
+
+    class SlowConversationBot:
+        async def aforward(self, **kwargs):
+            nonlocal calls
+            calls += 1
+            await asyncio.sleep(0)
+            return ContadoresConversationBotResult(
+                action="send_reply",
+                message_text=f"Respuesta #{calls}",
+                classification_label="answered_promo_deadline",
+                reason="Pregunta cubierta.",
+            )
+
+    async def run_two_processors() -> list[dict[str, int]]:
+        now = now_utc()
+        return await asyncio.gather(
+            contadores_endpoints.process_conversation_reply_batch(
+                lead=lead,
+                replies_in_window=[inbound],
+                reply_window_start=offer.created_at,
+                quiet_seconds=1,
+                conversation_bot=SlowConversationBot(),
+                now=now,
+                active_offer_context=True,
+            ),
+            contadores_endpoints.process_conversation_reply_batch(
+                lead=lead,
+                replies_in_window=[inbound],
+                reply_window_start=offer.created_at,
+                quiet_seconds=1,
+                conversation_bot=SlowConversationBot(),
+                now=now,
+                active_offer_context=True,
+            ),
+        )
+
+    results = asyncio.run(run_two_processors())
+    messages = [message for message in ContadoresMessage.list_by_lead(lead.id) if message.from_me]
+    ai_replies = [message for message in messages if message.sequence_step == "ai_reply"]
+
+    assert sum(result["ai_replies_sent"] for result in results) == 1
+    assert calls == 1
+    assert [message.text for message in ai_replies] == ["Respuesta #1"]
+
+
 def test_active_offer_reply_handles_venezuela_leads(monkeypatch, tmp_path) -> None:
     """A deliberate promo can continue with Venezuelan leads even though legacy follow-ups skip them."""
     configure_contadores_db(monkeypatch, tmp_path)
@@ -2127,6 +2198,94 @@ def test_conversation_bot_codex_failure_records_runtime_alert_without_handoff(mo
     assert alert["latest_inbound_text"] == "Cuanto cuesta?"
     assert "Codex ChatGPT fallo" in alert["reason"]
     assert "codex login --device-auth" in alert["reason"]
+
+
+def test_unanswered_question_email_reply_sends_whatsapp_and_teaches_playbook(monkeypatch, tmp_path) -> None:
+    """Unknown questions should wait for an email reply, then answer and save the teaching."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    ContadoresConfig.update(enabled=True, post_loom_quiet_seconds=1, alert_emails=["facu@example.com"])
+    learned_codex = tmp_path / ".codex" / "operator-learned-answers.md"
+    learned_wiki = tmp_path / "wiki" / "operator-learned-answers.md"
+    monkeypatch.setattr(
+        contadores_endpoints,
+        "OPERATOR_LEARNED_ANSWER_PATHS",
+        [learned_codex, learned_wiki],
+    )
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-unanswered-question",
+        phone="+593991111114",
+        full_name="Unknown Question",
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=True,
+        text="Promo solo pagina por 19 USD.",
+        delivery_status=MessageDeliveryStatus.DELIVERED,
+        sequence_step="promo_web_profesional_20260505",
+        created_at=now_utc() - timedelta(minutes=2),
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=False,
+        text="hasta cuando es la promo?",
+        created_at=now_utc() - timedelta(seconds=10),
+    )
+
+    class UnknownConversationBot:
+        async def aforward(self, **kwargs):
+            return ContadoresConversationBotResult(
+                action="handoff_human",
+                message_text="",
+                classification_label="unknown_promo_deadline",
+                reason="No hay fecha de vencimiento de promo en source of truth.",
+            )
+
+    monkeypatch.setattr(contadores_endpoints, "ContadoresConversationBotProgram", UnknownConversationBot)
+
+    with TestClient(app) as client:
+        tick = client.post("/api/contadores/automation/tick")
+        pending_before = client.get("/api/contadores/messages/pending-delivery")
+        alerts = client.get("/api/contadores/alerts/pending")
+        alert_id = alerts.json()["items"][0]["runtime_alert_id"]
+        marked = client.post(
+            f"/api/contadores/runtime-alerts/{alert_id}/mark-alerted",
+            json={
+                "email_thread_id": "thread-promo-deadline",
+                "email_message_id": "email-alert-1",
+                "email_inbox_id": "alerts-inbox",
+                "email_inbox_address": "alerts@example.com",
+            },
+        )
+        reply = client.post(
+            "/api/contadores/runtime-alerts/email-reply",
+            json={
+                "inbox_id": "alerts-inbox",
+                "message_id": "email-reply-1",
+                "from_email": "facu@example.com",
+                "thread_id": "thread-promo-deadline",
+                "plain_text": (
+                    "Respuesta: La promo esta disponible hasta el viernes.\n\n"
+                    "Si le interesa, le mostramos un ejemplo y vemos si le sirve para su caso."
+                ),
+            },
+        )
+        detail = client.get(f"/api/contadores/leads/{lead.id}")
+        pending_after = client.get("/api/contadores/messages/pending-delivery")
+
+    assert tick.status_code == 200
+    assert tick.json()["human_handoffs"] == 1
+    assert pending_before.json()["messages"] == []
+    assert alerts.status_code == 200
+    assert alerts.json()["items"][0]["automation_paused_reason"] == "unanswered_lead_question"
+    assert "NO SE COMO RESPONDER" in alerts.json()["items"][0]["reason"]
+    assert marked.status_code == 200
+    assert reply.status_code == 200
+    assert reply.json()["queued_message_ids"] == [pending_after.json()["messages"][0]["message_id"]]
+    assert detail.json()["lead"]["stage"] == "awaiting_initial_reply"
+    assert detail.json()["lead"]["automation_paused"] is False
+    assert pending_after.json()["messages"][0]["text"].startswith("La promo esta disponible")
+    assert "hasta cuando es la promo?" in learned_codex.read_text(encoding="utf-8")
+    assert "La promo esta disponible hasta el viernes." in learned_wiki.read_text(encoding="utf-8")
 
 
 def test_conversation_bot_handoffs_complete_scheduling_details(monkeypatch, tmp_path) -> None:

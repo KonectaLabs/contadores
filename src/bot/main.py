@@ -32,6 +32,7 @@ try:
         dispatch_pending_contadores_messages,
         fetch_funnels,
         fetch_pending_contadores_outbound,
+        process_contadores_alert_email_reply,
         process_whatsapp_inbound_event,
         process_whatsapp_message_status_event,
         register_contadores_calendly_event,
@@ -61,6 +62,7 @@ except ImportError:
         dispatch_pending_contadores_messages,
         fetch_funnels,
         fetch_pending_contadores_outbound,
+        process_contadores_alert_email_reply,
         process_whatsapp_inbound_event,
         process_whatsapp_message_status_event,
         register_contadores_calendly_event,
@@ -381,6 +383,38 @@ async def handle_calendly_webhook(
     return result
 
 
+async def handle_agentmail_webhook(
+    *,
+    backend_client: httpx.AsyncClient,
+    email_provider: AgentMailProvider,
+    raw_body: bytes,
+    headers: dict[str, str],
+) -> dict[str, Any]:
+    """Process one AgentMail webhook update."""
+    payload = email_provider.verify_webhook_payload(
+        payload=raw_body.decode("utf-8"),
+        headers=headers,
+    )
+    event_type = str(payload.get("event") or payload.get("event_type") or payload.get("type") or "").strip()
+    if event_type and event_type != "message.received":
+        return {"status": "ignored", "reason": "not_message_received", "event_type": event_type}
+
+    event = email_provider.build_inbound_event(payload)
+    if event is None:
+        return {"status": "ignored", "reason": "no_inbound_email_event"}
+
+    result = await process_contadores_alert_email_reply(
+        backend_client,
+        event=event,
+    )
+    if result.get("status") != "ignored":
+        await email_provider.acknowledge_message(
+            inbox_id=event.inbox_id,
+            message_id=event.message_id,
+        )
+    return result
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize providers, backend client, and worker loop."""
@@ -496,3 +530,25 @@ async def calendly_webhook(request: Request) -> dict[str, Any]:
         backend_client=backend_client,
         payload=payload if isinstance(payload, dict) else {"payload": payload},
     )
+
+
+@app.post("/webhooks/agentmail")
+async def agentmail_webhook(request: Request) -> dict[str, Any]:
+    """Receive AgentMail replies to operator alert emails."""
+    backend_client = getattr(app.state, "backend_client", None)
+    email_provider = getattr(app.state, "email_provider", None)
+    if backend_client is None or email_provider is None:
+        raise HTTPException(status_code=503, detail="Bot runtime is not ready")
+    if not email_provider.configured:
+        return {"status": "ignored", "reason": "agentmail_disabled"}
+
+    raw_body = await request.body()
+    try:
+        return await handle_agentmail_webhook(
+            backend_client=backend_client,
+            email_provider=email_provider,
+            raw_body=raw_body,
+            headers=dict(request.headers),
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc

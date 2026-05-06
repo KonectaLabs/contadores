@@ -85,8 +85,13 @@ ACCOUNTANT_PAGE_EXAMPLE_VIDEO_TEXT = "Esta es una pagina de un cliente contador 
 LAWYER_PAGE_EXAMPLE_VIDEO_TEXT = "Esta es una pagina de un cliente abogado nuestro, asi podria verse tu pagina"
 PAGE_EXAMPLE_VIDEO_TEXT = "Esta es una pagina de un cliente nuestro, asi podria verse tu pagina"
 WORKSTATION_SOLO_PAGE_STARTED_REASON = "workstation_solo_page_started"
+UNANSWERED_LEAD_QUESTION_REASON = "unanswered_lead_question"
 OPENER_FOLLOWUP_DELAY = timedelta(hours=24)
 WHATSAPP_CUSTOM_MESSAGE_WINDOW = timedelta(hours=24)
+CONVERSATION_PROCESSING_STALE_SECONDS = max(
+    60,
+    int(os.getenv("CONVERSATION_PROCESSING_STALE_SECONDS", "1200")),
+)
 CONTADORES_DELIVERY_MAX_ATTEMPTS = max(1, int(os.getenv("CONTADORES_DELIVERY_MAX_ATTEMPTS", "3")))
 CONTADORES_DELIVERY_RETRY_DELAY_SECONDS = max(
     0,
@@ -107,6 +112,21 @@ WATCHED_VIDEO_CONFIRMATION_LABEL = "watched_video_confirmation"
 VENEZUELA_MOBILE_PREFIXES = ("412", "414", "416", "424", "426")
 PHONE_DIGITS_RE = re.compile(r"\D+")
 CONVERSATION_BOT_LOCKS: dict[str, asyncio.Lock] = {}
+REPO_ROOT = Path(__file__).resolve().parents[3]
+OPERATOR_LEARNED_ANSWER_PATHS = [
+    REPO_ROOT
+    / ".codex"
+    / "skills"
+    / "contadores-lead-reply-playbook"
+    / "references"
+    / "operator-learned-answers.md",
+    REPO_ROOT
+    / "wiki"
+    / "skills"
+    / "contadores-lead-reply-playbook"
+    / "references"
+    / "operator-learned-answers.md",
+]
 
 WHATSAPP_DELIVERY_ERROR_BY_CODE = {
     130472: (
@@ -624,6 +644,83 @@ def format_scheduling_handoff_reason(
         f"Ultimo mensaje: {latest_text.strip() or '-'}",
     ]
     return "\n".join(lines)
+
+
+def extract_operator_whatsapp_reply(raw_text: str) -> str:
+    """Extract the WhatsApp reply text from one operator email body."""
+    clean_text = "\n".join(line.rstrip() for line in str(raw_text or "").splitlines()).strip()
+    if not clean_text:
+        return ""
+
+    casefold_text = clean_text.casefold()
+    for label in ["respuesta:", "whatsapp:", "mensaje:"]:
+        index = casefold_text.find(label)
+        if index >= 0:
+            return clean_text[index + len(label):].strip()
+
+    return clean_text
+
+
+def build_operator_learned_answer_entry(
+    *,
+    alert: ContadoresRuntimeAlert,
+    operator_reply_text: str,
+    resolved_at: datetime,
+) -> str:
+    """Build one markdown entry for operator-taught answer memory."""
+    timestamp = format_timestamp_seconds(resolved_at) or resolved_at.isoformat()
+    parts = [
+        f"## {timestamp}",
+        "",
+        f"- Funnel: {alert.funnel_id}",
+        f"- Lead question: {alert.latest_inbound_text or '-'}",
+        "- Operator answer to reuse:",
+        "",
+        "```text",
+        operator_reply_text.strip(),
+        "```",
+        "",
+    ]
+    return "\n".join(parts)
+
+
+def append_operator_learned_answer(
+    *,
+    alert: ContadoresRuntimeAlert,
+    operator_reply_text: str,
+    resolved_at: datetime,
+) -> None:
+    """Append one operator answer to the runtime playbook memory files."""
+    entry = build_operator_learned_answer_entry(
+        alert=alert,
+        operator_reply_text=operator_reply_text,
+        resolved_at=resolved_at,
+    )
+    for path in OPERATOR_LEARNED_ANSWER_PATHS:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists():
+            path.write_text("# Operator Learned Answers\n\n", encoding="utf-8")
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(entry)
+
+
+def create_unanswered_question_alert(
+    *,
+    lead: ContadoresLead,
+    result: ContadoresConversationBotResult,
+    latest_inbound: ContadoresMessage | None,
+) -> ContadoresRuntimeAlert:
+    """Create a teach-by-email ticket for a lead question the bot cannot answer."""
+    funnel = resolve_funnel(lead.funnel_id)
+    return ContadoresRuntimeAlert.add(
+        lead=lead,
+        funnel_label=funnel.label,
+        alert_type=UNANSWERED_LEAD_QUESTION_REASON,
+        error=result.reason or "El bot no encontro una respuesta segura para esta pregunta.",
+        fallback_action="await_operator_teaching",
+        previous_stage=lead.stage.value,
+        latest_inbound_text=latest_inbound.text if latest_inbound else "",
+    )
 
 
 def build_calendly_url(*, base_url: str) -> str:
@@ -2336,14 +2433,29 @@ def apply_conversation_bot_result(
         metrics["no_actions"] += 1
         return metrics
 
+    pause_reason = result.action or "ai_handoff"
+    classification_label = label or "needs_human"
+    classification_reason = reason
+    if result.action == "handoff_human" and not result.runtime_error and latest_inbound is not None:
+        create_unanswered_question_alert(
+            lead=lead,
+            result=result,
+            latest_inbound=latest_inbound,
+        )
+        pause_reason = UNANSWERED_LEAD_QUESTION_REASON
+        classification_label = UNANSWERED_LEAD_QUESTION_REASON
+        classification_reason = (
+            "El bot no sabe responder esta pregunta todavia; se pidio una respuesta por email."
+        )
+
     ContadoresLead.update_flow_state(
         lead.id,
         stage=ContadoresLeadStage.NEEDS_HUMAN,
         automation_paused=True,
-        automation_paused_reason=result.action or "ai_handoff",
+        automation_paused_reason=pause_reason,
         classification_completed_at=now,
-        last_classification_label=label or "needs_human",
-        last_classification_reason=reason,
+        last_classification_label=classification_label,
+        last_classification_reason=classification_reason,
         clear_needs_human_notified_at=True,
     )
     metrics["human_handoffs"] += 1
@@ -2381,6 +2493,9 @@ async def process_conversation_reply_batch(
         return metrics
 
     latest_inbound = replies_in_window[-1]
+    latest_inbound_at = ensure_utc_datetime(latest_inbound.created_at)
+    if latest_inbound.id is None or latest_inbound_at is None:
+        return metrics
     if not conversation_reply_batch_still_current(
         lead_id=lead.id,
         reply_window_start=reply_window_start,
@@ -2390,50 +2505,66 @@ async def process_conversation_reply_batch(
     ):
         return metrics
 
-    if latest_inbound_is_untranscribed_media(latest_inbound):
-        ContadoresLead.update_flow_state(
-            lead.id,
-            stage=ContadoresLeadStage.NEEDS_HUMAN,
-            automation_paused=True,
-            automation_paused_reason="untranscribed_media",
-            classification_completed_at=now,
-            last_classification_label="needs_human",
-            last_classification_reason="El ultimo inbound es media/audio sin transcript; requiere revision humana.",
-            clear_needs_human_notified_at=True,
+    claimed = ContadoresLead.claim_conversation_processing(
+        lead_id=lead.id,
+        latest_inbound_id=latest_inbound.id,
+        latest_inbound_at=latest_inbound_at,
+        claimed_at=now_utc(),
+        stale_after_seconds=CONVERSATION_PROCESSING_STALE_SECONDS,
+    )
+    if not claimed:
+        return metrics
+
+    try:
+        if latest_inbound_is_untranscribed_media(latest_inbound):
+            ContadoresLead.update_flow_state(
+                lead.id,
+                stage=ContadoresLeadStage.NEEDS_HUMAN,
+                automation_paused=True,
+                automation_paused_reason="untranscribed_media",
+                classification_completed_at=now,
+                last_classification_label="needs_human",
+                last_classification_reason="El ultimo inbound es media/audio sin transcript; requiere revision humana.",
+                clear_needs_human_notified_at=True,
+            )
+            metrics["human_handoffs"] += 1
+            return metrics
+
+        messages = ContadoresMessage.list_by_lead(lead.id)
+        funnel = resolve_funnel(lead.funnel_id)
+        inferred_timezone = infer_timezone_from_phone(lead.phone, lead.normalized_phone)
+        result = await conversation_bot.aforward(
+            funnel_id=funnel.id,
+            funnel_label=funnel.label,
+            funnel_info=build_funnel_info_for_bot(funnel),
+            lead_name=lead.full_name or "",
+            phone=lead.phone,
+            inferred_timezone=inferred_timezone,
+            current_stage=lead.stage.value,
+            latest_inbound=latest_inbound.text,
+            conversation=format_conversation_for_bot(messages),
         )
-        metrics["human_handoffs"] += 1
-        return metrics
-
-    messages = ContadoresMessage.list_by_lead(lead.id)
-    funnel = resolve_funnel(lead.funnel_id)
-    inferred_timezone = infer_timezone_from_phone(lead.phone, lead.normalized_phone)
-    result = await conversation_bot.aforward(
-        funnel_id=funnel.id,
-        funnel_label=funnel.label,
-        funnel_info=build_funnel_info_for_bot(funnel),
-        lead_name=lead.full_name or "",
-        phone=lead.phone,
-        inferred_timezone=inferred_timezone,
-        current_stage=lead.stage.value,
-        latest_inbound=latest_inbound.text,
-        conversation=format_conversation_for_bot(messages),
-    )
-    if not conversation_reply_batch_still_current(
-        lead_id=lead.id,
-        reply_window_start=reply_window_start,
-        latest_inbound=latest_inbound,
-        quiet_seconds=quiet_seconds,
-        now=now_utc(),
-    ):
-        return metrics
-    return apply_conversation_bot_result(
-        lead=lead,
-        result=result,
-        inferred_timezone=inferred_timezone,
-        latest_inbound=latest_inbound,
-        now=now,
-        active_offer_context=active_offer_context,
-    )
+        if not conversation_reply_batch_still_current(
+            lead_id=lead.id,
+            reply_window_start=reply_window_start,
+            latest_inbound=latest_inbound,
+            quiet_seconds=quiet_seconds,
+            now=now_utc(),
+        ):
+            return metrics
+        return apply_conversation_bot_result(
+            lead=lead,
+            result=result,
+            inferred_timezone=inferred_timezone,
+            latest_inbound=latest_inbound,
+            now=now,
+            active_offer_context=active_offer_context,
+        )
+    finally:
+        ContadoresLead.clear_conversation_processing(
+            lead_id=lead.id,
+            latest_inbound_id=latest_inbound.id,
+        )
 
 
 def send_calendly_link_only(*, lead: ContadoresLead, config: ContadoresConfig) -> list[ContadoresMessage]:
@@ -3654,6 +3785,23 @@ class MarkContadoresAlertedCommand(BaseModel):
     """Command to mark a needs_human alert as already sent."""
 
     sent_at: datetime | None = None
+    email_thread_id: str | None = None
+    email_message_id: str | None = None
+    email_inbox_id: str | None = None
+    email_inbox_address: str | None = None
+
+
+class ContadoresAlertEmailReplyCommand(BaseModel):
+    """One inbound operator email reply to a runtime alert thread."""
+
+    inbox_id: str = Field(min_length=1)
+    message_id: str = Field(min_length=1)
+    from_email: str
+    plain_text: str
+    thread_id: str | None = None
+    in_reply_to: str | None = None
+    references: str | None = None
+    subject: str | None = None
 
 
 class MarkContadoresBookedCommand(BaseModel):
@@ -4916,6 +5064,8 @@ async def list_pending_contadores_alerts(
     for lead in ContadoresLead.list_needs_human_without_notification(funnel_id=funnel_id, limit=100):
         if derive_effective_lead_stage(lead) != ContadoresLeadStage.NEEDS_HUMAN:
             continue
+        if lead.automation_paused_reason == UNANSWERED_LEAD_QUESTION_REASON:
+            continue
         is_scheduling_handoff = lead.automation_paused_reason == BOOKING_DETAILS_COLLECTED_REASON
         if derive_manual_reply_status(lead) == "answered" and not is_scheduling_handoff:
             continue
@@ -4934,7 +5084,13 @@ async def list_pending_contadores_alerts(
             )
         )
     for alert in ContadoresRuntimeAlert.list_pending(funnel_id=funnel_id, limit=100):
-        if alert.alert_type.startswith("workstation_"):
+        if alert.alert_type == UNANSWERED_LEAD_QUESTION_REASON:
+            alert_reason = (
+                "NO SE COMO RESPONDER A ESTO. "
+                "Responder este email con el texto exacto para mandar por WhatsApp. "
+                "La respuesta se guardara como aprendizaje para preguntas parecidas."
+            )
+        elif alert.alert_type.startswith("workstation_"):
             alert_reason = (
                 "Fallo la automatizacion de Workstation solo pagina. "
                 f"Accion sugerida: {alert.fallback_action or 'revisar Workstation'}. "
@@ -4995,11 +5151,77 @@ async def mark_contadores_runtime_alerted(
     updated = ContadoresRuntimeAlert.mark_notified(
         alert_id=alert_id,
         notified_at=command.sent_at or now_utc(),
+        email_thread_id=command.email_thread_id,
+        email_message_id=command.email_message_id,
+        email_inbox_id=command.email_inbox_id,
+        email_inbox_address=command.email_inbox_address,
     )
     if updated is None:
         raise HTTPException(status_code=404, detail="Runtime alert not found")
     ContadoresConfig.mark_alert_sent(sent_at=command.sent_at or now_utc())
     return {"status": "ok"}
+
+
+@contadores_router.post("/runtime-alerts/email-reply")
+async def handle_contadores_runtime_alert_email_reply(
+    command: ContadoresAlertEmailReplyCommand,
+) -> dict[str, Any]:
+    """Resolve one unanswered lead question from an operator email reply."""
+    alert = ContadoresRuntimeAlert.get_unresolved_by_email_thread(
+        thread_id=command.thread_id or "",
+    )
+    if alert is None:
+        return {"status": "ignored", "reason": "no_matching_runtime_alert"}
+    if alert.alert_type != UNANSWERED_LEAD_QUESTION_REASON:
+        return {"status": "ignored", "reason": "runtime_alert_not_teachable"}
+
+    message_text = extract_operator_whatsapp_reply(command.plain_text)
+    if not message_text:
+        return {"status": "ignored", "reason": "empty_operator_reply"}
+
+    lead = ContadoresLead.get_by_id(alert.lead_id)
+    if lead is None:
+        ContadoresRuntimeAlert.mark_resolved(
+            alert_id=alert.id or 0,
+            operator_reply_text=message_text,
+            resolved_at=now_utc(),
+        )
+        return {"status": "ignored", "reason": "lead_not_found"}
+
+    queued_rows = queue_ai_bot_message(
+        lead=lead,
+        text=message_text,
+        sequence_step=AI_REPLY_SEQUENCE_STEP,
+    )
+    resolved_at = now_utc()
+    previous_stage = ContadoresLead.normalize_stage(alert.previous_stage)
+    ContadoresLead.update_flow_state(
+        lead.id,
+        stage=previous_stage,
+        automation_paused=False,
+        classification_completed_at=resolved_at,
+        last_classification_label="operator_taught_reply",
+        last_classification_reason=(
+            "Se respondio usando la ensenanza recibida por email "
+            f"para runtime_alert_id={alert.id}."
+        ),
+    )
+    ContadoresRuntimeAlert.mark_resolved(
+        alert_id=alert.id or 0,
+        operator_reply_text=message_text,
+        resolved_at=resolved_at,
+    )
+    append_operator_learned_answer(
+        alert=alert,
+        operator_reply_text=message_text,
+        resolved_at=resolved_at,
+    )
+    return {
+        "status": "processed",
+        "lead_id": lead.id,
+        "runtime_alert_id": alert.id,
+        "queued_message_ids": [row.id for row in queued_rows if row.id is not None],
+    }
 
 
 @contadores_router.post("/bookings/mark", response_model=ContadoresLeadSummary)

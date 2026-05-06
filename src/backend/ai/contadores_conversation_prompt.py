@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from textwrap import dedent
 
 
@@ -16,6 +17,28 @@ CONVERSATION_BOT_JSON_FIELDS = [
     "scheduling_time",
     "timezone",
 ]
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+LEARNED_ANSWERS_PATH = (
+    REPO_ROOT
+    / ".codex"
+    / "skills"
+    / "contadores-lead-reply-playbook"
+    / "references"
+    / "operator-learned-answers.md"
+)
+MAX_LEARNED_ANSWERS_CHARS = 6000
+
+
+def load_operator_learned_answers() -> str:
+    """Return recent operator-taught answers for the runtime prompt."""
+    try:
+        text = LEARNED_ANSWERS_PATH.read_text(encoding="utf-8").strip()
+    except OSError:
+        return "-"
+    if not text:
+        return "-"
+    return text[-MAX_LEARNED_ANSWERS_CHARS:]
 
 KONECTA_SOURCE_OF_TRUTH = dedent(
     """
@@ -569,6 +592,12 @@ def build_conversation_bot_prompt(
     return dedent(
         f"""
     {KONECTA_SOURCE_OF_TRUTH}
+
+    OPERATOR LEARNED ANSWERS
+    These are operator-taught answers from previous unknown lead questions.
+    Use them as source-of-truth when a new question is semantically similar.
+
+    {load_operator_learned_answers()}
 
     {GLOBAL_CONVERSATION_BOT_PROMPT}
 

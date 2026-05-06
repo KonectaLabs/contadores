@@ -11,7 +11,7 @@ import httpx
 import main as bot_main
 import openpyxl
 import utils
-from providers import DeliveryReceipt, WhatsAppInboundEvent, WhatsAppMessageStatusEvent
+from providers import DeliveryReceipt, EmailInboundEvent, WhatsAppInboundEvent, WhatsAppMessageStatusEvent
 from utils import (
     PendingContadoresAlertItem,
     PendingContadoresDeliveryMessage,
@@ -732,8 +732,9 @@ def test_send_contadores_pending_alerts_handles_runtime_fallback_alert(monkeypat
         sent_calls.append(kwargs)
         return DeliveryReceipt(external_id="agentmail-runtime-alert-1")
 
-    async def fake_mark_backend_contadores_runtime_alert_sent(client, *, runtime_alert_id: int):
+    async def fake_mark_backend_contadores_runtime_alert_sent(client, *, runtime_alert_id: int, receipt=None):
         del client
+        del receipt
         marked_runtime_alerts.append(runtime_alert_id)
 
     async def fake_mark_backend_contadores_alert_sent(client, *, lead_id: str):
@@ -770,6 +771,53 @@ def test_send_contadores_pending_alerts_handles_runtime_fallback_alert(monkeypat
     assert "Link: https://auth.openai.com/codex/device" in sent_calls[0]["text"]
     assert "codex login --device-auth" in sent_calls[0]["text"]
     assert "Lead link: https://chatterface.fgoiriz.com/?section=contadores&contadores_lead=runtime-lead-1" in sent_calls[0]["text"]
+
+
+def test_agentmail_webhook_forwards_operator_reply_and_acknowledges(monkeypatch) -> None:
+    """AgentMail replies should be passed to the backend runtime-alert resolver."""
+    forwarded_events: list[EmailInboundEvent] = []
+    acknowledged: list[dict[str, str]] = []
+
+    event = EmailInboundEvent(
+        inbox_id="alerts-inbox",
+        message_id="email-reply-1",
+        from_email="facu@example.com",
+        plain_text="Respuesta: Hasta el viernes",
+        thread_id="thread-1",
+    )
+
+    class FakeEmailProvider:
+        def verify_webhook_payload(self, *, payload: str, headers: dict[str, str]) -> dict[str, object]:
+            assert json.loads(payload) == {"type": "message.received"}
+            assert headers["x-test"] == "1"
+            return {"type": "message.received", "message": {"message_id": "email-reply-1"}}
+
+        def build_inbound_event(self, payload: dict[str, object]) -> EmailInboundEvent:
+            assert payload["type"] == "message.received"
+            return event
+
+        async def acknowledge_message(self, *, inbox_id: str, message_id: str) -> None:
+            acknowledged.append({"inbox_id": inbox_id, "message_id": message_id})
+
+    async def fake_process_contadores_alert_email_reply(client, *, event: EmailInboundEvent):
+        del client
+        forwarded_events.append(event)
+        return {"status": "processed", "queued_message_ids": [7]}
+
+    monkeypatch.setattr(bot_main, "process_contadores_alert_email_reply", fake_process_contadores_alert_email_reply)
+
+    result = asyncio.run(
+        bot_main.handle_agentmail_webhook(
+            backend_client=SimpleNamespace(),
+            email_provider=FakeEmailProvider(),
+            raw_body=b'{"type": "message.received"}',
+            headers={"x-test": "1"},
+        )
+    )
+
+    assert result == {"status": "processed", "queued_message_ids": [7]}
+    assert forwarded_events == [event]
+    assert acknowledged == [{"inbox_id": "alerts-inbox", "message_id": "email-reply-1"}]
 
 
 def test_process_whatsapp_message_status_event_ignores_missing_contadores_message(monkeypatch) -> None:
