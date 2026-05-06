@@ -103,8 +103,11 @@ def build_abogados_test_funnel(
         "sheet_source_filter": None,
         "sheet_poll_seconds": 30,
         "template_language": "es",
-        "opener_text": "Hola, completaste el formulario para abogados. Es correcto?",
-        "opener_template_name": "abogados_intro_es_v1",
+        "opener_text": (
+            "Hola {nombre}, llenaste el formulario para abogados de {pais} sobre como conseguir "
+            "casos redituables a tu whatsapp. es correcto?"
+        ),
+        "opener_template_name": "abogados_intro_nombre_pais_es_v1",
         "opener_followup_text": "Queria compartirte informacion sobre la propuesta para tu estudio juridico.",
         "opener_followup_template_name": "abogados_followup_es_v1",
         "manual_ping_text": "Hola, queria saber si queres que retomemos la conversacion",
@@ -883,8 +886,8 @@ def test_contadores_strategy_stats_count_calendly_and_booked(monkeypatch, tmp_pa
     assert items["loom_mp4"]["calendly_rate"] == 1
 
 
-def test_contadores_pending_delivery_exposes_new_opener_template_without_params(monkeypatch, tmp_path) -> None:
-    """The opener should stay template-backed even after moving to a fixed copy."""
+def test_contadores_pending_delivery_exposes_name_country_opener_params(monkeypatch, tmp_path) -> None:
+    """The opener should render lead-specific copy and template params."""
     configure_contadores_db(monkeypatch, tmp_path)
     lead = ContadoresLead.upsert(
         external_lead_id="sheet-row-opener",
@@ -907,7 +910,10 @@ def test_contadores_pending_delivery_exposes_new_opener_template_without_params(
             "phone": "+5491999999999",
             "normalized_phone": "5491999999999",
             "full_name": "Eva Ruiz",
-            "text": "Hola, llenaste el formulario para contadores sobre como conseguir clientes a tu whatsapp. Es correcto?",
+            "text": (
+                "Hola Eva, llenaste el formulario para contadores de Argentina sobre como conseguir "
+                "clientes a tu whatsapp. es correcto?"
+            ),
             "dispatch_after": payload["messages"][0]["dispatch_after"],
             "created_at": payload["messages"][0]["created_at"],
             "sequence_step": "opener",
@@ -921,11 +927,40 @@ def test_contadores_pending_delivery_exposes_new_opener_template_without_params(
             "media_mime_type": None,
             "media_filename": None,
             "contact_has_inbound": False,
-            "whatsapp_template_name": "contadores_intro_es_v2",
+            "whatsapp_template_name": "contadores_intro_nombre_pais_es_v1",
             "whatsapp_template_language": "es",
-            "whatsapp_template_body_params": [],
+            "whatsapp_template_body_params": ["Eva", "Argentina"],
         }
     ]
+
+
+def test_abogados_pending_delivery_upgrades_legacy_opener_to_name_country_params(monkeypatch, tmp_path) -> None:
+    """Old Abogados funnel config should still send the new name/country template."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-lawyer-opener",
+        phone="+584245449498",
+        full_name="Dra Marielis Gomez",
+        funnel_id="abogados",
+    )
+    legacy_abogados_funnel = build_abogados_test_funnel()
+    legacy_abogados_funnel["opener_text"] = "Hola, completaste el formulario para abogados. Es correcto?"
+    legacy_abogados_funnel["opener_template_name"] = "abogados_intro_es_v1"
+
+    with TestClient(app) as client:
+        create_funnel = client.post("/api/funnels", json=legacy_abogados_funnel)
+        contadores_endpoints.send_opener_sequence(lead=lead)
+        response = client.get("/api/contadores/messages/pending-delivery")
+
+    assert create_funnel.status_code == 200
+    assert response.status_code == 200
+    message = response.json()["messages"][0]
+    assert message["text"] == (
+        "Hola Marielis, llenaste el formulario para abogados de Venezuela sobre como conseguir "
+        "casos redituables a tu whatsapp. es correcto?"
+    )
+    assert message["whatsapp_template_name"] == "abogados_intro_nombre_pais_es_v1"
+    assert message["whatsapp_template_body_params"] == ["Marielis", "Venezuela"]
 
 
 def test_manual_ping_action_queues_template_and_pauses_automation(monkeypatch, tmp_path) -> None:
@@ -2825,8 +2860,11 @@ def test_abogados_ctwa_referral_creates_lead_and_reaches_loom(monkeypatch, tmp_p
         "sheet_source_filter": None,
         "sheet_poll_seconds": 30,
         "template_language": "es",
-        "opener_text": "Hola, completaste el formulario para abogados. Es correcto?",
-        "opener_template_name": "abogados_intro_es_v1",
+        "opener_text": (
+            "Hola {nombre}, llenaste el formulario para abogados de {pais} sobre como conseguir "
+            "casos redituables a tu whatsapp. es correcto?"
+        ),
+        "opener_template_name": "abogados_intro_nombre_pais_es_v1",
         "opener_followup_text": "Queria compartirte informacion sobre la propuesta para tu estudio juridico.",
         "opener_followup_template_name": "abogados_followup_es_v1",
         "manual_ping_text": "Hola, queria saber si queres que retomemos la conversacion",

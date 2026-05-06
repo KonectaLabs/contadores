@@ -15,6 +15,13 @@ override the built-in Contadores definition.
 ## Current sequence
 
 1. Send opener as a WhatsApp template for sheet-imported leads.
+   - Contadores uses `contadores_intro_nombre_pais_es_v1` with positional
+     params: short lead name and country inferred from the WhatsApp phone.
+     Rendered copy:
+     `Hola {nombre}, llenaste el formulario para contadores de {pais} sobre como conseguir clientes a tu whatsapp. es correcto?`
+   - Abogados uses `abogados_intro_nombre_pais_es_v1` with the same positional
+     params. Rendered copy:
+     `Hola {nombre}, llenaste el formulario para abogados de {pais} sobre como conseguir casos redituables a tu whatsapp. es correcto?`
    - Click-to-WhatsApp leads whose `referral.source_id` matches the funnel config skip this step because their first inbound message is already the reply.
    - Abogados leads whose first inbound text normalizes to `Hola! Quiero mas informacion de su propuesta para abogados!` also skip this step.
 2. Wait for any reply.

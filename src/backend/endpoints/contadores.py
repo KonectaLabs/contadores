@@ -62,6 +62,12 @@ from backend.database import (
 from backend.funnel_config import GENERAL_INBOX_FUNNEL_ID, get_contadores_funnel
 from backend.funnel_config import get_file_backed_funnel, get_funnel, upsert_funnel
 from backend.funnel_config import list_funnels, list_funnels_by_whatsapp_referral_source_id
+from backend.lead_template_utils import (
+    opener_template_body_params,
+    opener_template_name_for_funnel,
+    opener_template_uses_lead_params,
+    render_opener_text,
+)
 
 contadores_router = APIRouter(prefix="/api/contadores", tags=["contadores"])
 logger = logging.getLogger(__name__)
@@ -301,9 +307,18 @@ def resolve_funnel(funnel_id: str | None = None):
     return get_funnel(funnel_id or "contadores") or get_contadores_funnel()
 
 
-def build_opener_text(funnel_id: str | None = None) -> str:
+def build_opener_text(funnel_id: str | None = None, *, lead: ContadoresLead | None = None) -> str:
     """Return the rendered opener text used in transcript history."""
-    return resolve_funnel(funnel_id).opener_text
+    funnel = resolve_funnel(funnel_id or (lead.funnel_id if lead else None))
+    if lead is None:
+        return funnel.opener_text
+    return render_opener_text(
+        funnel_id=funnel.id,
+        configured_text=funnel.opener_text,
+        full_name=lead.full_name,
+        phone=lead.phone,
+        normalized_phone=lead.normalized_phone,
+    )
 
 
 def build_loom_intro_text(funnel_id: str | None = None) -> str:
@@ -329,12 +344,32 @@ def resolve_contadores_template_name(
     """Return the WhatsApp template name for template-backed Contadores steps."""
     funnel = resolve_funnel(funnel_id)
     if sequence_step == "opener":
-        return funnel.opener_template_name
+        return opener_template_name_for_funnel(funnel.id, funnel.opener_template_name)
     if sequence_step in {OPENER_FOLLOWUP_SEQUENCE_STEP, OPENER_FOLLOWUP_RETRY_SEQUENCE_STEP}:
         return funnel.opener_followup_template_name
     if sequence_step == MANUAL_PING_SEQUENCE_STEP:
         return funnel.manual_ping_template_name
     return None
+
+
+def resolve_contadores_template_body_params(
+    sequence_step: str | None,
+    *,
+    lead: ContadoresLead,
+    template_name: str | None,
+    stored_params: list[str] | tuple[str, ...] | None = None,
+) -> list[str]:
+    """Return positional WhatsApp template params for one outbound row."""
+    stored = [str(item) for item in (stored_params or [])]
+    if stored:
+        return stored
+    if sequence_step == "opener" and opener_template_uses_lead_params(template_name):
+        return opener_template_body_params(
+            full_name=lead.full_name,
+            phone=lead.phone,
+            normalized_phone=lead.normalized_phone,
+        )
+    return []
 
 
 def is_whatsapp_custom_window_open(lead: ContadoresLead, *, now: datetime | None = None) -> bool:
@@ -2120,10 +2155,19 @@ def enqueue_lead_outbound(
 
 def send_opener_sequence(*, lead: ContadoresLead) -> list[ContadoresMessage]:
     """Queue the first template-backed opener message."""
+    funnel = resolve_funnel(lead.funnel_id)
+    template_name = resolve_contadores_template_name("opener", funnel_id=lead.funnel_id)
     opener = enqueue_lead_outbound(
         lead=lead,
-        text=build_opener_text(lead.funnel_id),
+        text=build_opener_text(lead.funnel_id, lead=lead),
         sequence_step="opener",
+        whatsapp_template_name=template_name,
+        whatsapp_template_language=funnel.template_language if template_name else None,
+        whatsapp_template_body_params=resolve_contadores_template_body_params(
+            "opener",
+            lead=lead,
+            template_name=template_name,
+        ),
     )
     ContadoresLead.update_flow_state(
         lead.id,
@@ -4637,7 +4681,14 @@ async def list_pending_contadores_delivery_messages(
                 contact_has_inbound=ContadoresMessage.has_inbound_for_lead(lead.id),
                 whatsapp_template_name=template_name,
                 whatsapp_template_language=template_language,
-                whatsapp_template_body_params=row.whatsapp_template_body_params if template_name else [],
+                whatsapp_template_body_params=resolve_contadores_template_body_params(
+                    row.sequence_step,
+                    lead=lead,
+                    template_name=template_name,
+                    stored_params=row.whatsapp_template_body_params,
+                )
+                if template_name
+                else [],
             )
         )
     return PendingContadoresDeliveryResponse(messages=items)

@@ -1,0 +1,26 @@
+{
+  "templates": [
+    {
+      "name": "contadores_intro_nombre_pais_es_v1",
+      "language": "es",
+      "category": "MARKETING",
+      "parameter_format": "POSITIONAL",
+      "body": "Hola {{1}}, llenaste el formulario para contadores de {{2}} sobre como conseguir clientes a tu whatsapp. es correcto?",
+      "example_values": [
+        "Eva",
+        "Argentina"
+      ]
+    },
+    {
+      "name": "abogados_intro_nombre_pais_es_v1",
+      "language": "es",
+      "category": "MARKETING",
+      "parameter_format": "POSITIONAL",
+      "body": "Hola {{1}}, llenaste el formulario para abogados de {{2}} sobre como conseguir casos redituables a tu whatsapp. es correcto?",
+      "example_values": [
+        "Lucia",
+        "Venezuela"
+      ]
+    }
+  ]
+}

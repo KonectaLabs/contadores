@@ -8,10 +8,11 @@ import re
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from backend.calendly import KONECTA_CALENDLY_URL, normalize_calendly_url
 from backend.database import DATA_DIR, normalize_email
+from backend.lead_template_utils import opener_template_name_for_funnel, opener_text_template_for_funnel
 
 FunnelKind = Literal["campaign", "inbox"]
 StrategyDelivery = Literal["link", "video"]
@@ -208,6 +209,13 @@ class FunnelDefinition(BaseModel):
             normalized.append(source_id)
         return normalized
 
+    @model_validator(mode="after")
+    def normalize_known_opener_copy(self) -> "FunnelDefinition":
+        """Keep built-in opener templates on the latest name/country version."""
+        self.opener_text = opener_text_template_for_funnel(self.id, self.opener_text)
+        self.opener_template_name = opener_template_name_for_funnel(self.id, self.opener_template_name)
+        return self
+
 
 class FunnelListResponse(BaseModel):
     """Response payload for funnel definitions."""
@@ -228,10 +236,10 @@ def build_default_contadores_funnel() -> FunnelDefinition:
         sheet_poll_seconds=_read_int("CONTADORES_SHEET_POLL_SECONDS", default=30, minimum=30),
         template_language="es",
         opener_text=(
-            "Hola, llenaste el formulario para contadores sobre como conseguir clientes "
-            "a tu whatsapp. Es correcto?"
+            "Hola {nombre}, llenaste el formulario para contadores de {pais} sobre como conseguir "
+            "clientes a tu whatsapp. es correcto?"
         ),
-        opener_template_name="contadores_intro_es_v2",
+        opener_template_name="contadores_intro_nombre_pais_es_v1",
         opener_followup_text="Queria compartirte informacion sobre como podes obtener clientes para tu estudio contable",
         opener_followup_template_name="contadores_opener_followup_24h_es_v1",
         manual_ping_text=DEFAULT_MANUAL_PING_TEXT,

@@ -322,9 +322,9 @@ def test_dispatch_pending_contadores_messages_sends_immediately_without_random_d
             dispatch_after="2026-04-21T10:00:00Z",
             created_at="2026-04-21T10:00:00Z",
             sequence_step="opener",
-            whatsapp_template_name="contadores_intro_es_v2",
+            whatsapp_template_name="contadores_intro_nombre_pais_es_v1",
             whatsapp_template_language="es",
-            whatsapp_template_body_params=[],
+            whatsapp_template_body_params=["Lead", "Argentina"],
         ),
         PendingContadoresDeliveryMessage(
             message_id=12,
@@ -404,8 +404,8 @@ def test_dispatch_pending_contadores_messages_persists_send_failure(monkeypatch)
     assert failure_calls == [(31, "invalid recipient phone number")]
 
 
-def test_dispatch_one_contadores_message_uses_template_without_body_params() -> None:
-    """Contadores template-backed steps should use approved templates with no variables."""
+def test_dispatch_one_contadores_message_uses_template_body_params() -> None:
+    """Contadores template-backed steps should pass approved template variables."""
     template_calls: list[tuple[str, str, str, list[str], str | None]] = []
 
     async def fake_send_template_message(
@@ -429,13 +429,16 @@ def test_dispatch_one_contadores_message_uses_template_without_body_params() -> 
         phone="+5491222222222",
         normalized_phone="5491222222222",
         full_name="Lead Two",
-        text="Hola, llenaste el formulario para contadores sobre como conseguir clientes a tu whatsapp. Es correcto?",
+        text=(
+            "Hola Eva, llenaste el formulario para contadores de Argentina sobre como conseguir "
+            "clientes a tu whatsapp. es correcto?"
+        ),
         dispatch_after="2026-04-21T10:00:00Z",
         created_at="2026-04-21T10:00:00Z",
         sequence_step="opener",
-        whatsapp_template_name="contadores_intro_es_v2",
+        whatsapp_template_name="contadores_intro_nombre_pais_es_v1",
         whatsapp_template_language="es",
-        whatsapp_template_body_params=[],
+        whatsapp_template_body_params=["Eva", "Argentina"],
     )
 
     receipt = asyncio.run(
@@ -452,10 +455,13 @@ def test_dispatch_one_contadores_message_uses_template_without_body_params() -> 
     assert template_calls == [
         (
             "+5491222222222",
-            "contadores_intro_es_v2",
+            "contadores_intro_nombre_pais_es_v1",
             "es",
-            [],
-            "Hola, llenaste el formulario para contadores sobre como conseguir clientes a tu whatsapp. Es correcto?",
+            ["Eva", "Argentina"],
+            (
+                "Hola Eva, llenaste el formulario para contadores de Argentina sobre como conseguir "
+                "clientes a tu whatsapp. es correcto?"
+            ),
         )
     ]
 

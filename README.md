@@ -51,6 +51,14 @@ Cada funnel contiene:
 - emails de alerta;
 - ventanas de espera.
 
+Template opener inicial:
+
+- Contadores usa `contadores_intro_nombre_pais_es_v1`.
+- Abogados usa `abogados_intro_nombre_pais_es_v1`.
+- Ambos reciben parametros posicionales: nombre corto y pais inferido del
+  WhatsApp del lead.
+- Specs versionados: `src/scripts/whatsapp_template_specs/opener_nombre_pais_es_v1.json`.
+
 ## Fuente de leads
 
 Contadores ya no tiene switch de runtime. No existe un modo alternativo ni lead

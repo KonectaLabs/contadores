@@ -20,7 +20,7 @@ def test_funnels_endpoint_exposes_default_contadores(monkeypatch, tmp_path) -> N
     assert payload["funnels"][0]["id"] == "contadores"
     assert payload["funnels"][0]["kind"] == "campaign"
     assert payload["funnels"][0]["sheet_poll_seconds"] == 30
-    assert payload["funnels"][0]["opener_template_name"] == "contadores_intro_es_v2"
+    assert payload["funnels"][0]["opener_template_name"] == "contadores_intro_nombre_pais_es_v1"
     assert payload["funnels"][0]["manual_ping_template_name"] == "contadores_manual_ping_es_v1"
     assert payload["funnels"][0]["whatsapp_referral_source_ids"] == []
     assert [item["id"] for item in payload["funnels"][0]["strategies"]] == ["loom_mp4"]
@@ -46,8 +46,11 @@ def test_funnels_endpoint_persists_new_niche(monkeypatch, tmp_path) -> None:
         "sheet_source_filter": None,
         "sheet_poll_seconds": 30,
         "template_language": "es",
-        "opener_text": "Hola, completaste el formulario para abogados. Es correcto?",
-        "opener_template_name": "abogados_intro_es_v1",
+        "opener_text": (
+            "Hola {nombre}, llenaste el formulario para abogados de {pais} sobre como conseguir "
+            "casos redituables a tu whatsapp. es correcto?"
+        ),
+        "opener_template_name": "abogados_intro_nombre_pais_es_v1",
         "opener_followup_text": "Queria compartirte informacion sobre la propuesta para tu estudio juridico.",
         "opener_followup_template_name": "abogados_followup_es_v1",
         "loom_intro_text": "Perfecto. Te cuento rapido como traemos consultas a tu estudio:",
