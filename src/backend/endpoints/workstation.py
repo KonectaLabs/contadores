@@ -73,6 +73,7 @@ WORKSTATION_BACKOFF_SECONDS = 30
 WORKSTATION_PING_1_DELAY_SECONDS = 24 * 60 * 60
 WORKSTATION_PING_2_DELAY_SECONDS = 48 * 60 * 60
 WORKSTATION_HANDOFF_DELAY_SECONDS = 72 * 60 * 60
+SOLO_PAGE_CONTEXT_MIN_CHARS = 35
 WORKSTATION_INTAKE_TEXT = (
     "Perfecto, entonces arrancamos con la pagina.\n\n"
     "Mandeme por aca lo basico que quiere que aparezca: nombre del estudio, ciudad/pais, "
@@ -965,6 +966,58 @@ def latest_inbound_is_quiet(messages: list[ContadoresMessage], *, now: datetime)
     return now >= latest_at + timedelta(seconds=WORKSTATION_BACKOFF_SECONDS)
 
 
+def message_has_solo_page_context(message: ContadoresMessage) -> bool:
+    """Return True when an old inbound contains enough page-building context."""
+    if message.from_me:
+        return False
+    text = " ".join((message.text or "").strip().split())
+    if not text or text.startswith("["):
+        return False
+    normalized = text.lower()
+    interest_only_markers = (
+        "si",
+        "ok",
+        "dale",
+        "perfecto",
+        "me interesa",
+        "hagamos",
+        "avancemos",
+        "empecemos",
+        "arranquemos",
+    )
+    if len(normalized) < SOLO_PAGE_CONTEXT_MIN_CHARS and any(marker in normalized for marker in interest_only_markers):
+        return False
+    context_markers = (
+        "estudio",
+        "despacho",
+        "servicio",
+        "trabajo",
+        "derecho",
+        "abogado",
+        "contador",
+        "impuesto",
+        "sociedad",
+        "logo",
+        "foto",
+        "whatsapp",
+        "ciudad",
+        "pais",
+        "país",
+        "direccion",
+        "dirección",
+        "pagina actual",
+        "página actual",
+    )
+    return len(normalized) >= 100 or any(marker in normalized for marker in context_markers)
+
+
+def has_existing_solo_page_context(client: WorkstationClient, messages: list[ContadoresMessage]) -> bool:
+    """Return True when a manually started client can skip the first intake prompt."""
+    if (client.notes or "").strip():
+        return True
+    return any(message_has_solo_page_context(message) for message in messages)
+
+
 def text_shows_workstation_approval(text: str) -> bool:
     """Return True when the client accepts the current page version."""
     normalized = " ".join((text or "").lower().replace("á", "a").replace("í", "i").split())
@@ -1379,7 +1432,16 @@ async def advance_solo_page_client(client: WorkstationClient, *, now: datetime) 
     fresh_client = WorkstationClient.get_by_id(client.id) or client
 
     if fresh_client.automation_status == WorkstationAutomationStatus.INTAKE:
-        if not any(message.from_me and message.sequence_step == WORKSTATION_INTAKE_SEQUENCE_STEP for message in messages):
+        intake_was_sent = any(
+            message.from_me and message.sequence_step == WORKSTATION_INTAKE_SEQUENCE_STEP
+            for message in messages
+        )
+        use_existing_context = (
+            not intake_was_sent
+            and fresh_client.last_automation_handled_at is None
+            and has_existing_solo_page_context(fresh_client, messages)
+        )
+        if not intake_was_sent and not use_existing_context:
             enqueue_lead_outbound(
                 lead=lead,
                 text=WORKSTATION_INTAKE_TEXT,
@@ -1393,7 +1455,10 @@ async def advance_solo_page_client(client: WorkstationClient, *, now: datetime) 
             metrics["intake_messages_sent"] = 1
             return metrics
 
-        replies = inbound_after(messages, fresh_client.last_automation_handled_at)
+        replies = inbound_after(messages, None) if use_existing_context else inbound_after(
+            messages,
+            fresh_client.last_automation_handled_at,
+        )
         if not replies or not latest_inbound_is_quiet(replies, now=now):
             return metrics
         WorkstationClient.update_automation_state(
@@ -1627,12 +1692,13 @@ async def create_workstation_client_from_lead(
 ) -> WorkstationClientDetailResponse:
     """Convert a CRM lead into a paid Workstation client."""
     lead = get_required_lead(lead_id)
+    is_solo_page = (work_type or "").strip().lower() == WorkstationClientWorkType.SOLO_PAGINA.value
     resolved_offer_price_usd = (
         offer_price_usd
         if offer_price_usd is not None
         else (
             resolve_solo_page_offer_price_usd(lead.id)
-            if (work_type or "").strip().lower() == WorkstationClientWorkType.SOLO_PAGINA.value
+            if is_solo_page
             else None
         )
     )
@@ -1657,7 +1723,11 @@ async def create_workstation_client_from_lead(
             lead.id,
             booked_at=lead.booked_at or now_utc(),
             automation_paused=True,
-            automation_paused_reason="manual_workstation_conversion",
+            automation_paused_reason=(
+                "manual_workstation_solo_page_conversion"
+                if is_solo_page
+                else "manual_workstation_conversion"
+            ),
         )
     fresh_client = WorkstationClient.get_by_id(client.id) or client
     return build_client_detail(fresh_client)

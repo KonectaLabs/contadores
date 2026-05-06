@@ -212,6 +212,10 @@ deterministic fast path before normal scheduling:
 - Once Workstation starts, the CRM lead is `booked`, automation is paused with
   `automation_paused_reason=workstation_solo_page_started`, and future replies
   are handled by `/api/workstation/automation/tick`.
+- If an operator manually starts the same promo path from the CRM `Solo page`
+  action, the backend creates `solo_pagina/pending_payment/intake`; Workstation
+  may skip the first intake prompt only when the existing chat already includes
+  concrete page context such as study name, services, location, logo, or photo.
 - Do not ask for email/day/time for this promo path unless the user is asking
   for a separate call instead of accepting the page workflow.
 

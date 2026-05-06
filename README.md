@@ -361,6 +361,10 @@ Promo solo pagina:
   `WorkstationClient` idempotente con `work_type=solo_pagina`,
   `status=pending_payment`, `automation_status=intake` y el precio fijo de la
   promo en `offer_price_usd`.
+- Para leads que quedaron en Manual por manejo humano, la UI muestra una accion
+  `Solo page`. Esa accion crea el mismo Workstation `solo_pagina`: si el chat
+  viejo ya trae datos utiles del estudio/servicios, Workstation genera el
+  boceto directamente; si solo trae interes generico, primero manda el intake.
 - El CRM queda pausado con
   `automation_paused_reason=workstation_solo_page_started`; desde ese punto
   responde el tick de Workstation, no el bot comercial.
@@ -413,6 +417,9 @@ Al convertir:
   archivo fisico guardado en `data/workstation/clients/.../media/`.
 - si la conversion viene de la promo solo pagina, el precio sorteado queda
   fijo en el cliente de Workstation para saber cuanto cobrar.
+- la accion `Solo page` desde Manual usa `work_type=solo_pagina`,
+  `status=pending_payment` y `automation_status=intake`, y pausa el lead con
+  `automation_paused_reason=manual_workstation_solo_page_conversion`.
 - el summary del CRM expone `workstation_client_id`.
 
 Cada cliente de Workstation tiene notas editables, media subida manualmente con

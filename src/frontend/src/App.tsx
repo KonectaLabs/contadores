@@ -603,6 +603,36 @@ export function App() {
     }
   }
 
+  async function startSoloPageWorkstation() {
+    const leadId = selectedLead?.id ?? selectedLeadId;
+    if (!leadId) {
+      return;
+    }
+    const params = new URLSearchParams({
+      work_type: "solo_pagina",
+      status: "pending_payment",
+      automation_status: "intake",
+    });
+    setActionBusy("convert-solo-page");
+    try {
+      const payload = await apiFetch<WorkstationClientDetailResponse>(
+        `/api/workstation/clients/from-lead/${leadId}?${params.toString()}`,
+        { method: "POST" },
+      );
+      setWorkstationDetail(payload);
+      setWorkstationNotesDraft(payload.notes ?? "");
+      setSelectedWorkstationClientId(payload.client.id);
+      setActiveSection("workstation");
+      await loadDashboard();
+      await loadWorkstation();
+      await loadDetail(leadId);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not start solo page Workstation.");
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
   async function openWorkstationClient(clientId: string) {
     setSelectedWorkstationClientId(clientId);
     setActiveSection("workstation");
@@ -1412,6 +1442,7 @@ export function App() {
               onToggleClosed={() => runAction(selectedLead?.stage === "closed" ? "reopen" : "close")}
               onDelete={deleteLead}
               onConvert={convertLeadToWorkstation}
+              onStartSoloPage={startSoloPageWorkstation}
               onCopyContext={copySelectedLeadContext}
               onOpenWorkstation={openWorkstationClient}
               copyStatus={leadContextCopyStatus}
@@ -3076,6 +3107,7 @@ function LeadDetailHeader({
   onToggleClosed,
   onDelete,
   onConvert,
+  onStartSoloPage,
   onCopyContext,
   onOpenWorkstation,
   copyStatus,
@@ -3089,6 +3121,7 @@ function LeadDetailHeader({
   onToggleClosed: () => void;
   onDelete: () => void;
   onConvert: () => void;
+  onStartSoloPage: () => void;
   onCopyContext: () => void | Promise<void>;
   onOpenWorkstation: (clientId: string) => void | Promise<void>;
   copyStatus: string;
@@ -3132,15 +3165,26 @@ function LeadDetailHeader({
             Open Workstation
           </button>
         ) : (
-          <button
-            type="button"
-            className="ct-btn ct-btn-ghost"
-            disabled={!lead || Boolean(actionBusy)}
-            onClick={onConvert}
-          >
-            <CurrencyDollar size={15} weight="bold" />
-            Convert
-          </button>
+          <>
+            <button
+              type="button"
+              className="ct-btn ct-btn-ghost"
+              disabled={!lead || Boolean(actionBusy)}
+              onClick={onStartSoloPage}
+            >
+              <Robot size={15} weight="bold" />
+              Solo page
+            </button>
+            <button
+              type="button"
+              className="ct-btn ct-btn-ghost"
+              disabled={!lead || Boolean(actionBusy)}
+              onClick={onConvert}
+            >
+              <CurrencyDollar size={15} weight="bold" />
+              Convert
+            </button>
+          </>
         )}
         {!inboxMode ? (
           <button type="button" className="ct-btn ct-btn-ghost" disabled={!lead || closed || booked || Boolean(actionBusy)} onClick={onManualBooked}>Mark booked</button>

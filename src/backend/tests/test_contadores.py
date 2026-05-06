@@ -3847,6 +3847,129 @@ def test_workstation_tick_generates_preview_without_blocking_on_missing_photo(mo
     assert updated.last_preview_sent_at is not None
 
 
+def test_manual_solo_page_conversion_uses_existing_chat_context(monkeypatch, tmp_path) -> None:
+    """Manual solo-page starts should generate when the old chat already has page details."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    data_dir = tmp_path / "data"
+    monkeypatch.setattr(database_module, "DATA_DIR", data_dir)
+    lead = ContadoresLead.upsert(
+        funnel_id="abogados",
+        external_lead_id="sheet-row-manual-solo-page-context",
+        phone="+584241111115",
+        full_name="Cliente Manual Solo",
+    )
+    offer_at = now_utc() - timedelta(minutes=15)
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=True,
+        text="Promo pagina profesional por 49 USD.",
+        delivery_status=MessageDeliveryStatus.DELIVERED,
+        sequence_step="promo_web_profesional_20260505",
+        whatsapp_template_body_params=["Cliente", "abogados", "Venezuela", "49"],
+        created_at=offer_at,
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=True,
+        text="Esta es una pagina de un cliente abogado nuestro, asi podria verse tu pagina",
+        delivery_status=MessageDeliveryStatus.DELIVERED,
+        sequence_step="auto_lawyer_page_example_video",
+        media_type="video",
+        media_path="data/contadores/videos/pagina-abogado.mp4",
+        created_at=offer_at + timedelta(minutes=1),
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=False,
+        text="Mi despacho se llama Estudio Manual, trabajo derecho civil y familia en Caracas.",
+        created_at=now_utc() - timedelta(seconds=45),
+    )
+
+    generated_calls: list[dict[str, object]] = []
+
+    def fake_generate_solo_page_version_sync(**kwargs) -> Path:
+        generated_calls.append(kwargs)
+        version_dir = workstation_endpoints.next_landing_page_version_dir(kwargs["client"])
+        (version_dir / "index.html").write_text("<html><body>Draft</body></html>", encoding="utf-8")
+        (version_dir / "styles.css").write_text("body{font-family:sans-serif}", encoding="utf-8")
+        (version_dir / "script.js").write_text("", encoding="utf-8")
+        (version_dir / "preview.mp4").write_bytes(b"mp4")
+        return version_dir
+
+    monkeypatch.setattr(workstation_endpoints, "generate_solo_page_version_sync", fake_generate_solo_page_version_sync)
+
+    with TestClient(app) as client:
+        created = client.post(
+            f"/api/workstation/clients/from-lead/{lead.id}",
+            params={
+                "work_type": "solo_pagina",
+                "status": "pending_payment",
+                "automation_status": "intake",
+            },
+        )
+        tick = client.post("/api/workstation/automation/tick")
+        pending = client.get("/api/contadores/messages/pending-delivery")
+        crm_detail = client.get(f"/api/contadores/leads/{lead.id}")
+
+    assert created.status_code == 200
+    assert created.json()["client"]["work_type"] == "solo_pagina"
+    assert created.json()["client"]["status"] == "pending_payment"
+    assert created.json()["client"]["offer_price_usd"] == 49
+    assert tick.status_code == 200
+    assert tick.json()["intake_messages_sent"] == 0
+    assert tick.json()["drafts_generated"] == 1
+    assert len(generated_calls) == 1
+    assert generated_calls[0]["revision"] is False
+    assert [item["sequence_step"] for item in pending.json()["messages"]] == ["workstation_preview_video"]
+    assert crm_detail.json()["lead"]["automation_paused_reason"] == "manual_workstation_solo_page_conversion"
+
+
+def test_manual_solo_page_conversion_without_context_sends_intake(monkeypatch, tmp_path) -> None:
+    """Manual solo-page starts should still ask intake when the old chat only has interest."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setattr(database_module, "DATA_DIR", tmp_path / "data")
+    lead = ContadoresLead.upsert(
+        funnel_id="contadores",
+        external_lead_id="sheet-row-manual-solo-page-no-context",
+        phone="+5491777777710",
+        full_name="Cliente Sin Datos",
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=True,
+        text="Promo pagina profesional por 29 USD.",
+        delivery_status=MessageDeliveryStatus.DELIVERED,
+        sequence_step="promo_web_profesional_20260505",
+        whatsapp_template_body_params=["Cliente", "contadores", "Argentina", "29"],
+        created_at=now_utc() - timedelta(minutes=5),
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=False,
+        text="Dale",
+        created_at=now_utc() - timedelta(seconds=45),
+    )
+
+    with TestClient(app) as client:
+        created = client.post(
+            f"/api/workstation/clients/from-lead/{lead.id}",
+            params={
+                "work_type": "solo_pagina",
+                "status": "pending_payment",
+                "automation_status": "intake",
+            },
+        )
+        tick = client.post("/api/workstation/automation/tick")
+        pending = client.get("/api/contadores/messages/pending-delivery")
+
+    assert created.status_code == 200
+    assert created.json()["client"]["offer_price_usd"] == 29
+    assert tick.status_code == 200
+    assert tick.json()["intake_messages_sent"] == 1
+    assert tick.json()["drafts_generated"] == 0
+    assert [item["sequence_step"] for item in pending.json()["messages"]] == ["workstation_intake"]
+
+
 def test_workstation_solo_page_codex_runs_from_repo_root(monkeypatch, tmp_path) -> None:
     """Codex should read repo templates and then validate client-folder outputs."""
     configure_contadores_db(monkeypatch, tmp_path)
