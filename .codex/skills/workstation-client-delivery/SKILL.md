@@ -51,7 +51,9 @@ handoff) plus the latest `progress.md` content. The frontend polls the selected
 client every few seconds and shows that progress without overwriting notes in
 progress. If a draft or revision stays in a working state for more than 30
 minutes, the detail marks it stale and the next tick creates the visible failure
-alert/email instead of leaving it silent.
+alert/email instead of leaving it silent. The Workstation tick endpoint has a
+process lock: while a long Codex generation tick is still running, retry ticks
+return `status=busy` and do not evaluate stale working clients.
 
 ## Operating Rules
 

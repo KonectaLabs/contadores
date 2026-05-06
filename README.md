@@ -588,7 +588,9 @@ fallado. La UI hace polling del cliente abierto cada pocos segundos sin pisar la
 notas que el operador este editando y muestra el contenido de `progress.md` como
 progreso casi en tiempo real. Si un draft o revision queda en estado working por
 mas de 30 minutos, el detalle lo marca como stale y el proximo tick lo convierte
-en fallo visible con alerta/email.
+en fallo visible con alerta/email. El endpoint de tick usa un lock de proceso:
+si otro tick llega mientras una generacion larga de Codex sigue activa, responde
+`status=busy` y no reevalua estados stale hasta que termine el tick en curso.
 
 El preview que recibe el cliente es solo MP4. El backend renderiza el HTML
 estatico con Playwright en desktop `1440x900`, graba un scroll y normaliza el

@@ -4330,6 +4330,44 @@ def test_workstation_tick_fails_stale_working_state(monkeypatch, tmp_path) -> No
     assert "Automation failed" in progress
 
 
+def test_workstation_tick_returns_busy_while_generation_tick_is_running(monkeypatch, tmp_path) -> None:
+    """Bot retries should not mark an in-progress Codex run as stale."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setattr(database_module, "DATA_DIR", tmp_path / "data")
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-workstation-busy-lock",
+        phone="+5491777777791",
+        full_name="Cliente Busy",
+    )
+    workstation = WorkstationClient.create_for_lead(
+        lead,
+        work_type=WorkstationClientWorkType.SOLO_PAGINA,
+        status=WorkstationClientStatus.PENDING_PAYMENT,
+        automation_status=WorkstationAutomationStatus.DRAFTING,
+    )
+    started_at = now_utc() - timedelta(minutes=31)
+    WorkstationClient.update_automation_state(
+        workstation.id,
+        automation_status=WorkstationAutomationStatus.DRAFTING,
+        last_automation_handled_at=started_at,
+    )
+    lock = asyncio.Lock()
+    asyncio.run(lock.acquire())
+    monkeypatch.setattr(workstation_endpoints, "workstation_automation_tick_lock", lock)
+
+    try:
+        with TestClient(app) as client:
+            tick = client.post("/api/workstation/automation/tick")
+            detail = client.get(f"/api/workstation/clients/{workstation.id}")
+    finally:
+        lock.release()
+
+    assert tick.status_code == 200
+    assert tick.json()["status"] == "busy"
+    assert tick.json()["failures"] == 0
+    assert detail.json()["client"]["automation_status"] == "drafting"
+
+
 def test_manual_solo_page_conversion_uses_existing_chat_context(monkeypatch, tmp_path) -> None:
     """Manual solo-page starts should generate when the old chat already has page details."""
     configure_contadores_db(monkeypatch, tmp_path)

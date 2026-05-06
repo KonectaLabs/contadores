@@ -83,6 +83,7 @@ WORKSTATION_INTAKE_TEXT = (
     "Si tiene una foto suya, pagina actual, logo o documento, mandemelo tambien. "
     "Con eso le preparo un primer boceto en video."
 )
+workstation_automation_tick_lock = asyncio.Lock()
 
 
 def workstation_root() -> Path:
@@ -554,21 +555,25 @@ def build_media_response(asset: WorkstationMediaAsset) -> WorkstationMediaAssetR
 @workstation_router.post("/automation/tick", response_model=WorkstationAutomationTickResponse)
 async def run_workstation_automation_tick() -> WorkstationAutomationTickResponse:
     """Advance automatic Workstation solo-page delivery jobs."""
-    summary = WorkstationAutomationTickResponse()
-    now = now_utc()
-    for client in WorkstationClient.list_active_automation(
-        work_type=WorkstationClientWorkType.SOLO_PAGINA,
-        limit=100,
-    ):
-        metrics = await advance_solo_page_client(client, now=now)
-        summary.intake_messages_sent += metrics["intake_messages_sent"]
-        summary.drafts_generated += metrics["drafts_generated"]
-        summary.revision_videos_sent += metrics["revision_videos_sent"]
-        summary.approvals += metrics["approvals"]
-        summary.pings_sent += metrics["pings_sent"]
-        summary.human_handoffs += metrics["human_handoffs"]
-        summary.failures += metrics["failures"]
-    return summary
+    if workstation_automation_tick_lock.locked():
+        return WorkstationAutomationTickResponse(status="busy")
+
+    async with workstation_automation_tick_lock:
+        summary = WorkstationAutomationTickResponse()
+        now = now_utc()
+        for client in WorkstationClient.list_active_automation(
+            work_type=WorkstationClientWorkType.SOLO_PAGINA,
+            limit=100,
+        ):
+            metrics = await advance_solo_page_client(client, now=now)
+            summary.intake_messages_sent += metrics["intake_messages_sent"]
+            summary.drafts_generated += metrics["drafts_generated"]
+            summary.revision_videos_sent += metrics["revision_videos_sent"]
+            summary.approvals += metrics["approvals"]
+            summary.pings_sent += metrics["pings_sent"]
+            summary.human_handoffs += metrics["human_handoffs"]
+            summary.failures += metrics["failures"]
+        return summary
 
 
 def build_professional_photo_response(client: WorkstationClient, version_dir: Path) -> WorkstationProfessionalPhotoVersion:
