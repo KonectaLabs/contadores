@@ -3114,6 +3114,16 @@ def run_quick_action_for_lead(
             automation_paused_reason="manual_booked",
         )
         return updated or lead, []
+    elif normalized_action in {"manual-handoff", "pause-ai-reply"}:
+        updated = ContadoresLead.update_flow_state(
+            lead.id,
+            stage=ContadoresLeadStage.NEEDS_HUMAN,
+            automation_paused=True,
+            automation_paused_reason="manual_handoff",
+            clear_manual_reply_handled_at=True,
+        )
+        ContadoresLead.clear_conversation_processing(lead_id=lead.id)
+        return updated or lead, []
     elif normalized_action == "send-loom":
         queued_rows = send_loom_sequence(lead=lead, config=config, assigned_by="operator")
     elif normalized_action == "send-video-check":

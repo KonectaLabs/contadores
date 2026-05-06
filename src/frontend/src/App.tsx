@@ -162,6 +162,7 @@ type QuickActionName =
   | "send-video-check"
   | "send-calendly"
   | "send-calendly-link"
+  | "manual-handoff"
   | "mark-answered"
   | "mark-booked"
   | "close"
@@ -1569,6 +1570,7 @@ export function App() {
                 setShowSendModal(true);
               }}
               onManualBooked={() => runAction("mark-booked")}
+              onManualHandoff={() => runAction("manual-handoff")}
               onMarkAnswered={() => runAction("mark-answered")}
               onToggleClosed={() => runAction(selectedLead?.stage === "closed" ? "reopen" : "close")}
               onDelete={deleteLead}
@@ -3552,6 +3554,7 @@ function LeadDetailHeader({
   inboxMode,
   onOpenSend,
   onManualBooked,
+  onManualHandoff,
   onMarkAnswered,
   onToggleClosed,
   onDelete,
@@ -3566,6 +3569,7 @@ function LeadDetailHeader({
   inboxMode: boolean;
   onOpenSend: () => void;
   onManualBooked: () => void;
+  onManualHandoff: () => void;
   onMarkAnswered: () => void;
   onToggleClosed: () => void;
   onDelete: () => void;
@@ -3577,6 +3581,7 @@ function LeadDetailHeader({
 }) {
   const closed = lead?.stage === "closed";
   const booked = lead?.stage === "booked";
+  const paused = Boolean(lead?.automation_paused);
   const canMarkAnswered = lead?.manual_reply_status === "needs_reply" && !closed;
   const converted = Boolean(lead?.workstation_client_id);
 
@@ -3637,6 +3642,12 @@ function LeadDetailHeader({
         )}
         {!inboxMode ? (
           <button type="button" className="ct-btn ct-btn-ghost" disabled={!lead || closed || booked || Boolean(actionBusy)} onClick={onManualBooked}>Mark booked</button>
+        ) : null}
+        {!inboxMode ? (
+          <button type="button" className="ct-btn ct-btn-ghost" disabled={!lead || closed || paused || Boolean(actionBusy)} onClick={onManualHandoff}>
+            <NotePencil size={15} weight="bold" />
+            Manual mode
+          </button>
         ) : null}
         {canMarkAnswered && !inboxMode ? (
           <button type="button" className="ct-btn ct-btn-ghost" disabled={Boolean(actionBusy)} onClick={onMarkAnswered}>Mark answered</button>

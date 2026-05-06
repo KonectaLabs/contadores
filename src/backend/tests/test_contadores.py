@@ -996,6 +996,44 @@ def test_manual_ping_action_queues_template_and_pauses_automation(monkeypatch, t
     assert lead_payload["automation_paused"] is True
 
 
+def test_manual_handoff_action_pauses_ai_reply_without_queueing_message(monkeypatch, tmp_path) -> None:
+    """Operators can stop AI replies for one lead and take the chat manually."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-manual-handoff",
+        phone="+5491888888899",
+        full_name="Manual Lead",
+    )
+    inbound = add_recent_inbound(lead.id, text="Me interesa, cuanto sale?")
+    assert inbound.id is not None
+    assert ContadoresLead.claim_conversation_processing(
+        lead_id=lead.id,
+        latest_inbound_id=inbound.id,
+        latest_inbound_at=inbound.created_at,
+        claimed_at=now_utc(),
+        stale_after_seconds=1200,
+    )
+
+    with TestClient(app) as client:
+        action_response = client.post(f"/api/contadores/leads/{lead.id}/actions/manual-handoff")
+        pending_response = client.get("/api/contadores/messages/pending-delivery")
+        detail_response = client.get(f"/api/contadores/leads/{lead.id}")
+
+    refreshed = ContadoresLead.get_by_id(lead.id)
+    assert refreshed is not None
+    assert action_response.status_code == 200
+    assert pending_response.status_code == 200
+    assert pending_response.json()["messages"] == []
+
+    lead_payload = detail_response.json()["lead"]
+    assert lead_payload["stage"] == "needs_human"
+    assert lead_payload["manual_reply_status"] == "needs_reply"
+    assert lead_payload["automation_paused"] is True
+    assert lead_payload["automation_paused_reason"] == "manual_handoff"
+    assert refreshed.conversation_processing_started_at is None
+    assert refreshed.conversation_processing_latest_inbound_id is None
+
+
 def test_accountant_page_example_video_action_queues_reusable_video(monkeypatch, tmp_path) -> None:
     """Operators should be able to send the reused accountant page example video."""
     configure_contadores_db(monkeypatch, tmp_path)
