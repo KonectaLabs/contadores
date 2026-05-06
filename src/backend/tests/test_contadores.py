@@ -4386,6 +4386,47 @@ def test_failed_solo_page_reopens_when_lead_replies_after_preview(monkeypatch, t
     assert updated.last_preview_sent_at is not None
 
 
+def test_workstation_failure_is_visible_and_pending_email_alert(monkeypatch, tmp_path) -> None:
+    """Workstation failures must be visible in UI data and queued for operator email."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    ContadoresConfig.update(enabled=True, alert_emails=["facu@example.com"])
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-workstation-visible-failure",
+        phone="+5491777777800",
+        full_name="Cliente Falla Visible",
+    )
+    workstation = WorkstationClient.create_for_lead(
+        lead,
+        work_type=WorkstationClientWorkType.SOLO_PAGINA,
+        status=WorkstationClientStatus.PENDING_PAYMENT,
+        automation_status=WorkstationAutomationStatus.DRAFTING,
+    )
+
+    workstation_endpoints.mark_workstation_failed(
+        client=workstation,
+        lead=lead,
+        error="RuntimeError: codex render failed",
+        latest_inbound_text="Adjunto fotos nuevas",
+    )
+
+    with TestClient(app) as client:
+        detail = client.get(f"/api/workstation/clients/{workstation.id}")
+        pending = client.get("/api/contadores/alerts/pending?funnel_id=contadores")
+
+    assert detail.status_code == 200
+    detail_payload = detail.json()
+    assert detail_payload["client"]["automation_status"] == "failed"
+    assert detail_payload["runtime_alerts"][0]["alert_type"] == "workstation_codex_failure"
+    assert detail_payload["runtime_alerts"][0]["error"] == "RuntimeError: codex render failed"
+    assert detail_payload["runtime_alerts"][0]["notified_at"] is None
+    pending_payload = pending.json()
+    runtime_items = [item for item in pending_payload["items"] if item["alert_kind"] == "runtime"]
+    assert len(runtime_items) == 1
+    assert runtime_items[0]["runtime_alert_id"] == detail_payload["runtime_alerts"][0]["id"]
+    assert runtime_items[0]["alert_emails"] == ["facu@example.com"]
+    assert runtime_items[0]["codex_error"] == "RuntimeError: codex render failed"
+
+
 def test_workstation_clients_can_be_filtered_by_funnel(monkeypatch, tmp_path) -> None:
     """Workstation lists should stay separated by funnel."""
     configure_contadores_db(monkeypatch, tmp_path)

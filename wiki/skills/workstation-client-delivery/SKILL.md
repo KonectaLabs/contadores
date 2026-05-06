@@ -33,6 +33,11 @@ Professional portraits are started from the Workstation client's `Actions`
 button. The UI opens a media-selection modal, starts an async backend job, then
 polls the job until the generated version appears under `professional-photo/`.
 
+Workstation automation failures are never silent. A failed solo-page automation
+must create a pending runtime alert for email notification and the client detail
+payload must expose `runtime_alerts`; the UI shows the failure state, error, and
+email notification status directly on the Workstation client page.
+
 ## Operating Rules
 
 - Do not call GPT Image or other paid image APIs unless the user explicitly asks.

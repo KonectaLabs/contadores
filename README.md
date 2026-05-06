@@ -557,7 +557,10 @@ La automatizacion Workstation solo pagina usa `run_codex_with_context` con
 `gpt-5.5`, `medium`, la skill `.codex/skills/workstation-solo-page/SKILL.md` y
 un write scope limitado al folder del cliente. Si Codex falla o no genera los
 archivos esperados, se marca `automation_status=failed` y se crea una alerta por
-email con el error y el comando/link de reauth.
+email con el error y el comando/link de reauth. Ese fallo tambien debe quedar
+visible en el detalle del cliente de Workstation: el endpoint devuelve
+`runtime_alerts` y la UI muestra la alerta con el estado de email pendiente,
+enviado o resuelto. No debe existir un `failed` silencioso.
 
 El preview que recibe el cliente es solo MP4. El backend renderiza el HTML
 estatico con Playwright en desktop `1440x900`, graba un scroll y normaliza el

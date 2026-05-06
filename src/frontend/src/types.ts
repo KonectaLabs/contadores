@@ -375,11 +375,25 @@ export interface WorkstationClientListResponse {
   clients: WorkstationClientSummary[];
 }
 
+export interface WorkstationRuntimeAlert {
+  id: number;
+  alert_type: string;
+  error: string;
+  fallback_action: string;
+  latest_inbound_text: string;
+  notified_at: string | null;
+  resolved_at: string | null;
+  email_thread_id: string | null;
+  email_message_id: string | null;
+  created_at: string;
+}
+
 export interface WorkstationClientDetailResponse {
   client: WorkstationClientSummary;
   notes: string;
   messages: MessageItem[];
   media: WorkstationMediaAsset[];
+  runtime_alerts: WorkstationRuntimeAlert[];
   professional_photos: WorkstationProfessionalPhotoVersion[];
 }
 

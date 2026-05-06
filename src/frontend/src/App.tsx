@@ -2115,6 +2115,10 @@ function WorkstationView({
   const activeClient = detailClient ?? clients.find((client) => client.id === selectedClientId) ?? null;
   const funnelLabel = funnel?.label ?? activeClient?.funnel_id ?? "selected funnel";
   const workstationMessages = detailClient ? detail?.messages ?? [] : [];
+  const runtimeAlerts = detailClient ? detail?.runtime_alerts ?? [] : [];
+  const openRuntimeAlerts = runtimeAlerts.filter((alert) => !alert.resolved_at);
+  const latestRuntimeAlert = openRuntimeAlerts[0] ?? runtimeAlerts[0] ?? null;
+  const workstationFailed = activeClient?.automation_status === "failed";
   const imageAssets = (detail?.media ?? []).filter((asset) => asset.content_type?.startsWith("image/"));
   const professionalPhotos = detail?.professional_photos ?? [];
   const [mediaDropActive, setMediaDropActive] = useState(false);
@@ -2250,7 +2254,7 @@ function WorkstationView({
             {clients.length ? clients.map((client) => (
               <button
                 type="button"
-                className={`workstation-client-row ${client.id === selectedClientId ? "active" : ""}`}
+                className={`workstation-client-row ${client.id === selectedClientId ? "active" : ""} ${client.automation_status === "failed" ? "failed" : ""}`}
                 key={client.id}
                 onClick={() => onSelectClient(client.id)}
               >
@@ -2260,7 +2264,7 @@ function WorkstationView({
                 <div>
                   <div className="workstation-client-row-top">
                     <strong>{client.display_name || client.lead?.full_name || "Client"}</strong>
-                    {formatWorkstationOffer(client) ? <span>{formatWorkstationOffer(client)}</span> : null}
+                    {client.automation_status === "failed" ? <span className="danger">Failed</span> : formatWorkstationOffer(client) ? <span>{formatWorkstationOffer(client)}</span> : null}
                   </div>
                   <p>{client.lead?.phone || client.folder_name}</p>
                   <small>
@@ -2378,6 +2382,24 @@ function WorkstationView({
                     onChange={(event) => onNotesChange(event.target.value)}
                     placeholder="Paste call notes, client answers, preferences, questions, offer context..."
                   />
+                </section>
+              ) : null}
+
+              {workstationFailed || latestRuntimeAlert ? (
+                <section className="workstation-failure-alert" role="alert">
+                  <WarningCircle size={22} weight="bold" />
+                  <div>
+                    <span>Workstation alert</span>
+                    <strong>{workstationFailed ? "Automation failed" : humanize(latestRuntimeAlert?.alert_type || "runtime alert")}</strong>
+                    <p>{latestRuntimeAlert?.error || "No runtime alert details were attached. Review this client manually."}</p>
+                    <small>
+                      {latestRuntimeAlert?.resolved_at
+                        ? `Resolved ${shortDate(latestRuntimeAlert.resolved_at)}`
+                        : latestRuntimeAlert?.notified_at
+                          ? `Email alert sent ${shortDate(latestRuntimeAlert.notified_at)}`
+                          : "Email alert pending"}
+                    </small>
+                  </div>
                 </section>
               ) : null}
 

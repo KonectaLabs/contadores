@@ -347,6 +347,21 @@ class WorkstationClientListResponse(BaseModel):
     clients: list[WorkstationClientSummary] = Field(default_factory=list)
 
 
+class WorkstationRuntimeAlertResponse(BaseModel):
+    """Operator-visible runtime alert attached to a Workstation client."""
+
+    id: int
+    alert_type: str
+    error: str
+    fallback_action: str
+    latest_inbound_text: str
+    notified_at: str | None = None
+    resolved_at: str | None = None
+    email_thread_id: str | None = None
+    email_message_id: str | None = None
+    created_at: str
+
+
 class WorkstationClientDetailResponse(BaseModel):
     """Full Workstation client profile payload."""
 
@@ -354,6 +369,7 @@ class WorkstationClientDetailResponse(BaseModel):
     notes: str
     messages: list[ContadoresMessageResponse] = Field(default_factory=list)
     media: list[WorkstationMediaAssetResponse] = Field(default_factory=list)
+    runtime_alerts: list[WorkstationRuntimeAlertResponse] = Field(default_factory=list)
     professional_photos: list["WorkstationProfessionalPhotoVersion"] = Field(default_factory=list)
 
 
@@ -1268,9 +1284,10 @@ def add_workstation_runtime_alert(
 ) -> None:
     """Create an operator email alert for Workstation automation failures."""
     config = get_effective_funnel_config(lead.funnel_id)
+    funnel_label = getattr(config, "label", None) or (lead.funnel_id or "contadores")
     ContadoresRuntimeAlert.add(
         lead=lead,
-        funnel_label=config.label,
+        funnel_label=funnel_label,
         alert_type=alert_type,
         error=error,
         fallback_action="workstation_handoff",
@@ -1618,17 +1635,35 @@ def build_client_summary(client: WorkstationClient) -> WorkstationClientSummary:
     )
 
 
+def build_runtime_alert_response(alert: ContadoresRuntimeAlert) -> WorkstationRuntimeAlertResponse:
+    """Serialize one Workstation runtime alert for operators."""
+    return WorkstationRuntimeAlertResponse(
+        id=int(alert.id or 0),
+        alert_type=alert.alert_type,
+        error=alert.error,
+        fallback_action=alert.fallback_action,
+        latest_inbound_text=alert.latest_inbound_text,
+        notified_at=format_timestamp_seconds(alert.notified_at),
+        resolved_at=format_timestamp_seconds(alert.resolved_at),
+        email_thread_id=alert.email_thread_id,
+        email_message_id=alert.email_message_id,
+        created_at=format_timestamp_seconds(alert.created_at) or "",
+    )
+
+
 def build_client_detail(client: WorkstationClient) -> WorkstationClientDetailResponse:
     """Build one complete Workstation client response."""
     lead = get_required_lead(client.lead_id)
     messages = ContadoresMessage.list_by_lead(client.lead_id)
     media = WorkstationMediaAsset.list_by_client(client.id)
+    runtime_alerts = ContadoresRuntimeAlert.list_recent_by_lead(client.lead_id)
     write_client_files(client)
     return WorkstationClientDetailResponse(
         client=build_client_summary(client),
         notes=client.notes,
         messages=[build_message_response(message) for message in messages],
         media=[build_media_response(asset) for asset in media],
+        runtime_alerts=[build_runtime_alert_response(alert) for alert in runtime_alerts],
         professional_photos=list_professional_photo_versions(client),
     )
 

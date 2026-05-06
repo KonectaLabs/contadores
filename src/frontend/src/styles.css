@@ -4569,6 +4569,11 @@ body {
   background: var(--ct-accent-soft);
 }
 
+#contadoresView .workstation-client-row.failed {
+  border-color: rgba(190, 18, 60, 0.36);
+  background: #fff1f2;
+}
+
 #contadoresView .workstation-client-row > div:last-child {
   min-width: 0;
   display: grid;
@@ -4601,6 +4606,11 @@ body {
   font: 700 9px/1 var(--font-mono);
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+#contadoresView .workstation-client-row-top span.danger {
+  background: #ffe4e6;
+  color: #be123c;
 }
 
 #contadoresView .workstation-client-row p,
@@ -4653,6 +4663,54 @@ body {
 
 #contadoresView .workstation-grid .workstation-panel {
   margin: 0;
+}
+
+#contadoresView .workstation-failure-alert {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  margin: 14px 16px 0;
+  padding: 14px;
+  border: 1px solid rgba(190, 18, 60, 0.32);
+  border-radius: var(--ct-radius);
+  background: #fff1f2;
+  color: #9f1239;
+}
+
+#contadoresView .workstation-failure-alert > svg {
+  margin-top: 1px;
+  color: #be123c;
+}
+
+#contadoresView .workstation-failure-alert div {
+  min-width: 0;
+}
+
+#contadoresView .workstation-failure-alert span,
+#contadoresView .workstation-failure-alert small {
+  display: block;
+  color: #be123c;
+  font: 700 10px/1 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+#contadoresView .workstation-failure-alert strong {
+  display: block;
+  margin-top: 5px;
+  color: #881337;
+  font: 800 15px/1.2 var(--font-sans);
+}
+
+#contadoresView .workstation-failure-alert p {
+  margin: 8px 0;
+  color: #9f1239;
+  font: 500 13px/1.45 var(--font-sans);
+  overflow-wrap: anywhere;
+}
+
+#contadoresView .workstation-failure-alert small {
+  color: #9f1239;
 }
 
 #contadoresView .workstation-crm-link {

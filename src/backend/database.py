@@ -2078,6 +2078,29 @@ class ContadoresRuntimeAlert(SQLModel, table=True):
             return rows
 
     @classmethod
+    def list_recent_by_lead(
+        cls,
+        lead_id: str,
+        *,
+        limit: int = 20,
+    ) -> list["ContadoresRuntimeAlert"]:
+        """List recent runtime alerts for one lead."""
+        clean_lead_id = (lead_id or "").strip()
+        if not clean_lead_id:
+            return []
+        with Session(engine) as session:
+            statement = (
+                select(cls)
+                .where(cls.lead_id == clean_lead_id)
+                .order_by(cls.created_at.desc(), cls.id.desc())
+                .limit(max(1, int(limit)))
+            )
+            rows = list(session.exec(statement).all())
+            for row in rows:
+                session.expunge(row)
+            return rows
+
+    @classmethod
     def mark_notified(
         cls,
         *,
