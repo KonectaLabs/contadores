@@ -4681,6 +4681,57 @@ def test_workstation_pings_tolerate_naive_preview_timestamp(monkeypatch, tmp_pat
     assert updated.ping_1_sent_at is not None
 
 
+def test_workstation_ping_error_does_not_fail_delivered_preview(monkeypatch, tmp_path) -> None:
+    """After a preview exists, ping-loop bugs should not alert as Codex delivery failures."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setattr(database_module, "DATA_DIR", tmp_path / "data")
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-workstation-ping-bug",
+        phone="+5491777777794",
+        full_name="Cliente Preview Entregado",
+    )
+    workstation = WorkstationClient.create_for_lead(
+        lead,
+        work_type=WorkstationClientWorkType.SOLO_PAGINA,
+        status=WorkstationClientStatus.PENDING_PAYMENT,
+        automation_status=WorkstationAutomationStatus.AWAITING_REVIEW,
+    )
+    preview_at = now_utc() - timedelta(minutes=10)
+    WorkstationClient.update_automation_state(
+        workstation.id,
+        automation_status=WorkstationAutomationStatus.AWAITING_REVIEW,
+        last_preview_sent_at=preview_at,
+        last_automation_handled_at=preview_at,
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=True,
+        text="Le mando un video con el boceto de su pagina.",
+        sequence_step="workstation_preview_video",
+        media_type="video",
+        media_path="data/workstation/clients/demo/landing-page/v001/preview.mp4",
+        delivery_status=MessageDeliveryStatus.DELIVERED,
+        created_at=preview_at,
+    )
+
+    def fake_process_workstation_pings(**kwargs) -> int:
+        raise TypeError("can't subtract offset-naive and offset-aware datetimes")
+
+    monkeypatch.setattr(workstation_endpoints, "process_workstation_pings", fake_process_workstation_pings)
+
+    with TestClient(app) as client:
+        tick = client.post("/api/workstation/automation/tick")
+        detail = client.get(f"/api/workstation/clients/{workstation.id}")
+
+    assert tick.status_code == 200
+    assert tick.json()["failures"] == 0
+    assert detail.json()["client"]["automation_status"] == "awaiting_review"
+    assert detail.json()["runtime_alerts"] == []
+    progress = workstation_endpoints.workstation_progress_path(workstation).read_text(encoding="utf-8")
+    assert "Nonblocking automation issue: TypeError" in progress
+    assert "Automation failed" not in progress
+
+
 def test_failed_solo_page_reopens_when_lead_replies_after_preview(monkeypatch, tmp_path) -> None:
     """A failed solo-page preview should not stay stuck after the lead replies."""
     configure_contadores_db(monkeypatch, tmp_path)

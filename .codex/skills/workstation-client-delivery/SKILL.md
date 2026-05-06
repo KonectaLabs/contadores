@@ -39,6 +39,9 @@ Workstation automation failures are never silent. A failed solo-page automation
 must create a pending runtime alert for email notification and the client detail
 payload must expose `runtime_alerts`; the UI shows the failure state, error, and
 email notification status directly on the Workstation client page.
+Only alert when delivery is blocked before the preview is generated or queued.
+Errors after a preview exists, such as ping-loop or secondary state issues,
+should stay in `progress.md` and leave the client waiting for review.
 
 Solo-page automation waits for 20 minutes of silence after the latest inbound
 message before drafting, revising, or treating the preview as approved. This

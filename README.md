@@ -581,6 +581,9 @@ una alerta por email con el error y el comando/link de reauth. Ese fallo tambien
 debe quedar visible en el detalle del cliente de Workstation: el endpoint
 devuelve `runtime_alerts` y la UI muestra la alerta con el estado de email
 pendiente, enviado o resuelto. No debe existir un `failed` silencioso.
+Los errores posteriores a un preview ya generado y enviado, como problemas al
+evaluar pings o estados secundarios, no deben marcar el cliente como failed ni
+mandar email: se registran en `progress.md` y el cliente sigue esperando review.
 
 El detalle de Workstation tambien devuelve `automation_state`, que explica si el
 cliente esta idle, esperando backoff, trabajando con Codex, listo para revision o

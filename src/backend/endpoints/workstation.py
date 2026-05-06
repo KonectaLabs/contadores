@@ -1426,6 +1426,15 @@ def mark_workstation_failed(
     )
 
 
+def record_workstation_nonblocking_issue(
+    *,
+    client: WorkstationClient,
+    error: str,
+) -> None:
+    """Log an internal Workstation issue that should not stop a delivered preview."""
+    append_workstation_progress(client, f"Nonblocking automation issue: {error}")
+
+
 def queue_workstation_preview(
     *,
     client: WorkstationClient,
@@ -1672,12 +1681,10 @@ async def advance_solo_page_client(client: WorkstationClient, *, now: datetime) 
                 )
                 metrics["human_handoffs"] = 1 if metrics["pings_sent"] and handoff_due else 0
             except Exception as error:
-                mark_workstation_failed(
+                record_workstation_nonblocking_issue(
                     client=fresh_client,
-                    lead=lead,
                     error=f"{error.__class__.__name__}: {error}",
                 )
-                metrics["failures"] = 1
             return metrics
         if not latest_inbound_is_quiet(replies, now=now):
             return metrics
