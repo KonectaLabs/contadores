@@ -100,11 +100,64 @@ WORKSTATION_INTAKE_TEXT = (
 workstation_automation_tick_lock = asyncio.Lock()
 manual_solo_page_work_client_ids: set[str] = set()
 active_solo_page_codex_turns: dict[str, object] = {}
+active_solo_page_codex_tasks: dict[str, object] = {}
+active_solo_page_codex_started_at: dict[str, datetime] = {}
 solo_page_stop_requested_client_ids: set[str] = set()
 
 
 class WorkstationCodexStopped(RuntimeError):
     """Raised when an operator stops an active Workstation Codex run."""
+
+
+def register_solo_page_task(client_id: str, task: object) -> None:
+    """Track the real asyncio task currently working on a client."""
+    active_solo_page_codex_tasks[client_id] = task
+    active_solo_page_codex_started_at.setdefault(client_id, now_utc())
+
+    def cleanup(done_task: object) -> None:
+        if active_solo_page_codex_tasks.get(client_id) is done_task:
+            active_solo_page_codex_tasks.pop(client_id, None)
+            active_solo_page_codex_started_at.pop(client_id, None)
+
+    add_done_callback = getattr(task, "add_done_callback", None)
+    if callable(add_done_callback):
+        add_done_callback(cleanup)
+
+
+def clear_solo_page_live_work(client_id: str) -> None:
+    """Forget in-memory live-work markers for one client."""
+    active_solo_page_codex_tasks.pop(client_id, None)
+    active_solo_page_codex_turns.pop(client_id, None)
+    active_solo_page_codex_started_at.pop(client_id, None)
+
+
+def observed_solo_page_live_status(client_id: str) -> dict[str, object]:
+    """Return process-observed work status, independent from persisted state."""
+    task = active_solo_page_codex_tasks.get(client_id)
+    task_done = getattr(task, "done", None)
+    if task is not None and callable(task_done) and task_done():
+        active_solo_page_codex_tasks.pop(client_id, None)
+        active_solo_page_codex_started_at.pop(client_id, None)
+        task = None
+    has_task = task is not None
+    has_turn = client_id in active_solo_page_codex_turns
+    if has_turn:
+        status = "codex_turn_active"
+        detail = "A live Codex turn is connected and streaming work for this client."
+    elif has_task:
+        status = "background_task_active"
+        detail = "A live backend task is preparing Codex, rendering, or queueing the preview."
+    else:
+        status = "not_running"
+        detail = "No live backend task or Codex turn is currently registered for this client."
+    return {
+        "is_live_working": has_task or has_turn,
+        "live_status": status,
+        "live_detail": detail,
+        "has_active_background_task": has_task,
+        "has_active_codex_turn": has_turn,
+        "live_started_at": format_timestamp_seconds(active_solo_page_codex_started_at.get(client_id)),
+    }
 
 
 def workstation_root() -> Path:
@@ -428,8 +481,14 @@ class WorkstationAutomationStateResponse(BaseModel):
     label: str
     detail: str
     is_working: bool = False
+    is_live_working: bool = False
     is_waiting_backoff: bool = False
     is_stale: bool = False
+    live_status: str = "not_running"
+    live_detail: str = ""
+    live_started_at: str | None = None
+    has_active_background_task: bool = False
+    has_active_codex_turn: bool = False
     backoff_until: str | None = None
     latest_inbound_at: str | None = None
     progress_path: str | None = None
@@ -1429,6 +1488,7 @@ def generate_solo_page_version_sync(
 
     def register_turn(turn: object) -> None:
         active_solo_page_codex_turns[client.id] = turn
+        active_solo_page_codex_started_at.setdefault(client.id, now_utc())
         if client.id in solo_page_stop_requested_client_ids:
             interrupt = getattr(turn, "interrupt", None)
             if callable(interrupt):
@@ -1547,7 +1607,7 @@ def record_workstation_nonblocking_issue(
 
 def mark_workstation_stopped_by_operator(client: WorkstationClient, *, clear_stop_request: bool = True) -> None:
     """Stop automation cleanly without creating a failure alert."""
-    active_solo_page_codex_turns.pop(client.id, None)
+    clear_solo_page_live_work(client.id)
     if clear_stop_request:
         solo_page_stop_requested_client_ids.discard(client.id)
     manual_solo_page_work_client_ids.discard(client.id)
@@ -1684,7 +1744,20 @@ async def run_manual_solo_page_work(client_id: str, operator_prompt: str) -> Non
     finally:
         manual_solo_page_work_client_ids.discard(client_id)
         solo_page_stop_requested_client_ids.discard(client_id)
-        active_solo_page_codex_turns.pop(client_id, None)
+        clear_solo_page_live_work(client_id)
+
+
+async def generate_solo_page_version_observed(**kwargs) -> Path:
+    """Run generation while marking the current backend task as live work."""
+    client = kwargs["client"]
+    current_task = asyncio.current_task()
+    if current_task is not None:
+        register_solo_page_task(client.id, current_task)
+    try:
+        return await run_in_threadpool(generate_solo_page_version_sync, **kwargs)
+    finally:
+        if active_solo_page_codex_tasks.get(client.id) is current_task:
+            clear_solo_page_live_work(client.id)
 
 
 def process_workstation_pings(
@@ -1843,8 +1916,7 @@ async def advance_solo_page_client(client: WorkstationClient, *, now: datetime) 
         )
         try:
             ensure_professional_photo_if_possible(fresh_client)
-            version_dir = await run_in_threadpool(
-                generate_solo_page_version_sync,
+            version_dir = await generate_solo_page_version_observed(
                 client=WorkstationClient.get_by_id(fresh_client.id) or fresh_client,
                 lead=lead,
                 replies=replies,
@@ -1935,8 +2007,7 @@ async def advance_solo_page_client(client: WorkstationClient, *, now: datetime) 
             last_automation_handled_at=now,
         )
         try:
-            version_dir = await run_in_threadpool(
-                generate_solo_page_version_sync,
+            version_dir = await generate_solo_page_version_observed(
                 client=fresh_client,
                 lead=lead,
                 replies=replies,
@@ -1994,8 +2065,7 @@ async def advance_solo_page_client(client: WorkstationClient, *, now: datetime) 
             last_automation_handled_at=now,
         )
         try:
-            version_dir = await run_in_threadpool(
-                generate_solo_page_version_sync,
+            version_dir = await generate_solo_page_version_observed(
                 client=fresh_client,
                 lead=lead,
                 replies=replies,
@@ -2113,6 +2183,7 @@ def build_workstation_automation_state(
         "progress_path": progress_path,
         "progress_markdown": progress_markdown,
         "progress_updated_at": progress_updated_at,
+        **observed_solo_page_live_status(client.id),
     }
     if client.work_type != WorkstationClientWorkType.SOLO_PAGINA:
         return WorkstationAutomationStateResponse(
@@ -2140,10 +2211,21 @@ def build_workstation_automation_state(
                 ),
                 is_stale=True,
             )
+        live = bool(base["is_live_working"])
+        if not live:
+            return WorkstationAutomationStateResponse(
+                **base,
+                label="No live Codex process",
+                detail=(
+                    f"The database says the {operation} is in progress, but this backend "
+                    "does not have a live task or Codex turn for it."
+                ),
+                is_working=False,
+            )
         return WorkstationAutomationStateResponse(
             **base,
             label="Codex working",
-            detail=f"Codex is generating the {operation} and rendering the preview video.",
+            detail=f"Observed live process: Codex is generating the {operation} or rendering the preview video.",
             is_working=True,
         )
     if workstation_handoff_can_resume(client):
@@ -2429,9 +2511,11 @@ async def start_workstation_solo_page_work(
     append_workstation_progress(client, "Manual Codex run queued from Workstation Actions.")
     manual_solo_page_work_client_ids.add(client.id)
     try:
-        asyncio.create_task(run_manual_solo_page_work(client.id, operator_prompt))
+        task = asyncio.create_task(run_manual_solo_page_work(client.id, operator_prompt))
+        register_solo_page_task(client.id, task)
     except Exception:
         manual_solo_page_work_client_ids.discard(client.id)
+        clear_solo_page_live_work(client.id)
         raise
     return build_client_detail(WorkstationClient.get_by_id(client.id) or client)
 

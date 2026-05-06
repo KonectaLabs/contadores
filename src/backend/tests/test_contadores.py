@@ -4969,6 +4969,75 @@ def test_workstation_solo_page_stop_interrupts_active_codex(monkeypatch, tmp_pat
     workstation_endpoints.solo_page_stop_requested_client_ids.clear()
 
 
+def test_workstation_automation_state_reports_missing_live_codex_process(monkeypatch, tmp_path) -> None:
+    """A persisted drafting state should not pretend Codex is live after a restart."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setattr(database_module, "DATA_DIR", tmp_path / "data")
+    workstation_endpoints.active_solo_page_codex_tasks.clear()
+    workstation_endpoints.active_solo_page_codex_turns.clear()
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-missing-live-codex",
+        phone="+5491777777720",
+        full_name="Cliente Sin Proceso",
+    )
+    workstation = WorkstationClient.create_for_lead(
+        lead,
+        work_type=WorkstationClientWorkType.SOLO_PAGINA,
+        status=WorkstationClientStatus.PENDING_PAYMENT,
+        automation_status=WorkstationAutomationStatus.DRAFTING,
+    )
+    WorkstationClient.update_automation_state(
+        workstation.id,
+        automation_status=WorkstationAutomationStatus.DRAFTING,
+        last_automation_handled_at=now_utc(),
+    )
+    workstation = WorkstationClient.get_by_id(workstation.id) or workstation
+
+    state = workstation_endpoints.build_workstation_automation_state(workstation, [])
+
+    assert state.label == "No live Codex process"
+    assert state.is_working is False
+    assert state.is_live_working is False
+    assert state.live_status == "not_running"
+
+
+def test_workstation_automation_state_reports_live_codex_task(monkeypatch, tmp_path) -> None:
+    """The UI should be able to distinguish a real running backend task."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setattr(database_module, "DATA_DIR", tmp_path / "data")
+    workstation_endpoints.active_solo_page_codex_tasks.clear()
+    workstation_endpoints.active_solo_page_codex_turns.clear()
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-live-codex",
+        phone="+5491777777721",
+        full_name="Cliente Live",
+    )
+    workstation = WorkstationClient.create_for_lead(
+        lead,
+        work_type=WorkstationClientWorkType.SOLO_PAGINA,
+        status=WorkstationClientStatus.PENDING_PAYMENT,
+        automation_status=WorkstationAutomationStatus.DRAFTING,
+    )
+    WorkstationClient.update_automation_state(
+        workstation.id,
+        automation_status=WorkstationAutomationStatus.DRAFTING,
+        last_automation_handled_at=now_utc(),
+    )
+    workstation = WorkstationClient.get_by_id(workstation.id) or workstation
+
+    fake_task = SimpleNamespace(done=lambda: False)
+    workstation_endpoints.register_solo_page_task(workstation.id, fake_task)
+    state = workstation_endpoints.build_workstation_automation_state(workstation, [])
+
+    assert state.label == "Codex working"
+    assert state.is_working is True
+    assert state.is_live_working is True
+    assert state.live_status == "background_task_active"
+    assert state.has_active_background_task is True
+    assert state.live_started_at is not None
+    workstation_endpoints.clear_solo_page_live_work(workstation.id)
+
+
 def test_workstation_progress_logging_uses_module_logger(monkeypatch, tmp_path) -> None:
     """Progress logging fallbacks should not crash with an undefined logger."""
     configure_contadores_db(monkeypatch, tmp_path)

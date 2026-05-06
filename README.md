@@ -591,6 +591,9 @@ debe quedar visible en el detalle del cliente de Workstation: el endpoint
 devuelve `runtime_alerts` y la UI muestra la alerta con el estado de email
 pendiente, enviado o resuelto. No debe existir un `failed` silencioso ni un
 timeout generico que tape el error real.
+El panel tambien muestra estado observado en vivo: task backend activo, turn
+Codex activo, hora de inicio y `not_running` cuando la base dice `drafting` o
+`revision_requested` pero el proceso real ya no existe.
 Los errores posteriores a un preview ya generado y enviado, como problemas al
 evaluar pings o estados secundarios, no deben marcar el cliente como failed ni
 mandar email: se registran en `progress.md` y el cliente sigue esperando review.

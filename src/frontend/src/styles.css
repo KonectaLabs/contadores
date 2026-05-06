@@ -4730,6 +4730,11 @@ body {
   background: #fffbeb;
 }
 
+#contadoresView .workstation-automation-panel.missing-live {
+  border-color: color-mix(in srgb, #b45309 38%, var(--ct-line));
+  background: #fff7ed;
+}
+
 #contadoresView .workstation-automation-panel.failed {
   border-color: rgba(190, 18, 60, 0.32);
   background: #fff1f2;
@@ -4764,6 +4769,11 @@ body {
   color: #92400e;
 }
 
+#contadoresView .workstation-automation-panel.missing-live .workstation-state-pill {
+  border-color: rgba(180, 83, 9, 0.34);
+  color: #92400e;
+}
+
 #contadoresView .workstation-automation-panel.failed .workstation-state-pill {
   border-color: rgba(190, 18, 60, 0.32);
   color: #be123c;
@@ -4773,6 +4783,12 @@ body {
   margin: 0;
   color: var(--ct-ink);
   font: 500 13px/1.45 var(--font-sans);
+}
+
+#contadoresView .workstation-live-detail {
+  margin: -2px 0 0;
+  color: var(--ct-ink-muted);
+  font: 500 12px/1.4 var(--font-sans);
 }
 
 #contadoresView .workstation-automation-meta {

@@ -393,8 +393,14 @@ export interface WorkstationAutomationState {
   label: string;
   detail: string;
   is_working: boolean;
+  is_live_working: boolean;
   is_waiting_backoff: boolean;
   is_stale: boolean;
+  live_status: string;
+  live_detail: string;
+  live_started_at: string | null;
+  has_active_background_task: boolean;
+  has_active_codex_turn: boolean;
   backoff_until: string | null;
   latest_inbound_at: string | null;
   progress_path: string | null;

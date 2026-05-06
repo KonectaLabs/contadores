@@ -2267,14 +2267,19 @@ function WorkstationView({
   const canUploadMedia = Boolean(activeClient) && actionBusy !== "workstation-upload";
   const currentProfessionalPhotoJob = professionalPhotoJob?.client_id === activeClient?.id ? professionalPhotoJob : null;
   const professionalPhotoJobBusy = currentProfessionalPhotoJob?.status === "queued" || currentProfessionalPhotoJob?.status === "running";
-  const soloPageBusy = actionBusy === "solo-page-work" || Boolean(automationState?.is_working);
-  const canStopSoloPageWork = activeClient?.work_type === "solo_pagina" && Boolean(automationState?.is_working);
+  const soloPageBusy = actionBusy === "solo-page-work" || Boolean(automationState?.is_live_working);
+  const canStopSoloPageWork = activeClient?.work_type === "solo_pagina" && Boolean(automationState?.is_live_working);
   const canStartSoloPageWork = activeClient?.work_type === "solo_pagina" && !soloPageBusy;
   const workstationStateIsReady = (automationState?.label ?? "").toLowerCase().includes("ready");
-  const workstationStatePillLabel = automationState?.is_working
-    ? "Working"
+  const workstationHasMissingLiveProcess = activeClient?.automation_status === "drafting" || activeClient?.automation_status === "revision_requested"
+    ? !automationState?.is_live_working && !automationState?.is_stale
+    : false;
+  const workstationStatePillLabel = automationState?.is_live_working
+    ? "Live"
     : automationState?.is_stale
       ? "Stale"
+      : workstationHasMissingLiveProcess
+        ? "No process"
       : automationState?.is_waiting_backoff
         ? "Backoff"
         : workstationFailed
@@ -2287,8 +2292,10 @@ function WorkstationView({
     ? "failed"
     : automationState?.is_stale
       ? "stale"
-    : automationState?.is_working
+    : automationState?.is_live_working
       ? "working"
+      : workstationHasMissingLiveProcess
+        ? "missing-live"
       : automationState?.is_waiting_backoff
         ? "waiting"
         : "idle";
@@ -2640,9 +2647,11 @@ function WorkstationView({
                     <strong>{automationState?.label ?? humanize(activeClient.automation_status)}</strong>
                   </div>
                   <span className="workstation-state-pill">
-                    {automationState?.is_working ? (
+                    {automationState?.is_live_working ? (
                       <SpinnerGap className="workstation-spinner" size={14} weight="bold" />
                     ) : automationState?.is_stale ? (
+                      <WarningCircle size={14} weight="bold" />
+                    ) : workstationHasMissingLiveProcess ? (
                       <WarningCircle size={14} weight="bold" />
                     ) : automationState?.is_waiting_backoff ? (
                       <ClockCountdown size={14} weight="bold" />
@@ -2660,9 +2669,14 @@ function WorkstationView({
                 <div className="workstation-automation-meta">
                   {automationState?.latest_inbound_at ? <span>Latest inbound: {shortDate(automationState.latest_inbound_at)}</span> : null}
                   {automationState?.backoff_until ? <span>Backoff until: {shortDate(automationState.backoff_until)}</span> : null}
+                  <span>Live process: {automationState?.live_status ? humanize(automationState.live_status) : "Not running"}</span>
+                  {automationState?.live_started_at ? <span>Live since: {shortDate(automationState.live_started_at)}</span> : null}
                   {automationState?.progress_updated_at ? <span>Progress updated: {shortDate(automationState.progress_updated_at)}</span> : null}
                   {automationState?.progress_path ? <code>{automationState.progress_path}</code> : null}
                 </div>
+                {automationState?.live_detail ? (
+                  <p className="workstation-live-detail">{automationState.live_detail}</p>
+                ) : null}
                 <div className="workstation-progress">
                   <div className="workstation-progress-head">
                     <Robot size={15} weight="bold" />
