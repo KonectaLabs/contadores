@@ -5,8 +5,10 @@ description: Use when Codex is asked by the Contadores Workstation automation to
 
 # Workstation Solo Page
 
-Create a fast first draft of a client's professional website from the Workstation
-folder. Optimize for a useful preview video quickly, not for a perfect final site.
+Act as the autonomous Workstation solo-page agent. Your job is to do the most
+useful next thing for the client, not to blindly produce a new preview every
+turn. When this skill is invoked for a page output folder, create or revise the
+static site only if that is the right next action.
 
 ## Source Of Truth
 
@@ -26,7 +28,8 @@ Use the provided base template folder for the profession:
 
 ## Output Contract
 
-Write only inside the required output folder provided by the prompt:
+When the prompt asks for a page version, write only inside the required output
+folder provided by the prompt:
 
 ```text
 landing-page/vNNN/index.html
@@ -39,6 +42,18 @@ landing-page/vNNN/assets/
 
 Do not edit source templates, repo files, other client folders, or production
 configuration. The automation will render `preview.mp4` after your files exist.
+
+## Agent Freedom
+
+- Use judgment. If the latest client message is a question, answer the question;
+  do not send a page/video just because you can.
+- If the client asks how to give you content, ask them to send the content and
+  say you will add it. Do not generate a new preview for that.
+- If the client is unclear, ask one short clarifying question.
+- If the client sent a useful photo, logo, service list, or concrete change and
+  a preview is the best next step, then generate or revise the page.
+- If the client approves the page, stop revising and hand off.
+- Pick the action that helps the client move forward with the least friction.
 
 ## Professional Photo Gate
 
@@ -68,6 +83,10 @@ into `landing-page/vNNN/assets/` and reference those copies from the HTML.
 
 - Build plain static HTML, CSS, and JavaScript. No bundlers.
 - Keep code readable, skimmable, and boring.
+- Treat each client folder as a long-lived project. Preserve the current
+  HTML/CSS/JS structure across revisions.
+- For revisions, edit the copied previous version in the output folder. Do not
+  redesign the page unless the client explicitly requested a redesign.
 - Write `preview-message.txt` with the exact WhatsApp caption that should be
   sent with the preview video. Choose the text for the specific client and
   version. Do not rely on a hardcoded generic caption.

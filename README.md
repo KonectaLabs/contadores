@@ -602,8 +602,16 @@ La automatizacion Workstation solo pagina usa `run_codex_with_context` con
 acceso al repo desde el worker Codex. Primero intenta ChatGPT Codex con
 `CONVERSATION_BOT_CODEX_CHATGPT_HOME`; si ese runtime falla, reintenta Codex con
 `OPENAI_API_KEY` y `CONVERSATION_BOT_CODEX_API_KEY_HOME`. Antes de generar
-bocetos, revisiones o aprobaciones, espera 20 minutos de silencio desde el
-ultimo inbound para que el cliente pueda mandar fotos, audios y datos en tandas.
+bocetos, revisiones, respuestas o aprobaciones, espera 20 minutos de silencio
+desde el ultimo inbound para que el cliente pueda mandar fotos, audios y datos
+en tandas.
+Cuando un cliente responde durante intake o despues de un preview, Workstation
+ya no fuerza una revision con video ante cualquier mensaje. Primero corre una
+decision autonoma:
+puede responder por texto, pedir mas datos, crear/revisar la pagina, aprobar y
+handoffear, pasar a humano o no hacer nada. Si el cliente pregunta como mandar
+contenido, la respuesta correcta es pedirle que lo envie por WhatsApp y no
+generar otro boceto.
 Si ambos runtimes de Codex fallan o no generan los archivos esperados, se marca
 `automation_status=failed` y se crea una alerta por email con el error real de
 ChatGPT Codex, el fallback API-key y el comando/link de reauth. Ese fallo tambien
@@ -637,6 +645,11 @@ con Playwright en desktop `1440x900`, graba un scroll y normaliza el archivo con
 saltos en paginas largas. No se manda link temporal al cliente. Cuando Codex
 escribe `outbound-messages.json`, Workstation respeta esa lista y puede encolar
 varios WhatsApp seguidos, incluyendo el MP4 y otros entregables generados.
+Cada carpeta de cliente tambien se inicializa como un proyecto Git local. En
+cada version, el backend commitea el HTML, CSS, JS, assets y mensajes de salida.
+Las revisiones parten copiando la version anterior al nuevo `vNNN`, asi Codex
+edita sobre el mismo diseno y solo cambia lo pedido salvo que el cliente pida un
+redisenio.
 
 Cuando la ventana de WhatsApp esta cerrada, Workstation solo usa templates Meta
 aprobados. Los nombres son configurables por `.env`:

@@ -126,6 +126,22 @@ class WorkstationOutboundMessageSpec:
     media_filename: str | None = None
 
 
+@dataclass
+class WorkstationAgentDecision:
+    """Next best Workstation action chosen from the client's latest reply."""
+
+    action: Literal[
+        "send_text",
+        "ask_for_details",
+        "generate_or_revise_page",
+        "approve_and_handoff",
+        "handoff_human",
+        "no_action",
+    ]
+    message: str = ""
+    reason: str = ""
+
+
 def register_solo_page_task(client_id: str, task: object) -> None:
     """Track the real asyncio task currently working on a client."""
     active_solo_page_codex_tasks[client_id] = task
@@ -1046,6 +1062,75 @@ def latest_landing_page_version_dir(client: WorkstationClient) -> Path | None:
     return sorted(versions)[-1] if versions else None
 
 
+def copy_previous_landing_page_version(*, previous_version: Path | None, version_dir: Path) -> None:
+    """Seed a new version with the last page files so revisions stay visually stable."""
+    if previous_version is None:
+        return
+    for filename in ("index.html", "styles.css", "script.js", "preview-message.txt", "outbound-messages.json"):
+        source = previous_version / filename
+        if source.exists():
+            shutil.copy2(source, version_dir / filename)
+    source_assets = previous_version / "assets"
+    if source_assets.is_dir():
+        shutil.copytree(source_assets, version_dir / "assets", dirs_exist_ok=True)
+
+
+def run_git_command(command: list[str], *, cwd: Path) -> None:
+    """Run a best-effort git command for client-local history."""
+    completed = subprocess.run(command, cwd=cwd, capture_output=True, text=True, check=False)
+    if completed.returncode != 0:
+        error_text = (completed.stderr or completed.stdout or "git command failed").strip()
+        raise RuntimeError(error_text)
+
+
+def ensure_client_git_project(client: WorkstationClient) -> None:
+    """Initialize a lightweight git repo inside the client folder if needed."""
+    folder = client_folder(client)
+    if not (folder / ".git").exists():
+        run_git_command(["git", "init"], cwd=folder)
+    try:
+        run_git_command(["git", "config", "user.email", "workstation@konecta.local"], cwd=folder)
+        run_git_command(["git", "config", "user.name", "Konecta Workstation"], cwd=folder)
+    except RuntimeError as error:
+        append_workstation_progress(client, f"Git config skipped: {error}")
+
+
+def commit_landing_page_version(client: WorkstationClient, version_dir: Path, *, operation: str) -> None:
+    """Commit readable page source files in the client's local git history."""
+    folder = client_folder(client)
+    ensure_client_git_project(client)
+    relative_version = version_dir.resolve().relative_to(folder.resolve())
+    paths_to_track = [
+        relative_version / "index.html",
+        relative_version / "styles.css",
+        relative_version / "script.js",
+        relative_version / "preview-message.txt",
+        relative_version / "outbound-messages.json",
+        relative_version / "metadata.json",
+        relative_version / "assets",
+    ]
+    existing_paths = [str(path) for path in paths_to_track if (folder / path).exists()]
+    if not existing_paths:
+        return
+    run_git_command(["git", "add", *existing_paths], cwd=folder)
+    status = subprocess.run(
+        ["git", "diff", "--cached", "--quiet"],
+        cwd=folder,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if status.returncode == 0:
+        return
+    if status.returncode not in {0, 1}:
+        error_text = (status.stderr or status.stdout or "git diff failed").strip()
+        raise RuntimeError(error_text)
+    run_git_command(
+        ["git", "commit", "-m", f"{operation.title()} {version_dir.name}"],
+        cwd=folder,
+    )
+
+
 def render_landing_page_video_sync(*, index_path: Path, output_path: Path) -> None:
     """Record a desktop scroll preview of a static landing page as MP4."""
     try:
@@ -1262,6 +1347,185 @@ def text_shows_workstation_approval(text: str) -> bool:
     return any(marker in normalized for marker in approval_markers)
 
 
+def parse_workstation_agent_decision(raw_text: str) -> WorkstationAgentDecision:
+    """Parse Codex JSON into a conservative Workstation decision."""
+    try:
+        payload = json.loads(raw_text)
+    except json.JSONDecodeError:
+        start = raw_text.find("{")
+        end = raw_text.rfind("}")
+        if start < 0 or end <= start:
+            return WorkstationAgentDecision(
+                action="ask_for_details",
+                message="Conteme que quiere que cambie o que datos quiere agregar y lo ajusto.",
+                reason="Codex did not return JSON.",
+            )
+        try:
+            payload = json.loads(raw_text[start : end + 1])
+        except json.JSONDecodeError:
+            return WorkstationAgentDecision(
+                action="ask_for_details",
+                message="Conteme que quiere que cambie o que datos quiere agregar y lo ajusto.",
+                reason="Codex returned invalid JSON.",
+            )
+
+    if not isinstance(payload, dict):
+        return WorkstationAgentDecision(
+            action="ask_for_details",
+            message="Conteme que quiere que cambie o que datos quiere agregar y lo ajusto.",
+            reason="Codex JSON was not an object.",
+        )
+
+    clean_action = str(payload.get("action") or "").strip().lower()
+    allowed_actions = {
+        "send_text",
+        "ask_for_details",
+        "generate_or_revise_page",
+        "approve_and_handoff",
+        "handoff_human",
+        "no_action",
+    }
+    if clean_action not in allowed_actions:
+        clean_action = "ask_for_details"
+    clean_message = clean_workstation_preview_message(payload.get("message"))
+    clean_reason = clean_workstation_preview_message(payload.get("reason"))
+    return WorkstationAgentDecision(action=clean_action, message=clean_message, reason=clean_reason)
+
+
+def fallback_workstation_agent_decision(reply_text: str) -> WorkstationAgentDecision:
+    """Choose a safe action when Codex decisioning is unavailable."""
+    normalized = " ".join((reply_text or "").lower().split())
+    if text_shows_workstation_approval(reply_text):
+        return WorkstationAgentDecision(
+            action="approve_and_handoff",
+            reason="The reply appears to approve the current preview.",
+        )
+    question_markers = ("?", "como", "cómo", "donde", "dónde", "que ", "qué ", "cuando", "cuándo")
+    content_markers = (
+        "agrega",
+        "agregale",
+        "agregar",
+        "cambia",
+        "cambiar",
+        "modifica",
+        "saca",
+        "quita",
+        "pon",
+        "pone",
+        "inclui",
+        "incluí",
+        "foto",
+        "logo",
+        "servicio",
+    )
+    if any(marker in normalized for marker in content_markers):
+        return WorkstationAgentDecision(
+            action="generate_or_revise_page",
+            reason="The reply includes concrete page change instructions.",
+        )
+    if "cosas que hice" in normalized or "trabajos" in normalized or any(marker in normalized for marker in question_markers):
+        return WorkstationAgentDecision(
+            action="send_text",
+            message="Conteme que cosas hizo o que datos quiere sumar y lo meto en la pagina.",
+            reason="The client is asking how to provide content rather than requesting a visual revision.",
+        )
+    return WorkstationAgentDecision(
+        action="ask_for_details",
+        message="Quiere que cambie algo del boceto o asi le gusta? Si quiere sumar datos, mandemelos por aca y lo ajusto.",
+        reason="The reply is not specific enough to revise the page yet.",
+    )
+
+
+def build_workstation_agent_decision_prompt(
+    *,
+    client: WorkstationClient,
+    lead: ContadoresLead,
+    replies: list[ContadoresMessage],
+    handoff_resume: bool = False,
+) -> str:
+    """Build the prompt that lets Codex choose the next Workstation action."""
+    write_client_files(client)
+    latest_reply_text = "\n".join(f"- {message.text}" for message in replies if message.text.strip()).strip()
+    previous_version = latest_landing_page_version_dir(client)
+    return f"""
+You are the autonomous Workstation solo-page client agent.
+
+Choose the best next action for the client. Do not default to making a website
+revision. Sometimes the right move is to answer the client's question, ask for
+more content, or confirm whether they like the current version.
+
+Client folder:
+{client_folder(client)}
+
+Previous page version:
+{previous_version or "(none)"}
+
+Client:
+- Name: {lead.full_name or client.display_name}
+- Funnel: {client.funnel_id}
+- Phone: {lead.phone or lead.normalized_phone or "-"}
+
+Latest client replies:
+{latest_reply_text or "(no text)"}
+
+Decision rules:
+- If the client asks a question, answer it with text. Do not generate a page.
+- If the client asks how to provide content, ask them to send the content and say you will add it.
+- If the client sent useful photos/content and a draft is helpful now, generate_or_revise_page is allowed.
+- If the client gave concrete changes to the current page, use generate_or_revise_page.
+- If the client seems to approve the current page, use approve_and_handoff.
+- If the situation needs a person, use handoff_human.
+- Use ask_for_details when the client intent is unclear.
+- Keep any WhatsApp message short, natural, and in Rioplatense/neutral Spanish.
+- Never invent payment, domain, hosting, or legal/accounting facts.
+
+Return only JSON:
+{{
+  "action": "send_text | ask_for_details | generate_or_revise_page | approve_and_handoff | handoff_human | no_action",
+  "message": "text to send if action is send_text, ask_for_details, or handoff_human",
+  "reason": "short internal reason"
+}}
+
+handoff_resume: {"yes" if handoff_resume else "no"}
+""".strip()
+
+
+def decide_workstation_next_action_sync(
+    *,
+    client: WorkstationClient,
+    lead: ContadoresLead,
+    replies: list[ContadoresMessage],
+    handoff_resume: bool = False,
+) -> WorkstationAgentDecision:
+    """Let Codex choose whether to reply, ask, revise, approve, or hand off."""
+    reply_text = "\n".join(message.text for message in replies if message.text.strip())
+    prompt = build_workstation_agent_decision_prompt(
+        client=client,
+        lead=lead,
+        replies=replies,
+        handoff_resume=handoff_resume,
+    )
+    try:
+        result = run_solo_page_codex_with_fallback(
+            prompt=prompt,
+            on_turn_started=lambda _turn: None,
+            skills=[],
+        )
+        decision = parse_workstation_agent_decision(result.final_response)
+    except Exception as error:
+        decision = fallback_workstation_agent_decision(reply_text)
+        decision.reason = f"{decision.reason} Codex decision fallback: {error.__class__.__name__}: {error}"
+    if decision.action in {"send_text", "ask_for_details", "handoff_human"} and not decision.message:
+        fallback = fallback_workstation_agent_decision(reply_text)
+        decision.message = fallback.message
+    return decision
+
+
+async def decide_workstation_next_action(**kwargs) -> WorkstationAgentDecision:
+    """Run Workstation decisioning without blocking the event loop."""
+    return await run_in_threadpool(decide_workstation_next_action_sync, **kwargs)
+
+
 def mirror_workstation_message_media(client: WorkstationClient, messages: list[ContadoresMessage]) -> list[WorkstationMediaAsset]:
     """Copy inbound WhatsApp media into the client's Workstation media folder."""
     existing_paths = {asset.stored_path for asset in WorkstationMediaAsset.list_by_client(client.id)}
@@ -1432,7 +1696,9 @@ Requirements:
   professional-photo/vNNN/professional-photo.jpg.
 - Use easy-to-read HTML/CSS/JS. Avoid build tools.
 - Treat the operator instruction as the main direction for this run when it exists.
-- If this is a revision, apply the requested changes to the previous version.
+- If this is a revision, the required output folder may already contain a copy
+  of the previous HTML/CSS/JS/assets. Edit those files in place and keep the
+  existing visual direction unless the client explicitly asked for a redesign.
 - If client information is incomplete, still create a credible first draft with honest placeholders.
 - Save all files inside the required output folder only.
 - Append short progress updates to progress.md after each meaningful step: context read, files written, checks done.
@@ -1448,14 +1714,19 @@ def run_solo_page_codex_with_fallback(
     *,
     prompt: str,
     on_turn_started,
+    skills: list[CodexSkill] | None = None,
 ):
     """Run solo-page Codex with ChatGPT auth first, then API-key auth."""
-    skill = CodexSkill(
-        name="workstation-solo-page",
-        path=str((REPO_ROOT / SOLO_PAGE_SKILL).resolve()),
-    )
+    selected_skills = skills
+    if selected_skills is None:
+        selected_skills = [
+            CodexSkill(
+                name="workstation-solo-page",
+                path=str((REPO_ROOT / SOLO_PAGE_SKILL).resolve()),
+            )
+        ]
     common_kwargs = {
-        "skills": [skill],
+        "skills": selected_skills,
         "model": CONVERSATION_BOT_CODEX_MODEL,
         "effort": CONVERSATION_BOT_CODEX_EFFORT,
         "service_tier": CONVERSATION_BOT_CODEX_SERVICE_TIER,
@@ -1504,6 +1775,11 @@ def generate_solo_page_version_sync(
         raise WorkstationCodexStopped("Codex was stopped by the operator.")
     version_dir = next_landing_page_version_dir(client)
     operation = "revision" if revision else "draft"
+    previous_version = latest_landing_page_version_dir(client)
+    copy_previous_landing_page_version(
+        previous_version=previous_version if revision else None,
+        version_dir=version_dir,
+    )
     append_workstation_progress(client, f"Starting {operation} generation in {relative_data_path(version_dir)}.")
     prompt = build_solo_page_codex_prompt(
         client=client,
@@ -1572,6 +1848,11 @@ def generate_solo_page_version_sync(
             stored_filename=f"generated-page-preview-{version_dir.name}.mp4",
             content_type="video/mp4",
         )
+        try:
+            commit_landing_page_version(client, version_dir, operation=operation)
+            append_workstation_progress(client, f"Committed {version_dir.name} page source in client git.")
+        except Exception as error:
+            append_workstation_progress(client, f"Git commit skipped: {error.__class__.__name__}: {error}")
         append_workstation_progress(client, "Preview media registered in Workstation.")
         return version_dir
     except WorkstationCodexStopped as error:
@@ -1906,6 +2187,35 @@ def queue_workstation_template(
     )
 
 
+def queue_workstation_agent_text(
+    *,
+    client: WorkstationClient,
+    lead: ContadoresLead,
+    text: str,
+    sequence_step: str,
+    next_status: WorkstationAutomationStatus = WorkstationAutomationStatus.AWAITING_REVIEW,
+    anchor_review_timer: bool = True,
+) -> ContadoresMessage | None:
+    """Queue one conversational Workstation reply chosen by the agent."""
+    clean_text = clean_workstation_preview_message(text)
+    if not clean_text:
+        return None
+    row = enqueue_lead_outbound(
+        lead=lead,
+        text=clean_text,
+        sequence_step=sequence_step,
+    )
+    update_kwargs = {
+        "automation_status": next_status,
+        "last_automation_handled_at": row.created_at,
+    }
+    if anchor_review_timer:
+        update_kwargs["last_preview_sent_at"] = row.created_at
+    WorkstationClient.update_automation_state(client.id, **update_kwargs)
+    append_workstation_progress(client, f"Queued agent text reply: {clean_text[:240]}")
+    return row
+
+
 async def run_manual_solo_page_work(client_id: str, operator_prompt: str) -> None:
     """Run one operator-triggered solo-page draft or revision."""
     try:
@@ -2145,6 +2455,61 @@ async def advance_solo_page_client(client: WorkstationClient, *, now: datetime) 
         )
         if not replies or not latest_inbound_is_quiet(replies, now=now):
             return metrics
+        decision = await decide_workstation_next_action(
+            client=fresh_client,
+            lead=lead,
+            replies=replies,
+        )
+        append_workstation_progress(
+            fresh_client,
+            f"Intake agent decision: {decision.action}. {decision.reason[:240]}",
+        )
+        if decision.action in {"send_text", "ask_for_details"}:
+            try:
+                queue_workstation_agent_text(
+                    client=fresh_client,
+                    lead=lead,
+                    text=decision.message,
+                    sequence_step=WORKSTATION_INTAKE_SEQUENCE_STEP,
+                    next_status=WorkstationAutomationStatus.INTAKE,
+                    anchor_review_timer=False,
+                )
+                metrics["intake_messages_sent"] = 1
+            except Exception as error:
+                mark_workstation_failed(
+                    client=fresh_client,
+                    lead=lead,
+                    error=f"{error.__class__.__name__}: {error}",
+                    latest_inbound_text=replies[-1].text if replies else "",
+                )
+                metrics["failures"] = 1
+            return metrics
+        if decision.action in {"handoff_human", "approve_and_handoff"}:
+            append_workstation_progress(fresh_client, "Agent chose human handoff during intake.")
+            WorkstationClient.update_automation_state(
+                fresh_client.id,
+                automation_status=WorkstationAutomationStatus.NEEDS_HUMAN,
+                last_automation_handled_at=now,
+            )
+            ContadoresLead.update_flow_state(
+                lead.id,
+                stage="needs_human",
+                automation_paused=True,
+                automation_paused_reason="workstation_agent_handoff",
+                last_classification_label="workstation_agent_handoff",
+                last_classification_reason=decision.reason or "El agente de Workstation pidio intervencion humana.",
+                clear_needs_human_notified_at=True,
+            )
+            metrics["human_handoffs"] = 1
+            return metrics
+        if decision.action == "no_action":
+            WorkstationClient.update_automation_state(
+                fresh_client.id,
+                last_automation_handled_at=now,
+            )
+            return metrics
+        if decision.action != "generate_or_revise_page":
+            return metrics
         append_workstation_progress(fresh_client, "Quiet window complete. Starting first draft.")
         WorkstationClient.update_automation_state(
             fresh_client.id,
@@ -2214,7 +2579,70 @@ async def advance_solo_page_client(client: WorkstationClient, *, now: datetime) 
         if not latest_inbound_is_quiet(replies, now=now):
             return metrics
         reply_text = "\n".join(message.text for message in replies if message.text.strip())
-        if text_shows_workstation_approval(reply_text):
+        decision = await decide_workstation_next_action(
+            client=fresh_client,
+            lead=lead,
+            replies=replies,
+        )
+        append_workstation_progress(
+            fresh_client,
+            f"Agent decision: {decision.action}. {decision.reason[:240]}",
+        )
+        if decision.action == "no_action":
+            WorkstationClient.update_automation_state(
+                fresh_client.id,
+                last_automation_handled_at=now,
+            )
+            return metrics
+        if decision.action in {"send_text", "ask_for_details"}:
+            try:
+                queue_workstation_agent_text(
+                    client=fresh_client,
+                    lead=lead,
+                    text=decision.message,
+                    sequence_step=WORKSTATION_REVISION_SEQUENCE_STEP,
+                )
+            except Exception as error:
+                mark_workstation_failed(
+                    client=fresh_client,
+                    lead=lead,
+                    error=f"{error.__class__.__name__}: {error}",
+                    latest_inbound_text=replies[-1].text if replies else "",
+                )
+                metrics["failures"] = 1
+            return metrics
+        if decision.action == "handoff_human":
+            append_workstation_progress(fresh_client, "Agent chose human handoff.")
+            if decision.message:
+                try:
+                    queue_workstation_agent_text(
+                        client=fresh_client,
+                        lead=lead,
+                        text=decision.message,
+                        sequence_step=WORKSTATION_HANDOFF_SEQUENCE_STEP,
+                    )
+                except Exception as error:
+                    record_workstation_nonblocking_issue(
+                        client=fresh_client,
+                        error=f"{error.__class__.__name__}: {error}",
+                    )
+            WorkstationClient.update_automation_state(
+                fresh_client.id,
+                automation_status=WorkstationAutomationStatus.NEEDS_HUMAN,
+                last_automation_handled_at=now,
+            )
+            ContadoresLead.update_flow_state(
+                lead.id,
+                stage="needs_human",
+                automation_paused=True,
+                automation_paused_reason="workstation_agent_handoff",
+                last_classification_label="workstation_agent_handoff",
+                last_classification_reason=decision.reason or "El agente de Workstation pidio intervencion humana.",
+                clear_needs_human_notified_at=True,
+            )
+            metrics["human_handoffs"] = 1
+            return metrics
+        if decision.action == "approve_and_handoff" or text_shows_workstation_approval(reply_text):
             append_workstation_progress(fresh_client, "Client approved the preview. Handing off to operator.")
             WorkstationClient.update_automation_state(
                 fresh_client.id,
@@ -2235,6 +2663,8 @@ async def advance_solo_page_client(client: WorkstationClient, *, now: datetime) 
             )
             metrics["approvals"] = 1
             metrics["human_handoffs"] = 1
+            return metrics
+        if decision.action != "generate_or_revise_page":
             return metrics
 
         append_workstation_progress(fresh_client, "Quiet window complete. Starting revision.")
@@ -2285,7 +2715,49 @@ async def advance_solo_page_client(client: WorkstationClient, *, now: datetime) 
         if not latest_inbound_is_quiet(replies, now=now):
             return metrics
         reply_text = "\n".join(message.text for message in replies if message.text.strip())
-        if text_shows_workstation_approval(reply_text):
+        decision = await decide_workstation_next_action(
+            client=fresh_client,
+            lead=lead,
+            replies=replies,
+            handoff_resume=True,
+        )
+        append_workstation_progress(
+            fresh_client,
+            f"Post-handoff agent decision: {decision.action}. {decision.reason[:240]}",
+        )
+        if decision.action == "no_action":
+            WorkstationClient.update_automation_state(
+                fresh_client.id,
+                last_automation_handled_at=now,
+            )
+            return metrics
+        if decision.action in {"send_text", "ask_for_details"}:
+            try:
+                queue_workstation_agent_text(
+                    client=fresh_client,
+                    lead=lead,
+                    text=decision.message,
+                    sequence_step=WORKSTATION_REVISION_SEQUENCE_STEP,
+                )
+            except Exception as error:
+                mark_workstation_failed(
+                    client=fresh_client,
+                    lead=lead,
+                    error=f"{error.__class__.__name__}: {error}",
+                    latest_inbound_text=replies[-1].text if replies else "",
+                )
+                metrics["failures"] = 1
+            return metrics
+        if decision.action == "handoff_human":
+            append_workstation_progress(fresh_client, "Agent kept this post-handoff reply with a human.")
+            WorkstationClient.update_automation_state(
+                fresh_client.id,
+                automation_status=WorkstationAutomationStatus.NEEDS_HUMAN,
+                last_automation_handled_at=now,
+            )
+            metrics["human_handoffs"] = 1
+            return metrics
+        if decision.action == "approve_and_handoff" or text_shows_workstation_approval(reply_text):
             append_workstation_progress(fresh_client, "Client replied after handoff and approved the preview.")
             WorkstationClient.update_automation_state(
                 fresh_client.id,
@@ -2293,6 +2765,8 @@ async def advance_solo_page_client(client: WorkstationClient, *, now: datetime) 
                 last_automation_handled_at=now,
             )
             metrics["approvals"] = 1
+            return metrics
+        if decision.action != "generate_or_revise_page":
             return metrics
 
         append_workstation_progress(fresh_client, "Client replied after handoff. Starting revision.")
@@ -2493,8 +2967,8 @@ def build_workstation_automation_state(
             )
         return WorkstationAutomationStateResponse(
             **base,
-            label="Revision ready",
-            detail="The client replied after handoff. The next tick will start a Codex revision.",
+            label="Agent decision ready",
+            detail="The client replied after handoff. The next tick will decide whether to answer, ask, revise, or hand off.",
             latest_inbound_at=format_timestamp_seconds(latest_message_at(replies)),
         )
 
@@ -2547,8 +3021,8 @@ def build_workstation_automation_state(
             )
         return WorkstationAutomationStateResponse(
             **base,
-            label="Ready to draft",
-            detail="The quiet window is complete. The next Workstation tick will start Codex.",
+            label="Agent decision ready",
+            detail="The quiet window is complete. The next Workstation tick will decide whether to answer, ask, draft, or hand off.",
             latest_inbound_at=format_timestamp_seconds(latest_message_at(replies)),
         )
 
@@ -2577,8 +3051,8 @@ def build_workstation_automation_state(
             )
         return WorkstationAutomationStateResponse(
             **base,
-            label="Revision ready",
-            detail="The quiet window is complete. The next tick will start a Codex revision.",
+            label="Agent decision ready",
+            detail="The quiet window is complete. The next tick will decide whether to answer, ask, revise, approve, or hand off.",
             latest_inbound_at=format_timestamp_seconds(latest_message_at(replies)),
         )
 
