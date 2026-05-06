@@ -594,6 +594,9 @@ timeout generico que tape el error real.
 El panel tambien muestra estado observado en vivo: task backend activo, turn
 Codex activo, hora de inicio y `not_running` cuando la base dice `drafting` o
 `revision_requested` pero el proceso real ya no existe.
+Las acciones manuales de Workstation deben bloquearse solo por ese estado vivo:
+si no hay task ni turn activo, el operador puede reiniciar Codex aunque haya
+quedado un `drafting` o `revision_requested` persistido.
 Los errores posteriores a un preview ya generado y enviado, como problemas al
 evaluar pings o estados secundarios, no deben marcar el cliente como failed ni
 mandar email: se registran en `progress.md` y el cliente sigue esperando review.

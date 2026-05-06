@@ -4925,6 +4925,54 @@ def test_manual_workstation_solo_page_endpoint_allows_parallel_clients(monkeypat
     workstation_endpoints.manual_solo_page_work_client_ids.clear()
 
 
+def test_manual_workstation_solo_page_endpoint_restarts_missing_live_process(monkeypatch, tmp_path) -> None:
+    """A stale persisted working state should not block a real operator restart."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setattr(database_module, "DATA_DIR", tmp_path / "data")
+    workstation_endpoints.manual_solo_page_work_client_ids.clear()
+    workstation_endpoints.active_solo_page_codex_tasks.clear()
+    workstation_endpoints.active_solo_page_codex_turns.clear()
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-restart-missing-live-workstation",
+        phone="+5491777777722",
+        full_name="Cliente Restart",
+    )
+    workstation = WorkstationClient.create_for_lead(
+        lead,
+        work_type=WorkstationClientWorkType.SOLO_PAGINA,
+        status=WorkstationClientStatus.PENDING_PAYMENT,
+        automation_status=WorkstationAutomationStatus.REVISION_REQUESTED,
+    )
+    WorkstationClient.update_automation_state(
+        workstation.id,
+        automation_status=WorkstationAutomationStatus.REVISION_REQUESTED,
+        last_automation_handled_at=now_utc(),
+    )
+    workstation_endpoints.manual_solo_page_work_client_ids.add(workstation.id)
+    queued_coroutines: list[object] = []
+
+    def fake_create_task(coroutine):
+        queued_coroutines.append(coroutine)
+        coroutine.close()
+        return SimpleNamespace(done=lambda: False)
+
+    monkeypatch.setattr(workstation_endpoints.asyncio, "create_task", fake_create_task)
+
+    with TestClient(app) as client:
+        response = client.post(
+            f"/api/workstation/clients/{workstation.id}/solo-page/work",
+            json={"prompt": "Rehacer con fotos profesionales."},
+        )
+
+    assert response.status_code == 202
+    assert response.json()["automation_state"]["is_live_working"] is True
+    assert len(queued_coroutines) == 1
+    progress = workstation_endpoints.workstation_progress_path(workstation).read_text(encoding="utf-8")
+    assert "Operator restarted Codex because no live backend task or Codex turn was registered." in progress
+    workstation_endpoints.manual_solo_page_work_client_ids.clear()
+    workstation_endpoints.clear_solo_page_live_work(workstation.id)
+
+
 def test_workstation_solo_page_stop_interrupts_active_codex(monkeypatch, tmp_path) -> None:
     """Operators should be able to stop a running Codex turn for one client."""
     configure_contadores_db(monkeypatch, tmp_path)

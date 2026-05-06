@@ -2492,11 +2492,20 @@ async def start_workstation_solo_page_work(
     operator_prompt = command.prompt.strip()
     if not operator_prompt:
         raise HTTPException(status_code=422, detail="Write a prompt before starting Codex.")
-    if client.id in manual_solo_page_work_client_ids or client.automation_status in {
+    live_status = observed_solo_page_live_status(client.id)
+    if client.id in manual_solo_page_work_client_ids and live_status["is_live_working"]:
+        raise HTTPException(status_code=409, detail="Workstation Codex is already working for this client.")
+    if live_status["is_live_working"]:
+        raise HTTPException(status_code=409, detail="Workstation Codex is already working for this client.")
+    manual_solo_page_work_client_ids.discard(client.id)
+    if client.automation_status in {
         WorkstationAutomationStatus.DRAFTING,
         WorkstationAutomationStatus.REVISION_REQUESTED,
     }:
-        raise HTTPException(status_code=409, detail="Workstation Codex is already working for this client.")
+        append_workstation_progress(
+            client,
+            "Operator restarted Codex because no live backend task or Codex turn was registered.",
+        )
 
     revision = latest_landing_page_version_dir(client) is not None
     WorkstationClient.update_automation_state(

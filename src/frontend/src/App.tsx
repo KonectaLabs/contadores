@@ -2249,7 +2249,7 @@ function WorkstationView({
   const runtimeAlerts = detailClient ? detail?.runtime_alerts ?? [] : [];
   const automationState = detailClient ? detail?.automation_state ?? null : null;
   const openRuntimeAlerts = runtimeAlerts.filter((alert) => !alert.resolved_at);
-  const latestRuntimeAlert = openRuntimeAlerts[0] ?? runtimeAlerts[0] ?? null;
+  const latestRuntimeAlert = openRuntimeAlerts[0] ?? null;
   const workstationFailed = activeClient?.automation_status === "failed";
   const imageAssets = (detail?.media ?? []).filter((asset) => asset.content_type?.startsWith("image/"));
   const professionalPhotos = detail?.professional_photos ?? [];
