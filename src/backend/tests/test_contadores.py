@@ -4642,6 +4642,7 @@ def test_manual_workstation_solo_page_endpoint_queues_background_work(monkeypatc
     """The Workstation action should return immediately with the client marked as working."""
     configure_contadores_db(monkeypatch, tmp_path)
     monkeypatch.setattr(database_module, "DATA_DIR", tmp_path / "data")
+    workstation_endpoints.manual_solo_page_work_client_ids.clear()
     lead = ContadoresLead.upsert(
         external_lead_id="sheet-row-manual-workstation-endpoint",
         phone="+5491777777712",
@@ -4673,6 +4674,65 @@ def test_manual_workstation_solo_page_endpoint_queues_background_work(monkeypatc
     assert len(queued_coroutines) == 1
     progress = workstation_endpoints.workstation_progress_path(workstation).read_text(encoding="utf-8")
     assert "Manual Codex run queued from Workstation Actions." in progress
+    workstation_endpoints.manual_solo_page_work_client_ids.clear()
+
+
+def test_manual_workstation_solo_page_endpoint_allows_parallel_clients(monkeypatch, tmp_path) -> None:
+    """Manual Codex work should only block another run for the same Workstation client."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setattr(database_module, "DATA_DIR", tmp_path / "data")
+    workstation_endpoints.manual_solo_page_work_client_ids.clear()
+    first_lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-parallel-workstation-1",
+        phone="+5491777777713",
+        full_name="Cliente Uno",
+    )
+    second_lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-parallel-workstation-2",
+        phone="+5491777777714",
+        full_name="Cliente Dos",
+    )
+    first_workstation = WorkstationClient.create_for_lead(
+        first_lead,
+        work_type=WorkstationClientWorkType.SOLO_PAGINA,
+        status=WorkstationClientStatus.PENDING_PAYMENT,
+        automation_status=WorkstationAutomationStatus.INTAKE,
+    )
+    second_workstation = WorkstationClient.create_for_lead(
+        second_lead,
+        work_type=WorkstationClientWorkType.SOLO_PAGINA,
+        status=WorkstationClientStatus.PENDING_PAYMENT,
+        automation_status=WorkstationAutomationStatus.INTAKE,
+    )
+    queued_coroutines: list[object] = []
+
+    def fake_create_task(coroutine):
+        queued_coroutines.append(coroutine)
+        coroutine.close()
+        return SimpleNamespace(done=lambda: False)
+
+    monkeypatch.setattr(workstation_endpoints.asyncio, "create_task", fake_create_task)
+
+    with TestClient(app) as client:
+        first_response = client.post(
+            f"/api/workstation/clients/{first_workstation.id}/solo-page/work",
+            json={"prompt": "Hacer la pagina del primero."},
+        )
+        second_response = client.post(
+            f"/api/workstation/clients/{second_workstation.id}/solo-page/work",
+            json={"prompt": "Hacer la pagina del segundo."},
+        )
+        duplicate_response = client.post(
+            f"/api/workstation/clients/{first_workstation.id}/solo-page/work",
+            json={"prompt": "No arrancar dos veces el mismo cliente."},
+        )
+
+    assert first_response.status_code == 202
+    assert second_response.status_code == 202
+    assert duplicate_response.status_code == 409
+    assert duplicate_response.json()["detail"] == "Workstation Codex is already working for this client."
+    assert len(queued_coroutines) == 2
+    workstation_endpoints.manual_solo_page_work_client_ids.clear()
 
 
 def test_workstation_tick_approval_marks_needs_human(monkeypatch, tmp_path) -> None:

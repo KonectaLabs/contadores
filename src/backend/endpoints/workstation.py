@@ -84,6 +84,7 @@ WORKSTATION_INTAKE_TEXT = (
     "Con eso le preparo un primer boceto en video."
 )
 workstation_automation_tick_lock = asyncio.Lock()
+manual_solo_page_work_client_ids: set[str] = set()
 
 
 def workstation_root() -> Path:
@@ -1495,7 +1496,7 @@ def queue_workstation_template(
 
 async def run_manual_solo_page_work(client_id: str, operator_prompt: str) -> None:
     """Run one operator-triggered solo-page draft or revision."""
-    async with workstation_automation_tick_lock:
+    try:
         client = WorkstationClient.get_by_id(client_id)
         if client is None:
             return
@@ -1562,6 +1563,8 @@ async def run_manual_solo_page_work(client_id: str, operator_prompt: str) -> Non
             fresh_client,
             "Queued manual Codex preview video for WhatsApp.",
         )
+    finally:
+        manual_solo_page_work_client_ids.discard(client_id)
 
 
 def process_workstation_pings(
@@ -2192,11 +2195,11 @@ async def start_workstation_solo_page_work(
     operator_prompt = command.prompt.strip()
     if not operator_prompt:
         raise HTTPException(status_code=422, detail="Write a prompt before starting Codex.")
-    if workstation_automation_tick_lock.locked() or client.automation_status in {
+    if client.id in manual_solo_page_work_client_ids or client.automation_status in {
         WorkstationAutomationStatus.DRAFTING,
         WorkstationAutomationStatus.REVISION_REQUESTED,
     }:
-        raise HTTPException(status_code=409, detail="Workstation Codex is already working.")
+        raise HTTPException(status_code=409, detail="Workstation Codex is already working for this client.")
 
     revision = latest_landing_page_version_dir(client) is not None
     WorkstationClient.update_automation_state(
@@ -2209,7 +2212,12 @@ async def start_workstation_solo_page_work(
         last_automation_handled_at=now_utc(),
     )
     append_workstation_progress(client, "Manual Codex run queued from Workstation Actions.")
-    asyncio.create_task(run_manual_solo_page_work(client.id, operator_prompt))
+    manual_solo_page_work_client_ids.add(client.id)
+    try:
+        asyncio.create_task(run_manual_solo_page_work(client.id, operator_prompt))
+    except Exception:
+        manual_solo_page_work_client_ids.discard(client.id)
+        raise
     return build_client_detail(WorkstationClient.get_by_id(client.id) or client)
 
 
