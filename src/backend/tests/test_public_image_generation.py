@@ -19,6 +19,7 @@ def test_public_image_generation_returns_codex_output(monkeypatch, tmp_path) -> 
     """The public endpoint should save inputs, run Codex, and return the generated image."""
     data_dir = tmp_path / "data"
     monkeypatch.setattr(database_module, "DATA_DIR", data_dir)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     calls: list[dict[str, object]] = []
 
     def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
@@ -60,6 +61,7 @@ def test_public_image_generation_is_not_blocked_by_cookie_auth(monkeypatch, tmp_
     auth_file = tmp_path / "auth.toml"
     auth_file.write_text("[users]\nadmin = \"secret\"\n", encoding="utf-8")
     monkeypatch.setattr(database_module, "DATA_DIR", data_dir)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setenv("AUTH_DISABLE", "false")
     monkeypatch.setenv("AUTH_TOML", str(auth_file))
 
@@ -88,11 +90,62 @@ def test_public_image_generation_is_not_blocked_by_cookie_auth(monkeypatch, tmp_
     assert protected_response.status_code == 401
 
 
+def test_public_image_generation_uses_openai_first_when_configured(monkeypatch, tmp_path) -> None:
+    """Public website requests should use Images API first when the API key is available."""
+    data_dir = tmp_path / "data"
+    monkeypatch.setattr(database_module, "DATA_DIR", data_dir)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    codex_calls: list[str] = []
+    openai_calls: list[dict[str, object]] = []
+
+    def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
+        del kwargs
+        codex_calls.append(prompt)
+        raise AssertionError("Codex should not run before OpenAI for public image requests")
+
+    def fake_call_openai_image_edit(
+        *,
+        api_key: str,
+        prompt: str,
+        input_paths: list[Path],
+    ) -> dict[str, object]:
+        openai_calls.append(
+            {
+                "api_key": api_key,
+                "prompt": prompt,
+                "input_names": [path.name for path in input_paths],
+            }
+        )
+        return {"data": [{"b64_json": base64.b64encode(PNG_BYTES).decode("ascii")}]}
+
+    monkeypatch.setattr(public_image_generation, "run_codex_with_context", fake_run_codex_with_context)
+    monkeypatch.setattr(public_image_generation, "call_openai_image_edit", fake_call_openai_image_edit)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/public/image-generation",
+            data={"prompt": "Editar rapido"},
+            files=[("images", ("referencia.jpg", b"source-jpg", "image/jpeg"))],
+        )
+
+    assert response.status_code == 200
+    assert response.content == PNG_BYTES
+    assert codex_calls == []
+    assert openai_calls == [
+        {
+            "api_key": "sk-test",
+            "prompt": "Editar rapido",
+            "input_names": ["01-referencia.jpg"],
+        }
+    ]
+
+
 def test_public_image_generation_falls_back_to_openai_generation(monkeypatch, tmp_path) -> None:
     """If Codex fails without input images, use the Images API generation endpoint."""
     data_dir = tmp_path / "data"
     monkeypatch.setattr(database_module, "DATA_DIR", data_dir)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("PUBLIC_IMAGE_GENERATION_PROVIDER", "codex-first")
     calls: list[dict[str, object]] = []
 
     def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
@@ -121,6 +174,7 @@ def test_public_image_generation_falls_back_to_openai_edit_with_images(monkeypat
     data_dir = tmp_path / "data"
     monkeypatch.setattr(database_module, "DATA_DIR", data_dir)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("PUBLIC_IMAGE_GENERATION_PROVIDER", "codex-first")
     calls: list[dict[str, object]] = []
 
     def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
@@ -168,6 +222,7 @@ def test_public_image_generation_limits_openai_fallback_calls(monkeypatch, tmp_p
     data_dir = tmp_path / "data"
     monkeypatch.setattr(database_module, "DATA_DIR", data_dir)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("PUBLIC_IMAGE_GENERATION_PROVIDER", "codex-first")
     monkeypatch.setattr(public_image_generation, "openai_image_fallback_count", 0)
     api_call_count = 0
 
@@ -202,6 +257,7 @@ def test_public_image_generation_falls_back_when_codex_writes_non_png(monkeypatc
     data_dir = tmp_path / "data"
     monkeypatch.setattr(database_module, "DATA_DIR", data_dir)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("PUBLIC_IMAGE_GENERATION_PROVIDER", "codex-first")
     calls: list[str] = []
 
     def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
@@ -239,6 +295,7 @@ def test_public_image_generation_rejects_invalid_openai_fallback_image(monkeypat
     data_dir = tmp_path / "data"
     monkeypatch.setattr(database_module, "DATA_DIR", data_dir)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("PUBLIC_IMAGE_GENERATION_PROVIDER", "codex-first")
 
     def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
         del prompt, kwargs

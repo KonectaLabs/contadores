@@ -37,6 +37,7 @@ OPENAI_IMAGE_FALLBACK_MODEL = os.getenv("OPENAI_IMAGE_FALLBACK_MODEL", "gpt-imag
 OPENAI_IMAGE_FALLBACK_SIZE = os.getenv("OPENAI_IMAGE_FALLBACK_SIZE", "1024x1024")
 OPENAI_IMAGE_FALLBACK_QUALITY = os.getenv("OPENAI_IMAGE_FALLBACK_QUALITY", "medium")
 OPENAI_IMAGE_FALLBACK_LIMIT = 10
+PUBLIC_IMAGE_GENERATION_PROVIDER = os.getenv("PUBLIC_IMAGE_GENERATION_PROVIDER", "openai-first")
 openai_image_fallback_count = 0
 openai_image_fallback_lock = Lock()
 
@@ -115,9 +116,23 @@ def run_public_image_generation_sync(
     user_prompt: str,
     input_paths: list[Path],
 ) -> Path:
-    """Ask Codex to generate one image, falling back to OpenAI Images API."""
+    """Generate one public image with the fastest configured provider."""
     output_path = job_dir / OUTPUT_FILENAME
     codex_error: str | None = None
+    openai_error: str | None = None
+
+    if should_try_openai_first():
+        try:
+            metadata = run_openai_image_fallback_sync(
+                output_path=output_path,
+                user_prompt=user_prompt,
+                input_paths=input_paths,
+                codex_error=None,
+            )
+            write_generation_metadata(job_dir=job_dir, metadata=metadata)
+            return output_path
+        except Exception as error:
+            openai_error = str(error)
 
     try:
         metadata = run_codex_image_generation_sync(
@@ -131,14 +146,45 @@ def run_public_image_generation_sync(
     except Exception as error:
         codex_error = str(error)
 
+    if openai_error is not None:
+        raise HTTPException(
+            status_code=502,
+            detail=combined_provider_error(codex_error=codex_error, openai_error=openai_error),
+        )
+
     metadata = run_openai_image_fallback_sync(
         output_path=output_path,
         user_prompt=user_prompt,
         input_paths=input_paths,
-        codex_error=codex_error,
+        codex_error=combined_provider_error(codex_error=codex_error, openai_error=openai_error),
     )
     write_generation_metadata(job_dir=job_dir, metadata=metadata)
     return output_path
+
+
+def should_try_openai_first() -> bool:
+    """Return True when public requests should prefer the Images API."""
+    provider = os.getenv(
+        "PUBLIC_IMAGE_GENERATION_PROVIDER",
+        PUBLIC_IMAGE_GENERATION_PROVIDER,
+    ).strip().lower()
+    return provider in {"openai", "openai-first", "openai-images-api"} and bool(
+        (os.getenv("OPENAI_API_KEY") or "").strip()
+    )
+
+
+def combined_provider_error(
+    *,
+    codex_error: str | None,
+    openai_error: str | None,
+) -> str | None:
+    """Return a compact fallback reason for metadata and HTTP errors."""
+    parts = []
+    if codex_error:
+        parts.append(f"Codex failed: {codex_error}")
+    if openai_error:
+        parts.append(f"OpenAI first attempt failed: {openai_error}")
+    return " | ".join(parts) or None
 
 
 def run_codex_image_generation_sync(
