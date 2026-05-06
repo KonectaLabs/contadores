@@ -2085,6 +2085,7 @@ function WorkstationView({
   const canUploadMedia = Boolean(activeClient) && actionBusy !== "workstation-upload";
   const currentProfessionalPhotoJob = professionalPhotoJob?.client_id === activeClient?.id ? professionalPhotoJob : null;
   const professionalPhotoJobBusy = currentProfessionalPhotoJob?.status === "queued" || currentProfessionalPhotoJob?.status === "running";
+  const activeOffer = formatWorkstationOffer(activeClient);
 
   useEffect(() => {
     setNotesOpen(false);
@@ -2217,6 +2218,7 @@ function WorkstationView({
                 <div>
                   <div className="workstation-client-row-top">
                     <strong>{client.display_name || client.lead?.full_name || "Client"}</strong>
+                    {formatWorkstationOffer(client) ? <span>{formatWorkstationOffer(client)}</span> : null}
                   </div>
                   <p>{client.lead?.phone || client.folder_name}</p>
                   <small>
@@ -2250,6 +2252,9 @@ function WorkstationView({
                     <p className="ct-detail-meta">
                       {humanize(activeClient.work_type)} · {humanize(activeClient.status)} · {humanize(activeClient.automation_status)}
                     </p>
+                    {activeOffer ? (
+                      <p className="ct-detail-meta">Oferta fija: {activeOffer}</p>
+                    ) : null}
                   </div>
                 </div>
                 <div className="ct-detail-head-actions">
@@ -4109,6 +4114,13 @@ function formatBytes(value: number): string {
     return `${Math.round(value / 1024)} KB`;
   }
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatWorkstationOffer(client: WorkstationClientSummary | null | undefined): string {
+  if (!client?.offer_price_usd || client.offer_price_usd <= 0) {
+    return "";
+  }
+  return `${client.offer_price_usd} ${client.offer_currency || "USD"}`;
 }
 
 function formatRate(value: number): string {

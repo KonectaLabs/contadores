@@ -44,6 +44,9 @@ configuration. The automation will render `preview.mp4` after your files exist.
 - Keep code readable, skimmable, and boring.
 - Personalize the page with the client's name, profession, city/country,
   services, WhatsApp contact, and any references they sent.
+- Treat `profile.json.client.offer_price_usd` as commercial context only. Do not
+  print the discounted price on the public page unless the client explicitly
+  asked for pricing to appear there.
 - If information is missing, still produce a credible first draft with restrained
   placeholders that can be revised later.
 - If a professional photo exists, use it. If not, use appropriate template assets.

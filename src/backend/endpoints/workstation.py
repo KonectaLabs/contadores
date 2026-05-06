@@ -53,6 +53,7 @@ from backend.endpoints.contadores import (
     group_strategy_assignments_by_lead,
     now_utc,
     resolve_message_media_file,
+    resolve_solo_page_offer_price_usd,
 )
 
 workstation_router = APIRouter(prefix="/api/workstation", tags=["workstation"])
@@ -211,6 +212,7 @@ def build_copy_all_text(
             f"name: {lead.full_name or client.display_name}",
             f"phone: {lead.phone or lead.normalized_phone}",
             f"email: {lead.email or '-'}",
+            f"offer: {client.offer_price_usd or '-'} {client.offer_currency or 'USD'}",
             "# Notas",
             client.notes or "(sin notas)",
             "# Media",
@@ -242,6 +244,8 @@ def write_client_files(client: WorkstationClient) -> None:
             "work_type": client.work_type.value,
             "status": client.status.value,
             "automation_status": client.automation_status.value,
+            "offer_price_usd": client.offer_price_usd,
+            "offer_currency": client.offer_currency,
             "display_name": client.display_name,
             "folder_name": client.folder_name,
             "folder_path": relative_data_path(folder),
@@ -319,6 +323,8 @@ class WorkstationClientSummary(BaseModel):
     work_type: str
     status: str
     automation_status: str
+    offer_price_usd: int | None = None
+    offer_currency: str = "USD"
     display_name: str
     folder_name: str
     folder_path: str
@@ -357,6 +363,8 @@ class CreateWorkstationClientCommand(BaseModel):
     work_type: str = WorkstationClientWorkType.PAGINA_ADS.value
     status: str = WorkstationClientStatus.PAID.value
     automation_status: str = WorkstationAutomationStatus.NEEDS_HUMAN.value
+    offer_price_usd: int | None = None
+    offer_currency: str = "USD"
 
 
 class UpdateWorkstationNotesCommand(BaseModel):
@@ -691,6 +699,13 @@ Requirements:
         codex_response=result.final_response,
         context=context,
     )
+    register_generated_workstation_media(
+        client=client,
+        source_path=output_path,
+        title=f"Foto profesional {version_dir.name}",
+        stored_filename=f"generated-professional-photo-{version_dir.name}.jpg",
+        content_type="image/jpeg",
+    )
     return build_professional_photo_response(client, version_dir)
 
 
@@ -807,6 +822,13 @@ Requirements:
         previous_version_path=base_image,
         user_edit_prompt=user_prompt,
     )
+    register_generated_workstation_media(
+        client=client,
+        source_path=output_path,
+        title=f"Foto profesional {version_dir.name}",
+        stored_filename=f"generated-professional-photo-{version_dir.name}.jpg",
+        content_type="image/jpeg",
+    )
     return build_professional_photo_response(client, version_dir)
 
 
@@ -862,13 +884,29 @@ def render_landing_page_video_sync(*, index_path: Path, output_path: Path) -> No
                 """
                 async () => {
                   const max = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
-                  const steps = 150;
-                  for (let i = 0; i <= steps; i += 1) {
-                    const y = Math.round((max * i) / steps);
-                    window.scrollTo(0, y);
-                    await new Promise((resolve) => setTimeout(resolve, 30));
-                  }
+                  const root = document.documentElement;
+                  const previousBehavior = root.style.scrollBehavior;
+                  root.style.scrollBehavior = "auto";
+                  window.scrollTo(0, 0);
                   await new Promise((resolve) => setTimeout(resolve, 700));
+
+                  const durationMs = Math.min(18000, Math.max(9500, max / 0.55));
+                  const start = performance.now();
+                  await new Promise((resolve) => {
+                    const step = (now) => {
+                      const progress = Math.min(1, (now - start) / durationMs);
+                      window.scrollTo(0, Math.round(max * progress));
+                      if (progress < 1) {
+                        window.requestAnimationFrame(step);
+                        return;
+                      }
+                      resolve();
+                    };
+                    window.requestAnimationFrame(step);
+                  });
+
+                  await new Promise((resolve) => setTimeout(resolve, 900));
+                  root.style.scrollBehavior = previousBehavior;
                 }
                 """
             )
@@ -984,6 +1022,41 @@ def mirror_workstation_message_media(client: WorkstationClient, messages: list[C
     return mirrored
 
 
+def register_generated_workstation_media(
+    *,
+    client: WorkstationClient,
+    source_path: Path,
+    title: str,
+    stored_filename: str,
+    content_type: str | None = None,
+) -> WorkstationMediaAsset | None:
+    """Copy a generated artifact into media/ and expose it in the Workstation UI."""
+    if not source_path.is_file():
+        return None
+    safe_name = safe_upload_filename(stored_filename or source_path.name)
+    target_path = client_folder(client) / "media" / safe_name
+    if source_path.resolve() != target_path.resolve():
+        shutil.copy2(source_path, target_path)
+
+    stored_path = relative_data_path(target_path)
+    for asset in WorkstationMediaAsset.list_by_client(client.id):
+        if asset.stored_path == stored_path:
+            return asset
+
+    asset = WorkstationMediaAsset.create(
+        client_id=client.id,
+        asset_id=uuid.uuid4().hex,
+        title=title,
+        original_filename=safe_name,
+        stored_filename=safe_name,
+        stored_path=stored_path,
+        content_type=content_type or mimetypes.guess_type(target_path.name)[0],
+        size_bytes=target_path.stat().st_size,
+    )
+    write_client_files(WorkstationClient.get_by_id(client.id) or client)
+    return asset
+
+
 def first_workstation_image_assets(client: WorkstationClient) -> list[WorkstationMediaAsset]:
     """Return image assets that can act as identity/reference photos."""
     return [
@@ -1047,6 +1120,7 @@ Previous page version:
 Client profile:
 - Name: {lead.full_name or client.display_name}
 - Funnel: {client.funnel_id}
+- Fixed offer price: {client.offer_price_usd or "-"} {client.offer_currency or "USD"}
 - Phone: {lead.phone or lead.normalized_phone or "-"}
 - Email: {lead.email or "-"}
 
@@ -1118,6 +1192,13 @@ def generate_solo_page_version_sync(
         (version_dir / "metadata.json").write_text(
             json.dumps(metadata, ensure_ascii=True, indent=2),
             encoding="utf-8",
+        )
+        register_generated_workstation_media(
+            client=client,
+            source_path=preview_path,
+            title=f"Preview pagina {version_dir.name}",
+            stored_filename=f"generated-page-preview-{version_dir.name}.mp4",
+            content_type="video/mp4",
         )
         return version_dir
     except Exception:
@@ -1454,6 +1535,8 @@ def build_client_summary(client: WorkstationClient) -> WorkstationClientSummary:
         work_type=client.work_type.value,
         status=client.status.value,
         automation_status=client.automation_status.value,
+        offer_price_usd=client.offer_price_usd,
+        offer_currency=client.offer_currency,
         display_name=client.display_name,
         folder_name=client.folder_name,
         folder_path=relative_data_path(folder),
@@ -1528,6 +1611,8 @@ async def create_workstation_client(command: CreateWorkstationClientCommand) -> 
         work_type=command.work_type,
         status=command.status,
         automation_status=command.automation_status,
+        offer_price_usd=command.offer_price_usd,
+        offer_currency=command.offer_currency,
     )
 
 
@@ -1537,16 +1622,36 @@ async def create_workstation_client_from_lead(
     work_type: str = WorkstationClientWorkType.PAGINA_ADS.value,
     status: str = WorkstationClientStatus.PAID.value,
     automation_status: str = WorkstationAutomationStatus.NEEDS_HUMAN.value,
+    offer_price_usd: int | None = None,
+    offer_currency: str = "USD",
 ) -> WorkstationClientDetailResponse:
     """Convert a CRM lead into a paid Workstation client."""
     lead = get_required_lead(lead_id)
+    resolved_offer_price_usd = (
+        offer_price_usd
+        if offer_price_usd is not None
+        else (
+            resolve_solo_page_offer_price_usd(lead.id)
+            if (work_type or "").strip().lower() == WorkstationClientWorkType.SOLO_PAGINA.value
+            else None
+        )
+    )
     existing = WorkstationClient.get_by_lead_id(lead.id)
     client = existing or WorkstationClient.create_for_lead(
         lead,
         work_type=work_type,
         status=status,
         automation_status=automation_status,
+        offer_price_usd=resolved_offer_price_usd,
+        offer_currency=offer_currency,
     )
+    if resolved_offer_price_usd is not None:
+        client = WorkstationClient.update_offer(
+            client.id,
+            offer_price_usd=resolved_offer_price_usd,
+            offer_currency=offer_currency,
+            only_if_missing=True,
+        ) or client
     if existing is None:
         ContadoresLead.update_flow_state(
             lead.id,

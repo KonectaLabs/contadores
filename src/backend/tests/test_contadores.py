@@ -1121,6 +1121,7 @@ def test_active_offer_positive_reply_after_example_creates_solo_page_workstation
         text="Hola Daniel, si te interesa esta oferta respondeme y te mostramos un ejemplo.",
         delivery_status=MessageDeliveryStatus.DELIVERED,
         sequence_step="promo_web_profesional_20260505",
+        whatsapp_template_body_params=["Daniel", "contadores", "Ecuador", "29"],
         created_at=offer_at,
     )
     ContadoresMessage.add(
@@ -1159,6 +1160,8 @@ def test_active_offer_positive_reply_after_example_creates_solo_page_workstation
     assert workstation.work_type == WorkstationClientWorkType.SOLO_PAGINA
     assert workstation.status == WorkstationClientStatus.PENDING_PAYMENT
     assert workstation.automation_status == WorkstationAutomationStatus.INTAKE
+    assert workstation.offer_price_usd == 29
+    assert workstation.offer_currency == "USD"
     assert detail.json()["lead"]["stage"] == "booked"
     assert detail.json()["lead"]["automation_paused"] is True
     assert detail.json()["lead"]["automation_paused_reason"] == "workstation_solo_page_started"
@@ -1166,6 +1169,8 @@ def test_active_offer_positive_reply_after_example_creates_solo_page_workstation
     assert workstation_detail.json()["client"]["work_type"] == "solo_pagina"
     assert workstation_detail.json()["client"]["status"] == "pending_payment"
     assert workstation_detail.json()["client"]["automation_status"] == "intake"
+    assert workstation_detail.json()["client"]["offer_price_usd"] == 29
+    assert workstation_detail.json()["client"]["offer_currency"] == "USD"
 
 
 def test_active_offer_reply_uses_conversation_bot_without_starting_old_sequence(monkeypatch, tmp_path) -> None:
@@ -3885,6 +3890,11 @@ def test_workstation_solo_page_codex_runs_from_repo_root(monkeypatch, tmp_path) 
     )
 
     assert (version_dir / "preview.mp4").read_bytes() == b"mp4"
+    media_assets = WorkstationMediaAsset.list_by_client(workstation.id)
+    preview_assets = [asset for asset in media_assets if asset.content_type == "video/mp4"]
+    assert len(preview_assets) == 1
+    assert preview_assets[0].stored_filename == "generated-page-preview-v001.mp4"
+    assert (data_dir / Path(preview_assets[0].stored_path).relative_to("data")).read_bytes() == b"mp4"
     assert len(calls) == 1
     assert Path(calls[0]["cwd"]).resolve() == workstation_endpoints.REPO_ROOT.resolve()
     assert "sandbox_writable_roots" not in calls[0]
@@ -4077,6 +4087,15 @@ def test_workstation_professional_photo_versions_use_codex_context(monkeypatch, 
     assert edit_response.status_code == 200
     assert edit_response.json()["version"] == "v002"
     assert [photo["version"] for photo in detail_response.json()["professional_photos"]] == ["v001", "v002"]
+    generated_media = [
+        asset
+        for asset in detail_response.json()["media"]
+        if asset["stored_filename"].startswith("generated-professional-photo-")
+    ]
+    assert {asset["stored_filename"] for asset in generated_media} == {
+        "generated-professional-photo-v001.jpg",
+        "generated-professional-photo-v002.jpg",
+    }
     assert file_response.status_code == 200
     assert file_response.content == b"generated-jpg"
     assert len(calls) == 2

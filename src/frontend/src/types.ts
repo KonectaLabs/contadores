@@ -354,6 +354,8 @@ export interface WorkstationClientSummary {
   work_type: string;
   status: string;
   automation_status: string;
+  offer_price_usd: number | null;
+  offer_currency: string;
   display_name: string;
   folder_name: string;
   folder_path: string;

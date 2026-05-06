@@ -73,6 +73,7 @@ SCHEDULING_HANDOFF_SEQUENCE_STEP = "scheduling_handoff_confirmation"
 AUDIO_TRANSCRIPT_SEQUENCE_STEP = "audio_transcript"
 BOOKING_DETAILS_COLLECTED_REASON = "booking_details_collected"
 ACTIVE_OFFER_SEQUENCE_PREFIXES = ("promo_", "offer_")
+SOLO_PAGE_OFFER_PRICE_RE = re.compile(r"(?<!\d)(19|29|49|99)\s*(?:usd|dolares)?", re.IGNORECASE)
 PAGE_EXAMPLE_VIDEO_SEQUENCE_STEP = "manual_page_example_video"
 PAGE_EXAMPLE_VIDEO_PATH = "data/contadores/videos/cliente-pagina.mp4"
 LAWYER_PAGE_EXAMPLE_VIDEO_PATH = "data/contadores/videos/pagina-abogado.mp4"
@@ -2100,12 +2101,21 @@ def start_solo_page_workstation_for_lead(
     reason: str,
 ) -> WorkstationClient:
     """Create the pending-payment solo-page Workstation client and pause sales automation."""
+    offer_price_usd = resolve_solo_page_offer_price_usd(lead.id)
     client = WorkstationClient.create_for_lead(
         lead,
         work_type=WorkstationClientWorkType.SOLO_PAGINA,
         status=WorkstationClientStatus.PENDING_PAYMENT,
         automation_status=WorkstationAutomationStatus.INTAKE,
+        offer_price_usd=offer_price_usd,
     )
+    if offer_price_usd is not None:
+        client = WorkstationClient.update_offer(
+            client.id,
+            offer_price_usd=offer_price_usd,
+            offer_currency="USD",
+            only_if_missing=True,
+        ) or client
     WorkstationClient.update_automation_state(
         client.id,
         automation_status=WorkstationAutomationStatus.INTAKE,
@@ -2476,6 +2486,27 @@ def get_latest_active_offer_message(lead_id: str) -> ContadoresMessage | None:
         if is_active_offer_sequence_step(message.sequence_step):
             return message
     return None
+
+
+def extract_solo_page_offer_price_usd(message: ContadoresMessage | None) -> int | None:
+    """Return the fixed USD price from one solo-page promo message, when present."""
+    if message is None:
+        return None
+    for raw_param in reversed(message.whatsapp_template_body_params):
+        clean_param = "".join(ch for ch in str(raw_param) if ch.isdigit())
+        if not clean_param:
+            continue
+        price = int(clean_param)
+        if price > 0:
+            return price
+
+    match = SOLO_PAGE_OFFER_PRICE_RE.search(message.text or "")
+    return int(match.group(1)) if match else None
+
+
+def resolve_solo_page_offer_price_usd(lead_id: str) -> int | None:
+    """Return the latest fixed solo-page promo price for one lead."""
+    return extract_solo_page_offer_price_usd(get_latest_active_offer_message(lead_id))
 
 
 def get_active_offer_reply_window_start(

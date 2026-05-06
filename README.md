@@ -359,7 +359,8 @@ Promo solo pagina:
   `data/contadores/videos/pagina-abogado.mp4` para abogados.
 - Si el lead vuelve a responder con interes despues del ejemplo, se crea un
   `WorkstationClient` idempotente con `work_type=solo_pagina`,
-  `status=pending_payment` y `automation_status=intake`.
+  `status=pending_payment`, `automation_status=intake` y el precio fijo de la
+  promo en `offer_price_usd`.
 - El CRM queda pausado con
   `automation_paused_reason=workstation_solo_page_started`; desde ese punto
   responde el tick de Workstation, no el bot comercial.
@@ -410,6 +411,8 @@ Al convertir:
 - se registra el evento `workstation_client_created`;
 - la media subida en Workstation se puede renombrar desde la UI sin cambiar el
   archivo fisico guardado en `data/workstation/clients/.../media/`.
+- si la conversion viene de la promo solo pagina, el precio sorteado queda
+  fijo en el cliente de Workstation para saber cuanto cobrar.
 - el summary del CRM expone `workstation_client_id`.
 
 Cada cliente de Workstation tiene notas editables, media subida manualmente con
@@ -487,10 +490,11 @@ data/workstation/clients/{client_id_corto}-{nombre-slug}/
 
 Dentro de esa carpeta se refrescan estos archivos:
 
-- `profile.json`: datos del cliente, lead y media.
+- `profile.json`: datos del cliente, lead, precio de oferta y media.
 - `notes.txt`: notas de reunion.
 - `conversation.txt`: transcript del chat CRM.
-- `media/`: archivos subidos desde Workstation.
+- `media/`: archivos subidos desde Workstation y copias de artefactos
+  generados que conviene ver rapido desde la UI.
 - `professional-photo/vNNN/`: versiones generadas por Codex para la foto
   profesional del cliente.
 - `landing-page/vNNN/`: bocetos estaticos generados por Codex para la promo
@@ -524,7 +528,8 @@ email con el error y el comando/link de reauth.
 
 El preview que recibe el cliente es solo MP4. El backend renderiza el HTML
 estatico con Playwright en desktop `1440x900`, graba un scroll y normaliza el
-archivo con `ffmpeg` a H.264. No se manda link temporal al cliente.
+archivo con `ffmpeg` a H.264. El scroll usa una animacion lineal y continua
+para evitar saltos en paginas largas. No se manda link temporal al cliente.
 
 Cuando la ventana de WhatsApp esta cerrada, Workstation solo usa templates Meta
 aprobados. Los nombres son configurables por `.env`:

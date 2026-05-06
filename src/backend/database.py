@@ -2108,6 +2108,8 @@ class WorkstationClient(SQLModel, table=True):
         default=WorkstationAutomationStatus.NEEDS_HUMAN,
         index=True,
     )
+    offer_price_usd: int | None = Field(default=None, index=True)
+    offer_currency: str = Field(default="USD")
     display_name: str = Field(default="")
     folder_name: str = Field(default="", index=True)
     notes: str = Field(default="")
@@ -2206,6 +2208,8 @@ class WorkstationClient(SQLModel, table=True):
         work_type: WorkstationClientWorkType | str = WorkstationClientWorkType.PAGINA_ADS,
         status: WorkstationClientStatus | str = WorkstationClientStatus.PAID,
         automation_status: WorkstationAutomationStatus | str = WorkstationAutomationStatus.NEEDS_HUMAN,
+        offer_price_usd: int | None = None,
+        offer_currency: str = "USD",
     ) -> "WorkstationClient":
         """Create one Workstation client for a paid lead, idempotently."""
         existing = cls.get_by_lead_id(lead.id)
@@ -2224,11 +2228,41 @@ class WorkstationClient(SQLModel, table=True):
                 status=normalize_workstation_client_status(status),
                 work_type=normalize_workstation_work_type(work_type),
                 automation_status=normalize_workstation_automation_status(automation_status),
+                offer_price_usd=offer_price_usd if offer_price_usd and offer_price_usd > 0 else None,
+                offer_currency=((offer_currency or "USD").strip().upper()[:12] or "USD"),
                 display_name=display_name,
                 folder_name=folder_name,
                 created_at=now,
                 updated_at=now,
             )
+            session.add(item)
+            session.commit()
+            session.refresh(item)
+            session.expunge(item)
+            return item
+
+    @classmethod
+    def update_offer(
+        cls,
+        client_id: str,
+        *,
+        offer_price_usd: int | None,
+        offer_currency: str = "USD",
+        only_if_missing: bool = True,
+    ) -> Optional["WorkstationClient"]:
+        """Persist the fixed commercial offer attached to one Workstation job."""
+        clean_price = offer_price_usd if offer_price_usd and offer_price_usd > 0 else None
+        clean_currency = ((offer_currency or "USD").strip().upper()[:12] or "USD")
+        with Session(engine) as session:
+            item = session.get(cls, client_id)
+            if item is None:
+                return None
+            if only_if_missing and item.offer_price_usd is not None:
+                session.expunge(item)
+                return item
+            item.offer_price_usd = clean_price
+            item.offer_currency = clean_currency
+            item.updated_at = datetime.now(timezone.utc)
             session.add(item)
             session.commit()
             session.refresh(item)
@@ -4265,6 +4299,8 @@ def ensure_workstation_client_automation_columns() -> None:
         column_definitions = {
             "work_type": "TEXT NOT NULL DEFAULT 'PAGINA_ADS'",
             "automation_status": "TEXT NOT NULL DEFAULT 'NEEDS_HUMAN'",
+            "offer_price_usd": "INTEGER",
+            "offer_currency": "TEXT NOT NULL DEFAULT 'USD'",
             "last_automation_handled_at": "TIMESTAMP",
             "last_preview_sent_at": "TIMESTAMP",
             "approved_at": "TIMESTAMP",
@@ -4314,6 +4350,7 @@ def ensure_workstation_client_automation_columns() -> None:
         for column_name in [
             "work_type",
             "automation_status",
+            "offer_price_usd",
             "last_automation_handled_at",
             "last_preview_sent_at",
             "approved_at",

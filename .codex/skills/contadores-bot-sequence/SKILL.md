@@ -208,7 +208,7 @@ deterministic fast path before normal scheduling:
 - If the lead responds positively after that example, queue
   `start_workstation_solo_page`. The backend creates or reuses one
   `WorkstationClient` with `work_type=solo_pagina`, `status=pending_payment`,
-  and `automation_status=intake`.
+  `automation_status=intake`, and the fixed promo price in `offer_price_usd`.
 - Once Workstation starts, the CRM lead is `booked`, automation is paused with
   `automation_paused_reason=workstation_solo_page_started`, and future replies
   are handled by `/api/workstation/automation/tick`.
