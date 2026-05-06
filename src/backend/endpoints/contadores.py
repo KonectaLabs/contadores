@@ -10,6 +10,7 @@ import logging
 import mimetypes
 import os
 import re
+import shutil
 import uuid
 import unicodedata
 from collections import Counter
@@ -51,10 +52,12 @@ from backend.database import (
     WorkstationClient,
     WorkstationClientStatus,
     WorkstationClientWorkType,
+    WorkstationMediaAsset,
     engine,
     normalize_contadores_tags,
     normalize_email,
     normalize_phone,
+    normalize_workstation_slug,
 )
 from backend.funnel_config import GENERAL_INBOX_FUNNEL_ID, get_contadores_funnel
 from backend.funnel_config import get_file_backed_funnel, get_funnel, upsert_funnel
@@ -1915,6 +1918,91 @@ def safe_message_media_filename(filename: str | None) -> str:
     return f"{stem or 'file'}{suffix}"
 
 
+def safe_workstation_media_filename(filename: str | None) -> str:
+    """Return the Workstation media filename used for mirrored WhatsApp images."""
+    raw_name = Path(filename or "file").name
+    stem = normalize_workstation_slug(Path(raw_name).stem)
+    suffix = "".join(ch for ch in Path(raw_name).suffix.lower() if ch.isalnum() or ch == ".")[:12]
+    return f"{stem}{suffix}" if suffix else stem
+
+
+def workstation_client_media_folder(client: WorkstationClient) -> Path:
+    """Return the media folder for one Workstation client."""
+    folder = DATA_DIR / "workstation" / "clients" / client.folder_name / "media"
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
+
+
+def relative_data_path(path: Path) -> str:
+    """Return a stable data/... path for files under the shared data volume."""
+    data_dir = DATA_DIR.expanduser().resolve()
+    resolved = path.expanduser().resolve()
+    try:
+        relative = resolved.relative_to(data_dir)
+    except ValueError:
+        return str(resolved)
+    return str(Path("data") / relative)
+
+
+def message_is_inbound_image(message: ContadoresMessage) -> bool:
+    """Return True when one inbound WhatsApp media row is an image."""
+    if message.from_me or not message.media_path:
+        return False
+    media_type = (message.media_type or "").strip().lower()
+    mime_type = (message.media_mime_type or "").strip().lower()
+    return media_type == "image" or mime_type.startswith("image/")
+
+
+def mirror_workstation_inbound_image(
+    *,
+    lead: ContadoresLead,
+    message: ContadoresMessage,
+) -> WorkstationMediaAsset | None:
+    """Copy one inbound user image into that lead's Workstation media folder."""
+    if not message_is_inbound_image(message):
+        return None
+
+    client = WorkstationClient.get_by_lead_id(lead.id)
+    if client is None:
+        return None
+
+    source_path = resolve_message_media_file(message.media_path)
+    if source_path is None or not source_path.is_file():
+        return None
+
+    existing_paths = {asset.stored_path for asset in WorkstationMediaAsset.list_by_client(client.id)}
+    safe_name = safe_workstation_media_filename(message.media_filename or source_path.name)
+    stored_filename = f"whatsapp-{message.id or uuid.uuid4().hex[:8]}-{safe_name}"
+    target_path = workstation_client_media_folder(client) / stored_filename
+    stored_path = relative_data_path(target_path)
+    if stored_path in existing_paths:
+        return None
+
+    shutil.copy2(source_path, target_path)
+    return WorkstationMediaAsset.create(
+        client_id=client.id,
+        asset_id=uuid.uuid4().hex,
+        title=message.media_caption or message.media_filename or source_path.name,
+        original_filename=message.media_filename or source_path.name,
+        stored_filename=stored_filename,
+        stored_path=stored_path,
+        content_type=message.media_mime_type or mimetypes.guess_type(source_path.name)[0],
+        size_bytes=target_path.stat().st_size,
+    )
+
+
+def try_mirror_workstation_inbound_image(
+    *,
+    lead: ContadoresLead,
+    message: ContadoresMessage,
+) -> None:
+    """Best-effort mirror for inbound user images; never blocks WhatsApp intake."""
+    try:
+        mirror_workstation_inbound_image(lead=lead, message=message)
+    except Exception:
+        logger.exception("Could not mirror inbound image %s into Workstation.", message.id)
+
+
 def classify_message_media_type(content_type: str | None, filename: str) -> str:
     """Map an uploaded file to the WhatsApp media family used by the bot."""
     media_type = (content_type or mimetypes.guess_type(filename)[0] or "").lower()
@@ -3698,6 +3786,7 @@ def record_whatsapp_inbound_for_lead(
         media_sha256=command.media_sha256,
         media_id=command.media_id,
     )
+    try_mirror_workstation_inbound_image(lead=lead, message=row)
 
     transcript = resolve_inbound_audio_transcript(command)
     if transcript is None:
@@ -3726,6 +3815,8 @@ def duplicate_inbound_response(command: ContadoresWhatsAppInboundCommand) -> Con
 
     existing_message = existing_messages[0]
     lead = ContadoresLead.get_by_id(existing_message.lead_id)
+    if lead is not None:
+        try_mirror_workstation_inbound_image(lead=lead, message=existing_message)
     return ContadoresWhatsAppInboundResponse(
         status="processed",
         route=lead.funnel_id if lead else None,

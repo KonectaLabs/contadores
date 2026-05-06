@@ -34,6 +34,10 @@ WhatsApp strategy videos should be referenced by `media_path` under the shared
 same path through one stable media URL. WhatsApp media sent by leads should also
 be downloaded into `data/contadores/inbound_media` when available so operators
 can inspect images, videos, audio, documents, and stickers from the CRM.
+When a lead has a Workstation client, inbound user images must also be mirrored
+into that client's `data/workstation/clients/.../media/` folder. If the lead is
+converted after the image arrived, the conversion step mirrors existing
+conversation images into the new workspace.
 Inbound audio should be transcribed before the conversational bot runs. The
 server image must include `ffmpeg` so WhatsApp `.ogg` audio can be converted for
 OpenAI speech-to-text, and the env should keep

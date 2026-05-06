@@ -1730,6 +1730,8 @@ async def create_workstation_client_from_lead(
             ),
         )
     fresh_client = WorkstationClient.get_by_id(client.id) or client
+    mirror_workstation_message_media(fresh_client, ContadoresMessage.list_by_lead(lead.id))
+    fresh_client = WorkstationClient.get_by_id(client.id) or fresh_client
     return build_client_detail(fresh_client)
 
 

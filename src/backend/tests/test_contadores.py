@@ -2543,6 +2543,82 @@ def test_conversation_bot_answers_transcribed_audio(monkeypatch, tmp_path) -> No
     assert pending.json()["messages"][0]["text"] == "La inversion es de 300 USD, pago unico."
 
 
+def test_whatsapp_inbound_image_mirrors_to_existing_workstation_client(monkeypatch, tmp_path) -> None:
+    """Images sent by an existing Workstation client should land in that client's media folder."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    data_dir = tmp_path / "data"
+    monkeypatch.setattr(database_module, "DATA_DIR", data_dir)
+    monkeypatch.setattr(contadores_endpoints, "DATA_DIR", data_dir)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-workstation-live-image",
+        phone="+5491333333399",
+        full_name="Cliente Imagen",
+    )
+    workstation = WorkstationClient.create_for_lead(lead)
+    source_path = data_dir / "contadores" / "inbound_media" / "lead-photo.jpg"
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    source_path.write_bytes(b"lead-photo-bytes")
+    payload = {
+        "phone": lead.phone,
+        "text": "[image]",
+        "external_id": "wamid.image.workspace.1",
+        "media_type": "image",
+        "media_path": "data/contadores/inbound_media/lead-photo.jpg",
+        "media_caption": "Foto del estudio",
+        "media_mime_type": "image/jpeg",
+        "media_filename": "lead photo.jpg",
+    }
+
+    with TestClient(app) as client:
+        first = client.post("/api/contadores/whatsapp/inbound", json=payload)
+        retry = client.post("/api/contadores/whatsapp/inbound", json=payload)
+
+    assert first.status_code == 200
+    assert retry.status_code == 200
+    media_assets = WorkstationMediaAsset.list_by_client(workstation.id)
+    assert len(media_assets) == 1
+    assert media_assets[0].title == "Foto del estudio"
+    assert media_assets[0].stored_path.startswith("data/workstation/clients/")
+    mirrored_path = data_dir / Path(media_assets[0].stored_path).relative_to("data")
+    assert mirrored_path.read_bytes() == b"lead-photo-bytes"
+
+
+def test_workstation_creation_mirrors_existing_whatsapp_images(monkeypatch, tmp_path) -> None:
+    """Images already present in the conversation should be copied when a workspace is created."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    data_dir = tmp_path / "data"
+    monkeypatch.setattr(database_module, "DATA_DIR", data_dir)
+    monkeypatch.setattr(contadores_endpoints, "DATA_DIR", data_dir)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-workstation-existing-image",
+        phone="+5491333333400",
+        full_name="Cliente Imagen Previa",
+    )
+    source_path = data_dir / "contadores" / "inbound_media" / "previous-photo.png"
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    source_path.write_bytes(b"previous-photo-bytes")
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=False,
+        text="[image]",
+        media_type="image",
+        media_path="data/contadores/inbound_media/previous-photo.png",
+        media_caption="Logo actual",
+        media_mime_type="image/png",
+        media_filename="logo actual.png",
+    )
+
+    with TestClient(app) as client:
+        created = client.post(f"/api/workstation/clients/from-lead/{lead.id}")
+
+    assert created.status_code == 200
+    media_payload = created.json()["media"]
+    assert len(media_payload) == 1
+    assert media_payload[0]["title"] == "Logo actual"
+    mirrored_path = data_dir / Path(media_payload[0]["stored_path"]).relative_to("data")
+    assert mirrored_path.read_bytes() == b"previous-photo-bytes"
+
+
 def test_contadores_reply_after_24h_followup_still_advances_to_loom(monkeypatch, tmp_path) -> None:
     """A reply after the 24-hour reminder should use the usual next stage and Loom copy."""
     configure_contadores_db(monkeypatch, tmp_path)

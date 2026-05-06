@@ -21,7 +21,7 @@ Read these files first:
 - `profile.json`: client, lead, folder, and media metadata.
 - `notes.txt`: operator meeting notes and client requirements.
 - `conversation.txt`: CRM/WhatsApp transcript.
-- `media/`: uploaded client files such as logos, photos, screenshots, or visual references. Operators can add these from the Workstation file selector, by dropping a file on the `Media` panel, or by pasting a clipboard file while that panel is active. Operators can rename the media title and download filename from the UI; the physical stored filename remains stable.
+- `media/`: uploaded client files such as logos, photos, screenshots, or visual references. Operators can add these from the Workstation file selector, by dropping a file on the `Media` panel, or by pasting a clipboard file while that panel is active. Images sent by the client in the WhatsApp conversation are mirrored here automatically when a Workstation client exists, and existing conversation images are mirrored when the lead is converted. Operators can rename the media title and download filename from the UI; the physical stored filename remains stable.
 - `landing-page/vNNN/`: versioned static page drafts for `work_type=solo_pagina`,
   including `index.html`, `styles.css`, `script.js`, `assets/`, `preview.mp4`,
   and `metadata.json`.

@@ -164,3 +164,6 @@ operator can choose files, drag them into the composer, or paste clipboard
 images/files. The backend stores these under
 `data/contadores/outbound_media/{lead_id}/`; the bot sends them as WhatsApp
 image, video, audio, or document media.
+Inbound user images are still stored for CRM review and are mirrored into the
+Workstation client's `media/` folder whenever that client exists; conversion to
+Workstation also mirrors any existing conversation images.

@@ -242,6 +242,10 @@ clipboard images/files. Uploaded outbound files are stored under
 `data/contadores/outbound_media/{lead_id}/`, recorded on the queued
 `contadores_messages` row, shown in the CRM timeline, and dispatched by the bot
 as WhatsApp image, video, audio, or document media.
+Inbound images sent by the lead remain visible in the CRM and are mirrored into
+the Workstation client's `media/` folder when that client exists. If the lead is
+converted after sending images, the conversion step mirrors those existing
+conversation images into the new client workspace.
 
 Manual/custom outbound is only allowed while WhatsApp's 24-hour customer service
 window is open. If `last_inbound_at` is older than 24 hours or missing, do not

@@ -404,6 +404,10 @@ Media en WhatsApp:
   reproducirlos y, si la transcripcion sale bien, el transcript queda como un
   mensaje inbound subsiguiente con `sequence_step=audio_transcript`, para que el
   operador lea el chat sin escuchar el audio y el bot siga como texto normal.
+- Si el lead ya tiene cliente en Workstation, toda imagen inbound del usuario se
+  copia tambien a `data/workstation/clients/.../media/`. Si la imagen llego
+  antes de crear el cliente, se copia al workspace en el momento de convertir el
+  lead.
 - La media o archivos que envia el operador desde `Manual outbound` se guardan
   en `data/contadores/outbound_media/{lead_id}/`, se muestran en el chat y el
   bot los despacha por WhatsApp como imagen, video, audio o documento.
@@ -514,7 +518,8 @@ Dentro de esa carpeta se refrescan estos archivos:
 - `notes.txt`: notas de reunion.
 - `conversation.txt`: transcript del chat CRM.
 - `media/`: archivos subidos desde Workstation y copias de artefactos
-  generados que conviene ver rapido desde la UI.
+  generados que conviene ver rapido desde la UI. Las imagenes que el cliente
+  mande por WhatsApp tambien se copian aca automaticamente.
 - `professional-photo/vNNN/`: versiones generadas por Codex para la foto
   profesional del cliente.
 - `landing-page/vNNN/`: bocetos estaticos generados por Codex para la promo

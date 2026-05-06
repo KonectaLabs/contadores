@@ -25,6 +25,9 @@ referenced by funnel `media_path`. The bot sends the configured file and the
 frontend serves that same file by stable path. Media sent by leads is downloaded
 into `data/contadores/inbound_media` when available and served through the same
 protected media endpoint for CRM review.
+Inbound user images are also mirrored into
+`data/workstation/clients/.../media/` once the lead has a Workstation client;
+conversion mirrors any image files that arrived before the workspace existed.
 
 ## Minimum Config
 
