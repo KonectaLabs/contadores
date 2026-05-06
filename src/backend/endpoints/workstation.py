@@ -525,6 +525,12 @@ class StartSoloPageWorkCommand(BaseModel):
     prompt: str = Field(min_length=1, max_length=4000)
 
 
+class SteerSoloPageWorkCommand(BaseModel):
+    """Send additional operator guidance to an active solo-page Codex run."""
+
+    message: str = Field(min_length=1, max_length=4000)
+
+
 class EditProfessionalPhotoCommand(BaseModel):
     """Create a new professional photo version from an existing version."""
 
@@ -2398,6 +2404,36 @@ async def stop_workstation_solo_page_work(client_id: str) -> WorkstationClientDe
         if callable(interrupt):
             interrupt()
     mark_workstation_stopped_by_operator(client, clear_stop_request=False)
+    return build_client_detail(WorkstationClient.get_by_id(client.id) or client)
+
+
+@workstation_router.post(
+    "/clients/{client_id}/solo-page/steer",
+    response_model=WorkstationClientDetailResponse,
+)
+async def steer_workstation_solo_page_work(
+    client_id: str,
+    command: SteerSoloPageWorkCommand,
+) -> WorkstationClientDetailResponse:
+    """Send additional operator guidance to a running Codex turn."""
+    client = get_required_client(client_id)
+    if client.work_type != WorkstationClientWorkType.SOLO_PAGINA:
+        raise HTTPException(status_code=400, detail="This action is only available for solo-page clients.")
+    turn = active_solo_page_codex_turns.get(client.id)
+    if turn is None or client.automation_status not in {
+        WorkstationAutomationStatus.DRAFTING,
+        WorkstationAutomationStatus.REVISION_REQUESTED,
+    }:
+        raise HTTPException(status_code=409, detail="Codex is not working for this client.")
+
+    message = command.message.strip()
+    if not message:
+        raise HTTPException(status_code=422, detail="Write a steer message first.")
+    steer = getattr(turn, "steer", None)
+    if not callable(steer):
+        raise HTTPException(status_code=409, detail="This Codex run cannot receive steer messages.")
+    steer(message)
+    append_workstation_progress(client, f"Operator steered Codex: {message[:240]}")
     return build_client_detail(WorkstationClient.get_by_id(client.id) or client)
 
 

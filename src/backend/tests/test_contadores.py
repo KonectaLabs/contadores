@@ -4875,6 +4875,48 @@ def test_workstation_solo_page_stop_interrupts_active_codex(monkeypatch, tmp_pat
     workstation_endpoints.solo_page_stop_requested_client_ids.clear()
 
 
+def test_workstation_solo_page_steer_sends_message_to_active_codex(monkeypatch, tmp_path) -> None:
+    """Operators should be able to steer a running Codex turn for one client."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setattr(database_module, "DATA_DIR", tmp_path / "data")
+    workstation_endpoints.active_solo_page_codex_turns.clear()
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-steer-workstation-codex",
+        phone="+5491777777716",
+        full_name="Cliente Steer",
+    )
+    workstation = WorkstationClient.create_for_lead(
+        lead,
+        work_type=WorkstationClientWorkType.SOLO_PAGINA,
+        status=WorkstationClientStatus.PENDING_PAYMENT,
+        automation_status=WorkstationAutomationStatus.DRAFTING,
+    )
+    WorkstationClient.update_automation_state(
+        workstation.id,
+        automation_status=WorkstationAutomationStatus.DRAFTING,
+        last_automation_handled_at=now_utc(),
+    )
+    steered_messages: list[str] = []
+
+    class FakeTurn:
+        def steer(self, message: str) -> None:
+            steered_messages.append(message)
+
+    workstation_endpoints.active_solo_page_codex_turns[workstation.id] = FakeTurn()
+
+    with TestClient(app) as client:
+        response = client.post(
+            f"/api/workstation/clients/{workstation.id}/solo-page/steer",
+            json={"message": "Hacelo mas sobrio y prioriza la foto profesional."},
+        )
+
+    assert response.status_code == 200
+    assert steered_messages == ["Hacelo mas sobrio y prioriza la foto profesional."]
+    progress = workstation_endpoints.workstation_progress_path(workstation).read_text(encoding="utf-8")
+    assert "Operator steered Codex: Hacelo mas sobrio" in progress
+    workstation_endpoints.active_solo_page_codex_turns.clear()
+
+
 def test_workstation_tick_approval_marks_needs_human(monkeypatch, tmp_path) -> None:
     """Client approval should stop automation and hand the job to a human operator."""
     configure_contadores_db(monkeypatch, tmp_path)

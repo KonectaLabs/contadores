@@ -68,6 +68,10 @@ Workstation `Actions` menu. Stop interrupts the active Codex turn for that
 client, moves the client to `needs_human`, and records the stop in `progress.md`
 without creating a failure alert.
 
+Operators can also steer a running solo-page Codex draft or revision from the
+same menu. Steer sends a short instruction to the active Codex turn without
+restarting the job, and records the instruction in `progress.md`.
+
 ## Operating Rules
 
 - Do not call GPT Image or other paid image APIs unless the user explicitly asks.

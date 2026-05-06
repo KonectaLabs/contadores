@@ -890,6 +890,33 @@ export function App() {
     }
   }
 
+  async function steerSoloPageCodexWork(message: string) {
+    const clientId = workstationDetail?.client.id ?? selectedWorkstationClientId;
+    const cleanMessage = message.trim();
+    if (!clientId || !cleanMessage) {
+      setError("Escribi un mensaje para Codex.");
+      return false;
+    }
+    setActionBusy("solo-page-steer");
+    try {
+      const payload = await apiFetch<WorkstationClientDetailResponse>(
+        `/api/workstation/clients/${clientId}/solo-page/steer`,
+        {
+          method: "POST",
+          body: JSON.stringify({ message: cleanMessage }),
+        },
+      );
+      setWorkstationDetail(payload);
+      await loadWorkstation();
+      return true;
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not steer Codex for this page.");
+      return false;
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
   function updateProfessionalPhotoEditPrompt(version: string, prompt: string) {
     setProfessionalPhotoEditPrompts((current) => ({ ...current, [version]: prompt }));
   }
@@ -1399,6 +1426,7 @@ export function App() {
           onCreateProfessionalPhoto={createProfessionalPhoto}
           onStartSoloPageCodexWork={startSoloPageCodexWork}
           onStopSoloPageCodexWork={stopSoloPageCodexWork}
+          onSteerSoloPageCodexWork={steerSoloPageCodexWork}
           onProfessionalPhotoEditPromptChange={updateProfessionalPhotoEditPrompt}
           onEditProfessionalPhoto={(version) => editProfessionalPhoto(version)}
         />
@@ -2169,6 +2197,7 @@ function WorkstationView({
   onCreateProfessionalPhoto,
   onStartSoloPageCodexWork,
   onStopSoloPageCodexWork,
+  onSteerSoloPageCodexWork,
   onProfessionalPhotoEditPromptChange,
   onEditProfessionalPhoto,
 }: {
@@ -2205,6 +2234,7 @@ function WorkstationView({
   onCreateProfessionalPhoto: (mediaAssetIds?: string[], context?: string) => boolean | Promise<boolean>;
   onStartSoloPageCodexWork: (operatorPrompt: string) => boolean | Promise<boolean>;
   onStopSoloPageCodexWork: () => void | Promise<void>;
+  onSteerSoloPageCodexWork: (message: string) => boolean | Promise<boolean>;
   onProfessionalPhotoEditPromptChange: (version: string, prompt: string) => void;
   onEditProfessionalPhoto: (version: string) => void;
 }) {
@@ -2229,6 +2259,8 @@ function WorkstationView({
   const [professionalPhotoModalOpen, setProfessionalPhotoModalOpen] = useState(false);
   const [soloPagePromptModalOpen, setSoloPagePromptModalOpen] = useState(false);
   const [soloPageOperatorPrompt, setSoloPageOperatorPrompt] = useState("");
+  const [soloPageSteerModalOpen, setSoloPageSteerModalOpen] = useState(false);
+  const [soloPageSteerMessage, setSoloPageSteerMessage] = useState("");
   const canUploadMedia = Boolean(activeClient) && actionBusy !== "workstation-upload";
   const currentProfessionalPhotoJob = professionalPhotoJob?.client_id === activeClient?.id ? professionalPhotoJob : null;
   const professionalPhotoJobBusy = currentProfessionalPhotoJob?.status === "queued" || currentProfessionalPhotoJob?.status === "running";
@@ -2265,6 +2297,8 @@ function WorkstationView({
     setProfessionalPhotoModalOpen(false);
     setSoloPagePromptModalOpen(false);
     setSoloPageOperatorPrompt("");
+    setSoloPageSteerModalOpen(false);
+    setSoloPageSteerMessage("");
   }, [selectedClientId]);
 
   function openProfessionalPhotoModal() {
@@ -2288,6 +2322,16 @@ function WorkstationView({
   function closeSoloPagePromptModal() {
     setSoloPagePromptModalOpen(false);
     setSoloPageOperatorPrompt("");
+  }
+
+  function openSoloPageSteerModal() {
+    setActionsOpen(false);
+    setSoloPageSteerModalOpen(true);
+  }
+
+  function closeSoloPageSteerModal() {
+    setSoloPageSteerModalOpen(false);
+    setSoloPageSteerMessage("");
   }
 
   function startMediaEdit(asset: WorkstationMediaAsset) {
@@ -2376,6 +2420,14 @@ function WorkstationView({
     const started = await onStartSoloPageCodexWork(soloPageOperatorPrompt);
     if (started) {
       closeSoloPagePromptModal();
+    }
+  }
+
+  async function submitSoloPageSteerModal(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const sent = await onSteerSoloPageCodexWork(soloPageSteerMessage);
+    if (sent) {
+      closeSoloPageSteerModal();
     }
   }
 
@@ -2482,6 +2534,15 @@ function WorkstationView({
                         >
                           <X size={16} weight="bold" />
                           <span>Stop Codex</span>
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={openSoloPageSteerModal}
+                          disabled={!canStopSoloPageWork || actionBusy === "solo-page-steer"}
+                        >
+                          <PaperPlaneTilt size={16} weight="bold" />
+                          <span>Steer Codex</span>
                         </button>
                         <button
                           type="button"
@@ -2817,6 +2878,66 @@ function WorkstationView({
           onSubmit={submitSoloPagePromptModal}
         />
       ) : null}
+      {soloPageSteerModalOpen ? (
+        <SoloPageSteerModal
+          message={soloPageSteerMessage}
+          busy={actionBusy === "solo-page-steer"}
+          onMessageChange={setSoloPageSteerMessage}
+          onClose={closeSoloPageSteerModal}
+          onSubmit={submitSoloPageSteerModal}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function SoloPageSteerModal({
+  message,
+  busy,
+  onMessageChange,
+  onClose,
+  onSubmit,
+}: {
+  message: string;
+  busy: boolean;
+  onMessageChange: (value: string) => void;
+  onClose: () => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <div className="ct-modal open" aria-hidden="false">
+      <button className="ct-modal-overlay" type="button" onClick={onClose} aria-label="Cerrar steer de Codex" />
+      <form className="ct-modal-panel workstation-solo-page-modal" role="dialog" aria-modal="true" aria-labelledby="workstationSoloPageSteerModalTitle" onSubmit={onSubmit}>
+        <header className="ct-modal-head">
+          <div>
+            <p className="ct-drawer-kicker">Workstation</p>
+            <h3 id="workstationSoloPageSteerModalTitle">Steer Codex</h3>
+            <p className="ct-modal-subtitle">Mensaje adicional para el run activo.</p>
+          </div>
+          <button type="button" className="ct-btn ct-btn-ghost workstation-modal-close" onClick={onClose} aria-label="Cerrar">
+            <X size={15} weight="bold" />
+          </button>
+        </header>
+        <div className="ct-modal-body">
+          <label className="ct-field workstation-prompt-field">
+            <span>Mensaje para Codex</span>
+            <textarea
+              value={message}
+              onChange={(event) => onMessageChange(event.target.value)}
+              placeholder="Segui, pero usá un tono más sobrio y no uses la foto del logo..."
+              rows={6}
+              autoFocus
+            />
+          </label>
+        </div>
+        <footer className="ct-modal-foot">
+          <button type="button" className="ct-btn ct-btn-ghost" onClick={onClose}>Cancel</button>
+          <button type="submit" className="ct-btn ct-btn-primary" disabled={!message.trim() || busy}>
+            {busy ? <SpinnerGap className="workstation-spinner" size={15} weight="bold" /> : <PaperPlaneTilt size={15} weight="bold" />}
+            {busy ? "Enviando..." : "Enviar"}
+          </button>
+        </footer>
+      </form>
     </div>
   );
 }
