@@ -4069,7 +4069,7 @@ def test_workstation_tick_generates_preview_without_blocking_on_missing_photo(mo
         status=WorkstationClientStatus.PENDING_PAYMENT,
         automation_status=WorkstationAutomationStatus.INTAKE,
     )
-    intake_at = now_utc() - timedelta(minutes=2)
+    intake_at = now_utc() - timedelta(minutes=30)
     ContadoresMessage.add(
         lead_id=lead.id,
         from_me=True,
@@ -4087,7 +4087,7 @@ def test_workstation_tick_generates_preview_without_blocking_on_missing_photo(mo
         lead_id=lead.id,
         from_me=False,
         text="El estudio se llama Molina Contadores, hacemos impuestos y sociedades en Quito.",
-        created_at=now_utc() - timedelta(seconds=45),
+        created_at=now_utc() - timedelta(minutes=21),
     )
     generated_calls: list[dict[str, object]] = []
 
@@ -4118,6 +4118,56 @@ def test_workstation_tick_generates_preview_without_blocking_on_missing_photo(mo
     updated = WorkstationClient.get_by_lead_id(lead.id)
     assert updated.automation_status == WorkstationAutomationStatus.AWAITING_REVIEW
     assert updated.last_preview_sent_at is not None
+
+
+def test_workstation_tick_waits_twenty_minutes_before_generating_preview(monkeypatch, tmp_path) -> None:
+    """Solo-page Workstation should wait for a long quiet window before drafting."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setattr(database_module, "DATA_DIR", tmp_path / "data")
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-workstation-draft-backoff",
+        phone="+5491777777788",
+        full_name="Cliente Backoff",
+    )
+    workstation = WorkstationClient.create_for_lead(
+        lead,
+        work_type=WorkstationClientWorkType.SOLO_PAGINA,
+        status=WorkstationClientStatus.PENDING_PAYMENT,
+        automation_status=WorkstationAutomationStatus.INTAKE,
+    )
+    intake_at = now_utc() - timedelta(minutes=30)
+    WorkstationClient.update_automation_state(
+        workstation.id,
+        automation_status=WorkstationAutomationStatus.INTAKE,
+        last_automation_handled_at=intake_at,
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=True,
+        text="Perfecto, entonces arrancamos con la pagina.",
+        sequence_step="workstation_intake",
+        delivery_status=MessageDeliveryStatus.DELIVERED,
+        created_at=intake_at,
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=False,
+        text="Estoy juntando fotos y datos del estudio.",
+        created_at=now_utc() - timedelta(minutes=19),
+    )
+
+    def fail_generate_solo_page_version_sync(**kwargs) -> Path:
+        raise AssertionError("Workstation generated before the quiet window elapsed")
+
+    monkeypatch.setattr(workstation_endpoints, "generate_solo_page_version_sync", fail_generate_solo_page_version_sync)
+
+    with TestClient(app) as client:
+        tick = client.post("/api/workstation/automation/tick")
+
+    assert tick.status_code == 200
+    assert tick.json()["drafts_generated"] == 0
+    updated = WorkstationClient.get_by_lead_id(lead.id)
+    assert updated.automation_status == WorkstationAutomationStatus.INTAKE
 
 
 def test_manual_solo_page_conversion_uses_existing_chat_context(monkeypatch, tmp_path) -> None:
@@ -4155,7 +4205,7 @@ def test_manual_solo_page_conversion_uses_existing_chat_context(monkeypatch, tmp
         lead_id=lead.id,
         from_me=False,
         text="Mi despacho se llama Estudio Manual, trabajo derecho civil y familia en Caracas.",
-        created_at=now_utc() - timedelta(seconds=45),
+        created_at=now_utc() - timedelta(minutes=21),
     )
 
     generated_calls: list[dict[str, object]] = []
@@ -4311,7 +4361,7 @@ def test_workstation_tick_approval_marks_needs_human(monkeypatch, tmp_path) -> N
         status=WorkstationClientStatus.PENDING_PAYMENT,
         automation_status=WorkstationAutomationStatus.AWAITING_REVIEW,
     )
-    preview_at = now_utc() - timedelta(minutes=5)
+    preview_at = now_utc() - timedelta(minutes=25)
     WorkstationClient.update_automation_state(
         workstation.id,
         automation_status=WorkstationAutomationStatus.AWAITING_REVIEW,
@@ -4332,7 +4382,7 @@ def test_workstation_tick_approval_marks_needs_human(monkeypatch, tmp_path) -> N
         lead_id=lead.id,
         from_me=False,
         text="Me gusta, asi esta bien",
-        created_at=now_utc() - timedelta(seconds=45),
+        created_at=now_utc() - timedelta(minutes=21),
     )
 
     with TestClient(app) as client:

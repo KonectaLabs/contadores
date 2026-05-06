@@ -38,6 +38,11 @@ must create a pending runtime alert for email notification and the client detail
 payload must expose `runtime_alerts`; the UI shows the failure state, error, and
 email notification status directly on the Workstation client page.
 
+Solo-page automation waits for 20 minutes of silence after the latest inbound
+message before drafting, revising, or treating the preview as approved. This
+gives clients time to send photos, audio, and business details in multiple
+messages.
+
 ## Operating Rules
 
 - Do not call GPT Image or other paid image APIs unless the user explicitly asks.
