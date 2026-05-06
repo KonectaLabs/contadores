@@ -4875,6 +4875,31 @@ def test_workstation_solo_page_stop_interrupts_active_codex(monkeypatch, tmp_pat
     workstation_endpoints.solo_page_stop_requested_client_ids.clear()
 
 
+def test_workstation_progress_logging_uses_module_logger(monkeypatch, tmp_path) -> None:
+    """Progress logging fallbacks should not crash with an undefined logger."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setattr(database_module, "DATA_DIR", tmp_path / "data")
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-workstation-progress-logger",
+        phone="+5491777777717",
+        full_name="Cliente Logger",
+    )
+    workstation = WorkstationClient.create_for_lead(
+        lead,
+        work_type=WorkstationClientWorkType.SOLO_PAGINA,
+        status=WorkstationClientStatus.PENDING_PAYMENT,
+        automation_status=WorkstationAutomationStatus.INTAKE,
+    )
+
+    def fail_write_text(*args, **kwargs) -> None:
+        raise OSError("disk unavailable")
+
+    progress_path = workstation_endpoints.workstation_progress_path(workstation)
+    monkeypatch.setattr(type(progress_path), "write_text", fail_write_text)
+
+    workstation_endpoints.append_workstation_progress(workstation, "This should be logged, not raised.")
+
+
 def test_workstation_solo_page_steer_sends_message_to_active_codex(monkeypatch, tmp_path) -> None:
     """Operators should be able to steer a running Codex turn for one client."""
     configure_contadores_db(monkeypatch, tmp_path)

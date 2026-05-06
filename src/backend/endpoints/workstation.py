@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import mimetypes
 import shutil
 import subprocess
@@ -57,6 +58,7 @@ from backend.endpoints.contadores import (
 )
 
 workstation_router = APIRouter(prefix="/api/workstation", tags=["workstation"])
+logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PROFESSIONAL_PHOTO_SKILL = Path(".codex/skills/client-professional-photo/SKILL.md")
