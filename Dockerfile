@@ -22,6 +22,8 @@ RUN uv sync --frozen --no-dev
 RUN uv run playwright install chromium --with-deps
 COPY src/backend/ ./src/backend/
 COPY .codex/skills/ ./.codex/skills/
+COPY tmp/pagina_abogado_static/ ./tmp/pagina_abogado_static/
+COPY tmp/pagina_contador_static/ ./tmp/pagina_contador_static/
 COPY --from=frontend-builder /app/src/frontend/dist ./src/frontend/dist
 
 EXPOSE 8000
