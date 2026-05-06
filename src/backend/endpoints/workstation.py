@@ -512,6 +512,12 @@ class CreateProfessionalPhotoCommand(BaseModel):
     context: str = ""
 
 
+class StartSoloPageWorkCommand(BaseModel):
+    """Start a manual solo-page Codex run with operator instructions."""
+
+    prompt: str = Field(min_length=1, max_length=4000)
+
+
 class EditProfessionalPhotoCommand(BaseModel):
     """Create a new professional photo version from an existing version."""
 
@@ -1255,6 +1261,7 @@ def build_solo_page_codex_prompt(
     version_dir: Path,
     replies: list[ContadoresMessage],
     revision: bool,
+    operator_prompt: str = "",
 ) -> str:
     """Build the Codex prompt for one static solo-page version."""
     write_client_files(client)
@@ -1273,6 +1280,11 @@ Use the workstation-solo-page skill to create a static website draft for this cl
 
 Client folder:
 {client_folder(client)}
+
+Client context files to read:
+- profile.json
+- notes.txt
+- conversation.txt
 
 Required output folder:
 {version_dir}
@@ -1299,9 +1311,13 @@ Professional photo versions available:
 Latest client messages for this version:
 {reply_text or "(no new reply text)"}
 
+Operator instruction for this run:
+{operator_prompt.strip() or "(none)"}
+
 Requirements:
 - Create only static files: index.html, styles.css, script.js, assets/.
 - Use easy-to-read HTML/CSS/JS. Avoid build tools.
+- Treat the operator instruction as the main direction for this run when it exists.
 - If this is a revision, apply the requested changes to the previous version.
 - If client information is incomplete, still create a credible first draft with honest placeholders.
 - Save all files inside the required output folder only.
@@ -1320,6 +1336,7 @@ def generate_solo_page_version_sync(
     lead: ContadoresLead,
     replies: list[ContadoresMessage],
     revision: bool,
+    operator_prompt: str = "",
 ) -> Path:
     """Run Codex to create one landing-page version and render its preview video."""
     version_dir = next_landing_page_version_dir(client)
@@ -1331,6 +1348,7 @@ def generate_solo_page_version_sync(
         version_dir=version_dir,
         replies=replies,
         revision=revision,
+        operator_prompt=operator_prompt,
     )
     try:
         append_workstation_progress(client, "Prompt prepared. Codex is writing the static page files.")
@@ -1363,6 +1381,7 @@ def generate_solo_page_version_sync(
             "lead_id": lead.id,
             "codex_response": result.final_response,
             "source_messages": [message.id for message in replies],
+            "operator_prompt": operator_prompt.strip(),
             "preview_path": relative_data_path(preview_path),
         }
         (version_dir / "metadata.json").write_text(
@@ -1472,6 +1491,77 @@ def queue_workstation_template(
         whatsapp_template_name=clean_template,
         whatsapp_template_language=WORKSTATION_TEMPLATE_LANGUAGE,
     )
+
+
+async def run_manual_solo_page_work(client_id: str, operator_prompt: str) -> None:
+    """Run one operator-triggered solo-page draft or revision."""
+    async with workstation_automation_tick_lock:
+        client = WorkstationClient.get_by_id(client_id)
+        if client is None:
+            return
+        lead = ContadoresLead.get_by_id(client.lead_id)
+        if lead is None:
+            append_workstation_progress(client, "Manual Codex run failed: source lead was not found.")
+            return
+
+        now = now_utc()
+        messages = ContadoresMessage.list_by_lead(lead.id)
+        mirror_workstation_message_media(client, messages)
+        fresh_client = WorkstationClient.get_by_id(client.id) or client
+        revision = latest_landing_page_version_dir(fresh_client) is not None
+        WorkstationClient.update_automation_state(
+            fresh_client.id,
+            automation_status=(
+                WorkstationAutomationStatus.REVISION_REQUESTED
+                if revision
+                else WorkstationAutomationStatus.DRAFTING
+            ),
+            last_automation_handled_at=now,
+        )
+        append_workstation_progress(
+            fresh_client,
+            "Operator started Codex manually from Workstation Actions.",
+        )
+        try:
+            ensure_professional_photo_if_possible(fresh_client)
+            latest_client_replies = [message for message in messages if not message.from_me]
+            version_dir = await run_in_threadpool(
+                generate_solo_page_version_sync,
+                client=WorkstationClient.get_by_id(fresh_client.id) or fresh_client,
+                lead=lead,
+                replies=latest_client_replies,
+                revision=revision,
+                operator_prompt=operator_prompt,
+            )
+            row = queue_workstation_preview(
+                client=fresh_client,
+                lead=lead,
+                version_dir=version_dir,
+                sequence_step=(
+                    WORKSTATION_REVISION_SEQUENCE_STEP
+                    if revision
+                    else WORKSTATION_PREVIEW_SEQUENCE_STEP
+                ),
+            )
+        except Exception as error:
+            mark_workstation_failed(
+                client=fresh_client,
+                lead=lead,
+                error=f"{error.__class__.__name__}: {error}",
+                latest_inbound_text=operator_prompt,
+            )
+            return
+
+        WorkstationClient.update_automation_state(
+            fresh_client.id,
+            automation_status=WorkstationAutomationStatus.AWAITING_REVIEW,
+            last_automation_handled_at=now_utc(),
+            last_preview_sent_at=row.created_at,
+        )
+        append_workstation_progress(
+            fresh_client,
+            "Queued manual Codex preview video for WhatsApp.",
+        )
 
 
 def process_workstation_pings(
@@ -2083,6 +2173,44 @@ async def create_workstation_client_from_lead(
 async def get_workstation_client(client_id: str) -> WorkstationClientDetailResponse:
     """Return one converted client profile."""
     return build_client_detail(get_required_client(client_id))
+
+
+@workstation_router.post(
+    "/clients/{client_id}/solo-page/work",
+    response_model=WorkstationClientDetailResponse,
+    status_code=202,
+)
+async def start_workstation_solo_page_work(
+    client_id: str,
+    command: StartSoloPageWorkCommand,
+) -> WorkstationClientDetailResponse:
+    """Start an operator-triggered Codex solo-page run."""
+    client = get_required_client(client_id)
+    if client.work_type != WorkstationClientWorkType.SOLO_PAGINA:
+        raise HTTPException(status_code=400, detail="This action is only available for solo-page clients.")
+
+    operator_prompt = command.prompt.strip()
+    if not operator_prompt:
+        raise HTTPException(status_code=422, detail="Write a prompt before starting Codex.")
+    if workstation_automation_tick_lock.locked() or client.automation_status in {
+        WorkstationAutomationStatus.DRAFTING,
+        WorkstationAutomationStatus.REVISION_REQUESTED,
+    }:
+        raise HTTPException(status_code=409, detail="Workstation Codex is already working.")
+
+    revision = latest_landing_page_version_dir(client) is not None
+    WorkstationClient.update_automation_state(
+        client.id,
+        automation_status=(
+            WorkstationAutomationStatus.REVISION_REQUESTED
+            if revision
+            else WorkstationAutomationStatus.DRAFTING
+        ),
+        last_automation_handled_at=now_utc(),
+    )
+    append_workstation_progress(client, "Manual Codex run queued from Workstation Actions.")
+    asyncio.create_task(run_manual_solo_page_work(client.id, operator_prompt))
+    return build_client_detail(WorkstationClient.get_by_id(client.id) or client)
 
 
 @workstation_router.post(

@@ -5136,6 +5136,15 @@ body {
   width: min(760px, 100%);
 }
 
+#contadoresView .workstation-solo-page-modal {
+  width: min(680px, 100%);
+}
+
+#contadoresView .workstation-prompt-field textarea {
+  min-height: 180px;
+  resize: vertical;
+}
+
 #contadoresView .workstation-modal-close {
   width: 36px;
   padding: 0;

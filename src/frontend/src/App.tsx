@@ -843,6 +843,33 @@ export function App() {
     }
   }
 
+  async function startSoloPageCodexWork(operatorPrompt: string) {
+    const clientId = workstationDetail?.client.id ?? selectedWorkstationClientId;
+    const prompt = operatorPrompt.trim();
+    if (!clientId || !prompt) {
+      setError("Escribi un prompt para Codex.");
+      return false;
+    }
+    setActionBusy("solo-page-work");
+    try {
+      const payload = await apiFetch<WorkstationClientDetailResponse>(
+        `/api/workstation/clients/${clientId}/solo-page/work`,
+        {
+          method: "POST",
+          body: JSON.stringify({ prompt }),
+        },
+      );
+      setWorkstationDetail(payload);
+      await loadWorkstation();
+      return true;
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not start Codex for this page.");
+      return false;
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
   function updateProfessionalPhotoEditPrompt(version: string, prompt: string) {
     setProfessionalPhotoEditPrompts((current) => ({ ...current, [version]: prompt }));
   }
@@ -1350,6 +1377,7 @@ export function App() {
           onProfessionalPhotoMediaIdsChange={setProfessionalPhotoMediaIds}
           onProfessionalPhotoContextChange={setProfessionalPhotoContext}
           onCreateProfessionalPhoto={createProfessionalPhoto}
+          onStartSoloPageCodexWork={startSoloPageCodexWork}
           onProfessionalPhotoEditPromptChange={updateProfessionalPhotoEditPrompt}
           onEditProfessionalPhoto={(version) => editProfessionalPhoto(version)}
         />
@@ -2118,6 +2146,7 @@ function WorkstationView({
   onProfessionalPhotoMediaIdsChange,
   onProfessionalPhotoContextChange,
   onCreateProfessionalPhoto,
+  onStartSoloPageCodexWork,
   onProfessionalPhotoEditPromptChange,
   onEditProfessionalPhoto,
 }: {
@@ -2152,6 +2181,7 @@ function WorkstationView({
   onProfessionalPhotoMediaIdsChange: (assetIds: string[]) => void;
   onProfessionalPhotoContextChange: (value: string) => void;
   onCreateProfessionalPhoto: (mediaAssetIds?: string[], context?: string) => boolean | Promise<boolean>;
+  onStartSoloPageCodexWork: (operatorPrompt: string) => boolean | Promise<boolean>;
   onProfessionalPhotoEditPromptChange: (version: string, prompt: string) => void;
   onEditProfessionalPhoto: (version: string) => void;
 }) {
@@ -2174,9 +2204,13 @@ function WorkstationView({
   const [mediaEditFilename, setMediaEditFilename] = useState("");
   const [actionsOpen, setActionsOpen] = useState(false);
   const [professionalPhotoModalOpen, setProfessionalPhotoModalOpen] = useState(false);
+  const [soloPagePromptModalOpen, setSoloPagePromptModalOpen] = useState(false);
+  const [soloPageOperatorPrompt, setSoloPageOperatorPrompt] = useState("");
   const canUploadMedia = Boolean(activeClient) && actionBusy !== "workstation-upload";
   const currentProfessionalPhotoJob = professionalPhotoJob?.client_id === activeClient?.id ? professionalPhotoJob : null;
   const professionalPhotoJobBusy = currentProfessionalPhotoJob?.status === "queued" || currentProfessionalPhotoJob?.status === "running";
+  const soloPageBusy = actionBusy === "solo-page-work" || Boolean(automationState?.is_working);
+  const canStartSoloPageWork = activeClient?.work_type === "solo_pagina" && !soloPageBusy;
   const activeOffer = formatWorkstationOffer(activeClient);
   const automationTone = workstationFailed
     ? "failed"
@@ -2193,6 +2227,8 @@ function WorkstationView({
     setEditingMediaId(null);
     setActionsOpen(false);
     setProfessionalPhotoModalOpen(false);
+    setSoloPagePromptModalOpen(false);
+    setSoloPageOperatorPrompt("");
   }, [selectedClientId]);
 
   function openProfessionalPhotoModal() {
@@ -2206,6 +2242,16 @@ function WorkstationView({
     setProfessionalPhotoModalOpen(false);
     onProfessionalPhotoMediaIdsChange([]);
     onProfessionalPhotoContextChange("");
+  }
+
+  function openSoloPagePromptModal() {
+    setActionsOpen(false);
+    setSoloPagePromptModalOpen(true);
+  }
+
+  function closeSoloPagePromptModal() {
+    setSoloPagePromptModalOpen(false);
+    setSoloPageOperatorPrompt("");
   }
 
   function startMediaEdit(asset: WorkstationMediaAsset) {
@@ -2286,6 +2332,14 @@ function WorkstationView({
     const started = await onCreateProfessionalPhoto(selectedProfessionalPhotoMediaIds, professionalPhotoContext);
     if (started) {
       closeProfessionalPhotoModal();
+    }
+  }
+
+  async function submitSoloPagePromptModal(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const started = await onStartSoloPageCodexWork(soloPageOperatorPrompt);
+    if (started) {
+      closeSoloPagePromptModal();
     }
   }
 
@@ -2372,6 +2426,15 @@ function WorkstationView({
                     </button>
                     {actionsOpen ? (
                       <div className="workstation-action-popover" role="menu">
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={openSoloPagePromptModal}
+                          disabled={!canStartSoloPageWork}
+                        >
+                          <Robot size={16} weight="bold" />
+                          <span>Poner Codex a trabajar</span>
+                        </button>
                         <button
                           type="button"
                           role="menuitem"
@@ -2697,6 +2760,66 @@ function WorkstationView({
           onSubmit={submitProfessionalPhotoModal}
         />
       ) : null}
+      {soloPagePromptModalOpen ? (
+        <SoloPagePromptModal
+          prompt={soloPageOperatorPrompt}
+          busy={actionBusy === "solo-page-work"}
+          onPromptChange={setSoloPageOperatorPrompt}
+          onClose={closeSoloPagePromptModal}
+          onSubmit={submitSoloPagePromptModal}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function SoloPagePromptModal({
+  prompt,
+  busy,
+  onPromptChange,
+  onClose,
+  onSubmit,
+}: {
+  prompt: string;
+  busy: boolean;
+  onPromptChange: (value: string) => void;
+  onClose: () => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <div className="ct-modal open" aria-hidden="false">
+      <button className="ct-modal-overlay" type="button" onClick={onClose} aria-label="Cerrar prompt de Codex" />
+      <form className="ct-modal-panel workstation-solo-page-modal" role="dialog" aria-modal="true" aria-labelledby="workstationSoloPageModalTitle" onSubmit={onSubmit}>
+        <header className="ct-modal-head">
+          <div>
+            <p className="ct-drawer-kicker">Workstation</p>
+            <h3 id="workstationSoloPageModalTitle">Poner Codex a trabajar</h3>
+            <p className="ct-modal-subtitle">Usa cliente, notas, media y conversacion completa.</p>
+          </div>
+          <button type="button" className="ct-btn ct-btn-ghost workstation-modal-close" onClick={onClose} aria-label="Cerrar">
+            <X size={15} weight="bold" />
+          </button>
+        </header>
+        <div className="ct-modal-body">
+          <label className="ct-field workstation-prompt-field">
+            <span>Prompt para Codex</span>
+            <textarea
+              value={prompt}
+              onChange={(event) => onPromptChange(event.target.value)}
+              placeholder="Hey, ponete a trabajar y hacele la pagina. Usá lo que ya mandó, priorizá..."
+              rows={7}
+              autoFocus
+            />
+          </label>
+        </div>
+        <footer className="ct-modal-foot">
+          <button type="button" className="ct-btn ct-btn-ghost" onClick={onClose}>Cancel</button>
+          <button type="submit" className="ct-btn ct-btn-primary" disabled={!prompt.trim() || busy}>
+            {busy ? <SpinnerGap className="workstation-spinner" size={15} weight="bold" /> : <Robot size={15} weight="bold" />}
+            {busy ? "Arrancando..." : "Arrancar"}
+          </button>
+        </footer>
+      </form>
     </div>
   );
 }

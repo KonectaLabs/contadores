@@ -4584,6 +4584,97 @@ def test_workstation_solo_page_codex_runs_from_repo_root(monkeypatch, tmp_path) 
     assert "Preview media registered in Workstation." in progress
 
 
+def test_manual_workstation_solo_page_work_uses_operator_prompt(monkeypatch, tmp_path) -> None:
+    """Operator-triggered page work should pass the typed prompt into Codex."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    data_dir = tmp_path / "data"
+    monkeypatch.setattr(database_module, "DATA_DIR", data_dir)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-manual-workstation-codex",
+        phone="+5491777777711",
+        full_name="Marielis Torres",
+    )
+    workstation = WorkstationClient.create_for_lead(
+        lead,
+        work_type=WorkstationClientWorkType.SOLO_PAGINA,
+        status=WorkstationClientStatus.PENDING_PAYMENT,
+        automation_status=WorkstationAutomationStatus.INTAKE,
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=False,
+        text="Soy abogada de familia en Lima y quiero algo serio.",
+        created_at=now_utc() - timedelta(minutes=5),
+    )
+    generated_calls: list[dict[str, object]] = []
+
+    def fake_generate_solo_page_version_sync(**kwargs) -> Path:
+        generated_calls.append(kwargs)
+        version_dir = workstation_endpoints.next_landing_page_version_dir(kwargs["client"])
+        (version_dir / "index.html").write_text("<html><body>Draft</body></html>", encoding="utf-8")
+        (version_dir / "styles.css").write_text("body{font-family:sans-serif}", encoding="utf-8")
+        (version_dir / "script.js").write_text("", encoding="utf-8")
+        (version_dir / "preview.mp4").write_bytes(b"mp4")
+        return version_dir
+
+    monkeypatch.setattr(workstation_endpoints, "generate_solo_page_version_sync", fake_generate_solo_page_version_sync)
+
+    asyncio.run(
+        workstation_endpoints.run_manual_solo_page_work(
+            workstation.id,
+            "Ponete a trabajar y hacele la pagina con tono premium.",
+        )
+    )
+
+    assert len(generated_calls) == 1
+    assert generated_calls[0]["revision"] is False
+    assert generated_calls[0]["operator_prompt"] == "Ponete a trabajar y hacele la pagina con tono premium."
+    assert [message.text for message in generated_calls[0]["replies"]] == [
+        "Soy abogada de familia en Lima y quiero algo serio.",
+    ]
+    pending = ContadoresMessage.list_pending_delivery(limit=10)
+    assert [message.sequence_step for message in pending] == ["workstation_preview_video"]
+    updated = WorkstationClient.get_by_id(workstation.id)
+    assert updated.automation_status == WorkstationAutomationStatus.AWAITING_REVIEW
+
+
+def test_manual_workstation_solo_page_endpoint_queues_background_work(monkeypatch, tmp_path) -> None:
+    """The Workstation action should return immediately with the client marked as working."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setattr(database_module, "DATA_DIR", tmp_path / "data")
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-manual-workstation-endpoint",
+        phone="+5491777777712",
+        full_name="Cliente Manual",
+    )
+    workstation = WorkstationClient.create_for_lead(
+        lead,
+        work_type=WorkstationClientWorkType.SOLO_PAGINA,
+        status=WorkstationClientStatus.PENDING_PAYMENT,
+        automation_status=WorkstationAutomationStatus.INTAKE,
+    )
+    queued_coroutines: list[object] = []
+
+    def fake_create_task(coroutine):
+        queued_coroutines.append(coroutine)
+        coroutine.close()
+        return SimpleNamespace(done=lambda: False)
+
+    monkeypatch.setattr(workstation_endpoints.asyncio, "create_task", fake_create_task)
+
+    with TestClient(app) as client:
+        response = client.post(
+            f"/api/workstation/clients/{workstation.id}/solo-page/work",
+            json={"prompt": "Hacer pagina ahora con el contexto existente."},
+        )
+
+    assert response.status_code == 202
+    assert response.json()["client"]["automation_status"] == "drafting"
+    assert len(queued_coroutines) == 1
+    progress = workstation_endpoints.workstation_progress_path(workstation).read_text(encoding="utf-8")
+    assert "Manual Codex run queued from Workstation Actions." in progress
+
+
 def test_workstation_tick_approval_marks_needs_human(monkeypatch, tmp_path) -> None:
     """Client approval should stop automation and hand the job to a human operator."""
     configure_contadores_db(monkeypatch, tmp_path)
