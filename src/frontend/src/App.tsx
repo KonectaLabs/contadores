@@ -2275,6 +2275,7 @@ function WorkstationView({
   const workstationMessages = detailClient ? detail?.messages ?? [] : [];
   const runtimeAlerts = detailClient ? detail?.runtime_alerts ?? [] : [];
   const automationState = detailClient ? detail?.automation_state ?? null : null;
+  const publicPage = detailClient ? detail?.public_page ?? null : null;
   const openRuntimeAlerts = runtimeAlerts.filter((alert) => !alert.resolved_at);
   const latestRuntimeAlert = openRuntimeAlerts[0] ?? null;
   const workstationFailed = activeClient?.automation_status === "failed";
@@ -2625,6 +2626,24 @@ function WorkstationView({
                     <Copy size={15} weight="bold" />
                     Copy all
                   </button>
+                  {publicPage ? (
+                    <>
+                      <a className="ct-btn ct-btn-ghost" href={publicPage.public_url} target="_blank" rel="noreferrer">
+                        <ArrowSquareOut size={15} weight="bold" />
+                        Open public page
+                      </a>
+                      <button
+                        type="button"
+                        className="ct-btn ct-btn-ghost"
+                        onClick={() => {
+                          copyTextToClipboard(publicPage.public_url).catch(() => undefined);
+                        }}
+                      >
+                        <Copy size={15} weight="bold" />
+                        Copy public URL
+                      </button>
+                    </>
+                  ) : null}
                   <a className="ct-btn ct-btn-primary" href={`/api/workstation/clients/${activeClient.id}/zip`}>
                     <DownloadSimple size={15} weight="bold" />
                     Download ZIP

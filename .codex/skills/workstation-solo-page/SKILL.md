@@ -40,8 +40,23 @@ landing-page/vNNN/outbound-messages.json
 landing-page/vNNN/assets/
 ```
 
+This structure is rigid:
+
+- `index.html`, `styles.css`, and `script.js` must be at the root of
+  `landing-page/vNNN/`.
+- Every image, font, logo copy, download, or page-owned asset must live under
+  `landing-page/vNNN/assets/`.
+- `index.html` must reference local files as `./styles.css`, `./script.js`, and
+  `./assets/...`.
+- Do not reference `/data`, `../`, absolute filesystem paths, repo template
+  paths, another client folder, or remote files that are required for the page
+  to render.
+- `preview.mp4` and `metadata.json` are backend-owned outputs. Do not create or
+  edit them.
+
 Do not edit source templates, repo files, other client folders, or production
-configuration. The automation will render `preview.mp4` after your files exist.
+configuration. The automation will render `preview.mp4`, write metadata, and
+publish the stable public trial URL after your files exist.
 
 ## Agent Freedom
 
@@ -51,6 +66,7 @@ configuration. The automation will render `preview.mp4` after your files exist.
   tools to act: `send_whatsapp_text`, `schedule_heartbeat`,
   `schedule_followup`, `read_agent_memory`, `write_agent_memory`,
   `generate_or_revise_solo_page`, `queue_workstation_deliverables`,
+  `send_workstation_public_page_link`, `check_domain_availability`,
   `mark_preview_approved`, or `handoff_human`. Do not return a JSON plan when a
   tool call is the right action.
 - If the client asks how to give you content, ask them to send the content and
@@ -65,7 +81,22 @@ configuration. The automation will render `preview.mp4` after your files exist.
   decisions that must survive into the next run.
 - If the client sent a useful photo, logo, service list, or concrete change and
   a preview is the best next step, then generate or revise the page.
-- If the client approves the page, stop revising and hand off.
+- First send video previews. Do not send the public trial URL just because it
+  exists.
+- If the client asks to see, test, publish, open, or try the page online, use
+  `send_workstation_public_page_link`.
+- If the client approves the video but the public trial URL has not been sent
+  yet, send the public trial URL and ask whether that public test version is
+  good.
+- If the client requests changes after the public URL was sent, revise the page
+  and then send the same public URL again. The backend keeps the URL stable and
+  points it to the newest version.
+- If the client approves the public test page, stop revising and use
+  `mark_preview_approved`.
+- For domain discussion, propose simple domains, use
+  `check_domain_availability` when available, treat prices as estimates, and
+  hand off for payment/domain purchase until Stripe and Cloudflare production
+  tools exist.
 - Pick the action that helps the client move forward with the least friction.
 
 ## Professional Photo Gate
@@ -105,6 +136,9 @@ documents, calculator, or office interior.
 
 - Build plain static HTML, CSS, and JavaScript. No bundlers.
 - Keep code readable, skimmable, and boring.
+- Optimize for mobile as well as desktop. The preview video is recorded in a
+  desktop/PC format, but the page must still be fully responsive and polished on
+  mobile screens.
 - Treat each client folder as a long-lived project. Preserve the current
   HTML/CSS/JS structure across revisions.
 - For revisions, edit the copied previous version in the output folder. Do not

@@ -571,6 +571,13 @@ Dentro de esa carpeta se refrescan estos archivos:
 - `progress.md`: log de progreso operativo que Codex y el backend van
   agregando durante drafts, revisiones, render y cola del preview.
 
+Cada `landing-page/vNNN/` tiene contrato rigido: `index.html`, `styles.css` y
+`script.js` viven en la raiz de la version; todos los assets propios de la
+pagina viven bajo `assets/`; el HTML referencia `./styles.css`, `./script.js` y
+`./assets/...`. No se permiten referencias a `/data`, `../`, rutas absolutas de
+filesystem ni archivos de las plantillas fuente. `preview.mp4` y
+`metadata.json` los escribe el backend, no el builder.
+
 La foto profesional se crea desde imagenes seleccionadas en `media/` y se guarda
 siempre con versionado determinista:
 
@@ -620,6 +627,28 @@ que la autenticacion de Codex pueda persistir en el volumen `data/`. Si
 lanzar Codex para priorizar el login ChatGPT/Codex. Si se configura en `false`,
 el proceso Codex conserva `OPENAI_API_KEY`.
 
+Cada cliente `solo_pagina` con una version generada tiene una URL publica de
+prueba estable, no autenticada e indescifrable:
+
+```text
+{WORKSTATION_PUBLIC_PAGE_BASE_URL}/p/{token}/
+```
+
+La URL vive en `workstation_public_pages`, una fila por cliente. El token no
+cambia entre versiones; cuando el backend crea `v002`, `v003`, etc. actualiza la
+fila para que la misma URL sirva siempre la ultima version. El detalle de
+Workstation muestra botones para abrir y copiar esa URL, y `profile.json`
+incluye `public_page` para que el agente Codex tambien la conozca.
+
+La URL de prueba se genera apenas existe `index.html` en una version y el
+backend termina de renderizar el preview. El primer envio al cliente sigue
+siendo video; el agente solo manda el link cuando el cliente pide ver/probar la
+pagina online o cuando ya aprobo el video y falta revisar la version publicada
+de prueba. Si despues pide cambios, se genera otra version y se puede reenviar
+el mismo link, que ya apunta a la version nueva. La aprobacion final llega recien
+cuando el cliente confirma la pagina publica de prueba; luego se handoffea para
+dominio, pago y publicacion final.
+
 La automatizacion Workstation solo pagina usa Codex GPT-5.5 con la skill
 `.codex/skills/workstation-solo-page/SKILL.md`. Todo agente autonomo tambien
 carga `.codex/skills/contadores-agent-harness/SKILL.md`, que le explica el loop
@@ -628,8 +657,9 @@ de herramientas, memoria y heartbeats. Si
 `CODEX_AGENT_TOOLS_WORKSTATION_ENABLED=true`, primero corre el agente autonomo
 con toolbelt interna: puede responder texto, agendar follow-up/heartbeat, leer o
 escribir memoria en `data/agent-memory/`, crear/revisar la pagina, encolar
-entregables, marcar aprobacion, pasar a humano o consultar disponibilidad y
-precios publicos estimados de dominios sin credenciales. Las tools quedan auditadas en
+entregables, mandar la URL publica de prueba, marcar aprobacion, pasar a humano
+o consultar disponibilidad y precios publicos estimados de dominios sin
+credenciales. Las tools quedan auditadas en
 `agent_runs`, `agent_tool_calls`, `scheduled_agent_tasks` y
 `data/agent-runs/`. Si el agente con tools falla antes de completar side
 effects, Workstation vuelve al decisionador JSON legacy.
@@ -673,7 +703,7 @@ si otro tick llega mientras una generacion larga de Codex sigue activa, responde
 El preview principal se renderiza como MP4. El backend renderiza el HTML estatico
 con Playwright en desktop `1440x900`, graba un scroll y normaliza el archivo con
 `ffmpeg` a H.264. El scroll usa una animacion lineal y continua para evitar
-saltos en paginas largas. No se manda link temporal al cliente. Cuando Codex
+saltos en paginas largas. Cuando Codex
 escribe `outbound-messages.json`, Workstation respeta esa lista y puede encolar
 varios WhatsApp seguidos, incluyendo el MP4 y otros entregables generados.
 Cada carpeta de cliente tambien se inicializa como un proyecto Git local. En
@@ -688,6 +718,7 @@ aprobados. Los nombres son configurables por `.env`:
 - `WORKSTATION_PING_TEMPLATE_1_NAME=konecta_workstation_ping_1_es_v1`
 - `WORKSTATION_PING_TEMPLATE_2_NAME=konecta_workstation_ping_2_es_v1`
 - `WORKSTATION_HANDOFF_TEMPLATE_NAME=konecta_workstation_handoff_es_v1`
+- `WORKSTATION_PUBLIC_PAGE_BASE_URL=https://dominio-publico`
 
 La cadencia es 24h, 48h y 72h desde el ultimo preview. Si faltan templates o
 falla WhatsApp/Codex, se alerta por email y no se manda texto custom fuera de la

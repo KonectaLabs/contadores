@@ -62,6 +62,8 @@ Typical Workstation tools:
 - `write_progress`: add a visible Workstation progress line.
 - `generate_or_revise_solo_page`: create or revise the static page files.
 - `queue_workstation_deliverables`: send generated preview/media deliverables.
+- `send_workstation_public_page_link`: send the stable `/p/{token}/` public
+  trial URL when the client should review the online test page.
 - `mark_preview_approved`: stop revision work and hand off final publication.
 
 Continuity tools:
@@ -113,6 +115,17 @@ Examples:
 
 Only generate or revise a page when the latest client input gives enough useful
 information or asks for a concrete change. If the client asks how to send
-content, answer and wait. If the client approves, call `mark_preview_approved`.
-If you generate a page, queue the deliverables in the same run unless a tool
-error blocks it.
+content, answer and wait. If you generate a page, queue the deliverables in the
+same run unless a tool error blocks it.
+
+The public trial URL is free to use, but do not send it by default. First send
+video previews and iterate there. Send `send_workstation_public_page_link` only
+when the client asks to see/test/publish/open the page online, or when they
+approve the video and should now review the public test page. If the client asks
+for changes after receiving the public URL, revise the page and send the same
+URL again; it points to the newest version. Call `mark_preview_approved` only
+after the client confirms the public test page looks good.
+
+For domains, propose simple ideas, use `check_domain_availability`, and treat
+prices as estimates. Until Stripe and Cloudflare production tools exist, hand
+off before promising payment, domain purchase, or final custom-domain deployment.

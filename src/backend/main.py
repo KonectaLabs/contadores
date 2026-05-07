@@ -23,6 +23,7 @@ from backend.endpoints import (
     auth_router,
     contadores_router,
     funnels_router,
+    public_workstation_router,
     workstation_router,
 )
 from backend.runtime_settings import get_runtime_settings
@@ -98,6 +99,11 @@ async def lifespan(app: FastAPI):
         logger.warning("INTERNAL_API_TOKEN is not configured; bot routes will reject internal requests.")
     logger.info("Backend online.")
     init_db()
+    from backend.endpoints.workstation import backfill_workstation_public_pages
+
+    published_pages = backfill_workstation_public_pages()
+    if published_pages:
+        logger.info("Workstation public trial pages ready=%s.", published_pages)
     yield
     logger.info("Backend stopped.")
 
@@ -140,6 +146,7 @@ if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 app.include_router(auth_router)
+app.include_router(public_workstation_router)
 app.include_router(contadores_router)
 app.include_router(funnels_router)
 app.include_router(workstation_router)
@@ -160,7 +167,7 @@ async def enforce_primitive_auth(request: Request, call_next):
             return RedirectResponse(url="/", status_code=303)
         return await call_next(request)
 
-    if path in PUBLIC_PATHS_WITHOUT_SESSION:
+    if path in PUBLIC_PATHS_WITHOUT_SESSION or path == "/p" or path.startswith("/p/"):
         return await call_next(request)
 
     if is_internal_bot_api_path(path) and internal_token_valid:

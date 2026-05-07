@@ -88,6 +88,8 @@ WORKSTATION_PING_2_TEXT = os.getenv(
     "WORKSTATION_PING_2_TEXT",
     "Le escribo para retomar lo de su pagina. Quiere que sigamos con el boceto?",
 ).strip()
+WA_CALLBACK_URL = os.getenv("WA_CALLBACK_URL", "").strip()
+WORKSTATION_PUBLIC_PAGE_BASE_URL = os.getenv("WORKSTATION_PUBLIC_PAGE_BASE_URL", "").strip().rstrip("/")
 
 
 # Instantly configuration

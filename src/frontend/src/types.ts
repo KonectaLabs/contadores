@@ -388,6 +388,19 @@ export interface WorkstationRuntimeAlert {
   created_at: string;
 }
 
+export interface WorkstationPublicPage {
+  client_id: string;
+  public_token: string;
+  public_path: string;
+  public_url: string;
+  current_version: string;
+  version_path: string;
+  status: string;
+  first_published_at: string | null;
+  updated_at: string | null;
+  last_sent_at: string | null;
+}
+
 export interface WorkstationAutomationState {
   status: string;
   label: string;
@@ -416,6 +429,7 @@ export interface WorkstationClientDetailResponse {
   runtime_alerts: WorkstationRuntimeAlert[];
   automation_state: WorkstationAutomationState;
   professional_photos: WorkstationProfessionalPhotoVersion[];
+  public_page: WorkstationPublicPage | null;
 }
 
 export interface WorkstationCopyAllResponse {

@@ -170,6 +170,14 @@ class QueueWorkstationDeliverablesArgs(ClientToolArgs):
     sequence_step: str = "workstation_revision_video"
 
 
+class SendWorkstationPublicPageLinkArgs(ClientToolArgs):
+    """Arguments for sending the public trial page URL."""
+
+    text: str | None = Field(default=None, max_length=4000)
+    dispatch_after_minutes: int = Field(default=0, ge=0, le=60 * 24 * 30)
+    idempotency_key: str | None = None
+
+
 class MarkPreviewApprovedArgs(ClientToolArgs):
     """Arguments for marking a Workstation preview approved."""
 
@@ -215,6 +223,11 @@ def tool_specs() -> list[CodexAgentToolSpec]:
         ("write_progress", "Append one visible Workstation progress line.", WriteProgressArgs),
         ("generate_or_revise_solo_page", "Create or revise the client's static solo-page.", GenerateOrReviseSoloPageArgs),
         ("queue_workstation_deliverables", "Queue preview/media deliverables from a page version.", QueueWorkstationDeliverablesArgs),
+        (
+            "send_workstation_public_page_link",
+            "Send the stable public trial page URL for this Workstation client.",
+            SendWorkstationPublicPageLinkArgs,
+        ),
         ("mark_preview_approved", "Mark the current Workstation preview approved and hand off.", MarkPreviewApprovedArgs),
     ]
     return [
@@ -255,7 +268,7 @@ def _message_payload(row: ContadoresMessage) -> dict[str, Any]:
         "sequence_step": row.sequence_step,
         "media_type": row.media_type,
         "media_path": row.media_path,
-        "dispatch_after": row.dispatch_after.isoformat(),
+        "dispatch_after": row.dispatch_after.isoformat() if row.dispatch_after else None,
     }
 
 
@@ -701,6 +714,8 @@ def get_workstation_context(arguments: dict[str, Any]) -> dict[str, Any]:
     workstation_endpoints.write_client_files(client)
     folder = workstation_endpoints.client_folder(client)
     latest_version = workstation_endpoints.latest_landing_page_version_dir(client)
+    public_page = workstation_endpoints.ensure_public_page_for_latest_version(client)
+    public_page_payload = workstation_endpoints.workstation_public_page_payload(public_page)
     messages = ContadoresMessage.list_by_lead(lead.id)[-30:]
     return {
         "client": {
@@ -713,6 +728,7 @@ def get_workstation_context(arguments: dict[str, Any]) -> dict[str, Any]:
             "last_preview_sent_at": client.last_preview_sent_at.isoformat() if client.last_preview_sent_at else None,
             "approved_at": client.approved_at.isoformat() if client.approved_at else None,
         },
+        "public_page": public_page_payload,
         "lead": {"id": lead.id, "full_name": lead.full_name, "phone": lead.phone},
         "messages": [
             {
@@ -791,10 +807,48 @@ def queue_workstation_deliverables(arguments: dict[str, Any]) -> dict[str, Any]:
     return {"queued": len(rows), "messages": [_message_payload(row) for row in rows]}
 
 
+def send_workstation_public_page_link(arguments: dict[str, Any]) -> dict[str, Any]:
+    from backend.endpoints import workstation as workstation_endpoints
+
+    args = SendWorkstationPublicPageLinkArgs.model_validate(arguments)
+    client = _client_or_error(args.client_id)
+    lead = _lead_or_error(client.lead_id)
+    row = workstation_endpoints.queue_workstation_public_page_link(
+        client=client,
+        lead=lead,
+        text=args.text,
+        dispatch_after=_dispatch_after(args.dispatch_after_minutes),
+    )
+    public_page = workstation_endpoints.ensure_public_page_for_latest_version(client)
+    return {
+        "queued": True,
+        "message": _message_payload(row),
+        "public_page": workstation_endpoints.workstation_public_page_payload(public_page),
+    }
+
+
 def mark_preview_approved(arguments: dict[str, Any]) -> dict[str, Any]:
+    from backend.endpoints import workstation as workstation_endpoints
+
     args = MarkPreviewApprovedArgs.model_validate(arguments)
     client = _client_or_error(args.client_id)
     lead = _lead_or_error(client.lead_id)
+    public_page = workstation_endpoints.ensure_public_page_for_latest_version(client)
+    if public_page is not None and public_page.last_sent_at is None:
+        row = workstation_endpoints.queue_workstation_public_page_link(
+            client=client,
+            lead=lead,
+            text="La publique de prueba para que pueda revisarla online: {url}",
+        )
+        public_page = workstation_endpoints.ensure_public_page_for_latest_version(client)
+        return {
+            "approved": False,
+            "public_link_sent": True,
+            "client_id": client.id,
+            "lead_id": lead.id,
+            "message": _message_payload(row),
+            "public_page": workstation_endpoints.workstation_public_page_payload(public_page),
+        }
     now = datetime.now(timezone.utc)
     WorkstationClient.update_automation_state(
         client.id,
@@ -834,6 +888,7 @@ TOOL_HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {
     "write_progress": write_progress,
     "generate_or_revise_solo_page": generate_or_revise_solo_page,
     "queue_workstation_deliverables": queue_workstation_deliverables,
+    "send_workstation_public_page_link": send_workstation_public_page_link,
     "mark_preview_approved": mark_preview_approved,
 }
 

@@ -36,6 +36,7 @@ from backend.database import (
     WorkstationClientStatus,
     WorkstationClientWorkType,
     WorkstationMediaAsset,
+    WorkstationPublicPage,
 )
 from backend.ai.codex_agent_tools import call_tool
 from backend.main import app
@@ -5248,6 +5249,218 @@ def test_manual_solo_page_conversion_without_context_sends_intake(monkeypatch, t
     assert [item["sequence_step"] for item in pending.json()["messages"]] == ["workstation_intake"]
 
 
+def test_workstation_public_page_uses_one_stable_latest_version_url(monkeypatch, tmp_path) -> None:
+    """One unguessable URL should keep serving the latest generated page version."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setattr(database_module, "DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr(workstation_endpoints, "WORKSTATION_PUBLIC_PAGE_BASE_URL", "https://preview.example.com")
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-workstation-public-page",
+        phone="+5491777777710",
+        full_name="Cliente Publico",
+    )
+    workstation = WorkstationClient.create_for_lead(
+        lead,
+        work_type=WorkstationClientWorkType.SOLO_PAGINA,
+        status=WorkstationClientStatus.PENDING_PAYMENT,
+        automation_status=WorkstationAutomationStatus.AWAITING_REVIEW,
+    )
+    v001 = workstation_endpoints.landing_page_root(workstation) / "v001"
+    (v001 / "assets").mkdir(parents=True)
+    (v001 / "index.html").write_text(
+        "<html><head><link rel='stylesheet' href='./styles.css'></head><body>v001</body></html>",
+        encoding="utf-8",
+    )
+    (v001 / "styles.css").write_text("body { color: red; }", encoding="utf-8")
+    (v001 / "script.js").write_text("", encoding="utf-8")
+
+    first_public_page = workstation_endpoints.ensure_workstation_public_page(workstation, v001)
+    assert first_public_page is not None
+    first_token = first_public_page.public_token
+
+    v002 = workstation_endpoints.landing_page_root(workstation) / "v002"
+    (v002 / "assets").mkdir(parents=True)
+    (v002 / "index.html").write_text(
+        "<html><head><script src='./script.js'></script></head><body>v002</body></html>",
+        encoding="utf-8",
+    )
+    (v002 / "styles.css").write_text("body { color: blue; }", encoding="utf-8")
+    (v002 / "script.js").write_text("window.previewVersion = 'v002';", encoding="utf-8")
+    second_public_page = workstation_endpoints.ensure_workstation_public_page(workstation, v002)
+
+    assert second_public_page is not None
+    assert second_public_page.public_token == first_token
+    assert second_public_page.current_version == "v002"
+    assert second_public_page.version_path.endswith("landing-page/v002")
+    assert workstation_endpoints.workstation_public_page_url(second_public_page) == f"https://preview.example.com/p/{first_token}/"
+
+    with TestClient(app) as client:
+        redirect = client.get(f"/p/{first_token}", follow_redirects=False)
+        index_response = client.get(f"/p/{first_token}/")
+        script_response = client.get(f"/p/{first_token}/script.js")
+        invalid_response = client.get("/p/not-a-real-token/")
+        traversal_response = client.get(f"/p/{first_token}/../profile.json")
+
+    assert redirect.status_code == 307
+    assert redirect.headers["location"] == f"/p/{first_token}/"
+    assert index_response.status_code == 200
+    assert "v002" in index_response.text
+    assert script_response.status_code == 200
+    assert "v002" in script_response.text
+    assert invalid_response.status_code == 404
+    assert traversal_response.status_code == 404
+
+
+def test_workstation_public_page_backfills_detail_profile_and_agent_context(monkeypatch, tmp_path) -> None:
+    """Existing generated pages should get a public row and expose it to UI and Codex."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setattr(database_module, "DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr(workstation_endpoints, "WORKSTATION_PUBLIC_PAGE_BASE_URL", "https://preview.example.com")
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-workstation-public-page-backfill",
+        phone="+5491777777711",
+        full_name="Cliente Backfill",
+    )
+    workstation = WorkstationClient.create_for_lead(
+        lead,
+        work_type=WorkstationClientWorkType.SOLO_PAGINA,
+        status=WorkstationClientStatus.PENDING_PAYMENT,
+        automation_status=WorkstationAutomationStatus.AWAITING_REVIEW,
+    )
+    version_dir = workstation_endpoints.landing_page_root(workstation) / "v001"
+    (version_dir / "assets").mkdir(parents=True)
+    (version_dir / "index.html").write_text("<html><body>public page</body></html>", encoding="utf-8")
+    (version_dir / "styles.css").write_text("", encoding="utf-8")
+    (version_dir / "script.js").write_text("", encoding="utf-8")
+
+    assert WorkstationPublicPage.get_by_client_id(workstation.id) is None
+    assert workstation_endpoints.backfill_workstation_public_pages() == 1
+
+    with TestClient(app) as client:
+        detail = client.get(f"/api/workstation/clients/{workstation.id}")
+
+    assert detail.status_code == 200
+    public_page = detail.json()["public_page"]
+    assert public_page["public_url"].startswith("https://preview.example.com/p/")
+    profile = json.loads((workstation_endpoints.client_folder(workstation) / "profile.json").read_text(encoding="utf-8"))
+    assert profile["public_page"]["public_url"] == public_page["public_url"]
+
+    context = call_tool(
+        run_id="agent-run-workstation-context-public-page",
+        tool_name="get_workstation_context",
+        arguments={"client_id": workstation.id},
+    )
+    assert context["ok"] is True
+    assert context["result"]["public_page"]["public_url"] == public_page["public_url"]
+
+
+def test_codex_tool_sends_workstation_public_page_link(monkeypatch, tmp_path) -> None:
+    """The Workstation tool should queue the public URL and mark it as sent."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setattr(database_module, "DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr(workstation_endpoints, "WORKSTATION_PUBLIC_PAGE_BASE_URL", "https://preview.example.com")
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-workstation-public-page-tool",
+        phone="+5491777777712",
+        full_name="Cliente Link",
+    )
+    add_recent_inbound(lead.id, text="Si, quiero verla publicada")
+    workstation = WorkstationClient.create_for_lead(
+        lead,
+        work_type=WorkstationClientWorkType.SOLO_PAGINA,
+        status=WorkstationClientStatus.PENDING_PAYMENT,
+        automation_status=WorkstationAutomationStatus.AWAITING_REVIEW,
+    )
+    version_dir = workstation_endpoints.landing_page_root(workstation) / "v001"
+    (version_dir / "assets").mkdir(parents=True)
+    (version_dir / "index.html").write_text("<html><body>link page</body></html>", encoding="utf-8")
+    (version_dir / "styles.css").write_text("", encoding="utf-8")
+    (version_dir / "script.js").write_text("", encoding="utf-8")
+    public_page = workstation_endpoints.ensure_workstation_public_page(workstation, version_dir)
+    assert public_page is not None
+    assert public_page.last_sent_at is None
+
+    result = call_tool(
+        run_id="agent-run-public-page-link",
+        tool_name="send_workstation_public_page_link",
+        arguments={
+            "client_id": workstation.id,
+            "text": "Ya esta publicada de prueba: {url}",
+        },
+    )
+
+    assert result["ok"] is True
+    assert result["result"]["queued"] is True
+    rows = [message for message in ContadoresMessage.list_by_lead(lead.id) if message.from_me]
+    assert [row.sequence_step for row in rows] == ["workstation_public_page_link"]
+    assert rows[0].text.startswith("Ya esta publicada de prueba: https://preview.example.com/p/")
+    updated_public_page = WorkstationPublicPage.get_by_client_id(workstation.id)
+    assert updated_public_page is not None
+    assert updated_public_page.last_sent_at is not None
+
+
+def test_workstation_approval_sends_public_link_before_final_handoff(monkeypatch, tmp_path) -> None:
+    """Video approval should send the public trial URL before final approval."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setattr(database_module, "DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr(workstation_endpoints, "WORKSTATION_PUBLIC_PAGE_BASE_URL", "https://preview.example.com")
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-workstation-approval-before-public-link",
+        phone="+5491777777713",
+        full_name="Cliente Aprueba Video",
+    )
+    workstation = WorkstationClient.create_for_lead(
+        lead,
+        work_type=WorkstationClientWorkType.SOLO_PAGINA,
+        status=WorkstationClientStatus.PENDING_PAYMENT,
+        automation_status=WorkstationAutomationStatus.AWAITING_REVIEW,
+    )
+    version_dir = workstation_endpoints.landing_page_root(workstation) / "v001"
+    (version_dir / "assets").mkdir(parents=True)
+    (version_dir / "index.html").write_text("<html><body>approval gate</body></html>", encoding="utf-8")
+    (version_dir / "styles.css").write_text("", encoding="utf-8")
+    (version_dir / "script.js").write_text("", encoding="utf-8")
+    public_page = workstation_endpoints.ensure_workstation_public_page(workstation, version_dir)
+    assert public_page is not None
+    assert public_page.last_sent_at is None
+    preview_at = now_utc() - timedelta(minutes=25)
+    WorkstationClient.update_automation_state(
+        workstation.id,
+        automation_status=WorkstationAutomationStatus.AWAITING_REVIEW,
+        last_preview_sent_at=preview_at,
+        last_automation_handled_at=preview_at,
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=True,
+        text="Le mando un video con el boceto de su pagina.",
+        sequence_step="workstation_preview_video",
+        media_type="video",
+        media_path=workstation_endpoints.relative_data_path(version_dir / "preview.mp4"),
+        delivery_status=MessageDeliveryStatus.DELIVERED,
+        created_at=preview_at,
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=False,
+        text="Me gusta, asi esta bien",
+        created_at=now_utc() - timedelta(minutes=21),
+    )
+
+    with TestClient(app) as client:
+        tick = client.post("/api/workstation/automation/tick")
+        pending = client.get("/api/contadores/messages/pending-delivery")
+
+    assert tick.status_code == 200
+    assert tick.json()["approvals"] == 0
+    assert [item["sequence_step"] for item in pending.json()["messages"]] == ["workstation_public_page_link"]
+    updated = WorkstationClient.get_by_lead_id(lead.id)
+    assert updated.automation_status == WorkstationAutomationStatus.AWAITING_REVIEW
+    updated_public_page = WorkstationPublicPage.get_by_client_id(workstation.id)
+    assert updated_public_page is not None
+    assert updated_public_page.last_sent_at is not None
+
+
 def test_workstation_solo_page_codex_runs_from_repo_root(monkeypatch, tmp_path) -> None:
     """Codex should read repo templates and then validate client-folder outputs."""
     configure_contadores_db(monkeypatch, tmp_path)
@@ -5953,6 +6166,13 @@ def test_workstation_tick_approval_marks_needs_human(monkeypatch, tmp_path) -> N
         last_preview_sent_at=preview_at,
         last_automation_handled_at=preview_at,
     )
+    version_dir = workstation_endpoints.landing_page_root(workstation) / "v001"
+    (version_dir / "assets").mkdir(parents=True)
+    (version_dir / "index.html").write_text("<html><body>approved public page</body></html>", encoding="utf-8")
+    (version_dir / "styles.css").write_text("", encoding="utf-8")
+    (version_dir / "script.js").write_text("", encoding="utf-8")
+    workstation_endpoints.ensure_workstation_public_page(workstation, version_dir)
+    WorkstationPublicPage.mark_sent(workstation.id, sent_at=preview_at)
     ContadoresMessage.add(
         lead_id=lead.id,
         from_me=True,

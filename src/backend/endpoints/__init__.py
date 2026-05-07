@@ -3,11 +3,12 @@
 from backend.endpoints.auth import auth_router
 from backend.endpoints.contadores import contadores_router
 from backend.endpoints.funnels import funnels_router
-from backend.endpoints.workstation import workstation_router
+from backend.endpoints.workstation import public_workstation_router, workstation_router
 
 __all__ = [
     "auth_router",
     "contadores_router",
     "funnels_router",
+    "public_workstation_router",
     "workstation_router",
 ]

@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import statistics
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -2812,6 +2813,117 @@ class WorkstationClient(SQLModel, table=True):
             if item is None:
                 return None
             item.codex_workstation_thread_id = (thread_id or "").strip() or None
+            item.updated_at = datetime.now(timezone.utc)
+            session.add(item)
+            session.commit()
+            session.refresh(item)
+            session.expunge(item)
+            return item
+
+
+def build_workstation_public_page_token() -> str:
+    """Return an unguessable token for a Workstation trial page."""
+    return secrets.token_urlsafe(24)
+
+
+class WorkstationPublicPage(SQLModel, table=True):
+    """Stable public trial URL for one Workstation solo-page client."""
+
+    __tablename__ = "workstation_public_pages"
+    __table_args__ = (
+        UniqueConstraint("client_id", name="uq_workstation_public_pages_client_id"),
+        UniqueConstraint("public_token", name="uq_workstation_public_pages_public_token"),
+    )
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    client_id: str = Field(foreign_key="workstation_clients.id", index=True)
+    public_token: str = Field(default_factory=build_workstation_public_page_token, index=True)
+    current_version: str = Field(default="", index=True)
+    version_path: str = Field(default="")
+    status: str = Field(default="active", index=True)
+    first_published_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
+    last_sent_at: datetime | None = Field(default=None, index=True)
+
+    @classmethod
+    def get_by_client_id(cls, client_id: str) -> Optional["WorkstationPublicPage"]:
+        """Get the public page row for one Workstation client."""
+        clean_client_id = (client_id or "").strip()
+        if not clean_client_id:
+            return None
+        with Session(engine) as session:
+            statement = select(cls).where(cls.client_id == clean_client_id).limit(1)
+            item = session.exec(statement).first()
+            if item:
+                session.expunge(item)
+            return item
+
+    @classmethod
+    def get_active_by_token(cls, public_token: str) -> Optional["WorkstationPublicPage"]:
+        """Get one active public page by its unguessable token."""
+        clean_token = (public_token or "").strip()
+        if not clean_token:
+            return None
+        with Session(engine) as session:
+            statement = (
+                select(cls)
+                .where(cls.public_token == clean_token)
+                .where(cls.status == "active")
+                .limit(1)
+            )
+            item = session.exec(statement).first()
+            if item:
+                session.expunge(item)
+            return item
+
+    @classmethod
+    def create_or_update_for_client(
+        cls,
+        *,
+        client_id: str,
+        current_version: str,
+        version_path: str,
+    ) -> "WorkstationPublicPage":
+        """Create or move the stable public URL to the latest page version."""
+        now = datetime.now(timezone.utc)
+        clean_client_id = (client_id or "").strip()
+        clean_version = (current_version or "").strip()
+        clean_path = (version_path or "").strip()
+        with Session(engine) as session:
+            statement = select(cls).where(cls.client_id == clean_client_id).limit(1)
+            item = session.exec(statement).first()
+            if item is None:
+                item = cls(
+                    client_id=clean_client_id,
+                    public_token=build_workstation_public_page_token(),
+                    current_version=clean_version,
+                    version_path=clean_path,
+                    first_published_at=now,
+                    updated_at=now,
+                )
+            else:
+                item.current_version = clean_version
+                item.version_path = clean_path
+                item.status = "active"
+                item.updated_at = now
+            session.add(item)
+            session.commit()
+            session.refresh(item)
+            session.expunge(item)
+            return item
+
+    @classmethod
+    def mark_sent(cls, client_id: str, *, sent_at: datetime | None = None) -> Optional["WorkstationPublicPage"]:
+        """Persist when the public URL was last sent to the client."""
+        clean_client_id = (client_id or "").strip()
+        if not clean_client_id:
+            return None
+        with Session(engine) as session:
+            statement = select(cls).where(cls.client_id == clean_client_id).limit(1)
+            item = session.exec(statement).first()
+            if item is None:
+                return None
+            item.last_sent_at = sent_at or datetime.now(timezone.utc)
             item.updated_at = datetime.now(timezone.utc)
             session.add(item)
             session.commit()

@@ -91,6 +91,16 @@ restarting the job, and records the instruction in `progress.md`.
 - Static page drafts belong under `landing-page/vNNN/`. Do not overwrite prior
   page versions; create the next version and let the automation render
   `preview.mp4` from that folder.
+- Static page structure is fixed. Put `index.html`, `styles.css`, and
+  `script.js` at the root of the page version. Put every page-owned asset under
+  `assets/`. Reference them only as `./styles.css`, `./script.js`, and
+  `./assets/...`. Never reference `/data`, `../`, absolute filesystem paths,
+  source-template files, or another client folder from public HTML.
+- `preview.mp4` and `metadata.json` are backend-owned files. Do not create or
+  edit them manually.
+- After a valid page version exists, the backend keeps one stable public trial
+  URL for the client under `/p/{token}/`. That URL always points to the latest
+  generated version and is for review/testing, not final custom-domain hosting.
 - If the client should receive more than the page preview, create
   `outbound-messages.json` in the page version with an ordered `messages` array.
   Use it for separate text/media sends. When there is a professional photo,

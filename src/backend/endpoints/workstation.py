@@ -16,9 +16,10 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
@@ -41,7 +42,9 @@ from backend.config import (
     WORKSTATION_PING_2_TEXT,
     WORKSTATION_PING_TEMPLATE_1_NAME,
     WORKSTATION_PING_TEMPLATE_2_NAME,
+    WORKSTATION_PUBLIC_PAGE_BASE_URL,
     WORKSTATION_TEMPLATE_LANGUAGE,
+    WA_CALLBACK_URL,
 )
 from backend.database import (
     ContadoresLead,
@@ -53,6 +56,7 @@ from backend.database import (
     WorkstationMediaAsset,
     WorkstationClientStatus,
     WorkstationClientWorkType,
+    WorkstationPublicPage,
     normalize_workstation_slug,
 )
 from backend.endpoints.contadores import (
@@ -70,6 +74,7 @@ from backend.endpoints.contadores import (
 )
 
 workstation_router = APIRouter(prefix="/api/workstation", tags=["workstation"])
+public_workstation_router = APIRouter(tags=["workstation"])
 logger = logging.getLogger(__name__)
 
 
@@ -87,6 +92,7 @@ ACTIVE_PROFESSIONAL_PHOTO_JOB_STATUSES = {"queued", "running"}
 WORKSTATION_INTAKE_SEQUENCE_STEP = "workstation_intake"
 WORKSTATION_PREVIEW_SEQUENCE_STEP = "workstation_preview_video"
 WORKSTATION_REVISION_SEQUENCE_STEP = "workstation_revision_video"
+WORKSTATION_PUBLIC_PAGE_SEQUENCE_STEP = "workstation_public_page_link"
 WORKSTATION_PING_1_SEQUENCE_STEP = "workstation_ping_1"
 WORKSTATION_PING_2_SEQUENCE_STEP = "workstation_ping_2"
 WORKSTATION_HANDOFF_SEQUENCE_STEP = "workstation_handoff"
@@ -150,6 +156,7 @@ class WorkstationAgentDecision:
         "send_text",
         "ask_for_details",
         "generate_or_revise_page",
+        "send_public_page_link",
         "approve_and_handoff",
         "handoff_human",
         "no_action",
@@ -277,6 +284,116 @@ def relative_data_path(path: Path) -> str:
     return str(Path("data") / relative)
 
 
+def resolve_data_path(stored_path: str | None) -> Path | None:
+    """Resolve a stored data/... path inside the shared data directory."""
+    clean_path = (stored_path or "").strip()
+    if not clean_path:
+        return None
+    candidate = Path(clean_path).expanduser()
+    if candidate.is_absolute():
+        return candidate.resolve()
+    parts = candidate.parts
+    data_dir = database_module.DATA_DIR.expanduser().resolve()
+    if parts and parts[0] == "data":
+        return data_dir.joinpath(*parts[1:]).resolve()
+    return (data_dir / candidate).resolve()
+
+
+def workstation_public_page_base_url() -> str:
+    """Return the configured public origin for trial pages, if available."""
+    configured = (WORKSTATION_PUBLIC_PAGE_BASE_URL or "").strip().rstrip("/")
+    if configured:
+        return configured
+    callback_url = (WA_CALLBACK_URL or "").strip()
+    if not callback_url:
+        return ""
+    parsed = urlsplit(callback_url)
+    if not parsed.scheme or not parsed.netloc:
+        return ""
+    return urlunsplit((parsed.scheme, parsed.netloc, "", "", "")).rstrip("/")
+
+
+def workstation_public_page_path(public_page: WorkstationPublicPage) -> str:
+    """Return the stable public path for one trial page."""
+    return f"/p/{public_page.public_token}/"
+
+
+def workstation_public_page_url(public_page: WorkstationPublicPage) -> str:
+    """Return an absolute public URL when configured, otherwise a usable path."""
+    path = workstation_public_page_path(public_page)
+    base_url = workstation_public_page_base_url()
+    return f"{base_url}{path}" if base_url else path
+
+
+def workstation_public_page_payload(public_page: WorkstationPublicPage | None) -> dict[str, str | None] | None:
+    """Serialize public trial page data for profile.json and agent context."""
+    if public_page is None:
+        return None
+    return {
+        "client_id": public_page.client_id,
+        "public_token": public_page.public_token,
+        "public_path": workstation_public_page_path(public_page),
+        "public_url": workstation_public_page_url(public_page),
+        "current_version": public_page.current_version,
+        "version_path": public_page.version_path,
+        "status": public_page.status,
+        "first_published_at": format_timestamp_seconds(public_page.first_published_at),
+        "updated_at": format_timestamp_seconds(public_page.updated_at),
+        "last_sent_at": format_timestamp_seconds(public_page.last_sent_at),
+    }
+
+
+def ensure_workstation_public_page(client: WorkstationClient, version_dir: Path) -> WorkstationPublicPage | None:
+    """Create or update the stable public trial URL for one generated page."""
+    if client.work_type != WorkstationClientWorkType.SOLO_PAGINA:
+        return None
+    index_path = version_dir / "index.html"
+    if not index_path.is_file():
+        return None
+    page_root = landing_page_root(client).resolve()
+    resolved_version = version_dir.resolve()
+    try:
+        resolved_version.relative_to(page_root)
+    except ValueError:
+        raise RuntimeError(f"Version path is outside the landing-page folder: {version_dir}")
+    return WorkstationPublicPage.create_or_update_for_client(
+        client_id=client.id,
+        current_version=version_dir.name,
+        version_path=relative_data_path(version_dir),
+    )
+
+
+def ensure_public_page_for_latest_version(client: WorkstationClient) -> WorkstationPublicPage | None:
+    """Backfill or refresh the stable public URL from the latest page version."""
+    latest_version = latest_landing_page_version_dir(client)
+    if latest_version is None:
+        return WorkstationPublicPage.get_by_client_id(client.id)
+    return ensure_workstation_public_page(client, latest_version)
+
+
+def workstation_public_page_was_sent(client: WorkstationClient) -> bool:
+    """Return True when the client has already received the public trial URL."""
+    public_page = WorkstationPublicPage.get_by_client_id(client.id)
+    return public_page is not None and public_page.last_sent_at is not None
+
+
+def resolve_public_page_version_dir(public_page: WorkstationPublicPage) -> Path:
+    """Resolve the version folder owned by a public trial page row."""
+    path = resolve_data_path(public_page.version_path)
+    if path is None or not path.is_dir():
+        raise HTTPException(status_code=404, detail="Public page not found")
+    client = WorkstationClient.get_by_id(public_page.client_id)
+    if client is None:
+        raise HTTPException(status_code=404, detail="Public page not found")
+    client_root = client_folder(client).resolve()
+    resolved_path = path.resolve()
+    try:
+        resolved_path.relative_to(client_root)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Public page not found")
+    return resolved_path
+
+
 def safe_upload_filename(filename: str | None) -> str:
     """Return a readable filename segment that cannot escape the media folder."""
     raw_name = Path(filename or "file").name
@@ -360,6 +477,7 @@ def build_copy_all_text(
     media: list[WorkstationMediaAsset],
 ) -> str:
     """Build the clipboard-ready profile context for Codex."""
+    public_page = ensure_public_page_for_latest_version(client)
     media_lines = [
         f"- {asset.title or asset.original_filename}: {asset.stored_path}"
         for asset in media
@@ -375,6 +493,7 @@ def build_copy_all_text(
             f"phone: {lead.phone or lead.normalized_phone}",
             f"email: {lead.email or '-'}",
             f"offer: {client.offer_price_usd or '-'} {client.offer_currency or 'USD'}",
+            f"public_trial_url: {workstation_public_page_url(public_page) if public_page else '-'}",
             "# Notas",
             client.notes or "(sin notas)",
             "# Media",
@@ -385,12 +504,18 @@ def build_copy_all_text(
     ).strip() + "\n"
 
 
-def write_client_files(client: WorkstationClient) -> None:
+def write_client_files(
+    client: WorkstationClient,
+    *,
+    public_page: WorkstationPublicPage | None = None,
+) -> None:
     """Refresh the filesystem snapshot for one Workstation client."""
     folder = client_folder(client)
     lead = ContadoresLead.get_by_id(client.lead_id)
     messages = ContadoresMessage.list_by_lead(client.lead_id) if lead else []
     media = WorkstationMediaAsset.list_by_client(client.id)
+    if public_page is None:
+        public_page = ensure_public_page_for_latest_version(client)
 
     (folder / "notes.txt").write_text(client.notes or "", encoding="utf-8")
     if lead:
@@ -441,6 +566,7 @@ def write_client_files(client: WorkstationClient) -> None:
             }
             for asset in media
         ],
+        "public_page": workstation_public_page_payload(public_page),
     }
     (folder / "profile.json").write_text(
         json.dumps(profile, ensure_ascii=True, indent=2),
@@ -474,6 +600,21 @@ class WorkstationMediaAssetResponse(BaseModel):
     size_bytes: int
     media_url: str
     created_at: str
+
+
+class WorkstationPublicPageResponse(BaseModel):
+    """Public trial page URL attached to one Workstation client."""
+
+    client_id: str
+    public_token: str
+    public_path: str
+    public_url: str
+    current_version: str
+    version_path: str
+    status: str
+    first_published_at: str | None = None
+    updated_at: str | None = None
+    last_sent_at: str | None = None
 
 
 class WorkstationClientSummary(BaseModel):
@@ -555,6 +696,7 @@ class WorkstationClientDetailResponse(BaseModel):
     runtime_alerts: list[WorkstationRuntimeAlertResponse] = Field(default_factory=list)
     automation_state: WorkstationAutomationStateResponse
     professional_photos: list["WorkstationProfessionalPhotoVersion"] = Field(default_factory=list)
+    public_page: WorkstationPublicPageResponse | None = None
 
 
 class CreateWorkstationClientCommand(BaseModel):
@@ -676,6 +818,25 @@ class WorkstationAutomationTickResponse(BaseModel):
 
 
 WorkstationClientDetailResponse.model_rebuild()
+
+
+def build_public_page_response(public_page: WorkstationPublicPage | None) -> WorkstationPublicPageResponse | None:
+    """Serialize one public trial page row."""
+    payload = workstation_public_page_payload(public_page)
+    if payload is None:
+        return None
+    return WorkstationPublicPageResponse(
+        client_id=str(payload["client_id"] or ""),
+        public_token=str(payload["public_token"] or ""),
+        public_path=str(payload["public_path"] or ""),
+        public_url=str(payload["public_url"] or ""),
+        current_version=str(payload["current_version"] or ""),
+        version_path=str(payload["version_path"] or ""),
+        status=str(payload["status"] or ""),
+        first_published_at=payload["first_published_at"],
+        updated_at=payload["updated_at"],
+        last_sent_at=payload["last_sent_at"],
+    )
 
 
 def build_media_response(asset: WorkstationMediaAsset) -> WorkstationMediaAssetResponse:
@@ -1442,6 +1603,7 @@ def parse_workstation_agent_decision(raw_text: str) -> WorkstationAgentDecision:
         "send_text",
         "ask_for_details",
         "generate_or_revise_page",
+        "send_public_page_link",
         "approve_and_handoff",
         "handoff_human",
         "no_action",
@@ -1460,6 +1622,22 @@ def fallback_workstation_agent_decision(reply_text: str) -> WorkstationAgentDeci
         return WorkstationAgentDecision(
             action="approve_and_handoff",
             reason="The reply appears to approve the current preview.",
+        )
+    public_link_markers = (
+        "link",
+        "url",
+        "publica",
+        "publicar",
+        "publicada",
+        "internet",
+        "verla",
+        "probarla",
+        "deploy",
+    )
+    if any(marker in normalized for marker in public_link_markers):
+        return WorkstationAgentDecision(
+            action="send_public_page_link",
+            reason="The client appears to ask for the public trial page URL.",
         )
     question_markers = ("?", "como", "cómo", "donde", "dónde", "que ", "qué ", "cuando", "cuándo")
     content_markers = (
@@ -1509,9 +1687,11 @@ def build_workstation_agent_decision_prompt(
     handoff_resume: bool = False,
 ) -> str:
     """Build the prompt that lets Codex choose the next Workstation action."""
-    write_client_files(client)
+    public_page = ensure_public_page_for_latest_version(client)
+    write_client_files(client, public_page=public_page)
     latest_reply_text = "\n".join(f"- {message.text}" for message in replies if message.text.strip()).strip()
     previous_version = latest_landing_page_version_dir(client)
+    public_page_payload = workstation_public_page_payload(public_page)
     return f"""
 You are the autonomous Workstation solo-page client agent.
 
@@ -1524,6 +1704,10 @@ Client folder:
 
 Previous page version:
 {previous_version or "(none)"}
+
+Public trial page:
+- URL: {public_page_payload["public_url"] if public_page_payload else "(none)"}
+- last_sent_at: {public_page_payload["last_sent_at"] if public_page_payload else "(never)"}
 
 Client:
 - Name: {lead.full_name or client.display_name}
@@ -1543,7 +1727,9 @@ Decision rules:
   improve it with AI.
 - If the client sent useful photos/content and a draft is helpful now, generate_or_revise_page is allowed.
 - If the client gave concrete changes to the current page, use generate_or_revise_page.
-- If the client seems to approve the current page, use approve_and_handoff.
+- If the client asks to see, test, publish, or open the page online, use send_public_page_link.
+- If the client approves the preview but the public trial URL has not been sent yet, use send_public_page_link.
+- If the public trial URL was already sent and the client approves that public page, use approve_and_handoff.
 - If the situation needs a person, use handoff_human.
 - Use ask_for_details when the client intent is unclear.
 - Keep any WhatsApp message short, natural, and in Rioplatense/neutral Spanish.
@@ -1551,8 +1737,8 @@ Decision rules:
 
 Return only JSON:
 {{
-  "action": "send_text | ask_for_details | generate_or_revise_page | approve_and_handoff | handoff_human | no_action",
-  "message": "text to send if action is send_text, ask_for_details, or handoff_human",
+  "action": "send_text | ask_for_details | generate_or_revise_page | send_public_page_link | approve_and_handoff | handoff_human | no_action",
+  "message": "text to send if action is send_text, ask_for_details, send_public_page_link, or handoff_human",
   "reason": "short internal reason"
 }}
 
@@ -1568,8 +1754,10 @@ def build_workstation_tool_agent_context(
     handoff_resume: bool = False,
 ) -> str:
     """Build decision context for the tool-capable Workstation employee."""
-    write_client_files(client)
+    public_page = ensure_public_page_for_latest_version(client)
+    write_client_files(client, public_page=public_page)
     previous_version = latest_landing_page_version_dir(client)
+    public_page_payload = workstation_public_page_payload(public_page)
     reply_lines = [
         f"- id={message.id} at={format_timestamp_seconds(message.created_at) or '-'}: {message.text or '[media]'}"
         for message in replies
@@ -1584,6 +1772,8 @@ def build_workstation_tool_agent_context(
 - automation_status: {client.automation_status.value}
 - client_folder: {client_folder(client)}
 - previous_page_version: {previous_version or '(none)'}
+- public_trial_url: {public_page_payload["public_url"] if public_page_payload else '(none)'}
+- public_trial_url_last_sent_at: {public_page_payload["last_sent_at"] if public_page_payload else '(never)'}
 - handoff_resume: {"yes" if handoff_resume else "no"}
 
 # Latest Client Replies
@@ -1593,7 +1783,9 @@ def build_workstation_tool_agent_context(
 - If the client asks a question, answer with send_whatsapp_text. Do not generate a page for that.
 - If the client asks how to send content, ask them to send it and say you will add it.
 - If the client gave concrete page changes or useful assets, use generate_or_revise_solo_page and then queue_workstation_deliverables.
-- If the client approves the preview, use mark_preview_approved.
+- If the client asks to see, test, publish, or open the page online, use send_workstation_public_page_link.
+- If the client approves the preview but public_trial_url_last_sent_at is never, send_workstation_public_page_link first.
+- If public_trial_url_last_sent_at exists and the client approves the public test page, use mark_preview_approved.
 - If the situation needs a person, use handoff_human.
 - If the right move is to wait, use schedule_followup.
 - Keep the current page design stable across revisions unless the client explicitly asks for a redesign.
@@ -2032,6 +2224,13 @@ async def generate_solo_page_version(
             json.dumps(metadata, ensure_ascii=True, indent=2),
             encoding="utf-8",
         )
+        public_page = ensure_workstation_public_page(client, version_dir)
+        if public_page is not None:
+            append_workstation_progress(
+                client,
+                f"Public trial URL ready: {workstation_public_page_url(public_page)}",
+            )
+            write_client_files(client, public_page=public_page)
         register_generated_workstation_media(
             client=client,
             source_path=preview_path,
@@ -2447,6 +2646,49 @@ def queue_workstation_agent_text(
     return row
 
 
+def build_public_page_link_message(public_page: WorkstationPublicPage, text: str | None = None) -> str:
+    """Return the WhatsApp text for a public trial page link."""
+    clean_text = clean_workstation_preview_message(text)
+    if clean_text:
+        public_url = workstation_public_page_url(public_page)
+        if "{url}" in clean_text:
+            return clean_text.replace("{url}", public_url)
+        return f"{clean_text}\n{public_url}"
+    return (
+        "Le dejo la pagina publicada de prueba para que pueda verla y probarla:\n"
+        f"{workstation_public_page_url(public_page)}\n\n"
+        "Digame si asi le gusta o que quiere ajustar."
+    )
+
+
+def queue_workstation_public_page_link(
+    *,
+    client: WorkstationClient,
+    lead: ContadoresLead,
+    text: str | None = None,
+    dispatch_after: datetime | None = None,
+) -> ContadoresMessage:
+    """Queue the stable public trial URL for the client."""
+    public_page = ensure_public_page_for_latest_version(client)
+    if public_page is None:
+        raise RuntimeError("No public trial page is available for this client.")
+    row = enqueue_lead_outbound(
+        lead=lead,
+        text=build_public_page_link_message(public_page, text),
+        sequence_step=WORKSTATION_PUBLIC_PAGE_SEQUENCE_STEP,
+        dispatch_after=dispatch_after,
+    )
+    WorkstationPublicPage.mark_sent(client.id, sent_at=row.created_at)
+    WorkstationClient.update_automation_state(
+        client.id,
+        automation_status=WorkstationAutomationStatus.AWAITING_REVIEW,
+        last_automation_handled_at=row.created_at,
+        last_preview_sent_at=row.created_at,
+    )
+    append_workstation_progress(client, f"Queued public trial page URL: {workstation_public_page_url(public_page)}")
+    return row
+
+
 async def run_manual_solo_page_work(client_id: str, operator_prompt: str) -> None:
     """Run one operator-triggered solo-page draft or revision."""
     try:
@@ -2496,6 +2738,14 @@ async def run_manual_solo_page_work(client_id: str, operator_prompt: str) -> Non
                     else WORKSTATION_PREVIEW_SEQUENCE_STEP
                 ),
             )
+            if revision and workstation_public_page_was_sent(fresh_client):
+                rows.append(
+                    queue_workstation_public_page_link(
+                        client=fresh_client,
+                        lead=lead,
+                        text="Ya actualice la pagina. Puede revisarla aca y decirme si asi queda bien: {url}",
+                    )
+                )
         except WorkstationCodexStopped:
             mark_workstation_stopped_by_operator(fresh_client)
             return
@@ -2841,6 +3091,22 @@ async def advance_solo_page_client(client: WorkstationClient, *, now: datetime) 
                 )
                 metrics["failures"] = 1
             return metrics
+        if decision.action == "send_public_page_link":
+            try:
+                queue_workstation_public_page_link(
+                    client=fresh_client,
+                    lead=lead,
+                    text=decision.message,
+                )
+            except Exception as error:
+                mark_workstation_failed(
+                    client=fresh_client,
+                    lead=lead,
+                    error=f"{error.__class__.__name__}: {error}",
+                    latest_inbound_text=replies[-1].text if replies else "",
+                )
+                metrics["failures"] = 1
+            return metrics
         if decision.action == "handoff_human":
             append_workstation_progress(fresh_client, "Agent chose human handoff.")
             if decision.message:
@@ -2873,6 +3139,27 @@ async def advance_solo_page_client(client: WorkstationClient, *, now: datetime) 
             metrics["human_handoffs"] = 1
             return metrics
         if decision.action == "approve_and_handoff" or text_shows_workstation_approval(reply_text):
+            public_page = ensure_public_page_for_latest_version(fresh_client)
+            if public_page is not None and public_page.last_sent_at is None:
+                append_workstation_progress(
+                    fresh_client,
+                    "Client approved the video preview. Sending public trial URL before final approval.",
+                )
+                try:
+                    queue_workstation_public_page_link(
+                        client=fresh_client,
+                        lead=lead,
+                        text=decision.message,
+                    )
+                except Exception as error:
+                    mark_workstation_failed(
+                        client=fresh_client,
+                        lead=lead,
+                        error=f"{error.__class__.__name__}: {error}",
+                        latest_inbound_text=replies[-1].text if replies else "",
+                    )
+                    metrics["failures"] = 1
+                return metrics
             append_workstation_progress(fresh_client, "Client approved the preview. Handing off to operator.")
             WorkstationClient.update_automation_state(
                 fresh_client.id,
@@ -2916,6 +3203,14 @@ async def advance_solo_page_client(client: WorkstationClient, *, now: datetime) 
                 version_dir=version_dir,
                 sequence_step=WORKSTATION_REVISION_SEQUENCE_STEP,
             )
+            if workstation_public_page_was_sent(fresh_client):
+                rows.append(
+                    queue_workstation_public_page_link(
+                        client=fresh_client,
+                        lead=lead,
+                        text="Ya actualice la pagina. Puede revisarla aca y decirme si asi queda bien: {url}",
+                    )
+                )
         except WorkstationCodexStopped:
             mark_workstation_stopped_by_operator(fresh_client)
             return metrics
@@ -2978,6 +3273,22 @@ async def advance_solo_page_client(client: WorkstationClient, *, now: datetime) 
                 )
                 metrics["failures"] = 1
             return metrics
+        if decision.action == "send_public_page_link":
+            try:
+                queue_workstation_public_page_link(
+                    client=fresh_client,
+                    lead=lead,
+                    text=decision.message,
+                )
+            except Exception as error:
+                mark_workstation_failed(
+                    client=fresh_client,
+                    lead=lead,
+                    error=f"{error.__class__.__name__}: {error}",
+                    latest_inbound_text=replies[-1].text if replies else "",
+                )
+                metrics["failures"] = 1
+            return metrics
         if decision.action == "handoff_human":
             append_workstation_progress(fresh_client, "Agent kept this post-handoff reply with a human.")
             WorkstationClient.update_automation_state(
@@ -2988,6 +3299,27 @@ async def advance_solo_page_client(client: WorkstationClient, *, now: datetime) 
             metrics["human_handoffs"] = 1
             return metrics
         if decision.action == "approve_and_handoff" or text_shows_workstation_approval(reply_text):
+            public_page = ensure_public_page_for_latest_version(fresh_client)
+            if public_page is not None and public_page.last_sent_at is None:
+                append_workstation_progress(
+                    fresh_client,
+                    "Client approved after handoff. Sending public trial URL before final approval.",
+                )
+                try:
+                    queue_workstation_public_page_link(
+                        client=fresh_client,
+                        lead=lead,
+                        text=decision.message,
+                    )
+                except Exception as error:
+                    mark_workstation_failed(
+                        client=fresh_client,
+                        lead=lead,
+                        error=f"{error.__class__.__name__}: {error}",
+                        latest_inbound_text=replies[-1].text if replies else "",
+                    )
+                    metrics["failures"] = 1
+                return metrics
             append_workstation_progress(fresh_client, "Client replied after handoff and approved the preview.")
             WorkstationClient.update_automation_state(
                 fresh_client.id,
@@ -3018,6 +3350,14 @@ async def advance_solo_page_client(client: WorkstationClient, *, now: datetime) 
                 version_dir=version_dir,
                 sequence_step=WORKSTATION_REVISION_SEQUENCE_STEP,
             )
+            if workstation_public_page_was_sent(fresh_client):
+                rows.append(
+                    queue_workstation_public_page_link(
+                        client=fresh_client,
+                        lead=lead,
+                        text="Ya actualice la pagina. Puede revisarla aca y decirme si asi queda bien: {url}",
+                    )
+                )
         except WorkstationCodexStopped:
             mark_workstation_stopped_by_operator(fresh_client)
             return metrics
@@ -3305,7 +3645,8 @@ def build_client_detail(client: WorkstationClient) -> WorkstationClientDetailRes
     messages = ContadoresMessage.list_by_lead(client.lead_id)
     media = WorkstationMediaAsset.list_by_client(client.id)
     runtime_alerts = ContadoresRuntimeAlert.list_recent_by_lead(client.lead_id)
-    write_client_files(client)
+    public_page = ensure_public_page_for_latest_version(client)
+    write_client_files(client, public_page=public_page)
     return WorkstationClientDetailResponse(
         client=build_client_summary(client),
         notes=client.notes,
@@ -3314,7 +3655,69 @@ def build_client_detail(client: WorkstationClient) -> WorkstationClientDetailRes
         runtime_alerts=[build_runtime_alert_response(alert) for alert in runtime_alerts],
         automation_state=build_workstation_automation_state(client, messages),
         professional_photos=list_professional_photo_versions(client),
+        public_page=build_public_page_response(public_page),
     )
+
+
+def backfill_workstation_public_pages(*, limit: int = 1000) -> int:
+    """Create stable public URLs for existing solo-page clients with generated pages."""
+    created_or_updated = 0
+    for client in WorkstationClient.list_recent(
+        limit=limit,
+        work_type=WorkstationClientWorkType.SOLO_PAGINA,
+    ):
+        public_page = ensure_public_page_for_latest_version(client)
+        if public_page is None:
+            continue
+        write_client_files(client, public_page=public_page)
+        created_or_updated += 1
+    return created_or_updated
+
+
+def get_public_page_or_404(public_token: str) -> WorkstationPublicPage:
+    """Return one active public page or raise a 404."""
+    public_page = WorkstationPublicPage.get_active_by_token(public_token)
+    if public_page is None:
+        raise HTTPException(status_code=404, detail="Public page not found")
+    return public_page
+
+
+def resolve_public_page_file(public_page: WorkstationPublicPage, asset_path: str | None) -> Path:
+    """Resolve a public page asset without allowing directory traversal."""
+    version_dir = resolve_public_page_version_dir(public_page)
+    clean_path = (asset_path or "index.html").strip() or "index.html"
+    candidate = (version_dir / Path(clean_path)).resolve()
+    try:
+        candidate.relative_to(version_dir)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Public page asset not found")
+    if not candidate.is_file():
+        raise HTTPException(status_code=404, detail="Public page asset not found")
+    return candidate
+
+
+@public_workstation_router.get("/p/{public_token}")
+async def redirect_public_workstation_page(public_token: str) -> RedirectResponse:
+    """Redirect slashless public trial URLs to the static page root."""
+    get_public_page_or_404(public_token)
+    return RedirectResponse(url=f"/p/{public_token}/", status_code=307)
+
+
+@public_workstation_router.get("/p/{public_token}/")
+async def serve_public_workstation_page(public_token: str) -> FileResponse:
+    """Serve the current public trial page HTML."""
+    public_page = get_public_page_or_404(public_token)
+    path = resolve_public_page_file(public_page, "index.html")
+    return FileResponse(path, media_type="text/html", content_disposition_type="inline")
+
+
+@public_workstation_router.get("/p/{public_token}/{asset_path:path}")
+async def serve_public_workstation_page_asset(public_token: str, asset_path: str) -> FileResponse:
+    """Serve one static asset from the current public trial page version."""
+    public_page = get_public_page_or_404(public_token)
+    path = resolve_public_page_file(public_page, asset_path)
+    media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    return FileResponse(path, media_type=media_type, content_disposition_type="inline")
 
 
 @workstation_router.get("/clients", response_model=WorkstationClientListResponse)

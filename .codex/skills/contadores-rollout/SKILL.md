@@ -67,6 +67,10 @@ ChatGPT Codex with `CONVERSATION_BOT_CODEX_CHATGPT_HOME`, then Codex with
 Workstation client moves to `failed` with an operator-visible alert containing
 both underlying errors; the UI should not hide those errors behind a generic
 request timeout.
+Set `WORKSTATION_PUBLIC_PAGE_BASE_URL` on the server to the public origin served
+by Traefik, without a trailing slash. Workstation uses that origin to build the
+unguessable `/p/{token}/` trial URLs for solo-page clients. These are review
+links inside the Contadores backend, not final custom-domain hosting.
 
 Outbound WhatsApp send failures are persisted on `contadores_messages`. The bot
 reports send exceptions to the backend, the backend requeues until
