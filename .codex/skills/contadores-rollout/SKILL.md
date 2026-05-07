@@ -71,6 +71,10 @@ Set `WORKSTATION_PUBLIC_PAGE_BASE_URL` on the server to the public origin served
 by Traefik, without a trailing slash. Workstation uses that origin to build the
 unguessable `/p/{token}/` trial URLs for solo-page clients. These are review
 links inside the Contadores backend, not final custom-domain hosting.
+Keep `WORKSTATION_CODEX_HEARTBEAT_ENABLED=true` and
+`WORKSTATION_CODEX_HEARTBEAT_INTERVAL_HOURS=12` unless deliberately pausing
+Workstation autonomy. The heartbeat creates DB-backed Codex wake-ups for active
+solo-page clients and lets Codex choose a concrete action or no action.
 
 Outbound WhatsApp send failures are persisted on `contadores_messages`. The bot
 reports send exceptions to the backend, the backend requeues until

@@ -2250,6 +2250,35 @@ class ScheduledAgentTask(SQLModel, table=True):
             return rows
 
     @classmethod
+    def get_open_for_target(
+        cls,
+        *,
+        target_type: str,
+        target_id: str,
+        reason_prefix: str,
+    ) -> Optional["ScheduledAgentTask"]:
+        """Return a pending/running task for one target and reason prefix."""
+        clean_target_type = (target_type or "").strip()
+        clean_target_id = (target_id or "").strip()
+        clean_prefix = (reason_prefix or "").strip()
+        if not clean_target_type or not clean_target_id or not clean_prefix:
+            return None
+        with Session(engine) as session:
+            statement = (
+                select(cls)
+                .where(cls.target_type == clean_target_type)
+                .where(cls.target_id == clean_target_id)
+                .where(cls.status.in_({"pending", "running"}))
+                .where(cls.reason.like(f"{clean_prefix}%"))
+                .order_by(cls.due_at, cls.created_at, cls.id)
+                .limit(1)
+            )
+            row = session.exec(statement).first()
+            if row:
+                session.expunge(row)
+            return row
+
+    @classmethod
     def mark_status(
         cls,
         task_id: str,

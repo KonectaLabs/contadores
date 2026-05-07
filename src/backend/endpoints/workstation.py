@@ -37,6 +37,8 @@ from backend.config import (
     CONVERSATION_BOT_CODEX_SERVICE_TIER,
     OPENAI_API_KEY,
     WORKSTATION_HANDOFF_TEMPLATE_NAME,
+    WORKSTATION_CODEX_HEARTBEAT_ENABLED,
+    WORKSTATION_CODEX_HEARTBEAT_INTERVAL_HOURS,
     WORKSTATION_HUMAN_HANDOFF_TEXT,
     WORKSTATION_PING_1_TEXT,
     WORKSTATION_PING_2_TEXT,
@@ -93,9 +95,11 @@ WORKSTATION_INTAKE_SEQUENCE_STEP = "workstation_intake"
 WORKSTATION_PREVIEW_SEQUENCE_STEP = "workstation_preview_video"
 WORKSTATION_REVISION_SEQUENCE_STEP = "workstation_revision_video"
 WORKSTATION_PUBLIC_PAGE_SEQUENCE_STEP = "workstation_public_page_link"
+WORKSTATION_HEARTBEAT_SEQUENCE_STEP = "workstation_codex_heartbeat"
 WORKSTATION_PING_1_SEQUENCE_STEP = "workstation_ping_1"
 WORKSTATION_PING_2_SEQUENCE_STEP = "workstation_ping_2"
 WORKSTATION_HANDOFF_SEQUENCE_STEP = "workstation_handoff"
+WORKSTATION_CODEX_HEARTBEAT_REASON = "periodic_workstation_heartbeat"
 WORKSTATION_BACKOFF_SECONDS = 20 * 60
 WORKSTATION_PING_1_DELAY_SECONDS = 24 * 60 * 60
 WORKSTATION_PING_2_DELAY_SECONDS = 48 * 60 * 60
@@ -814,10 +818,229 @@ class WorkstationAutomationTickResponse(BaseModel):
     pings_sent: int = 0
     human_handoffs: int = 0
     failures: int = 0
+    scheduled_agent_tasks_created: int = 0
     scheduled_agent_tasks_processed: int = 0
 
 
 WorkstationClientDetailResponse.model_rebuild()
+
+
+def empty_workstation_metrics() -> dict[str, int]:
+    """Return the metric keys used by one Workstation automation step."""
+    return {
+        "intake_messages_sent": 0,
+        "drafts_generated": 0,
+        "revision_videos_sent": 0,
+        "approvals": 0,
+        "pings_sent": 0,
+        "human_handoffs": 0,
+        "failures": 0,
+    }
+
+
+def merge_workstation_metrics(summary: WorkstationAutomationTickResponse, metrics: dict[str, int]) -> None:
+    """Add one Workstation metrics dict into a tick response."""
+    summary.intake_messages_sent += metrics["intake_messages_sent"]
+    summary.drafts_generated += metrics["drafts_generated"]
+    summary.revision_videos_sent += metrics["revision_videos_sent"]
+    summary.approvals += metrics["approvals"]
+    summary.pings_sent += metrics["pings_sent"]
+    summary.human_handoffs += metrics["human_handoffs"]
+    summary.failures += metrics["failures"]
+
+
+def workstation_heartbeat_interval() -> timedelta:
+    """Return the configured Codex heartbeat interval for Workstation clients."""
+    return timedelta(hours=max(1, int(WORKSTATION_CODEX_HEARTBEAT_INTERVAL_HOURS or 12)))
+
+
+def workstation_heartbeat_client_is_candidate(client: WorkstationClient) -> bool:
+    """Return True when a client can be checked by the periodic Codex heartbeat."""
+    if client.work_type != WorkstationClientWorkType.SOLO_PAGINA:
+        return False
+    if client.status in {WorkstationClientStatus.ARCHIVED, WorkstationClientStatus.CLOSED}:
+        return False
+    if client.automation_status != WorkstationAutomationStatus.NEEDS_HUMAN:
+        return False
+    if workstation_handoff_can_resume(client):
+        return False
+    return True
+
+
+def workstation_heartbeat_is_due(
+    client: WorkstationClient,
+    *,
+    messages: list[ContadoresMessage],
+    now: datetime,
+) -> bool:
+    """Return True when the periodic Codex heartbeat should inspect this client."""
+    last_handled_at = normalize_utc(client.last_automation_handled_at)
+    new_replies = inbound_after(messages, last_handled_at)
+    if new_replies and latest_inbound_is_quiet(new_replies, now=now):
+        return True
+    anchor = last_handled_at or normalize_utc(client.created_at)
+    if anchor is None:
+        return True
+    return now >= anchor + workstation_heartbeat_interval()
+
+
+def ensure_workstation_codex_heartbeat_tasks(*, now: datetime, limit: int = 300) -> int:
+    """Create due periodic Codex heartbeat tasks for active solo-page clients."""
+    if not WORKSTATION_CODEX_HEARTBEAT_ENABLED:
+        return 0
+    created = 0
+    interval_seconds = int(workstation_heartbeat_interval().total_seconds())
+    bucket = int(now.timestamp() // max(1, interval_seconds))
+    for client in WorkstationClient.list_recent(limit=limit, work_type=WorkstationClientWorkType.SOLO_PAGINA):
+        if not workstation_heartbeat_client_is_candidate(client):
+            continue
+        if ScheduledAgentTask.get_open_for_target(
+            target_type="workstation_client",
+            target_id=client.id,
+            reason_prefix=WORKSTATION_CODEX_HEARTBEAT_REASON,
+        ):
+            continue
+        messages = ContadoresMessage.list_by_lead(client.lead_id)
+        if not workstation_heartbeat_is_due(client, messages=messages, now=now):
+            continue
+        ScheduledAgentTask.create(
+            target_type="workstation_client",
+            target_id=client.id,
+            due_at=now,
+            reason=f"{WORKSTATION_CODEX_HEARTBEAT_REASON}: {client.automation_status.value}",
+            instruction=(
+                "Automatic 12-hour Workstation solo-page heartbeat. Re-read the client context and latest "
+                "messages. Decide whether to do nothing, answer, send the public trial URL, revise the page, "
+                "or hand off. If no client-facing action is useful, choose no_action and do not send a filler message."
+            ),
+            idempotency_key=f"{WORKSTATION_CODEX_HEARTBEAT_REASON}:{client.id}:{bucket}",
+        )
+        created += 1
+    return created
+
+
+async def apply_workstation_scheduled_decision(
+    *,
+    client: WorkstationClient,
+    lead: ContadoresLead,
+    replies: list[ContadoresMessage],
+    decision: WorkstationAgentDecision,
+    now: datetime,
+) -> dict[str, int]:
+    """Apply a Codex decision produced by a scheduled Workstation heartbeat."""
+    metrics = empty_workstation_metrics()
+    fresh_client = WorkstationClient.get_by_id(client.id) or client
+    reply_text = "\n".join(message.text for message in replies if message.text.strip())
+    append_workstation_progress(
+        fresh_client,
+        f"Scheduled heartbeat decision: {decision.action}. {decision.reason[:240]}",
+    )
+
+    if decision.action == "no_action":
+        WorkstationClient.update_automation_state(fresh_client.id, last_automation_handled_at=now)
+        return metrics
+
+    if decision.action in {"send_text", "ask_for_details"}:
+        queue_workstation_agent_text(
+            client=fresh_client,
+            lead=lead,
+            text=decision.message,
+            sequence_step=WORKSTATION_HEARTBEAT_SEQUENCE_STEP,
+            anchor_review_timer=False,
+        )
+        return metrics
+
+    if decision.action == "send_public_page_link":
+        queue_workstation_public_page_link(client=fresh_client, lead=lead, text=decision.message)
+        return metrics
+
+    if decision.action == "handoff_human":
+        if decision.message:
+            queue_workstation_agent_text(
+                client=fresh_client,
+                lead=lead,
+                text=decision.message,
+                sequence_step=WORKSTATION_HEARTBEAT_SEQUENCE_STEP,
+                next_status=WorkstationAutomationStatus.NEEDS_HUMAN,
+                anchor_review_timer=False,
+            )
+        else:
+            WorkstationClient.update_automation_state(
+                fresh_client.id,
+                automation_status=WorkstationAutomationStatus.NEEDS_HUMAN,
+                last_automation_handled_at=now,
+            )
+        metrics["human_handoffs"] = 1
+        return metrics
+
+    if decision.action == "approve_and_handoff" or text_shows_workstation_approval(reply_text):
+        public_page = ensure_public_page_for_latest_version(fresh_client)
+        if public_page is not None and public_page.last_sent_at is None:
+            queue_workstation_public_page_link(client=fresh_client, lead=lead, text=decision.message)
+            return metrics
+        WorkstationClient.update_automation_state(
+            fresh_client.id,
+            automation_status=WorkstationAutomationStatus.NEEDS_HUMAN,
+            approved_at=now,
+            last_automation_handled_at=now,
+        )
+        ContadoresLead.update_flow_state(
+            lead.id,
+            stage="needs_human",
+            automation_paused=True,
+            automation_paused_reason="workstation_solo_page_approved",
+            last_classification_label="workstation_solo_page_approved",
+            last_classification_reason="El cliente aprobo la pagina publica de prueba.",
+            clear_needs_human_notified_at=True,
+        )
+        metrics["approvals"] = 1
+        metrics["human_handoffs"] = 1
+        return metrics
+
+    if decision.action != "generate_or_revise_page":
+        WorkstationClient.update_automation_state(fresh_client.id, last_automation_handled_at=now)
+        return metrics
+
+    revision = latest_landing_page_version_dir(fresh_client) is not None
+    WorkstationClient.update_automation_state(
+        fresh_client.id,
+        automation_status=(
+            WorkstationAutomationStatus.REVISION_REQUESTED
+            if revision
+            else WorkstationAutomationStatus.DRAFTING
+        ),
+        last_automation_handled_at=now,
+    )
+    await ensure_professional_photo_if_possible(fresh_client)
+    version_dir = await generate_solo_page_version_observed(
+        client=WorkstationClient.get_by_id(fresh_client.id) or fresh_client,
+        lead=lead,
+        replies=replies,
+        revision=revision,
+    )
+    rows = queue_workstation_preview(
+        client=fresh_client,
+        lead=lead,
+        version_dir=version_dir,
+        sequence_step=WORKSTATION_REVISION_SEQUENCE_STEP if revision else WORKSTATION_PREVIEW_SEQUENCE_STEP,
+    )
+    if revision and workstation_public_page_was_sent(fresh_client):
+        rows.append(
+            queue_workstation_public_page_link(
+                client=fresh_client,
+                lead=lead,
+                text="Ya actualice la pagina. Puede revisarla aca y decirme si asi queda bien: {url}",
+            )
+        )
+    WorkstationClient.update_automation_state(
+        fresh_client.id,
+        automation_status=WorkstationAutomationStatus.AWAITING_REVIEW,
+        last_automation_handled_at=now_utc(),
+        last_preview_sent_at=latest_preview_queue_timestamp(rows),
+    )
+    metrics["drafts_generated"] = 0 if revision else 1
+    metrics["revision_videos_sent"] = 1
+    return metrics
 
 
 def build_public_page_response(public_page: WorkstationPublicPage | None) -> WorkstationPublicPageResponse | None:
@@ -864,57 +1087,69 @@ async def run_workstation_automation_tick() -> WorkstationAutomationTickResponse
     async with workstation_automation_tick_lock:
         summary = WorkstationAutomationTickResponse()
         now = now_utc()
-        if CODEX_AGENT_TOOLS_ENABLED and CODEX_AGENT_TOOLS_WORKSTATION_ENABLED:
-            for task in ScheduledAgentTask.list_due(now=now, limit=20):
-                if task.target_type != "workstation_client":
-                    continue
-                ScheduledAgentTask.mark_status(task.id, status="running", timestamp=now)
-                client = WorkstationClient.get_by_id(task.target_id)
-                if client is None:
+        summary.scheduled_agent_tasks_created = ensure_workstation_codex_heartbeat_tasks(now=now)
+        for task in ScheduledAgentTask.list_due(now=now, limit=20):
+            if task.target_type != "workstation_client":
+                continue
+            ScheduledAgentTask.mark_status(task.id, status="running", timestamp=now)
+            client = WorkstationClient.get_by_id(task.target_id)
+            if client is None:
+                ScheduledAgentTask.mark_status(
+                    task.id,
+                    status="failed",
+                    error="Workstation client not found.",
+                )
+                summary.failures += 1
+                continue
+            lead = ContadoresLead.get_by_id(client.lead_id)
+            if lead is None:
+                ScheduledAgentTask.mark_status(task.id, status="failed", error="Lead not found.")
+                summary.failures += 1
+                continue
+            try:
+                messages = ContadoresMessage.list_by_lead(lead.id)
+                replies = inbound_after(messages, client.last_automation_handled_at)
+                if replies and not latest_inbound_is_quiet(replies, now=now):
                     ScheduledAgentTask.mark_status(
                         task.id,
-                        status="failed",
-                        error="Workstation client not found.",
+                        status="pending",
+                        error="Latest inbound is still inside the quiet window.",
                     )
-                    summary.failures += 1
                     continue
-                lead = ContadoresLead.get_by_id(client.lead_id)
-                if lead is None:
-                    ScheduledAgentTask.mark_status(task.id, status="failed", error="Lead not found.")
-                    summary.failures += 1
-                    continue
-                try:
-                    decision = await decide_workstation_next_action(
-                        client=client,
-                        lead=lead,
-                        replies=[],
-                        handoff_resume=True,
-                    )
-                    ScheduledAgentTask.mark_status(
-                        task.id,
-                        status="completed",
-                        error=decision.reason,
-                    )
-                    summary.scheduled_agent_tasks_processed += 1
-                except Exception as error:
-                    ScheduledAgentTask.mark_status(
-                        task.id,
-                        status="failed",
-                        error=f"{error.__class__.__name__}: {error}",
-                    )
-                    summary.failures += 1
+                decision = await decide_workstation_next_action(
+                    client=client,
+                    lead=lead,
+                    replies=replies,
+                    handoff_resume=True,
+                    scheduled_instruction=task.instruction,
+                )
+                metrics = await apply_workstation_scheduled_decision(
+                    client=client,
+                    lead=lead,
+                    replies=replies,
+                    decision=decision,
+                    now=now,
+                )
+                merge_workstation_metrics(summary, metrics)
+                ScheduledAgentTask.mark_status(
+                    task.id,
+                    status="completed",
+                    error=decision.reason,
+                )
+                summary.scheduled_agent_tasks_processed += 1
+            except Exception as error:
+                ScheduledAgentTask.mark_status(
+                    task.id,
+                    status="failed",
+                    error=f"{error.__class__.__name__}: {error}",
+                )
+                summary.failures += 1
         for client in WorkstationClient.list_active_automation(
             work_type=WorkstationClientWorkType.SOLO_PAGINA,
             limit=100,
         ):
             metrics = await advance_solo_page_client(client, now=now)
-            summary.intake_messages_sent += metrics["intake_messages_sent"]
-            summary.drafts_generated += metrics["drafts_generated"]
-            summary.revision_videos_sent += metrics["revision_videos_sent"]
-            summary.approvals += metrics["approvals"]
-            summary.pings_sent += metrics["pings_sent"]
-            summary.human_handoffs += metrics["human_handoffs"]
-            summary.failures += metrics["failures"]
+            merge_workstation_metrics(summary, metrics)
         return summary
 
 
@@ -1431,14 +1666,12 @@ def render_landing_page_video_sync(*, index_path: Path, output_path: Path) -> No
 
 def inbound_after(messages: list[ContadoresMessage], timestamp: datetime | None) -> list[ContadoresMessage]:
     """Return inbound messages newer than one timestamp."""
-    anchor = timestamp.astimezone(timezone.utc) if timestamp and timestamp.tzinfo else timestamp
+    anchor = normalize_utc(timestamp)
     replies: list[ContadoresMessage] = []
     for message in messages:
         if message.from_me:
             continue
-        created_at = message.created_at
-        if created_at and created_at.tzinfo:
-            created_at = created_at.astimezone(timezone.utc)
+        created_at = normalize_utc(message.created_at)
         if anchor is not None and created_at is not None and created_at <= anchor:
             continue
         replies.append(message)
@@ -1685,6 +1918,7 @@ def build_workstation_agent_decision_prompt(
     lead: ContadoresLead,
     replies: list[ContadoresMessage],
     handoff_resume: bool = False,
+    scheduled_instruction: str = "",
 ) -> str:
     """Build the prompt that lets Codex choose the next Workstation action."""
     public_page = ensure_public_page_for_latest_version(client)
@@ -1708,6 +1942,9 @@ Previous page version:
 Public trial page:
 - URL: {public_page_payload["public_url"] if public_page_payload else "(none)"}
 - last_sent_at: {public_page_payload["last_sent_at"] if public_page_payload else "(never)"}
+
+Scheduled instruction:
+{scheduled_instruction.strip() or "(none)"}
 
 Client:
 - Name: {lead.full_name or client.display_name}
@@ -1752,6 +1989,7 @@ def build_workstation_tool_agent_context(
     lead: ContadoresLead,
     replies: list[ContadoresMessage],
     handoff_resume: bool = False,
+    scheduled_instruction: str = "",
 ) -> str:
     """Build decision context for the tool-capable Workstation employee."""
     public_page = ensure_public_page_for_latest_version(client)
@@ -1775,6 +2013,7 @@ def build_workstation_tool_agent_context(
 - public_trial_url: {public_page_payload["public_url"] if public_page_payload else '(none)'}
 - public_trial_url_last_sent_at: {public_page_payload["last_sent_at"] if public_page_payload else '(never)'}
 - handoff_resume: {"yes" if handoff_resume else "no"}
+- scheduled_instruction: {scheduled_instruction.strip() or '(none)'}
 
 # Latest Client Replies
 {chr(10).join(reply_lines) if reply_lines else "(none)"}
@@ -1788,6 +2027,8 @@ def build_workstation_tool_agent_context(
 - If public_trial_url_last_sent_at exists and the client approves the public test page, use mark_preview_approved.
 - If the situation needs a person, use handoff_human.
 - If the right move is to wait, use schedule_followup.
+- If this is a scheduled heartbeat and no client-facing action is useful, do
+  nothing. Do not send a filler message.
 - Keep the current page design stable across revisions unless the client explicitly asks for a redesign.
 """.strip()
 
@@ -1798,6 +2039,7 @@ async def run_workstation_tool_agent(
     lead: ContadoresLead,
     replies: list[ContadoresMessage],
     handoff_resume: bool = False,
+    scheduled_instruction: str = "",
 ) -> WorkstationAgentDecision | None:
     """Let Codex act through product tools and return no fallback decision if it acted."""
     if not (CODEX_AGENT_TOOLS_ENABLED and CODEX_AGENT_TOOLS_WORKSTATION_ENABLED):
@@ -1808,6 +2050,7 @@ async def run_workstation_tool_agent(
         lead=lead,
         replies=replies,
         handoff_resume=handoff_resume,
+        scheduled_instruction=scheduled_instruction,
     )
 
     def register_turn(turn: object) -> None:
@@ -1861,6 +2104,7 @@ async def decide_workstation_next_action(
     lead: ContadoresLead,
     replies: list[ContadoresMessage],
     handoff_resume: bool = False,
+    scheduled_instruction: str = "",
 ) -> WorkstationAgentDecision:
     """Let Codex choose whether to reply, ask, revise, approve, or hand off."""
     reply_text = "\n".join(message.text for message in replies if message.text.strip())
@@ -1869,6 +2113,7 @@ async def decide_workstation_next_action(
         lead=lead,
         replies=replies,
         handoff_resume=handoff_resume,
+        scheduled_instruction=scheduled_instruction,
     )
     if tool_decision is not None:
         return tool_decision
@@ -1877,6 +2122,7 @@ async def decide_workstation_next_action(
         lead=lead,
         replies=replies,
         handoff_resume=handoff_resume,
+        scheduled_instruction=scheduled_instruction,
     )
     try:
         result = await run_solo_page_codex_with_fallback(

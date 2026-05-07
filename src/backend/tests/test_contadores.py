@@ -5461,6 +5461,118 @@ def test_workstation_approval_sends_public_link_before_final_handoff(monkeypatch
     assert updated_public_page.last_sent_at is not None
 
 
+def test_workstation_periodic_heartbeat_sends_public_link_from_needs_human(monkeypatch, tmp_path) -> None:
+    """The 12-hour heartbeat should recover a human-handoff client that asks for the link."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setattr(database_module, "DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr(workstation_endpoints, "WORKSTATION_PUBLIC_PAGE_BASE_URL", "https://preview.example.com")
+    monkeypatch.setattr(workstation_endpoints, "WORKSTATION_CODEX_HEARTBEAT_ENABLED", True)
+    monkeypatch.setattr(workstation_endpoints, "WORKSTATION_CODEX_HEARTBEAT_INTERVAL_HOURS", 12)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-workstation-heartbeat-link",
+        phone="+5491777777714",
+        full_name="Cliente Heartbeat Link",
+    )
+    workstation = WorkstationClient.create_for_lead(
+        lead,
+        work_type=WorkstationClientWorkType.SOLO_PAGINA,
+        status=WorkstationClientStatus.PENDING_PAYMENT,
+        automation_status=WorkstationAutomationStatus.NEEDS_HUMAN,
+    )
+    handled_at = now_utc() - timedelta(hours=13)
+    preview_at = now_utc() - timedelta(days=1)
+    WorkstationClient.update_automation_state(
+        workstation.id,
+        automation_status=WorkstationAutomationStatus.NEEDS_HUMAN,
+        last_preview_sent_at=preview_at,
+        last_automation_handled_at=handled_at,
+    )
+    version_dir = workstation_endpoints.landing_page_root(workstation) / "v001"
+    (version_dir / "assets").mkdir(parents=True)
+    (version_dir / "index.html").write_text("<html><body>heartbeat link</body></html>", encoding="utf-8")
+    (version_dir / "styles.css").write_text("", encoding="utf-8")
+    (version_dir / "script.js").write_text("", encoding="utf-8")
+    workstation_endpoints.ensure_workstation_public_page(workstation, version_dir)
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=False,
+        text="Subela para verla",
+        created_at=now_utc() - timedelta(minutes=25),
+    )
+
+    async def fake_decide_workstation_next_action(**kwargs):
+        assert kwargs["scheduled_instruction"]
+        assert [message.text for message in kwargs["replies"]] == ["Subela para verla"]
+        return workstation_endpoints.WorkstationAgentDecision(
+            action="send_public_page_link",
+            message="Ya esta publicada de prueba: {url}",
+            reason="Client asked to see the public page.",
+        )
+
+    monkeypatch.setattr(workstation_endpoints, "decide_workstation_next_action", fake_decide_workstation_next_action)
+
+    with TestClient(app) as client:
+        tick = client.post("/api/workstation/automation/tick")
+        pending = client.get("/api/contadores/messages/pending-delivery")
+
+    assert tick.status_code == 200
+    payload = tick.json()
+    assert payload["scheduled_agent_tasks_created"] == 1
+    assert payload["scheduled_agent_tasks_processed"] == 1
+    assert [item["sequence_step"] for item in pending.json()["messages"]] == ["workstation_public_page_link"]
+    public_page = WorkstationPublicPage.get_by_client_id(workstation.id)
+    assert public_page is not None
+    assert public_page.last_sent_at is not None
+    assert ScheduledAgentTask.list_due(now=now_utc()) == []
+
+
+def test_workstation_periodic_heartbeat_can_choose_no_action(monkeypatch, tmp_path) -> None:
+    """A heartbeat no_action should only advance the handled timestamp."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setattr(database_module, "DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr(workstation_endpoints, "WORKSTATION_CODEX_HEARTBEAT_ENABLED", True)
+    monkeypatch.setattr(workstation_endpoints, "WORKSTATION_CODEX_HEARTBEAT_INTERVAL_HOURS", 12)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-workstation-heartbeat-no-action",
+        phone="+5491777777715",
+        full_name="Cliente Heartbeat Quieto",
+    )
+    workstation = WorkstationClient.create_for_lead(
+        lead,
+        work_type=WorkstationClientWorkType.SOLO_PAGINA,
+        status=WorkstationClientStatus.PENDING_PAYMENT,
+        automation_status=WorkstationAutomationStatus.NEEDS_HUMAN,
+    )
+    handled_at = now_utc() - timedelta(hours=13)
+    WorkstationClient.update_automation_state(
+        workstation.id,
+        automation_status=WorkstationAutomationStatus.NEEDS_HUMAN,
+        last_automation_handled_at=handled_at,
+    )
+
+    async def fake_decide_workstation_next_action(**kwargs):
+        assert kwargs["replies"] == []
+        return workstation_endpoints.WorkstationAgentDecision(
+            action="no_action",
+            reason="No useful client-facing action.",
+        )
+
+    monkeypatch.setattr(workstation_endpoints, "decide_workstation_next_action", fake_decide_workstation_next_action)
+
+    with TestClient(app) as client:
+        tick = client.post("/api/workstation/automation/tick")
+        pending = client.get("/api/contadores/messages/pending-delivery")
+
+    assert tick.status_code == 200
+    payload = tick.json()
+    assert payload["scheduled_agent_tasks_created"] == 1
+    assert payload["scheduled_agent_tasks_processed"] == 1
+    assert pending.json()["messages"] == []
+    updated = WorkstationClient.get_by_id(workstation.id)
+    assert updated is not None
+    assert workstation_endpoints.normalize_utc(updated.last_automation_handled_at) > handled_at
+
+
 def test_workstation_solo_page_codex_runs_from_repo_root(monkeypatch, tmp_path) -> None:
     """Codex should read repo templates and then validate client-folder outputs."""
     configure_contadores_db(monkeypatch, tmp_path)

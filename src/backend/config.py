@@ -90,6 +90,17 @@ WORKSTATION_PING_2_TEXT = os.getenv(
 ).strip()
 WA_CALLBACK_URL = os.getenv("WA_CALLBACK_URL", "").strip()
 WORKSTATION_PUBLIC_PAGE_BASE_URL = os.getenv("WORKSTATION_PUBLIC_PAGE_BASE_URL", "").strip().rstrip("/")
+WORKSTATION_CODEX_HEARTBEAT_ENABLED = os.getenv(
+    "WORKSTATION_CODEX_HEARTBEAT_ENABLED",
+    "true",
+).lower() in {"1", "true", "yes", "on"}
+try:
+    WORKSTATION_CODEX_HEARTBEAT_INTERVAL_HOURS = max(
+        1,
+        int(os.getenv("WORKSTATION_CODEX_HEARTBEAT_INTERVAL_HOURS", "12")),
+    )
+except ValueError:
+    WORKSTATION_CODEX_HEARTBEAT_INTERVAL_HOURS = 12
 
 
 # Instantly configuration

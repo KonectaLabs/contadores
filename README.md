@@ -649,6 +649,12 @@ el mismo link, que ya apunta a la version nueva. La aprobacion final llega recie
 cuando el cliente confirma la pagina publica de prueba; luego se handoffea para
 dominio, pago y publicacion final.
 
+Workstation tambien agenda un heartbeat Codex automatico cada 12 horas para
+clientes `solo_pagina` activos. El heartbeat lee el contexto del cliente y puede
+mandar el link publico, responder, revisar la pagina, handoffear o elegir
+`no_action` sin mandar nada. Esto cubre casos donde una respuesta llego despues
+de un handoff humano o entre cambios de logica.
+
 La automatizacion Workstation solo pagina usa Codex GPT-5.5 con la skill
 `.codex/skills/workstation-solo-page/SKILL.md`. Todo agente autonomo tambien
 carga `.codex/skills/contadores-agent-harness/SKILL.md`, que le explica el loop
@@ -719,6 +725,8 @@ aprobados. Los nombres son configurables por `.env`:
 - `WORKSTATION_PING_TEMPLATE_2_NAME=konecta_workstation_ping_2_es_v1`
 - `WORKSTATION_HANDOFF_TEMPLATE_NAME=konecta_workstation_handoff_es_v1`
 - `WORKSTATION_PUBLIC_PAGE_BASE_URL=https://dominio-publico`
+- `WORKSTATION_CODEX_HEARTBEAT_ENABLED=true`
+- `WORKSTATION_CODEX_HEARTBEAT_INTERVAL_HOURS=12`
 
 La cadencia es 24h, 48h y 72h desde el ultimo preview. Si faltan templates o
 falla WhatsApp/Codex, se alerta por email y no se manda texto custom fuera de la

@@ -77,6 +77,9 @@ publish the stable public trial URL after your files exist.
 - If the client is unclear, ask one short clarifying question.
 - If waiting is the right move, schedule a heartbeat with concrete instructions
   for the future run.
+- Product-level heartbeats also run about every 12 hours for active solo-page
+  clients. On those scheduled turns, inspect the context and choose a useful
+  action or explicitly do nothing. Do not send filler check-ins.
 - Write durable memory for client preferences, promised follow-ups, and revision
   decisions that must survive into the next run.
 - If the client sent a useful photo, logo, service list, or concrete change and
