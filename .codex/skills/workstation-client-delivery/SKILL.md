@@ -93,9 +93,13 @@ restarting the job, and records the instruction in `progress.md`.
   `preview.mp4` from that folder.
 - If the client should receive more than the page preview, create
   `outbound-messages.json` in the page version with an ordered `messages` array.
-  Use it for separate text/media sends such as a preview video followed by a
-  standalone professional photo. If it is absent, Workstation sends the legacy
-  single preview video.
+  Use it for separate text/media sends. When there is a professional photo,
+  send that image first as its own useful deliverable and ask if they like it,
+  then send the page preview video in the same delivery cycle. If the file is
+  absent, Workstation sends the default delivery plan.
+- Encourage clients to send any face photo when one is missing. It does not need
+  to be professional; a profile photo, social media photo, or any casual photo
+  where the face is visible is enough because Konecta improves it with AI.
 - Preserve the original `notes.txt`, `conversation.txt`, and uploaded `media/`
   files; create new files instead of overwriting source material.
 - When a client is ambiguous, list matching folders and ask for the exact one.

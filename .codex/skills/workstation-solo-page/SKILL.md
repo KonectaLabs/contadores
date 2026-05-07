@@ -53,7 +53,10 @@ configuration. The automation will render `preview.mp4` after your files exist.
   `mark_preview_approved`, or `handoff_human`. Do not return a JSON plan when a
   tool call is the right action.
 - If the client asks how to give you content, ask them to send the content and
-  say you will add it. Do not generate a new preview for that.
+  say you will add it. When asking for a face photo, lower the friction: tell
+  them any photo works, it does not need to be professional, and it can be their
+  profile photo, a social media photo, or any casual photo where their face is
+  visible because we improve it with AI. Do not generate a new preview for that.
 - If the client is unclear, ask one short clarifying question.
 - If the client sent a useful photo, logo, service list, or concrete change and
   a preview is the best next step, then generate or revise the page.
@@ -70,6 +73,9 @@ Before building or revising the page:
 - If the client sent photos of people, first make sure there is a generated
   professional-photo asset for every distinct person visible or identified in
   those source photos.
+- Do not wait for a perfect photo. A casual face photo, profile photo, or social
+  media photo is enough source material because the professional portrait is
+  generated with AI.
 - Use the `client-professional-photo` skill to create any missing portraits from
   the source photos, preserving identity and saving each result under
   `professional-photo/vNNN/professional-photo.jpg`.
@@ -105,6 +111,10 @@ documents, calculator, or office interior.
   `outbound-messages.json` with a `messages` array. This gives Codex freedom to
   send separate text messages and media attachments, for example the page
   preview video plus a standalone professional photo.
+- When a new professional-photo exists for the client, send it as its own image
+  deliverable and ask whether they like it. In the same delivery cycle, also
+  send the page preview video when it is ready; do not split this into separate
+  client turns. Prefer the order: professional photo first, page video second.
 - Each `outbound-messages.json` item can include `text`, `media_type`,
   `media_path`, `media_caption`, `media_filename`, and optionally
   `sequence_step`. Supported media types are `image`, `video`, `audio`, and

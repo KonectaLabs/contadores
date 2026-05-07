@@ -103,8 +103,11 @@ WORKSTATION_INTAKE_TEXT = (
     "Perfecto, entonces arrancamos con la pagina.\n\n"
     "Mandeme por aca lo basico que quiere que aparezca: nombre del estudio, ciudad/pais, "
     "servicios principales y WhatsApp de contacto.\n\n"
-    "Si tiene una foto suya, pagina actual, logo o documento, mandemelo tambien. "
-    "Con eso le preparo un primer boceto en video."
+    "Y mandeme cualquier foto donde se le vea la cara. No hace falta que sea profesional: "
+    "puede ser la foto de perfil, una foto de redes sociales o cualquiera que tenga a mano. "
+    "Nosotros la mejoramos con inteligencia artificial y con eso ya podemos trabajar.\n\n"
+    "Si tiene pagina actual, logo o documento, mandemelo tambien. Con eso le preparo "
+    "un primer boceto en video."
 )
 workstation_automation_tick_lock = asyncio.Lock()
 manual_solo_page_work_client_ids: set[str] = set()
@@ -824,6 +827,12 @@ def list_professional_photo_versions(client: WorkstationClient) -> list[Workstat
     return [build_professional_photo_response(client, version_dir) for version_dir in versions]
 
 
+def latest_professional_photo_version(client: WorkstationClient) -> WorkstationProfessionalPhotoVersion | None:
+    """Return the newest generated professional photo, if one exists."""
+    versions = list_professional_photo_versions(client)
+    return versions[-1] if versions else None
+
+
 def next_professional_photo_version_dir(client: WorkstationClient) -> Path:
     """Create and return the next professional photo version directory."""
     root = professional_photo_root(client)
@@ -1471,7 +1480,11 @@ def fallback_workstation_agent_decision(reply_text: str) -> WorkstationAgentDeci
     if "cosas que hice" in normalized or "trabajos" in normalized or any(marker in normalized for marker in question_markers):
         return WorkstationAgentDecision(
             action="send_text",
-            message="Conteme que cosas hizo o que datos quiere sumar y lo meto en la pagina.",
+            message=(
+                "Mandeme por aca lo que tenga y lo sumo. Para la foto, no hace falta que sea profesional: "
+                "puede ser su foto de perfil, una de redes o cualquier foto donde se le vea la cara. "
+                "Nosotros la mejoramos con inteligencia artificial."
+            ),
             reason="The client is asking how to provide content rather than requesting a visual revision.",
         )
     return WorkstationAgentDecision(
@@ -1515,7 +1528,12 @@ Latest client replies:
 
 Decision rules:
 - If the client asks a question, answer it with text. Do not generate a page.
-- If the client asks how to provide content, ask them to send the content and say you will add it.
+- If the client asks how to provide content or photos, ask them to send whatever
+  they have and say you will add it.
+- Encourage a face photo without creating friction: tell them any photo works,
+  it does not need to be professional, and it can be a profile photo, social
+  media photo, or any casual photo where their face is visible because we
+  improve it with AI.
 - If the client sent useful photos/content and a draft is helpful now, generate_or_revise_page is allowed.
 - If the client gave concrete changes to the current page, use generate_or_revise_page.
 - If the client seems to approve the current page, use approve_and_handoff.
@@ -1842,6 +1860,9 @@ Requirements:
 - Write preview-message.txt with the exact WhatsApp message to send alongside
   the preview video. Choose copy that fits this client and this run. Ask for
   changes or approval clearly, but do not hardcode a generic template.
+- If a professional-photo version exists, treat it as a deliverable too. Prefer
+  outbound-messages.json with the standalone professional photo first, asking
+  if they like it, and the page preview video as the next message.
 - When the client should receive more than one WhatsApp item, also write
   outbound-messages.json with a {{"messages": [...]}} object. Each message can be
   text-only or include media_type plus media_path. Use this for deliverables
@@ -2183,7 +2204,7 @@ def build_fallback_workstation_outbound_message(
     version_dir: Path,
     sequence_step: str,
 ) -> WorkstationOutboundMessageSpec:
-    """Return the legacy single preview-video message."""
+    """Return the preview-video message."""
     preview_path = version_dir / "preview.mp4"
     return WorkstationOutboundMessageSpec(
         text=read_workstation_preview_message(version_dir),
@@ -2192,6 +2213,50 @@ def build_fallback_workstation_outbound_message(
         media_path=relative_data_path(preview_path),
         media_filename=f"{client.folder_name}-{version_dir.name}.mp4",
     )
+
+
+def build_professional_photo_outbound_message(
+    *,
+    client: WorkstationClient,
+    sequence_step: str,
+) -> WorkstationOutboundMessageSpec | None:
+    """Return a standalone professional-photo message when one is available."""
+    photo = latest_professional_photo_version(client)
+    if photo is None:
+        return None
+    return WorkstationOutboundMessageSpec(
+        text="Le dejo tambien esta foto profesional que armamos con la foto que me mando. Digame si le gusta.",
+        sequence_step=sequence_step,
+        media_type="image",
+        media_path=photo.image_path,
+        media_caption="Le dejo tambien esta foto profesional que armamos con la foto que me mando. Digame si le gusta.",
+        media_filename=f"{client.folder_name}-{photo.version}-foto-profesional.jpg",
+    )
+
+
+def build_default_workstation_outbound_messages(
+    *,
+    client: WorkstationClient,
+    version_dir: Path,
+    sequence_step: str,
+) -> list[WorkstationOutboundMessageSpec]:
+    """Return the default Workstation delivery plan for generated previews."""
+    messages: list[WorkstationOutboundMessageSpec] = []
+    if sequence_step == WORKSTATION_PREVIEW_SEQUENCE_STEP:
+        photo_message = build_professional_photo_outbound_message(
+            client=client,
+            sequence_step=sequence_step,
+        )
+        if photo_message is not None:
+            messages.append(photo_message)
+    messages.append(
+        build_fallback_workstation_outbound_message(
+            client=client,
+            version_dir=version_dir,
+            sequence_step=sequence_step,
+        )
+    )
+    return messages
 
 
 def parse_workstation_outbound_message(
@@ -2251,13 +2316,11 @@ def read_workstation_outbound_messages(
     """Read the flexible Codex-written WhatsApp delivery plan for a page version."""
     plan_path = version_dir / "outbound-messages.json"
     if not plan_path.exists():
-        return [
-            build_fallback_workstation_outbound_message(
-                client=client,
-                version_dir=version_dir,
-                sequence_step=sequence_step,
-            )
-        ]
+        return build_default_workstation_outbound_messages(
+            client=client,
+            version_dir=version_dir,
+            sequence_step=sequence_step,
+        )
 
     try:
         payload = json.loads(plan_path.read_text(encoding="utf-8"))
@@ -2281,13 +2344,11 @@ def read_workstation_outbound_messages(
     if messages:
         return messages
 
-    return [
-        build_fallback_workstation_outbound_message(
-            client=client,
-            version_dir=version_dir,
-            sequence_step=sequence_step,
-        )
-    ]
+    return build_default_workstation_outbound_messages(
+        client=client,
+        version_dir=version_dir,
+        sequence_step=sequence_step,
+    )
 
 
 def queue_workstation_preview(

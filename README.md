@@ -580,6 +580,10 @@ professional-photo/v001/metadata.json
 
 Las modificaciones desde la UI crean `v002`, `v003`, etc. Nunca se sobrescriben
 las fotos fuente ni las versiones anteriores.
+Durante el intake hay que incentivar al cliente a mandar una foto sin demorar:
+no hace falta que sea profesional. Sirve una foto de perfil, una foto de redes
+sociales o cualquier foto casual donde se vea la cara, porque Konecta la mejora
+con inteligencia artificial antes de usarla.
 
 La automatizacion de `landing-page` nunca debe usar fotos crudas de personas
 desde `media/` como retratos publicos. Si el cliente mando fotos de una o varias
@@ -596,10 +600,12 @@ elige ahi el texto exacto que acompana al MP4 por WhatsApp. El backend solo usa
 un texto generico como fallback cuando ese archivo falta o esta vacio.
 Si Codex necesita mandar mas de un item al cliente, tambien puede escribir
 `outbound-messages.json` con una lista ordenada de mensajes y adjuntos
-(`image`, `video`, `audio` o `document`). Eso permite, por ejemplo, mandar el
-video de la nueva version de la pagina y despues la foto profesional como imagen
-separada. Si el archivo no existe o no tiene mensajes validos, se mantiene el
-fallback historico de un solo MP4 con `preview-message.txt`.
+(`image`, `video`, `audio` o `document`). Cuando hay foto profesional, se manda
+como imagen separada y se pregunta si le gusta; en el mismo ciclo de entrega
+tambien se manda el video de la pagina cuando termina de renderizar. El orden
+preferido es foto profesional primero y video del boceto despues. Si el archivo
+no existe o no tiene mensajes validos, Workstation arma el plan default: foto
+profesional disponible primero y MP4 con `preview-message.txt` despues.
 
 El backend usa el Codex SDK para Workstation, generacion de imagenes y el bot
 conversacional. En Docker, la imagen instala `@openai/codex` y usa

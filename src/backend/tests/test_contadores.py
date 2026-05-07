@@ -5097,6 +5097,51 @@ def test_workstation_solo_page_can_queue_multiple_codex_deliverables(monkeypatch
     assert rows[1].media_path.endswith("professional-photo/v001/professional-photo.jpg")
 
 
+def test_workstation_solo_page_fallback_sends_professional_photo_before_preview(monkeypatch, tmp_path) -> None:
+    """Default preview delivery should include the generated photo before the video."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    data_dir = tmp_path / "data"
+    monkeypatch.setattr(database_module, "DATA_DIR", data_dir)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-workstation-default-photo-delivery",
+        phone="+5491777777734",
+        full_name="Cliente Foto Default",
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=False,
+        text="[image] foto.jpg",
+        created_at=now_utc() - timedelta(minutes=1),
+    )
+    workstation = WorkstationClient.create_for_lead(
+        lead,
+        work_type=WorkstationClientWorkType.SOLO_PAGINA,
+        status=WorkstationClientStatus.PENDING_PAYMENT,
+        automation_status=WorkstationAutomationStatus.INTAKE,
+    )
+    photo_dir = workstation_endpoints.professional_photo_root(workstation) / "v001"
+    photo_dir.mkdir(parents=True, exist_ok=True)
+    (photo_dir / "professional-photo.jpg").write_bytes(b"jpg")
+    version_dir = workstation_endpoints.next_landing_page_version_dir(workstation)
+    version_dir.mkdir(parents=True, exist_ok=True)
+    (version_dir / "preview.mp4").write_bytes(b"mp4")
+    (version_dir / "preview-message.txt").write_text("Le mando el boceto de la pagina.", encoding="utf-8")
+
+    rows = workstation_endpoints.queue_workstation_preview(
+        client=workstation,
+        lead=lead,
+        version_dir=version_dir,
+        sequence_step=workstation_endpoints.WORKSTATION_PREVIEW_SEQUENCE_STEP,
+    )
+
+    assert [row.media_type for row in rows] == ["image", "video"]
+    assert rows[0].media_path.endswith("professional-photo/v001/professional-photo.jpg")
+    assert rows[0].media_filename.endswith("-v001-foto-profesional.jpg")
+    assert "foto profesional" in rows[0].text.lower()
+    assert rows[1].media_path.endswith("landing-page/v001/preview.mp4")
+    assert rows[1].text == "Le mando el boceto de la pagina."
+
+
 def test_workstation_solo_page_codex_falls_back_to_api_key(monkeypatch, tmp_path) -> None:
     """Solo-page generation should retry with OPENAI_API_KEY when ChatGPT Codex fails."""
     configure_contadores_db(monkeypatch, tmp_path)
