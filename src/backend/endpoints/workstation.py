@@ -3135,6 +3135,12 @@ def build_workstation_automation_state(
             label="Manual workspace",
             detail="This client does not have solo-page automation assigned.",
         )
+    if client.status == WorkstationClientStatus.CLOSED:
+        return WorkstationAutomationStateResponse(
+            **base,
+            label="Closed lead",
+            detail="Workstation is closed for this lead. Automation will not spend more tokens here.",
+        )
 
     if client.automation_status == WorkstationAutomationStatus.FAILED:
         return WorkstationAutomationStateResponse(
@@ -3419,6 +3425,42 @@ async def get_workstation_client(client_id: str) -> WorkstationClientDetailRespo
     return build_client_detail(get_required_client(client_id))
 
 
+@workstation_router.post("/clients/{client_id}/close", response_model=WorkstationClientDetailResponse)
+async def close_workstation_client(client_id: str) -> WorkstationClientDetailResponse:
+    """Close a Workstation client and stop CRM/Workstation automation."""
+    client = get_required_client(client_id)
+    lead = get_required_lead(client.lead_id)
+    now = now_utc()
+
+    solo_page_stop_requested_client_ids.add(client.id)
+    turn = active_solo_page_codex_turns.get(client.id)
+    if turn is not None:
+        await interrupt_turn(turn)
+    clear_solo_page_live_work(client.id)
+    manual_solo_page_work_client_ids.discard(client.id)
+
+    updated_client = WorkstationClient.update_automation_state(
+        client.id,
+        status=WorkstationClientStatus.CLOSED,
+        automation_status=WorkstationAutomationStatus.NEEDS_HUMAN,
+        last_automation_handled_at=now,
+    ) or client
+    ContadoresLead.update_flow_state(
+        lead.id,
+        stage="closed",
+        closed_at=now,
+        stage_before_closed=lead.stage,
+        automation_paused=True,
+        automation_paused_reason="manual_workstation_close",
+        last_classification_label="manual_workstation_close",
+        last_classification_reason="Closed from Workstation by operator.",
+        manual_reply_handled_at=now,
+    )
+    ContadoresLead.clear_conversation_processing(lead_id=lead.id)
+    append_workstation_progress(updated_client, "Lead closed from Workstation. Automation stopped.")
+    return build_client_detail(WorkstationClient.get_by_id(client.id) or updated_client)
+
+
 @workstation_router.post(
     "/clients/{client_id}/solo-page/work",
     response_model=WorkstationClientDetailResponse,
@@ -3430,6 +3472,8 @@ async def start_workstation_solo_page_work(
 ) -> WorkstationClientDetailResponse:
     """Start an operator-triggered Codex solo-page run."""
     client = get_required_client(client_id)
+    if client.status == WorkstationClientStatus.CLOSED:
+        raise HTTPException(status_code=409, detail="This Workstation lead is closed.")
     if client.work_type != WorkstationClientWorkType.SOLO_PAGINA:
         raise HTTPException(status_code=400, detail="This action is only available for solo-page clients.")
 

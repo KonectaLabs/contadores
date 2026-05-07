@@ -4502,6 +4502,41 @@ def test_workstation_conversion_is_idempotent_and_keeps_crm_link(monkeypatch, tm
     assert WorkstationClient.get_by_lead_id(lead.id) is not None
 
 
+def test_workstation_close_closes_crm_lead_and_stops_automation(monkeypatch, tmp_path) -> None:
+    """Closing from Workstation should stop further automated work for that lead."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setattr(database_module, "DATA_DIR", tmp_path / "data")
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-workstation-close",
+        phone="+5491777777788",
+        full_name="Cliente Cierre",
+    )
+    workstation = WorkstationClient.create_for_lead(
+        lead,
+        work_type=WorkstationClientWorkType.SOLO_PAGINA,
+        status=WorkstationClientStatus.PAID,
+        automation_status=WorkstationAutomationStatus.AWAITING_REVIEW,
+    )
+
+    with TestClient(app) as client:
+        response = client.post(f"/api/workstation/clients/{workstation.id}/close")
+        crm_detail = client.get(f"/api/contadores/leads/{lead.id}")
+        start_response = client.post(
+            f"/api/workstation/clients/{workstation.id}/solo-page/work",
+            json={"prompt": "hacer una version nueva"},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["client"]["status"] == "closed"
+    assert payload["client"]["automation_status"] == "needs_human"
+    assert payload["automation_state"]["label"] == "Closed lead"
+    assert crm_detail.json()["lead"]["stage"] == "closed"
+    assert crm_detail.json()["lead"]["automation_paused"] is True
+    assert crm_detail.json()["lead"]["automation_paused_reason"] == "manual_workstation_close"
+    assert start_response.status_code == 409
+
+
 def test_workstation_migration_normalizes_enum_values(monkeypatch, tmp_path) -> None:
     """Existing rows with raw enum values should remain readable after migration."""
     configure_contadores_db(monkeypatch, tmp_path)

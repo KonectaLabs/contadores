@@ -2465,6 +2465,7 @@ class WorkstationClientStatus(str, Enum):
     PENDING_PAYMENT = "pending_payment"
     PAID = "paid"
     IN_PROGRESS = "in_progress"
+    CLOSED = "closed"
     ARCHIVED = "archived"
 
 
@@ -2636,7 +2637,7 @@ class WorkstationClient(SQLModel, table=True):
             statement = (
                 select(cls)
                 .where(cls.work_type == normalize_workstation_work_type(work_type))
-                .where(cls.status != WorkstationClientStatus.ARCHIVED)
+                .where(cls.status.not_in({WorkstationClientStatus.ARCHIVED, WorkstationClientStatus.CLOSED}))
                 .where(cls.automation_status.not_in(terminal_statuses))
                 .where(
                     or_(

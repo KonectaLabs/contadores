@@ -4917,6 +4917,15 @@ body {
   color: var(--ct-accent-strong);
 }
 
+#contadoresView .workstation-action-popover button.danger {
+  color: var(--ct-danger);
+}
+
+#contadoresView .workstation-action-popover button.danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--ct-danger) 10%, transparent);
+  color: var(--ct-danger);
+}
+
 #contadoresView .workstation-action-popover button:disabled {
   opacity: 0.45;
   cursor: not-allowed;

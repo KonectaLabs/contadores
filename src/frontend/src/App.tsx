@@ -921,6 +921,28 @@ export function App() {
     }
   }
 
+  async function closeWorkstationClient() {
+    const clientId = workstationDetail?.client.id ?? selectedWorkstationClientId;
+    const clientName = workstationDetail?.client.display_name || "this lead";
+    if (!clientId || !window.confirm(`Close ${clientName}? This stops Workstation and CRM automation for this lead.`)) {
+      return;
+    }
+    setActionBusy("workstation-close");
+    try {
+      const payload = await apiFetch<WorkstationClientDetailResponse>(
+        `/api/workstation/clients/${clientId}/close`,
+        { method: "POST" },
+      );
+      setWorkstationDetail(payload);
+      setWorkstationNotesDraft(payload.notes ?? "");
+      await Promise.all([loadWorkstation(), loadDashboard()]);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not close Workstation lead.");
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
   function updateProfessionalPhotoEditPrompt(version: string, prompt: string) {
     setProfessionalPhotoEditPrompts((current) => ({ ...current, [version]: prompt }));
   }
@@ -1431,6 +1453,7 @@ export function App() {
           onStartSoloPageCodexWork={startSoloPageCodexWork}
           onStopSoloPageCodexWork={stopSoloPageCodexWork}
           onSteerSoloPageCodexWork={steerSoloPageCodexWork}
+          onCloseWorkstationClient={closeWorkstationClient}
           onProfessionalPhotoEditPromptChange={updateProfessionalPhotoEditPrompt}
           onEditProfessionalPhoto={(version) => editProfessionalPhoto(version)}
         />
@@ -2203,6 +2226,7 @@ function WorkstationView({
   onStartSoloPageCodexWork,
   onStopSoloPageCodexWork,
   onSteerSoloPageCodexWork,
+  onCloseWorkstationClient,
   onProfessionalPhotoEditPromptChange,
   onEditProfessionalPhoto,
 }: {
@@ -2240,6 +2264,7 @@ function WorkstationView({
   onStartSoloPageCodexWork: (operatorPrompt: string) => boolean | Promise<boolean>;
   onStopSoloPageCodexWork: () => void | Promise<void>;
   onSteerSoloPageCodexWork: (message: string) => boolean | Promise<boolean>;
+  onCloseWorkstationClient: () => void | Promise<void>;
   onProfessionalPhotoEditPromptChange: (version: string, prompt: string) => void;
   onEditProfessionalPhoto: (version: string) => void;
 }) {
@@ -2253,6 +2278,7 @@ function WorkstationView({
   const openRuntimeAlerts = runtimeAlerts.filter((alert) => !alert.resolved_at);
   const latestRuntimeAlert = openRuntimeAlerts[0] ?? null;
   const workstationFailed = activeClient?.automation_status === "failed";
+  const workstationClosed = activeClient?.status === "closed";
   const imageAssets = (detail?.media ?? []).filter((asset) => asset.content_type?.startsWith("image/"));
   const professionalPhotos = detail?.professional_photos ?? [];
   const [mediaDropActive, setMediaDropActive] = useState(false);
@@ -2271,7 +2297,7 @@ function WorkstationView({
   const professionalPhotoJobBusy = currentProfessionalPhotoJob?.status === "queued" || currentProfessionalPhotoJob?.status === "running";
   const soloPageBusy = actionBusy === "solo-page-work" || Boolean(automationState?.is_live_working);
   const canStopSoloPageWork = activeClient?.work_type === "solo_pagina" && Boolean(automationState?.is_live_working);
-  const canStartSoloPageWork = activeClient?.work_type === "solo_pagina" && !soloPageBusy;
+  const canStartSoloPageWork = activeClient?.work_type === "solo_pagina" && !soloPageBusy && !workstationClosed;
   const workstationStateIsReady = (automationState?.label ?? "").toLowerCase().includes("ready");
   const workstationHasMissingLiveProcess = activeClient?.automation_status === "drafting" || activeClient?.automation_status === "revision_requested"
     ? !automationState?.is_live_working && !automationState?.is_stale
@@ -2560,10 +2586,23 @@ function WorkstationView({
                           type="button"
                           role="menuitem"
                           onClick={openProfessionalPhotoModal}
-                          disabled={!imageAssets.length || professionalPhotoJobBusy || actionBusy === "professional-photo-start"}
+                          disabled={workstationClosed || !imageAssets.length || professionalPhotoJobBusy || actionBusy === "professional-photo-start"}
                         >
                           <Camera size={16} weight="bold" />
                           <span>Hacer foto profesional</span>
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="danger"
+                          onClick={() => {
+                            setActionsOpen(false);
+                            onCloseWorkstationClient();
+                          }}
+                          disabled={workstationClosed || actionBusy === "workstation-close"}
+                        >
+                          <Trash size={16} weight="bold" />
+                          <span>{actionBusy === "workstation-close" ? "Closing..." : "Close lead"}</span>
                         </button>
                       </div>
                     ) : null}
