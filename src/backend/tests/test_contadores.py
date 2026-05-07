@@ -4609,6 +4609,43 @@ def test_workstation_conversion_is_idempotent_and_keeps_crm_link(monkeypatch, tm
     assert WorkstationClient.get_by_lead_id(lead.id) is not None
 
 
+def test_solo_page_workstation_conversion_leaves_manual_attention(monkeypatch, tmp_path) -> None:
+    """A converted solo-page lead should leave the CRM manual-attention queue."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    ContadoresConfig.update(enabled=True, alert_emails=["facu@example.com"])
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-workstation-manual-exit",
+        phone="+5491777777797",
+        full_name="Cliente Manual Sale",
+    )
+    ContadoresLead.update_flow_state(
+        lead.id,
+        stage=ContadoresLeadStage.NEEDS_HUMAN,
+        automation_paused=True,
+        automation_paused_reason="handoff_human",
+        clear_needs_human_notified_at=True,
+        last_inbound_at=now_utc(),
+    )
+
+    with TestClient(app) as client:
+        conversion = client.post(
+            f"/api/workstation/clients/from-lead/{lead.id}"
+            "?work_type=solo_pagina&status=pending_payment&automation_status=intake"
+        )
+        manual_attention = client.get(
+            "/api/contadores/leads"
+            "?stage=needs_human&manual_reply_status=needs_reply&needs_human=true"
+        )
+        pending_alerts = client.get("/api/contadores/alerts/pending?funnel_id=contadores")
+        crm_detail = client.get(f"/api/contadores/leads/{lead.id}")
+
+    assert conversion.status_code == 200
+    assert crm_detail.json()["lead"]["stage"] == "booked"
+    assert crm_detail.json()["lead"]["raw_stage"] == "needs_human"
+    assert manual_attention.json()["leads"] == []
+    assert pending_alerts.json()["items"] == []
+
+
 def test_workstation_close_closes_crm_lead_and_stops_automation(monkeypatch, tmp_path) -> None:
     """Closing from Workstation should stop further automated work for that lead."""
     configure_contadores_db(monkeypatch, tmp_path)
@@ -5424,6 +5461,12 @@ def test_workstation_approval_sends_public_link_before_final_handoff(monkeypatch
     assert public_page is not None
     assert public_page.last_sent_at is None
     preview_at = now_utc() - timedelta(minutes=25)
+    ContadoresLead.update_flow_state(
+        lead.id,
+        booked_at=preview_at - timedelta(minutes=5),
+        automation_paused=True,
+        automation_paused_reason="workstation_solo_page_started",
+    )
     WorkstationClient.update_automation_state(
         workstation.id,
         automation_status=WorkstationAutomationStatus.AWAITING_REVIEW,
@@ -6259,6 +6302,7 @@ def test_workstation_solo_page_steer_sends_message_to_active_codex(monkeypatch, 
 def test_workstation_tick_approval_marks_needs_human(monkeypatch, tmp_path) -> None:
     """Client approval should stop automation and hand the job to a human operator."""
     configure_contadores_db(monkeypatch, tmp_path)
+    ContadoresConfig.update(enabled=True, alert_emails=["facu@example.com"])
     monkeypatch.setattr(database_module, "DATA_DIR", tmp_path / "data")
     lead = ContadoresLead.upsert(
         external_lead_id="sheet-row-workstation-approved",
@@ -6272,6 +6316,12 @@ def test_workstation_tick_approval_marks_needs_human(monkeypatch, tmp_path) -> N
         automation_status=WorkstationAutomationStatus.AWAITING_REVIEW,
     )
     preview_at = now_utc() - timedelta(minutes=25)
+    ContadoresLead.update_flow_state(
+        lead.id,
+        booked_at=preview_at - timedelta(minutes=5),
+        automation_paused=True,
+        automation_paused_reason="workstation_solo_page_started",
+    )
     WorkstationClient.update_automation_state(
         workstation.id,
         automation_status=WorkstationAutomationStatus.AWAITING_REVIEW,
@@ -6305,6 +6355,7 @@ def test_workstation_tick_approval_marks_needs_human(monkeypatch, tmp_path) -> N
     with TestClient(app) as client:
         tick = client.post("/api/workstation/automation/tick")
         detail = client.get(f"/api/contadores/leads/{lead.id}")
+        pending_alerts = client.get("/api/contadores/alerts/pending?funnel_id=contadores")
 
     assert tick.status_code == 200
     assert tick.json()["approvals"] == 1
@@ -6314,6 +6365,8 @@ def test_workstation_tick_approval_marks_needs_human(monkeypatch, tmp_path) -> N
     assert updated.approved_at is not None
     assert detail.json()["lead"]["stage"] == "needs_human"
     assert detail.json()["lead"]["automation_paused_reason"] == "workstation_solo_page_approved"
+    assert pending_alerts.json()["items"][0]["lead_id"] == lead.id
+    assert pending_alerts.json()["items"][0]["automation_paused_reason"] == "workstation_solo_page_approved"
 
 
 def test_workstation_pings_tolerate_naive_preview_timestamp(monkeypatch, tmp_path) -> None:

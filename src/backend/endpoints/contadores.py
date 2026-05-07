@@ -117,6 +117,11 @@ SOLO_PAGE_PROMO_TEXT_TEMPLATE = (
     "Si le interesa esa opcion, le mando un ejemplo."
 )
 WORKSTATION_SOLO_PAGE_STARTED_REASON = "workstation_solo_page_started"
+WORKSTATION_OPERATOR_HANDOFF_REASONS = {
+    "workstation_agent_handoff",
+    "workstation_no_response_handoff",
+    "workstation_solo_page_approved",
+}
 UNANSWERED_LEAD_QUESTION_REASON = "unanswered_lead_question"
 ALERT_TRANSCRIPT_MAX_MESSAGES = 80
 ALERT_TRANSCRIPT_MAX_CHARS = 20000
@@ -987,16 +992,55 @@ def lead_has_new_inbound_after_calendly(lead: ContadoresLead) -> bool:
     return last_inbound_at > calendly_sent_at
 
 
+def open_workstation_client_for_lead(lead: ContadoresLead) -> WorkstationClient | None:
+    """Return the active Workstation client for this lead, when one exists."""
+    client = WorkstationClient.get_by_lead_id(lead.id)
+    if client is None:
+        return None
+    if client.status in {WorkstationClientStatus.CLOSED, WorkstationClientStatus.ARCHIVED}:
+        return None
+    return client
+
+
+def workstation_handoff_requires_operator(
+    lead: ContadoresLead,
+    client: WorkstationClient | None = None,
+) -> bool:
+    """Return True only when Workstation explicitly handed the lead to an operator."""
+    workstation_client = client or open_workstation_client_for_lead(lead)
+    if workstation_client is None:
+        return False
+    return (
+        workstation_client.automation_status == WorkstationAutomationStatus.NEEDS_HUMAN
+        and lead.automation_paused_reason in WORKSTATION_OPERATOR_HANDOFF_REASONS
+    )
+
+
+def lead_is_workstation_managed_without_operator_handoff(lead: ContadoresLead) -> bool:
+    """Return True when Workstation is handling the lead without needing manual attention."""
+    workstation_client = open_workstation_client_for_lead(lead)
+    if workstation_client is None:
+        return False
+    return not workstation_handoff_requires_operator(lead, workstation_client)
+
+
 def derive_effective_lead_stage(lead: ContadoresLead) -> ContadoresLeadStage:
     """Return the operator-facing stage derived from the clearest completed milestone."""
     if lead.stage == ContadoresLeadStage.ARCHIVED or lead.archived_at is not None:
         return ContadoresLeadStage.ARCHIVED
     if lead.stage == ContadoresLeadStage.CLOSED or lead.closed_at is not None:
         return ContadoresLeadStage.CLOSED
+    if lead.stage == ContadoresLeadStage.NEEDS_HUMAN:
+        workstation_client = open_workstation_client_for_lead(lead)
+        if workstation_client is not None:
+            if workstation_handoff_requires_operator(lead, workstation_client):
+                return ContadoresLeadStage.NEEDS_HUMAN
+            return ContadoresLeadStage.BOOKED
+        if lead.booked_at is not None:
+            return ContadoresLeadStage.BOOKED
+        return ContadoresLeadStage.NEEDS_HUMAN
     if lead.booked_at is not None:
         return ContadoresLeadStage.BOOKED
-    if lead.stage == ContadoresLeadStage.NEEDS_HUMAN:
-        return ContadoresLeadStage.NEEDS_HUMAN
     if lead.calendly_sent_at is not None:
         return ContadoresLeadStage.CALENDLY_SENT
     return lead.stage
@@ -1016,6 +1060,8 @@ def lead_counts_in_calendly_bucket(lead: ContadoresLead) -> bool:
 
 def derive_manual_reply_status(lead: ContadoresLead) -> str | None:
     """Return whether the current manual handoff needs an operator reply."""
+    if lead_is_workstation_managed_without_operator_handoff(lead):
+        return None
     if derive_effective_lead_stage(lead) != ContadoresLeadStage.NEEDS_HUMAN:
         return None
 

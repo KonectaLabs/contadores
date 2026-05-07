@@ -4164,15 +4164,18 @@ async def create_workstation_client_from_lead(
             only_if_missing=True,
         ) or client
     if existing is None:
+        conversion_reason = (
+            "manual_workstation_solo_page_conversion"
+            if is_solo_page
+            else "manual_workstation_conversion"
+        )
         ContadoresLead.update_flow_state(
             lead.id,
             booked_at=lead.booked_at or now_utc(),
             automation_paused=True,
-            automation_paused_reason=(
-                "manual_workstation_solo_page_conversion"
-                if is_solo_page
-                else "manual_workstation_conversion"
-            ),
+            automation_paused_reason=conversion_reason,
+            clear_needs_human_notified_at=True,
+            clear_manual_reply_handled_at=True,
         )
     fresh_client = WorkstationClient.get_by_id(client.id) or client
     mirror_workstation_message_media(fresh_client, ContadoresMessage.list_by_lead(lead.id))
