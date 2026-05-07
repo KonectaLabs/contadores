@@ -79,6 +79,22 @@ def test_fallback_workstation_agent_decision_answers_content_question() -> None:
     assert "Conteme" in decision.message
 
 
+def test_fallback_workstation_agent_decision_asks_before_vague_trajectory_revision() -> None:
+    """Vague factual copy requests should collect facts before revising."""
+    decision = fallback_workstation_agent_decision("Tema de la trayectoria que coloquemos algo mas amplio")
+
+    assert decision.action == "ask_for_details"
+    assert "5 cosas" in decision.message
+    assert "Desde que ano" in decision.message
+
+
+def test_fallback_workstation_agent_decision_allows_concrete_revision() -> None:
+    """Specific page changes can still become revisions."""
+    decision = fallback_workstation_agent_decision("Agregale derecho migratorio, familia y contratos.")
+
+    assert decision.action == "generate_or_revise_page"
+
+
 def test_copy_previous_landing_page_version_preserves_design_files(tmp_path) -> None:
     """Revision folders should start from the prior HTML/CSS/JS instead of a blank redesign."""
     previous = tmp_path / "v001"

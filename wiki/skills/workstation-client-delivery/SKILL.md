@@ -101,6 +101,13 @@ restarting the job, and records the instruction in `progress.md`.
 - After a valid page version exists, the backend keeps one stable public trial
   URL for the client under `/p/{token}/`. That URL always points to the latest
   generated version and is for review/testing, not final custom-domain hosting.
+- Do not revise public pages from vague factual/copy requests. If the client
+  says something like "hacer la trayectoria mas amplia", "poner algo mas
+  completo", or "mejorar la experiencia" without giving the facts, ask five
+  compact questions and wait. Collect timeframe, main areas/services,
+  credentials or roles, clients/cases/logros that can be mentioned without
+  sensitive details, and preferred tone. Do not invent trajectory, cases,
+  awards, credentials, services, legal facts, or accounting facts.
 - If the client should receive more than the page preview, create
   `outbound-messages.json` in the page version with an ordered `messages` array.
   Use it for separate text/media sends. When there is a professional photo,

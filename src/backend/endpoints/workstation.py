@@ -911,7 +911,9 @@ def ensure_workstation_codex_heartbeat_tasks(*, now: datetime, limit: int = 300)
             instruction=(
                 "Automatic 12-hour Workstation solo-page heartbeat. Re-read the client context and latest "
                 "messages. Decide whether to do nothing, answer, send the public trial URL, revise the page, "
-                "or hand off. If no client-facing action is useful, choose no_action and do not send a filler message."
+                "ask for missing factual content, or hand off. If the client asks for vague copy work such as "
+                "'make the trajectory broader', ask five concrete questions and wait instead of inventing facts. "
+                "If no client-facing action is useful, choose no_action and do not send a filler message."
             ),
             idempotency_key=f"{WORKSTATION_CODEX_HEARTBEAT_REASON}:{client.id}:{bucket}",
         )
@@ -1872,6 +1874,12 @@ def fallback_workstation_agent_decision(reply_text: str) -> WorkstationAgentDeci
             action="send_public_page_link",
             reason="The client appears to ask for the public trial page URL.",
         )
+    if reply_needs_workstation_content_intake(reply_text):
+        return WorkstationAgentDecision(
+            action="ask_for_details",
+            message=build_workstation_content_intake_message(reply_text),
+            reason="The requested copy change is too vague to revise without inventing client facts.",
+        )
     question_markers = ("?", "como", "cómo", "donde", "dónde", "que ", "qué ", "cuando", "cuándo")
     content_markers = (
         "agrega",
@@ -1907,8 +1915,96 @@ def fallback_workstation_agent_decision(reply_text: str) -> WorkstationAgentDeci
         )
     return WorkstationAgentDecision(
         action="ask_for_details",
-        message="Quiere que cambie algo del boceto o asi le gusta? Si quiere sumar datos, mandemelos por aca y lo ajusto.",
+        message=build_workstation_content_intake_message(reply_text),
         reason="The reply is not specific enough to revise the page yet.",
+    )
+
+
+def reply_needs_workstation_content_intake(reply_text: str) -> bool:
+    """Return True when a revision request needs factual input before editing."""
+    normalized = " ".join((reply_text or "").lower().split())
+    if not normalized:
+        return True
+    vague_copy_markers = (
+        "algo mas",
+        "algo más",
+        "mas amplio",
+        "más amplio",
+        "amplio",
+        "ampliar",
+        "mas completo",
+        "más completo",
+        "mas larga",
+        "más larga",
+        "mas largo",
+        "más largo",
+        "mejorar",
+        "mejoralo",
+        "mejorarla",
+        "trayectoria",
+        "experiencia",
+        "perfil profesional",
+        "biografia",
+        "biografía",
+        "historia",
+    )
+    if not any(marker in normalized for marker in vague_copy_markers):
+        return False
+    concrete_fact_markers = (
+        "desde ",
+        "ano",
+        "año",
+        "anos",
+        "años",
+        "universidad",
+        "egres",
+        "gradu",
+        "diplom",
+        "certifica",
+        "colegio",
+        "fundador",
+        "directora",
+        "director",
+        "socia",
+        "socio",
+        "civil",
+        "penal",
+        "familia",
+        "mercantil",
+        "laboral",
+        "inmigr",
+        "contrato",
+        "empresas",
+        "audiencias",
+        "clientes",
+        "casos",
+        "mas de ",
+        "más de ",
+    )
+    if any(marker in normalized for marker in concrete_fact_markers):
+        return False
+    return True
+
+
+def build_workstation_content_intake_message(reply_text: str) -> str:
+    """Build a short structured request for missing page facts."""
+    normalized = " ".join((reply_text or "").lower().split())
+    if "trayectoria" in normalized or "experiencia" in normalized:
+        return (
+            "Perfecto. Para ampliar la trayectoria sin inventar datos, mandeme estas 5 cosas:\n\n"
+            "1. Desde que ano ejerce o trabaja en esta area?\n"
+            "2. Que areas principales quiere destacar?\n"
+            "3. Que estudios, cargos, certificaciones o lugares de trabajo quiere mencionar?\n"
+            "4. Que tipo de clientes, casos o logros quiere resaltar sin datos sensibles?\n"
+            "5. Que tono prefiere: mas sobrio, cercano o fuerte?"
+        )
+    return (
+        "Perfecto. Para ajustarla bien sin inventar datos, mandeme estas 5 cosas:\n\n"
+        "1. Que seccion quiere cambiar?\n"
+        "2. Que texto o idea quiere agregar?\n"
+        "3. Que dato concreto no puede faltar?\n"
+        "4. Que quiere evitar o sacar?\n"
+        "5. Que tono prefiere: mas sobrio, cercano o fuerte?"
     )
 
 
@@ -1962,8 +2058,15 @@ Decision rules:
   it does not need to be professional, and it can be a profile photo, social
   media photo, or any casual photo where their face is visible because we
   improve it with AI.
+- If the client asks for vague factual/copy changes, do not revise yet. Examples:
+  "hacer la trayectoria mas amplia", "poner algo mas completo", "mejorar la
+  experiencia", or "agregar algo de historia" without the actual facts. Use
+  ask_for_details and ask five compact questions so the client gives the facts.
+- Do not invent trajectory, experience, cases, awards, credentials, cities,
+  services, or legal/accounting facts just to make a section longer.
 - If the client sent useful photos/content and a draft is helpful now, generate_or_revise_page is allowed.
-- If the client gave concrete changes to the current page, use generate_or_revise_page.
+- If the client gave concrete changes to the current page with enough factual
+  detail to edit safely, use generate_or_revise_page.
 - If the client asks to see, test, publish, or open the page online, use send_public_page_link.
 - If the client approves the preview but the public trial URL has not been sent yet, use send_public_page_link.
 - If the public trial URL was already sent and the client approves that public page, use approve_and_handoff.
@@ -2021,7 +2124,14 @@ def build_workstation_tool_agent_context(
 # Operating Judgment
 - If the client asks a question, answer with send_whatsapp_text. Do not generate a page for that.
 - If the client asks how to send content, ask them to send it and say you will add it.
-- If the client gave concrete page changes or useful assets, use generate_or_revise_solo_page and then queue_workstation_deliverables.
+- If the client asks for vague factual/copy changes, do not revise yet. Examples:
+  "hacer la trayectoria mas amplia", "poner algo mas completo", "mejorar la
+  experiencia", or "agregar algo de historia" without the actual facts. Ask five
+  compact questions and wait.
+- Do not invent trajectory, experience, cases, awards, credentials, cities,
+  services, or legal/accounting facts just to make a section longer.
+- If the client gave concrete page changes or useful assets with enough factual
+  detail to edit safely, use generate_or_revise_solo_page and then queue_workstation_deliverables.
 - If the client asks to see, test, publish, or open the page online, use send_workstation_public_page_link.
 - If the client approves the preview but public_trial_url_last_sent_at is never, send_workstation_public_page_link first.
 - If public_trial_url_last_sent_at exists and the client approves the public test page, use mark_preview_approved.

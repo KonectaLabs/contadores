@@ -679,6 +679,10 @@ puede responder por texto, pedir mas datos, crear/revisar la pagina, aprobar y
 handoffear, pasar a humano o no hacer nada. Si el cliente pregunta como mandar
 contenido, la respuesta correcta es pedirle que lo envie por WhatsApp y no
 generar otro boceto.
+Si el pedido es factual pero vago, por ejemplo "hacer la trayectoria mas
+amplia" o "poner algo mas completo", Workstation no debe inventar contenido ni
+regenerar por reflejo: pide cinco datos concretos, espera la respuesta y recien
+ahi crea la revision.
 Si ambos runtimes de Codex fallan o no generan los archivos esperados, se marca
 `automation_status=failed` y se crea una alerta por email con el error real de
 ChatGPT Codex, el fallback API-key y el comando/link de reauth. Ese fallo tambien
