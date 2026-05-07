@@ -21,3 +21,13 @@ def test_health_response_keeps_default_cache_headers() -> None:
 
     assert response.status_code == 200
     assert "cache-control" not in response.headers
+
+
+def test_public_image_generation_endpoint_is_removed() -> None:
+    """The removed public image endpoint should not be advertised or routed."""
+    with TestClient(app) as client:
+        response = client.post("/api/public/image-generation", data={"prompt": "test"})
+        openapi_response = client.get("/openapi.json")
+
+    assert response.status_code == 404
+    assert "/api/public/image-generation" not in openapi_response.json()["paths"]

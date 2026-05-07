@@ -12,12 +12,6 @@ http:
       entryPoints:
         - web
       service: backend
-    public-image-generation:
-      rule: "PathPrefix(`/api/public/image-generation`)"
-      priority: 50
-      entryPoints:
-        - web
-      service: backend
     bot:
       rule: "HostRegexp(`.+\\..+`) && !HostRegexp(`\\d+\\.\\d+\\.\\d+\\.\\d+`) && PathPrefix(`/webhook`)"
       priority: 10

@@ -608,8 +608,8 @@ preferido es foto profesional primero y video del boceto despues. Si el archivo
 no existe o no tiene mensajes validos, Workstation arma el plan default: foto
 profesional disponible primero y MP4 con `preview-message.txt` despues.
 
-El backend usa el Codex SDK async para Workstation, generacion de imagenes y el
-bot conversacional. Cada lead conserva su thread en
+El backend usa el Codex SDK async para Workstation y el bot conversacional. Cada
+lead conserva su thread en
 `contadores_leads.codex_conversation_thread_id` y cada cliente Workstation
 conserva otro thread separado en
 `workstation_clients.codex_workstation_thread_id`; los runs auditados guardan
@@ -695,27 +695,6 @@ Si el cliente responde despues del `workstation_handoff`, y ese handoff no fue
 por aprobacion explicita, Workstation vuelve a tratarlo como review del preview:
 primero muestra backoff de 20 minutos y luego el tick arranca una revision de
 Codex automaticamente. Los handoffs por aprobacion quedan en humano.
-
-El backend tambien expone un endpoint publico, sin cookie ni token, para generar
-una imagen con Codex desde un prompt y referencias visuales opcionales:
-
-```bash
-curl -X POST http://127.0.0.1:8000/api/public/image-generation \
-  -F 'prompt=Crear una imagen usando estas referencias' \
-  -F 'images=@referencia-1.png' \
-  -F 'images=@referencia-2.jpg' \
-  -o generated-image.png
-```
-
-Cada request guarda sus inputs, metadata y `generated-image.png` en
-`data/public-image-generations/{job_id}/`. El response devuelve directamente la
-imagen generada. El camino principal usa Codex con el login ChatGPT guardado en
-`CODEX_HOME`; si Codex falla o no crea el archivo esperado, el backend hace
-fallback a la OpenAI Images API con `OPENAI_API_KEY`. El modelo de fallback se
-configura con `OPENAI_IMAGE_FALLBACK_MODEL` y por defecto usa `gpt-image-1.5`,
-que es el modelo GPT Image recomendado en la documentacion actual de OpenAI.
-El fallback por API tiene un limite simple en memoria de 10 usos por proceso;
-Codex no tiene limite en este endpoint.
 
 El ZIP se descarga desde:
 

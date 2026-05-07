@@ -23,7 +23,6 @@ from backend.endpoints import (
     auth_router,
     contadores_router,
     funnels_router,
-    public_image_generation_router,
     workstation_router,
 )
 from backend.runtime_settings import get_runtime_settings
@@ -67,7 +66,6 @@ PUBLIC_PATHS_WITHOUT_SESSION = {
     "/login",
     "/api/auth/login",
     "/api/auth/logout",
-    "/api/public/image-generation",
 }
 
 
@@ -127,10 +125,6 @@ app = FastAPI(
             "description": "Converted paid clients, delivery notes, media files, and Codex-ready exports.",
         },
         {
-            "name": "public-image-generation",
-            "description": "Unauthenticated prompt-plus-images image generation through Codex.",
-        },
-        {
             "name": "system",
             "description": "System endpoints and frontend serving.",
         },
@@ -148,7 +142,6 @@ if STATIC_DIR.exists():
 app.include_router(auth_router)
 app.include_router(contadores_router)
 app.include_router(funnels_router)
-app.include_router(public_image_generation_router)
 app.include_router(workstation_router)
 
 
