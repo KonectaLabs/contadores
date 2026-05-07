@@ -3331,6 +3331,8 @@ async def list_workstation_clients(
     query_value = (query or "").strip().lower()
     visible: list[WorkstationClient] = []
     for client in clients:
+        if client.status == WorkstationClientStatus.CLOSED:
+            continue
         lead = ContadoresLead.get_by_id(client.lead_id)
         haystack = " ".join(
             [

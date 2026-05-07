@@ -4521,6 +4521,7 @@ def test_workstation_close_closes_crm_lead_and_stops_automation(monkeypatch, tmp
     with TestClient(app) as client:
         response = client.post(f"/api/workstation/clients/{workstation.id}/close")
         crm_detail = client.get(f"/api/contadores/leads/{lead.id}")
+        workstation_list = client.get("/api/workstation/clients")
         start_response = client.post(
             f"/api/workstation/clients/{workstation.id}/solo-page/work",
             json={"prompt": "hacer una version nueva"},
@@ -4534,6 +4535,7 @@ def test_workstation_close_closes_crm_lead_and_stops_automation(monkeypatch, tmp
     assert crm_detail.json()["lead"]["stage"] == "closed"
     assert crm_detail.json()["lead"]["automation_paused"] is True
     assert crm_detail.json()["lead"]["automation_paused_reason"] == "manual_workstation_close"
+    assert workstation_list.json()["clients"] == []
     assert start_response.status_code == 409
 
 
