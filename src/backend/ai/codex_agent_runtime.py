@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import backend.database as database_module
 from backend.codex_utils import CodexSkill, CodexTurnResult, run_codex_with_context
 from backend.config import (
     CONVERSATION_BOT_CODEX_API_KEY_HOME,
@@ -17,11 +18,11 @@ from backend.config import (
     CONVERSATION_BOT_CODEX_SERVICE_TIER,
     OPENAI_API_KEY,
 )
-from backend.database import AgentRun, AgentToolCall, DATA_DIR
+from backend.database import AgentRun, AgentToolCall
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-AGENT_RUNS_DIR = DATA_DIR / "agent-runs"
+AGENT_HARNESS_SKILL = REPO_ROOT / ".codex" / "skills" / "contadores-agent-harness" / "SKILL.md"
 TOOL_RUNNER_MODULE = "backend.ai.codex_agent_runtime"
 
 
@@ -51,9 +52,38 @@ class CodexAgentRunResult:
 
 def run_context_dir(run_id: str) -> Path:
     """Return the persistent audit folder for one agent run."""
-    path = AGENT_RUNS_DIR / run_id
+    path = database_module.DATA_DIR / "agent-runs" / run_id
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def _safe_memory_segment(value: str) -> str:
+    """Return a filesystem-safe segment while keeping IDs readable."""
+    clean = "".join(char if char.isalnum() or char in {"-", "_", "."} else "_" for char in value.strip())
+    return clean[:160] or "unknown"
+
+
+def agent_memory_path(target_type: str, target_id: str) -> Path:
+    """Return the persistent Markdown memory file for one product target."""
+    root = database_module.DATA_DIR / "agent-memory" / _safe_memory_segment(target_type)
+    root.mkdir(parents=True, exist_ok=True)
+    return root / f"{_safe_memory_segment(target_id)}.md"
+
+
+def read_agent_memory_text(
+    *,
+    target_type: str,
+    target_id: str,
+    limit_chars: int = 12000,
+) -> str:
+    """Read the latest memory text for one product target."""
+    path = agent_memory_path(target_type, target_id)
+    if not path.exists():
+        return ""
+    text = path.read_text(encoding="utf-8", errors="replace")
+    if limit_chars <= 0 or len(text) <= limit_chars:
+        return text
+    return text[-limit_chars:]
 
 
 def write_jsonl(path: Path, payload: dict[str, Any]) -> None:
@@ -81,6 +111,7 @@ def build_agent_prompt(
     objective: str,
     context_md: str,
     tool_specs: list[CodexAgentToolSpec],
+    memory_md: str = "",
 ) -> str:
     """Build the employee-style prompt that teaches Codex how to act with tools."""
     manifest = json.dumps(build_tool_manifest(tool_specs), ensure_ascii=True, indent=2)
@@ -92,6 +123,12 @@ You are not a JSON classifier. Use judgment. Sometimes the right action is a
 short answer, sometimes a clarifying question, sometimes page work, sometimes a
 future follow-up, and sometimes a human handoff.
 
+You are allowed to operate through product tools. The tools below are the hands
+of the backend: they send WhatsApp messages, move leads, update state, schedule
+future wake-ups, write memory, and create Workstation deliverables. If a tool is
+the right way to act, call it. Do not merely describe the action for someone
+else to execute.
+
 Run id:
 {run_id}
 
@@ -100,6 +137,9 @@ Objective:
 
 Context:
 {context_md.strip()}
+
+Persistent memory for this target:
+{memory_md.strip() or "(empty)"}
 
 Available product tools:
 ```json
@@ -112,13 +152,41 @@ How to use tools:
   uv run python -m {TOOL_RUNNER_MODULE} call --run-id {run_id} --tool TOOL_NAME --arguments-json 'JSON_OBJECT'
 - Tool calls are audited and are the product side effects.
 - You may call more than one tool if that is best for the client.
+- Use read_agent_memory/write_agent_memory for durable notes that the next run
+  should know.
 - Use short, natural WhatsApp messages. Avoid spam.
-- Use schedule_followup instead of sleeping or creating OS cron jobs.
+- Use schedule_heartbeat or schedule_followup instead of sleeping or creating
+  OS cron jobs.
 - If a tool returns an error, adapt using the error. Do not bypass product rules.
 - If no side effect is appropriate, do not call a tool and explain briefly why.
 
-Finish with a short internal summary of what you did.
+Finish with a short internal summary for the audit log. The client only sees
+messages or media you actually queued through tools.
 """.strip()
+
+
+def add_agent_harness_skill(skills: list[CodexSkill] | None) -> list[CodexSkill]:
+    """Load the agent harness skill before task-specific skills."""
+    selected: list[CodexSkill] = []
+    if AGENT_HARNESS_SKILL.exists():
+        selected.append(
+            CodexSkill(
+                name="contadores-agent-harness",
+                path=str(AGENT_HARNESS_SKILL.resolve()),
+            )
+        )
+
+    seen_names = {skill.name for skill in selected}
+    seen_paths = {Path(skill.path).expanduser().resolve() for skill in selected if skill.path}
+    for skill in skills or []:
+        skill_path = Path(skill.path).expanduser().resolve() if skill.path else Path()
+        if skill.name in seen_names or skill_path in seen_paths:
+            continue
+        selected.append(skill)
+        seen_names.add(skill.name)
+        if skill.path:
+            seen_paths.add(skill_path)
+    return selected
 
 
 async def _run_codex_agent_once(
@@ -158,8 +226,11 @@ async def run_codex_agent(
     run_id = uuid.uuid4().hex
     context_dir = run_context_dir(run_id)
     context_path = context_dir / "context.md"
+    memory_snapshot_path = context_dir / "memory.md"
     manifest_path = context_dir / "tools.json"
+    memory_md = read_agent_memory_text(target_type=target_type, target_id=target_id)
     context_path.write_text(context_md.strip() + "\n", encoding="utf-8")
+    memory_snapshot_path.write_text(memory_md.strip() + "\n", encoding="utf-8")
     manifest_path.write_text(
         json.dumps(build_tool_manifest(tool_specs), ensure_ascii=True, indent=2),
         encoding="utf-8",
@@ -177,8 +248,9 @@ async def run_codex_agent(
         objective=objective,
         context_md=context_md,
         tool_specs=tool_specs,
+        memory_md=memory_md,
     )
-    selected_skills = skills or []
+    selected_skills = add_agent_harness_skill(skills)
     try:
         try:
             codex_result = await _run_codex_agent_once(

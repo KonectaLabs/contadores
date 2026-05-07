@@ -295,7 +295,8 @@ Bot conversacional post-video y post-Calendly:
   `CODEX_AGENT_TOOLS_CONVERSATION_ENABLED=true`, antes del contrato JSON legacy
   corre el runtime autonomo con tools internas auditadas. En ese modo Codex no
   actua como clasificador: puede llamar tools para mandar uno o mas mensajes,
-  agendar un follow-up, iniciar Workstation, actualizar estado o pasar a humano.
+  agendar un follow-up/heartbeat, mover leads entre funnels, taggear, escribir
+  memoria durable, iniciar Workstation, actualizar estado o pasar a humano.
   Si ese runtime falla antes de ejecutar side effects, se conserva el fallback
   legacy.
 - Orden de fallback: primero ChatGPT Codex, despues Codex autenticado con API
@@ -620,14 +621,17 @@ lanzar Codex para priorizar el login ChatGPT/Codex. Si se configura en `false`,
 el proceso Codex conserva `OPENAI_API_KEY`.
 
 La automatizacion Workstation solo pagina usa Codex GPT-5.5 con la skill
-`.codex/skills/workstation-solo-page/SKILL.md`. Si
+`.codex/skills/workstation-solo-page/SKILL.md`. Todo agente autonomo tambien
+carga `.codex/skills/contadores-agent-harness/SKILL.md`, que le explica el loop
+de herramientas, memoria y heartbeats. Si
 `CODEX_AGENT_TOOLS_ENABLED=true` y
 `CODEX_AGENT_TOOLS_WORKSTATION_ENABLED=true`, primero corre el agente autonomo
-con toolbelt interna: puede responder texto, agendar follow-up, crear/revisar la
-pagina, encolar entregables, marcar aprobacion o pasar a humano. Las tools
-quedan auditadas en `agent_runs`, `agent_tool_calls`,
-`scheduled_agent_tasks` y `data/agent-runs/`. Si el agente con tools falla antes
-de completar side effects, Workstation vuelve al decisionador JSON legacy.
+con toolbelt interna: puede responder texto, agendar follow-up/heartbeat, leer o
+escribir memoria en `data/agent-memory/`, crear/revisar la pagina, encolar
+entregables, marcar aprobacion o pasar a humano. Las tools quedan auditadas en
+`agent_runs`, `agent_tool_calls`, `scheduled_agent_tasks` y
+`data/agent-runs/`. Si el agente con tools falla antes de completar side
+effects, Workstation vuelve al decisionador JSON legacy.
 Antes de generar bocetos, revisiones, respuestas o aprobaciones, espera 20
 minutos de silencio desde el ultimo inbound para que el cliente pueda mandar
 fotos, audios y datos en tandas.

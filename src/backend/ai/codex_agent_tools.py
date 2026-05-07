@@ -10,7 +10,13 @@ from typing import Any, Callable
 
 from pydantic import BaseModel, Field, ValidationError
 
-from backend.ai.codex_agent_runtime import CodexAgentToolSpec, run_context_dir, write_jsonl
+from backend.ai.codex_agent_runtime import (
+    CodexAgentToolSpec,
+    agent_memory_path,
+    read_agent_memory_text,
+    run_context_dir,
+    write_jsonl,
+)
 from backend.database import (
     AgentToolCall,
     ContadoresLead,
@@ -73,6 +79,53 @@ class ScheduleFollowupArgs(BaseModel):
     idempotency_key: str | None = None
 
 
+class ScheduleHeartbeatArgs(ScheduleFollowupArgs):
+    """Arguments for a future self-directed agent heartbeat."""
+
+
+class AgentMemoryTargetArgs(BaseModel):
+    """Arguments for reading one target memory file."""
+
+    target_type: str = Field(pattern="^(lead|workstation_client)$")
+    target_id: str = Field(min_length=1)
+    limit_chars: int = Field(default=12000, ge=100, le=50000)
+
+
+class WriteAgentMemoryArgs(BaseModel):
+    """Arguments for appending durable memory for a lead or client."""
+
+    target_type: str = Field(pattern="^(lead|workstation_client)$")
+    target_id: str = Field(min_length=1)
+    note: str = Field(min_length=1, max_length=8000)
+    title: str = Field(default="", max_length=160)
+    importance: str = Field(default="normal", pattern="^(low|normal|high)$")
+
+
+class ListAgentToolCallsArgs(BaseModel):
+    """Arguments for reading audited tool calls in the current or another run."""
+
+    run_id: str | None = Field(default=None, max_length=120)
+    status: str | None = Field(default=None, pattern="^(succeeded|failed)$")
+
+
+class MoveLeadToFunnelArgs(LeadToolArgs):
+    """Arguments for moving a lead to another funnel and stage."""
+
+    funnel_id: str = Field(min_length=1, max_length=120)
+    stage: str = Field(
+        default=ContadoresLeadStage.AWAITING_INITIAL_REPLY.value,
+        pattern="^(awaiting_initial_reply|awaiting_video_reply|needs_human|calendly_sent|booked|closed|archived)$",
+    )
+    reason: str = Field(min_length=1, max_length=4000)
+
+
+class SetLeadTagsArgs(LeadToolArgs):
+    """Arguments for replacing or appending operator tags."""
+
+    tags: list[str] = Field(default_factory=list, min_length=1, max_length=20)
+    mode: str = Field(default="append", pattern="^(append|replace)$")
+
+
 class UpdateLeadStateArgs(LeadToolArgs):
     """Arguments for updating a lead state."""
 
@@ -129,6 +182,16 @@ def tool_specs() -> list[CodexAgentToolSpec]:
         ("send_whatsapp_text", "Queue one WhatsApp text message, optionally delayed.", SendWhatsAppTextArgs),
         ("send_whatsapp_media", "Queue one WhatsApp media message, optionally delayed.", SendWhatsAppMediaArgs),
         ("schedule_followup", "Create a DB-backed future agent wake-up.", ScheduleFollowupArgs),
+        (
+            "schedule_heartbeat",
+            "Schedule a future self-directed agent run with instructions for your future self.",
+            ScheduleHeartbeatArgs,
+        ),
+        ("read_agent_memory", "Read durable Markdown memory for this lead or Workstation client.", AgentMemoryTargetArgs),
+        ("write_agent_memory", "Append a concise durable memory note for future Codex runs.", WriteAgentMemoryArgs),
+        ("list_agent_tool_calls", "Inspect audited tool calls for the current or a specified run.", ListAgentToolCallsArgs),
+        ("move_lead_to_funnel", "Move a lead to another funnel and lifecycle stage.", MoveLeadToFunnelArgs),
+        ("set_lead_tags", "Append or replace operator tags on a lead.", SetLeadTagsArgs),
         ("update_lead_state", "Update stage or automation pause state for a lead.", UpdateLeadStateArgs),
         ("handoff_human", "Pause automation and hand a lead to a human.", HandoffHumanArgs),
         (
@@ -269,6 +332,137 @@ def schedule_followup(arguments: dict[str, Any], *, run_id: str) -> dict[str, An
         "target_type": task.target_type,
         "target_id": task.target_id,
         "due_at": task.due_at.isoformat(),
+    }
+
+
+def schedule_heartbeat(arguments: dict[str, Any], *, run_id: str) -> dict[str, Any]:
+    args = ScheduleHeartbeatArgs.model_validate(arguments)
+    reason = f"heartbeat: {args.reason}"[:1000]
+    return schedule_followup(
+        {
+            "target_type": args.target_type,
+            "target_id": args.target_id,
+            "run_after_minutes": args.run_after_minutes,
+            "reason": reason,
+            "instruction": args.instruction,
+            "idempotency_key": args.idempotency_key,
+        },
+        run_id=run_id,
+    )
+
+
+def read_agent_memory(arguments: dict[str, Any]) -> dict[str, Any]:
+    args = AgentMemoryTargetArgs.model_validate(arguments)
+    path = agent_memory_path(args.target_type, args.target_id)
+    text = read_agent_memory_text(
+        target_type=args.target_type,
+        target_id=args.target_id,
+        limit_chars=args.limit_chars,
+    )
+    return {
+        "found": bool(text.strip()),
+        "target_type": args.target_type,
+        "target_id": args.target_id,
+        "path": str(path),
+        "memory": text,
+    }
+
+
+def write_agent_memory(arguments: dict[str, Any], *, run_id: str) -> dict[str, Any]:
+    args = WriteAgentMemoryArgs.model_validate(arguments)
+    path = agent_memory_path(args.target_type, args.target_id)
+    now = datetime.now(timezone.utc).isoformat()
+    title = " ".join(args.title.split()).strip() or "Codex note"
+    entry = (
+        f"\n## {now} - {title}\n"
+        f"- run_id: {run_id}\n"
+        f"- importance: {args.importance}\n\n"
+        f"{args.note.strip()}\n"
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(entry)
+    return {
+        "written": True,
+        "target_type": args.target_type,
+        "target_id": args.target_id,
+        "path": str(path),
+    }
+
+
+def _parse_json_object(raw_value: str) -> dict[str, Any]:
+    try:
+        value = json.loads(raw_value or "{}")
+    except json.JSONDecodeError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def list_agent_tool_calls(arguments: dict[str, Any], *, run_id: str) -> dict[str, Any]:
+    args = ListAgentToolCallsArgs.model_validate(arguments)
+    target_run_id = (args.run_id or run_id).strip()
+    calls = AgentToolCall.list_by_run(target_run_id)
+    if args.status:
+        calls = [call for call in calls if call.status == args.status]
+    return {
+        "run_id": target_run_id,
+        "calls": [
+            {
+                "id": call.id,
+                "tool_name": call.tool_name,
+                "target_type": call.target_type,
+                "target_id": call.target_id,
+                "status": call.status,
+                "arguments": _parse_json_object(call.arguments_json),
+                "result": _parse_json_object(call.result_json),
+                "error": call.error,
+                "created_at": call.created_at.isoformat(),
+            }
+            for call in calls
+        ],
+    }
+
+
+def move_lead_to_funnel(arguments: dict[str, Any]) -> dict[str, Any]:
+    args = MoveLeadToFunnelArgs.model_validate(arguments)
+    lead = _lead_or_error(args.lead_id)
+    updated = ContadoresLead.move_to_funnel(
+        lead.id,
+        funnel_id=args.funnel_id,
+        stage=args.stage,
+    )
+    if updated is None:
+        raise AgentToolError(f"Lead not found: {lead.id}")
+    updated = ContadoresLead.update_flow_state(
+        lead.id,
+        stage=updated.stage,
+        automation_paused=updated.automation_paused,
+        automation_paused_reason=args.reason if updated.automation_paused else None,
+        classification_completed_at=datetime.now(timezone.utc),
+        last_classification_label="codex_agent_move_lead_to_funnel",
+        last_classification_reason=args.reason,
+    )
+    return {
+        "moved": updated is not None,
+        "lead_id": lead.id,
+        "funnel_id": updated.funnel_id if updated else args.funnel_id,
+        "stage": updated.stage.value if updated else args.stage,
+        "automation_paused": updated.automation_paused if updated else False,
+    }
+
+
+def set_lead_tags(arguments: dict[str, Any]) -> dict[str, Any]:
+    args = SetLeadTagsArgs.model_validate(arguments)
+    lead = _lead_or_error(args.lead_id)
+    tags = args.tags if args.mode == "replace" else [*lead.tags, *args.tags]
+    updated = ContadoresLead.set_tags(lead.id, tags=tags)
+    if updated is None:
+        raise AgentToolError(f"Lead not found: {lead.id}")
+    return {
+        "updated": True,
+        "lead_id": updated.id,
+        "tags": updated.tags,
+        "mode": args.mode,
     }
 
 
@@ -466,6 +660,12 @@ TOOL_HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {
     "send_whatsapp_text": send_whatsapp_text,
     "send_whatsapp_media": send_whatsapp_media,
     "schedule_followup": schedule_followup,
+    "schedule_heartbeat": schedule_heartbeat,
+    "read_agent_memory": read_agent_memory,
+    "write_agent_memory": write_agent_memory,
+    "list_agent_tool_calls": list_agent_tool_calls,
+    "move_lead_to_funnel": move_lead_to_funnel,
+    "set_lead_tags": set_lead_tags,
     "update_lead_state": update_lead_state,
     "handoff_human": handoff_human,
     "create_or_get_solo_page_client": create_or_get_solo_page_client,
@@ -474,6 +674,13 @@ TOOL_HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {
     "generate_or_revise_solo_page": generate_or_revise_solo_page,
     "queue_workstation_deliverables": queue_workstation_deliverables,
     "mark_preview_approved": mark_preview_approved,
+}
+
+RUN_AWARE_TOOLS = {
+    "schedule_followup",
+    "schedule_heartbeat",
+    "write_agent_memory",
+    "list_agent_tool_calls",
 }
 
 
@@ -487,7 +694,7 @@ def call_tool(*, run_id: str, tool_name: str, arguments: dict[str, Any]) -> dict
     try:
         if handler is None:
             raise AgentToolError(f"Unknown tool: {clean_tool_name}")
-        if clean_tool_name == "schedule_followup":
+        if clean_tool_name in RUN_AWARE_TOOLS:
             result = handler(arguments, run_id=run_id)
         else:
             result = handler(arguments)

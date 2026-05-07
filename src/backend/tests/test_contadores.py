@@ -18,7 +18,9 @@ import backend.database as database_module
 import backend.endpoints.contadores as contadores_endpoints
 import backend.endpoints.workstation as workstation_endpoints
 from backend.audio_transcription import AudioTranscriptionError
+from backend.codex_utils import CodexSkill, CodexTurnResult
 from backend.ai.contadores_conversation_bot import ContadoresConversationBotResult, REJECTION_SURVEY_REPLY
+from backend.ai import codex_agent_runtime
 from backend.contadores_strategies import get_contadores_strategy
 from backend.database import (
     AgentToolCall,
@@ -167,6 +169,158 @@ def test_codex_agent_tool_schedules_followup(monkeypatch, tmp_path) -> None:
     assert result["result"]["task_id"] == duplicate["result"]["task_id"]
     due = ScheduledAgentTask.list_due(now=now_utc() + timedelta(minutes=61))
     assert [task.id for task in due] == [result["result"]["task_id"]]
+
+
+def test_codex_agent_tool_schedules_heartbeat(monkeypatch, tmp_path) -> None:
+    """Codex should be able to wake its future self with DB-backed instructions."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-agent-tool-heartbeat",
+        phone="+5491777777795",
+        full_name="Cliente Heartbeat",
+    )
+
+    result = call_tool(
+        run_id="agent-run-heartbeat",
+        tool_name="schedule_heartbeat",
+        arguments={
+            "target_type": "lead",
+            "target_id": lead.id,
+            "run_after_minutes": 45,
+            "reason": "Esperar a que mande una foto.",
+            "instruction": "Revisar si el lead mando una foto y responder con el siguiente paso.",
+            "idempotency_key": "heartbeat-key",
+        },
+    )
+
+    assert result["ok"] is True
+    due = ScheduledAgentTask.list_due(now=now_utc() + timedelta(minutes=46))
+    assert [task.id for task in due] == [result["result"]["task_id"]]
+    assert due[0].reason.startswith("heartbeat:")
+
+
+def test_codex_agent_tool_memory_roundtrip(monkeypatch, tmp_path) -> None:
+    """Autonomous runs should have durable target memory outside the prompt."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setattr(database_module, "DATA_DIR", tmp_path / "data")
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-agent-tool-memory",
+        phone="+5491777777796",
+        full_name="Cliente Memory",
+    )
+
+    written = call_tool(
+        run_id="agent-run-memory",
+        tool_name="write_agent_memory",
+        arguments={
+            "target_type": "lead",
+            "target_id": lead.id,
+            "title": "Pending photo",
+            "note": "El lead prometio mandar una foto casual para mejorarla con AI.",
+            "importance": "high",
+        },
+    )
+    read = call_tool(
+        run_id="agent-run-memory",
+        tool_name="read_agent_memory",
+        arguments={"target_type": "lead", "target_id": lead.id},
+    )
+
+    assert written["ok"] is True
+    assert read["ok"] is True
+    assert "foto casual" in read["result"]["memory"]
+    assert Path(read["result"]["path"]).exists()
+
+
+def test_codex_agent_tool_moves_lead_and_sets_tags(monkeypatch, tmp_path) -> None:
+    """The toolbelt should let Codex directly move and tag leads."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-agent-tool-move",
+        phone="+5491777777797",
+        full_name="Cliente Move",
+        tags=["form"],
+    )
+
+    moved = call_tool(
+        run_id="agent-run-move",
+        tool_name="move_lead_to_funnel",
+        arguments={
+            "lead_id": lead.id,
+            "funnel_id": "abogados",
+            "stage": "needs_human",
+            "reason": "El lead pidio asesoramiento legal, no contable.",
+        },
+    )
+    tagged = call_tool(
+        run_id="agent-run-move",
+        tool_name="set_lead_tags",
+        arguments={
+            "lead_id": lead.id,
+            "tags": ["legal-intent"],
+            "mode": "append",
+        },
+    )
+    updated = ContadoresLead.get_by_id(lead.id)
+
+    assert moved["ok"] is True
+    assert tagged["ok"] is True
+    assert updated is not None
+    assert updated.funnel_id == "abogados"
+    assert updated.stage == ContadoresLeadStage.NEEDS_HUMAN
+    assert updated.automation_paused is True
+    assert "form" in updated.tags
+    assert "legal-intent" in updated.tags
+
+
+def test_codex_agent_runtime_injects_harness_skill(monkeypatch, tmp_path) -> None:
+    """Every autonomous run should load the generic harness before task skills."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    captured: dict[str, list[CodexSkill]] = {}
+
+    async def fake_run_codex_agent_once(**kwargs):
+        captured["skills"] = kwargs["skills"]
+        return CodexTurnResult(
+            final_response="done",
+            thread_id="thread-harness",
+            turn_id="turn-harness",
+            status="completed",
+            error=None,
+            items_count=0,
+            usage=None,
+            model="gpt-5.5",
+            effort="medium",
+            service_tier=None,
+            cwd=Path("/Users/fgoiriz/private/repos/contadores"),
+        )
+
+    harness_skill = CodexSkill(
+        name="contadores-agent-harness",
+        path=str(codex_agent_runtime.AGENT_HARNESS_SKILL),
+    )
+    task_skill = CodexSkill(
+        name="workstation-solo-page",
+        path=str(Path("/tmp/workstation-solo-page/SKILL.md")),
+    )
+    monkeypatch.setattr(codex_agent_runtime, "_run_codex_agent_once", fake_run_codex_agent_once)
+
+    result = asyncio.run(
+        codex_agent_runtime.run_codex_agent(
+            target_type="lead",
+            target_id="lead-harness",
+            objective="test harness skill",
+            context_md="context",
+            tool_specs=[],
+            skills=[harness_skill, task_skill],
+            prompt_version="test-harness",
+        )
+    )
+
+    assert result.codex_result.thread_id == "thread-harness"
+    assert [skill.name for skill in captured["skills"]] == [
+        "contadores-agent-harness",
+        "workstation-solo-page",
+    ]
 
 
 def test_workstation_tool_agent_short_circuits_legacy_decision(monkeypatch, tmp_path) -> None:

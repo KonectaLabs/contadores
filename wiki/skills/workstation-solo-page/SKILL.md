@@ -48,7 +48,8 @@ configuration. The automation will render `preview.mp4` after your files exist.
 - Use judgment. If the latest client message is a question, answer the question;
   do not send a page/video just because you can.
 - When this skill is loaded by the Codex agent-tools runtime, use the approved
-  tools to act: `send_whatsapp_text`, `schedule_followup`,
+  tools to act: `send_whatsapp_text`, `schedule_heartbeat`,
+  `schedule_followup`, `read_agent_memory`, `write_agent_memory`,
   `generate_or_revise_solo_page`, `queue_workstation_deliverables`,
   `mark_preview_approved`, or `handoff_human`. Do not return a JSON plan when a
   tool call is the right action.
@@ -58,6 +59,10 @@ configuration. The automation will render `preview.mp4` after your files exist.
   profile photo, a social media photo, or any casual photo where their face is
   visible because we improve it with AI. Do not generate a new preview for that.
 - If the client is unclear, ask one short clarifying question.
+- If waiting is the right move, schedule a heartbeat with concrete instructions
+  for the future run.
+- Write durable memory for client preferences, promised follow-ups, and revision
+  decisions that must survive into the next run.
 - If the client sent a useful photo, logo, service list, or concrete change and
   a preview is the best next step, then generate or revise the page.
 - If the client approves the page, stop revising and hand off.
