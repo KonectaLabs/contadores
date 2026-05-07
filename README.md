@@ -628,7 +628,8 @@ de herramientas, memoria y heartbeats. Si
 `CODEX_AGENT_TOOLS_WORKSTATION_ENABLED=true`, primero corre el agente autonomo
 con toolbelt interna: puede responder texto, agendar follow-up/heartbeat, leer o
 escribir memoria en `data/agent-memory/`, crear/revisar la pagina, encolar
-entregables, marcar aprobacion o pasar a humano. Las tools quedan auditadas en
+entregables, marcar aprobacion, pasar a humano o consultar disponibilidad y
+precios publicos estimados de dominios sin credenciales. Las tools quedan auditadas en
 `agent_runs`, `agent_tool_calls`, `scheduled_agent_tasks` y
 `data/agent-runs/`. Si el agente con tools falla antes de completar side
 effects, Workstation vuelve al decisionador JSON legacy.

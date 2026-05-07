@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+import httpx
 from pydantic import BaseModel, Field, ValidationError
 
 from backend.ai.codex_agent_runtime import (
@@ -108,6 +109,12 @@ class ListAgentToolCallsArgs(BaseModel):
     status: str | None = Field(default=None, pattern="^(succeeded|failed)$")
 
 
+class CheckDomainAvailabilityArgs(BaseModel):
+    """Arguments for checking whether a domain can be registered."""
+
+    domain: str = Field(min_length=4, max_length=253)
+
+
 class MoveLeadToFunnelArgs(LeadToolArgs):
     """Arguments for moving a lead to another funnel and stage."""
 
@@ -190,6 +197,11 @@ def tool_specs() -> list[CodexAgentToolSpec]:
         ("read_agent_memory", "Read durable Markdown memory for this lead or Workstation client.", AgentMemoryTargetArgs),
         ("write_agent_memory", "Append a concise durable memory note for future Codex runs.", WriteAgentMemoryArgs),
         ("list_agent_tool_calls", "Inspect audited tool calls for the current or a specified run.", ListAgentToolCallsArgs),
+        (
+            "check_domain_availability",
+            "Check whether a domain exists and return public no-auth registrar price estimates when available.",
+            CheckDomainAvailabilityArgs,
+        ),
         ("move_lead_to_funnel", "Move a lead to another funnel and lifecycle stage.", MoveLeadToFunnelArgs),
         ("set_lead_tags", "Append or replace operator tags on a lead.", SetLeadTagsArgs),
         ("update_lead_state", "Update stage or automation pause state for a lead.", UpdateLeadStateArgs),
@@ -421,6 +433,154 @@ def list_agent_tool_calls(arguments: dict[str, Any], *, run_id: str) -> dict[str
             for call in calls
         ],
     }
+
+
+def _normalize_domain(value: str) -> str:
+    """Return a lower-case ASCII domain without URL or email noise."""
+    clean = (value or "").strip().lower()
+    if "://" in clean:
+        clean = clean.split("://", 1)[1]
+    clean = clean.split("/", 1)[0].split("?", 1)[0].split("#", 1)[0]
+    clean = clean.rsplit("@", 1)[-1].strip(".")
+    try:
+        ascii_domain = clean.encode("idna").decode("ascii")
+    except UnicodeError as error:
+        raise AgentToolError(f"Invalid domain: {value}") from error
+    labels = ascii_domain.split(".")
+    if len(labels) < 2 or len(ascii_domain) > 253:
+        raise AgentToolError("Use a full domain like example.com.")
+    if any(not label or len(label) > 63 or label.startswith("-") or label.endswith("-") for label in labels):
+        raise AgentToolError(f"Invalid domain: {value}")
+    return ascii_domain
+
+
+def _audit_domain_target_id(value: Any) -> str:
+    """Return a normalized domain for audit rows when possible."""
+    if not value:
+        return ""
+    try:
+        return _normalize_domain(str(value))
+    except AgentToolError:
+        return str(value)
+
+
+def _best_domain_price(prices: list[dict[str, Any]]) -> dict[str, Any] | None:
+    valid_prices = [
+        price
+        for price in prices
+        if isinstance(price.get("registration_price"), int | float) and price.get("currency")
+    ]
+    if not valid_prices:
+        return None
+    best = min(valid_prices, key=lambda price: float(price["registration_price"]))
+    return {
+        "registrar": best.get("registrar"),
+        "registration_price": best.get("registration_price"),
+        "renewal_price": best.get("renewal_price"),
+        "currency": best.get("currency"),
+    }
+
+
+def _cloudflare_tld_price(domain: str) -> dict[str, Any] | None:
+    """Return Cloudflare Registrar standard TLD pricing when public data has it."""
+    tld = domain.rsplit(".", 1)[-1]
+    response = httpx.get("https://cfdomainpricing.com/prices.json", timeout=8)
+    response.raise_for_status()
+    prices = response.json().get(tld)
+    if not isinstance(prices, dict):
+        return None
+    registration = prices.get("registration")
+    renewal = prices.get("renewal")
+    if not isinstance(registration, int | float):
+        return None
+    return {
+        "registrar": "cloudflare",
+        "registration_price": registration,
+        "renewal_price": renewal,
+        "currency": "USD",
+    }
+
+
+def _public_tld_price(domain: str) -> dict[str, Any] | None:
+    try:
+        return _cloudflare_tld_price(domain)
+    except Exception:
+        return None
+
+
+def _domain_result_from_namecrawl(domain: str) -> dict[str, Any]:
+    response = httpx.post(
+        "https://api.namecrawl.dev/v1/public/check",
+        json={"domain": domain},
+        timeout=12,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    results = payload.get("data", {}).get("results", [])
+    match = next(
+        (result for result in results if str(result.get("fqdn", "")).lower().strip(".") == domain),
+        None,
+    )
+    if not isinstance(match, dict):
+        raise AgentToolError(f"No domain result returned for {domain}")
+
+    prices = match.get("pricing") if isinstance(match.get("pricing"), list) else []
+    best_price = _best_domain_price(prices) or _public_tld_price(domain)
+    if best_price and not prices:
+        prices = [best_price]
+    return {
+        "domain": domain,
+        "exists": match.get("available") is False,
+        "available": match.get("available") is True,
+        "status": match.get("status"),
+        "registrar": match.get("registrar"),
+        "expiry_date": match.get("expiry_date"),
+        "prices": prices,
+        "best_price": best_price,
+        "source": "namecrawl_public",
+        "price_note": "Public registrar estimate. Final checkout price can vary by registrar, country, taxes, premium status, and promotions.",
+    }
+
+
+def _domain_result_from_rdap(domain: str) -> dict[str, Any]:
+    response = httpx.get(f"https://rdap.org/domain/{domain}", timeout=12, follow_redirects=True)
+    if response.status_code == 404:
+        best_price = _public_tld_price(domain)
+        return {
+            "domain": domain,
+            "exists": False,
+            "available": True,
+            "status": "not_found_in_rdap",
+            "prices": [best_price] if best_price else [],
+            "best_price": best_price,
+            "source": "rdap",
+            "price_note": "RDAP does not provide registrar prices. Price is a public standard TLD estimate when present.",
+        }
+    response.raise_for_status()
+    payload = response.json()
+    best_price = _public_tld_price(domain)
+    return {
+        "domain": domain,
+        "exists": True,
+        "available": False,
+        "status": "registered",
+        "registrar": payload.get("registrarName") or payload.get("name"),
+        "prices": [best_price] if best_price else [],
+        "best_price": best_price,
+        "source": "rdap",
+        "price_note": "Domain is registered. Price is only a public standard TLD registration estimate, not the market value of this taken domain.",
+    }
+
+
+def check_domain_availability(arguments: dict[str, Any]) -> dict[str, Any]:
+    args = CheckDomainAvailabilityArgs.model_validate(arguments)
+    domain = _normalize_domain(args.domain)
+    try:
+        return _domain_result_from_namecrawl(domain)
+    except Exception as error:
+        fallback = _domain_result_from_rdap(domain)
+        fallback["primary_source_error"] = f"{error.__class__.__name__}: {error}"
+        return fallback
 
 
 def move_lead_to_funnel(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -664,6 +824,7 @@ TOOL_HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {
     "read_agent_memory": read_agent_memory,
     "write_agent_memory": write_agent_memory,
     "list_agent_tool_calls": list_agent_tool_calls,
+    "check_domain_availability": check_domain_availability,
     "move_lead_to_funnel": move_lead_to_funnel,
     "set_lead_tags": set_lead_tags,
     "update_lead_state": update_lead_state,
@@ -688,8 +849,10 @@ def call_tool(*, run_id: str, tool_name: str, arguments: dict[str, Any]) -> dict
     """Validate, execute, and audit one product tool call."""
     clean_tool_name = (tool_name or "").strip()
     handler = TOOL_HANDLERS.get(clean_tool_name)
-    target_type = str(arguments.get("target_type") or ("workstation_client" if arguments.get("client_id") else "lead"))
-    target_id = str(arguments.get("target_id") or arguments.get("client_id") or arguments.get("lead_id") or "")
+    default_target_type = "domain" if arguments.get("domain") else "workstation_client" if arguments.get("client_id") else "lead"
+    target_type = str(arguments.get("target_type") or default_target_type)
+    domain_target_id = _audit_domain_target_id(arguments.get("domain"))
+    target_id = str(arguments.get("target_id") or arguments.get("client_id") or arguments.get("lead_id") or domain_target_id or "")
     idempotency_key = str(arguments.get("idempotency_key") or "").strip() or None
     try:
         if handler is None:

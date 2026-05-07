@@ -232,6 +232,112 @@ def test_codex_agent_tool_memory_roundtrip(monkeypatch, tmp_path) -> None:
     assert Path(read["result"]["path"]).exists()
 
 
+def test_codex_agent_tool_checks_domain_with_public_prices(monkeypatch, tmp_path) -> None:
+    """Codex should be able to check domain availability without API credentials."""
+    configure_contadores_db(monkeypatch, tmp_path)
+
+    class FakeDomainResponse:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "data": {
+                    "results": [
+                        {
+                            "fqdn": "konecta-test-domain.com",
+                            "available": True,
+                            "status": "available",
+                            "pricing": [
+                                {
+                                    "registrar": "example-registrar",
+                                    "registration_price": 12.0,
+                                    "renewal_price": 14.0,
+                                    "currency": "USD",
+                                },
+                                {
+                                    "registrar": "cheap-registrar",
+                                    "registration_price": 9.5,
+                                    "renewal_price": 11.0,
+                                    "currency": "USD",
+                                },
+                            ],
+                        }
+                    ]
+                }
+            }
+
+    def fake_post(url: str, *, json: dict, timeout: int) -> FakeDomainResponse:
+        assert url == "https://api.namecrawl.dev/v1/public/check"
+        assert json == {"domain": "konecta-test-domain.com"}
+        assert timeout == 12
+        return FakeDomainResponse()
+
+    monkeypatch.setattr("backend.ai.codex_agent_tools.httpx.post", fake_post)
+
+    result = call_tool(
+        run_id="agent-run-domain",
+        tool_name="check_domain_availability",
+        arguments={"domain": "https://Konecta-Test-Domain.com/path"},
+    )
+
+    assert result["ok"] is True
+    assert result["result"]["domain"] == "konecta-test-domain.com"
+    assert result["result"]["available"] is True
+    assert result["result"]["exists"] is False
+    assert result["result"]["best_price"] == {
+        "registrar": "cheap-registrar",
+        "registration_price": 9.5,
+        "renewal_price": 11.0,
+        "currency": "USD",
+    }
+    calls = AgentToolCall.list_by_run("agent-run-domain")
+    assert calls[0].tool_name == "check_domain_availability"
+    assert calls[0].target_type == "domain"
+    assert calls[0].target_id == "konecta-test-domain.com"
+
+
+def test_codex_agent_tool_domain_check_falls_back_to_rdap(monkeypatch, tmp_path) -> None:
+    """RDAP fallback should still tell Codex if a domain exists when price lookup fails."""
+    configure_contadores_db(monkeypatch, tmp_path)
+
+    class FakeRdapResponse:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {"registrarName": "Example Registrar"}
+
+    def failing_post(*args, **kwargs):
+        raise RuntimeError("public lookup down")
+
+    def fake_get(url: str, *, timeout: int, follow_redirects: bool) -> FakeRdapResponse:
+        assert url == "https://rdap.org/domain/example.com"
+        assert timeout == 12
+        assert follow_redirects is True
+        return FakeRdapResponse()
+
+    monkeypatch.setattr("backend.ai.codex_agent_tools.httpx.post", failing_post)
+    monkeypatch.setattr("backend.ai.codex_agent_tools.httpx.get", fake_get)
+
+    result = call_tool(
+        run_id="agent-run-domain-rdap",
+        tool_name="check_domain_availability",
+        arguments={"domain": "example.com"},
+    )
+
+    assert result["ok"] is True
+    assert result["result"]["exists"] is True
+    assert result["result"]["available"] is False
+    assert result["result"]["best_price"] is None
+    assert result["result"]["source"] == "rdap"
+    assert "public lookup down" in result["result"]["primary_source_error"]
+
+
 def test_codex_agent_tool_moves_lead_and_sets_tags(monkeypatch, tmp_path) -> None:
     """The toolbelt should let Codex directly move and tag leads."""
     configure_contadores_db(monkeypatch, tmp_path)

@@ -47,6 +47,9 @@ Typical lead tools:
 - `get_lead_context`: inspect lead state and recent WhatsApp messages.
 - `send_whatsapp_text`: queue a WhatsApp text inside product delivery rules.
 - `send_whatsapp_media`: queue media when there is a real file to send.
+- `check_domain_availability`: check if a domain exists and return public
+  no-auth registrar price estimates when available. Treat prices as estimates,
+  not final checkout totals.
 - `move_lead_to_funnel`: move the lead to another funnel and stage.
 - `set_lead_tags`: append or replace operator tags.
 - `update_lead_state`: update stage or automation pause state.
