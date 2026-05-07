@@ -6,6 +6,7 @@ import asyncio
 import base64
 import csv
 import hashlib
+import inspect
 import json
 import logging
 import mimetypes
@@ -77,6 +78,13 @@ from backend.lead_template_utils import (
 
 contadores_router = APIRouter(prefix="/api/contadores", tags=["contadores"])
 logger = logging.getLogger(__name__)
+
+
+async def await_if_needed(value):
+    """Await async values while keeping old test fakes simple."""
+    if inspect.isawaitable(value):
+        return await value
+    return value
 
 OPENER_FOLLOWUP_SEQUENCE_STEP = "opener_followup_24h"
 OPENER_FOLLOWUP_RETRY_SEQUENCE_STEP = "opener_followup_24h_template_retry_20260424"
@@ -2850,8 +2858,7 @@ async def process_conversation_reply_batch(
 - Respect WhatsApp window/tool errors and use handoff_human when product rules block a safe reply.
 """.strip()
             try:
-                agent_result = await asyncio.to_thread(
-                    run_codex_agent,
+                agent_result = await await_if_needed(run_codex_agent(
                     target_type="lead",
                     target_id=lead.id,
                     objective=(
@@ -2875,7 +2882,7 @@ async def process_conversation_reply_batch(
                         )
                     ],
                     prompt_version="conversation-agent-tools-v1",
-                )
+                ))
                 if agent_result.side_effect_count:
                     metrics["ai_replies_sent"] += len(
                         [
@@ -2927,7 +2934,13 @@ async def process_conversation_reply_batch(
             current_stage=lead.stage.value,
             latest_inbound=latest_inbound.text,
             conversation=format_conversation_for_bot(messages),
+            codex_thread_id=lead.codex_conversation_thread_id,
         )
+        if result.codex_thread_id and result.codex_thread_id != lead.codex_conversation_thread_id:
+            ContadoresLead.update_codex_conversation_thread_id(
+                lead.id,
+                thread_id=result.codex_thread_id,
+            )
         if not conversation_reply_batch_still_current(
             lead_id=lead.id,
             reply_window_start=reply_window_start,
@@ -5235,8 +5248,7 @@ async def run_contadores_automation_tick(
             ScheduledAgentTask.mark_status(task.id, status="running", timestamp=now)
             messages = ContadoresMessage.list_by_lead(lead.id)
             try:
-                agent_result = await asyncio.to_thread(
-                    run_codex_agent,
+                agent_result = await await_if_needed(run_codex_agent(
                     target_type="lead",
                     target_id=lead.id,
                     objective=(
@@ -5276,7 +5288,7 @@ async def run_contadores_automation_tick(
                         )
                     ],
                     prompt_version="conversation-scheduled-agent-tools-v1",
-                )
+                ))
                 ScheduledAgentTask.mark_status(
                     task.id,
                     status="completed",

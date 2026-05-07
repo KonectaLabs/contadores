@@ -110,7 +110,7 @@ async def save_image_uploads(job_dir: Path, images: list[UploadFile]) -> list[Pa
     return saved_paths
 
 
-def run_public_image_generation_sync(
+async def run_public_image_generation(
     *,
     job_dir: Path,
     user_prompt: str,
@@ -123,7 +123,8 @@ def run_public_image_generation_sync(
 
     if should_try_openai_first():
         try:
-            metadata = run_openai_image_fallback_sync(
+            metadata = await run_in_threadpool(
+                run_openai_image_fallback_sync,
                 output_path=output_path,
                 user_prompt=user_prompt,
                 input_paths=input_paths,
@@ -135,7 +136,7 @@ def run_public_image_generation_sync(
             openai_error = str(error)
 
     try:
-        metadata = run_codex_image_generation_sync(
+        metadata = await run_codex_image_generation(
             job_dir=job_dir,
             output_path=output_path,
             user_prompt=user_prompt,
@@ -152,7 +153,8 @@ def run_public_image_generation_sync(
             detail=combined_provider_error(codex_error=codex_error, openai_error=openai_error),
         )
 
-    metadata = run_openai_image_fallback_sync(
+    metadata = await run_in_threadpool(
+        run_openai_image_fallback_sync,
         output_path=output_path,
         user_prompt=user_prompt,
         input_paths=input_paths,
@@ -187,7 +189,7 @@ def combined_provider_error(
     return " | ".join(parts) or None
 
 
-def run_codex_image_generation_sync(
+async def run_codex_image_generation(
     *,
     job_dir: Path,
     output_path: Path,
@@ -217,7 +219,7 @@ Rules:
 """.strip()
 
     try:
-        result = run_codex_with_context(
+        result = await run_codex_with_context(
             codex_prompt,
             local_images=input_paths,
             cwd=job_dir,
@@ -399,8 +401,7 @@ async def generate_public_image(
 
     try:
         input_paths = await save_image_uploads(job_dir, image_uploads)
-        output_path = await run_in_threadpool(
-            run_public_image_generation_sync,
+        output_path = await run_public_image_generation(
             job_dir=job_dir,
             user_prompt=prompt,
             input_paths=input_paths,

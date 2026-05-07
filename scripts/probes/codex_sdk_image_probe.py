@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
+import asyncio
 from pathlib import Path
 
-from backend.codex_utils import run_codex
+from backend.codex_utils import run_codex_with_context
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -11,7 +12,7 @@ IMAGE_PATH = REPO_ROOT / "imagen.jpg"
 RESULT_PATH = REPO_ROOT / "codex_sdk_image_probe_result.json"
 
 
-def main() -> None:
+async def main() -> None:
     if IMAGE_PATH.exists():
         raise SystemExit(f"Refusing to overwrite existing file: {IMAGE_PATH}")
 
@@ -35,7 +36,7 @@ Task:
 After the attempt, state whether {IMAGE_PATH.name} was created.
 """.strip()
 
-    result = run_codex(prompt)
+    result = await run_codex_with_context(prompt)
 
     payload = {
         "final_response": result.final_response,
@@ -49,4 +50,4 @@ After the attempt, state whether {IMAGE_PATH.name} was created.
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

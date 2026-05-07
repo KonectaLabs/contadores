@@ -22,7 +22,7 @@ def test_public_image_generation_returns_codex_output(monkeypatch, tmp_path) -> 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     calls: list[dict[str, object]] = []
 
-    def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
+    async def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
         output_marker = "Required output path:\n"
         output_path = Path(prompt.split(output_marker, 1)[1].splitlines()[0].strip())
         output_path.write_bytes(PNG_BYTES)
@@ -65,7 +65,7 @@ def test_public_image_generation_is_not_blocked_by_cookie_auth(monkeypatch, tmp_
     monkeypatch.setenv("AUTH_DISABLE", "false")
     monkeypatch.setenv("AUTH_TOML", str(auth_file))
 
-    def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
+    async def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
         output_marker = "Required output path:\n"
         output_path = Path(prompt.split(output_marker, 1)[1].splitlines()[0].strip())
         output_path.write_bytes(PNG_BYTES)
@@ -98,7 +98,7 @@ def test_public_image_generation_uses_openai_first_when_configured(monkeypatch, 
     codex_calls: list[str] = []
     openai_calls: list[dict[str, object]] = []
 
-    def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
+    async def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
         del kwargs
         codex_calls.append(prompt)
         raise AssertionError("Codex should not run before OpenAI for public image requests")
@@ -148,7 +148,7 @@ def test_public_image_generation_falls_back_to_openai_generation(monkeypatch, tm
     monkeypatch.setenv("PUBLIC_IMAGE_GENERATION_PROVIDER", "codex-first")
     calls: list[dict[str, object]] = []
 
-    def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
+    async def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
         raise RuntimeError("codex login failed")
 
     def fake_call_openai_image_generation(*, api_key: str, prompt: str) -> dict[str, object]:
@@ -177,7 +177,7 @@ def test_public_image_generation_falls_back_to_openai_edit_with_images(monkeypat
     monkeypatch.setenv("PUBLIC_IMAGE_GENERATION_PROVIDER", "codex-first")
     calls: list[dict[str, object]] = []
 
-    def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
+    async def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
         raise RuntimeError("codex did not create output")
 
     def fake_call_openai_image_edit(
@@ -226,7 +226,7 @@ def test_public_image_generation_limits_openai_fallback_calls(monkeypatch, tmp_p
     monkeypatch.setattr(public_image_generation, "openai_image_fallback_count", 0)
     api_call_count = 0
 
-    def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
+    async def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
         raise RuntimeError("codex failed")
 
     def fake_call_openai_image_generation(*, api_key: str, prompt: str) -> dict[str, object]:
@@ -260,7 +260,7 @@ def test_public_image_generation_falls_back_when_codex_writes_non_png(monkeypatc
     monkeypatch.setenv("PUBLIC_IMAGE_GENERATION_PROVIDER", "codex-first")
     calls: list[str] = []
 
-    def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
+    async def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
         del kwargs
         output_marker = "Required output path:\n"
         output_path = Path(prompt.split(output_marker, 1)[1].splitlines()[0].strip())
@@ -297,7 +297,7 @@ def test_public_image_generation_rejects_invalid_openai_fallback_image(monkeypat
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("PUBLIC_IMAGE_GENERATION_PROVIDER", "codex-first")
 
-    def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
+    async def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
         del prompt, kwargs
         raise RuntimeError("codex unavailable")
 

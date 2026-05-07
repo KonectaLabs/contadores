@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import mimetypes
@@ -24,7 +25,7 @@ from pydantic import BaseModel, Field
 from backend.ai.codex_agent_runtime import run_codex_agent
 from backend.ai.codex_agent_tools import tool_specs as codex_agent_tool_specs
 import backend.database as database_module
-from backend.codex_utils import CodexSkill, run_codex_with_context
+from backend.codex_utils import CodexSkill, interrupt_turn, run_codex_with_context, steer_turn
 from backend.config import (
     CODEX_AGENT_TOOLS_ENABLED,
     CODEX_AGENT_TOOLS_WORKSTATION_ENABLED,
@@ -70,6 +71,13 @@ from backend.endpoints.contadores import (
 
 workstation_router = APIRouter(prefix="/api/workstation", tags=["workstation"])
 logger = logging.getLogger(__name__)
+
+
+async def await_if_needed(value):
+    """Await async values while keeping old test fakes simple."""
+    if inspect.isawaitable(value):
+        return await value
+    return value
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PROFESSIONAL_PHOTO_SKILL = Path(".codex/skills/client-professional-photo/SKILL.md")
@@ -891,7 +899,7 @@ def write_professional_photo_metadata(
     )
 
 
-def generate_professional_photo_sync(
+async def generate_professional_photo(
     *,
     client: WorkstationClient,
     assets: list[WorkstationMediaAsset],
@@ -924,7 +932,7 @@ Requirements:
 - After saving, respond with a short confirmation and the output path.
 """.strip()
     try:
-        result = run_codex_with_context(
+        result = await run_codex_with_context(
             prompt,
             skills=[
                 CodexSkill(
@@ -980,8 +988,7 @@ async def run_create_professional_photo_job(
     job.started_at = current_job_timestamp()
 
     try:
-        version = await run_in_threadpool(
-            generate_professional_photo_sync,
+        version = await generate_professional_photo(
             client=client,
             assets=assets,
             context=context,
@@ -1002,7 +1009,7 @@ async def run_create_professional_photo_job(
     job.completed_at = current_job_timestamp()
 
 
-def edit_professional_photo_sync(
+async def edit_professional_photo(
     *,
     client: WorkstationClient,
     base_version: str,
@@ -1046,7 +1053,7 @@ Requirements:
 - After saving, respond with a short confirmation and the output path.
 """.strip()
     try:
-        result = run_codex_with_context(
+        result = await run_codex_with_context(
             prompt,
             skills=[
                 CodexSkill(
@@ -1481,7 +1488,7 @@ def fallback_workstation_agent_decision(reply_text: str) -> WorkstationAgentDeci
         return WorkstationAgentDecision(
             action="send_text",
             message=(
-                "Mandeme por aca lo que tenga y lo sumo. Para la foto, no hace falta que sea profesional: "
+                "Conteme por aca lo que tenga y lo sumo. Para la foto, no hace falta que sea profesional: "
                 "puede ser su foto de perfil, una de redes o cualquier foto donde se le vea la cara. "
                 "Nosotros la mejoramos con inteligencia artificial."
             ),
@@ -1593,7 +1600,7 @@ def build_workstation_tool_agent_context(
 """.strip()
 
 
-def run_workstation_tool_agent_sync(
+async def run_workstation_tool_agent(
     *,
     client: WorkstationClient,
     lead: ContadoresLead,
@@ -1616,7 +1623,7 @@ def run_workstation_tool_agent_sync(
         active_solo_page_codex_started_at.setdefault(client.id, now_utc())
 
     try:
-        result = run_codex_agent(
+        result = await await_if_needed(run_codex_agent(
             target_type="workstation_client",
             target_id=client.id,
             objective=(
@@ -1633,7 +1640,7 @@ def run_workstation_tool_agent_sync(
             ],
             prompt_version="workstation-agent-tools-v1",
             on_turn_started=register_turn,
-        )
+        ))
     except Exception as error:
         append_workstation_progress(
             client,
@@ -1656,7 +1663,7 @@ def run_workstation_tool_agent_sync(
     return None
 
 
-def decide_workstation_next_action_sync(
+async def decide_workstation_next_action(
     *,
     client: WorkstationClient,
     lead: ContadoresLead,
@@ -1665,7 +1672,7 @@ def decide_workstation_next_action_sync(
 ) -> WorkstationAgentDecision:
     """Let Codex choose whether to reply, ask, revise, approve, or hand off."""
     reply_text = "\n".join(message.text for message in replies if message.text.strip())
-    tool_decision = run_workstation_tool_agent_sync(
+    tool_decision = await run_workstation_tool_agent(
         client=client,
         lead=lead,
         replies=replies,
@@ -1680,11 +1687,15 @@ def decide_workstation_next_action_sync(
         handoff_resume=handoff_resume,
     )
     try:
-        result = run_solo_page_codex_with_fallback(
+        result = await run_solo_page_codex_with_fallback(
             prompt=prompt,
             on_turn_started=lambda _turn: None,
             skills=[],
+            thread_id=client.codex_workstation_thread_id,
         )
+        result_thread_id = getattr(result, "thread_id", "") or ""
+        if result_thread_id and result_thread_id != client.codex_workstation_thread_id:
+            WorkstationClient.update_codex_workstation_thread_id(client.id, thread_id=result_thread_id)
         decision = parse_workstation_agent_decision(result.final_response)
     except Exception as error:
         decision = fallback_workstation_agent_decision(reply_text)
@@ -1693,11 +1704,6 @@ def decide_workstation_next_action_sync(
         fallback = fallback_workstation_agent_decision(reply_text)
         decision.message = fallback.message
     return decision
-
-
-async def decide_workstation_next_action(**kwargs) -> WorkstationAgentDecision:
-    """Run Workstation decisioning without blocking the event loop."""
-    return await run_in_threadpool(decide_workstation_next_action_sync, **kwargs)
 
 
 def mirror_workstation_message_media(client: WorkstationClient, messages: list[ContadoresMessage]) -> list[WorkstationMediaAsset]:
@@ -1778,7 +1784,7 @@ def first_workstation_image_assets(client: WorkstationClient) -> list[Workstatio
     ]
 
 
-def ensure_professional_photo_if_possible(client: WorkstationClient) -> None:
+async def ensure_professional_photo_if_possible(client: WorkstationClient) -> None:
     """Generate one professional photo when the client already provided an image."""
     if list_professional_photo_versions(client):
         return
@@ -1786,7 +1792,7 @@ def ensure_professional_photo_if_possible(client: WorkstationClient) -> None:
     if not image_assets:
         return
     try:
-        generate_professional_photo_sync(
+        await generate_professional_photo(
             client=client,
             assets=[image_assets[0]],
             context=f"Funnel: {client.funnel_id}. Trabajo: pagina web profesional.",
@@ -1891,10 +1897,11 @@ Revision mode: {"yes" if revision else "no"}
 """.strip()
 
 
-def run_solo_page_codex_with_fallback(
+async def run_solo_page_codex_with_fallback(
     *,
     prompt: str,
     on_turn_started,
+    thread_id: str | None = None,
     skills: list[CodexSkill] | None = None,
 ):
     """Run solo-page Codex with ChatGPT auth first, then API-key auth."""
@@ -1915,8 +1922,9 @@ def run_solo_page_codex_with_fallback(
         "on_turn_started": on_turn_started,
     }
     try:
-        return run_codex_with_context(
+        return await run_codex_with_context(
             prompt,
+            thread_id=thread_id,
             codex_home=CONVERSATION_BOT_CODEX_CHATGPT_HOME,
             prefer_chatgpt_login=True,
             **common_kwargs,
@@ -1927,7 +1935,7 @@ def run_solo_page_codex_with_fallback(
     api_key_error_text = "OPENAI_API_KEY is not configured"
     if OPENAI_API_KEY.strip():
         try:
-            return run_codex_with_context(
+            return await run_codex_with_context(
                 prompt,
                 codex_home=CONVERSATION_BOT_CODEX_API_KEY_HOME,
                 prefer_chatgpt_login=False,
@@ -1943,7 +1951,7 @@ def run_solo_page_codex_with_fallback(
     )
 
 
-def generate_solo_page_version_sync(
+async def generate_solo_page_version(
     *,
     client: WorkstationClient,
     lead: ContadoresLead,
@@ -1971,21 +1979,23 @@ def generate_solo_page_version_sync(
         operator_prompt=operator_prompt,
     )
 
-    def register_turn(turn: object) -> None:
+    async def register_turn(turn: object) -> None:
         active_solo_page_codex_turns[client.id] = turn
         active_solo_page_codex_started_at.setdefault(client.id, now_utc())
         if client.id in solo_page_stop_requested_client_ids:
-            interrupt = getattr(turn, "interrupt", None)
-            if callable(interrupt):
-                interrupt()
+            await interrupt_turn(turn)
 
     try:
         append_workstation_progress(client, "Prompt prepared. Codex is writing the static page files.")
         try:
-            result = run_solo_page_codex_with_fallback(
+            result = await run_solo_page_codex_with_fallback(
                 prompt=prompt,
                 on_turn_started=register_turn,
+                thread_id=client.codex_workstation_thread_id,
             )
+            result_thread_id = getattr(result, "thread_id", "") or ""
+            if result_thread_id and result_thread_id != client.codex_workstation_thread_id:
+                WorkstationClient.update_codex_workstation_thread_id(client.id, thread_id=result_thread_id)
         except Exception as error:
             if client.id in solo_page_stop_requested_client_ids:
                 raise WorkstationCodexStopped("Codex was stopped by the operator.") from error
@@ -2004,7 +2014,7 @@ def generate_solo_page_version_sync(
             (version_dir / "script.js").write_text("", encoding="utf-8")
         append_workstation_progress(client, "Static files are valid. Rendering preview video.")
         preview_path = version_dir / "preview.mp4"
-        render_landing_page_video_sync(index_path=index_path, output_path=preview_path)
+        await run_in_threadpool(render_landing_page_video_sync, index_path=index_path, output_path=preview_path)
         append_workstation_progress(client, "Preview video rendered.")
         preview_message = read_workstation_preview_message(version_dir)
         metadata = {
@@ -2467,10 +2477,9 @@ async def run_manual_solo_page_work(client_id: str, operator_prompt: str) -> Non
             "Operator started Codex manually from Workstation Actions.",
         )
         try:
-            ensure_professional_photo_if_possible(fresh_client)
+            await ensure_professional_photo_if_possible(fresh_client)
             latest_client_replies = [message for message in messages if not message.from_me]
-            version_dir = await run_in_threadpool(
-                generate_solo_page_version_sync,
+            version_dir = await generate_solo_page_version(
                 client=WorkstationClient.get_by_id(fresh_client.id) or fresh_client,
                 lead=lead,
                 replies=latest_client_replies,
@@ -2522,7 +2531,7 @@ async def generate_solo_page_version_observed(**kwargs) -> Path:
     if current_task is not None:
         register_solo_page_task(client.id, current_task)
     try:
-        return await run_in_threadpool(generate_solo_page_version_sync, **kwargs)
+        return await generate_solo_page_version(**kwargs)
     finally:
         if active_solo_page_codex_tasks.get(client.id) is current_task:
             clear_solo_page_live_work(client.id)
@@ -2738,7 +2747,7 @@ async def advance_solo_page_client(client: WorkstationClient, *, now: datetime) 
             last_automation_handled_at=now,
         )
         try:
-            ensure_professional_photo_if_possible(fresh_client)
+            await ensure_professional_photo_if_possible(fresh_client)
             version_dir = await generate_solo_page_version_observed(
                 client=WorkstationClient.get_by_id(fresh_client.id) or fresh_client,
                 lead=lead,
@@ -3482,9 +3491,7 @@ async def stop_workstation_solo_page_work(client_id: str) -> WorkstationClientDe
     solo_page_stop_requested_client_ids.add(client.id)
     turn = active_solo_page_codex_turns.get(client.id)
     if turn is not None:
-        interrupt = getattr(turn, "interrupt", None)
-        if callable(interrupt):
-            interrupt()
+        await interrupt_turn(turn)
     mark_workstation_stopped_by_operator(client, clear_stop_request=False)
     return build_client_detail(WorkstationClient.get_by_id(client.id) or client)
 
@@ -3511,10 +3518,9 @@ async def steer_workstation_solo_page_work(
     message = command.message.strip()
     if not message:
         raise HTTPException(status_code=422, detail="Write a steer message first.")
-    steer = getattr(turn, "steer", None)
-    if not callable(steer):
+    if not hasattr(turn, "steer"):
         raise HTTPException(status_code=409, detail="This Codex run cannot receive steer messages.")
-    steer(message)
+    await steer_turn(turn, message)
     append_workstation_progress(client, f"Operator steered Codex: {message[:240]}")
     return build_client_detail(WorkstationClient.get_by_id(client.id) or client)
 
@@ -3577,8 +3583,7 @@ async def create_workstation_professional_photo(
     """Generate a professional portrait from selected client media images."""
     client = get_required_client(client_id)
     assets = get_client_image_assets(client, command.media_asset_ids)
-    version = await run_in_threadpool(
-        generate_professional_photo_sync,
+    version = await generate_professional_photo(
         client=client,
         assets=assets,
         context=command.context,
@@ -3597,8 +3602,7 @@ async def edit_workstation_professional_photo(
     """Generate a new professional portrait version from a user edit prompt."""
     client = get_required_client(client_id)
     assets = get_client_image_assets(client, command.media_asset_ids) if command.media_asset_ids else []
-    version = await run_in_threadpool(
-        edit_professional_photo_sync,
+    version = await edit_professional_photo(
         client=client,
         base_version=command.base_version,
         assets=assets,

@@ -607,10 +607,14 @@ preferido es foto profesional primero y video del boceto despues. Si el archivo
 no existe o no tiene mensajes validos, Workstation arma el plan default: foto
 profesional disponible primero y MP4 con `preview-message.txt` despues.
 
-El backend usa el Codex SDK para Workstation, generacion de imagenes y el bot
-conversacional. En Docker, la imagen instala `@openai/codex` y usa
-`CODEX_HOME=/app/data/codex-home` por defecto para que la autenticacion de Codex
-pueda persistir en el volumen `data/`. Si
+El backend usa el Codex SDK async para Workstation, generacion de imagenes y el
+bot conversacional. Cada lead conserva su thread en
+`contadores_leads.codex_conversation_thread_id` y cada cliente Workstation
+conserva otro thread separado en
+`workstation_clients.codex_workstation_thread_id`; los runs auditados guardan
+`codex_thread_id` y `codex_turn_id` en `agent_runs`. En Docker, la imagen
+instala `@openai/codex` y usa `CODEX_HOME=/app/data/codex-home` por defecto para
+que la autenticacion de Codex pueda persistir en el volumen `data/`. Si
 `CODEX_PREFER_CHATGPT_LOGIN=true`, el backend remueve `OPENAI_API_KEY` antes de
 lanzar Codex para priorizar el login ChatGPT/Codex. Si se configura en `false`,
 el proceso Codex conserva `OPENAI_API_KEY`.

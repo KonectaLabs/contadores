@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import re
 import unicodedata
@@ -164,6 +163,8 @@ class ContadoresConversationBotResult(BaseModel):
     timezone: str = ""
     runtime_provider: str = ""
     runtime_error: str = ""
+    codex_thread_id: str = ""
+    codex_turn_id: str = ""
 
 
 def _normalize_list(value: Any) -> list[str]:
@@ -564,8 +565,10 @@ class DspyConversationBotProgram(Program):
         current_stage: str,
         latest_inbound: str,
         conversation: str,
+        codex_thread_id: str | None = None,
     ) -> ContadoresConversationBotResult:
         """Return one structured fallback action for the current lead state."""
+        del codex_thread_id
         prediction = await self.predict.acall(
             global_rules=f"{KONECTA_SOURCE_OF_TRUTH}\n\n{GLOBAL_CONVERSATION_BOT_PROMPT}",
             few_shot_examples=CONVERSATION_BOT_FEW_SHOTS,
@@ -620,6 +623,7 @@ class CodexConversationBotProgram:
         current_stage: str,
         latest_inbound: str,
         conversation: str,
+        codex_thread_id: str | None = None,
     ) -> ContadoresConversationBotResult:
         """Run Codex and parse its JSON result."""
         prompt = "\n\n".join(
@@ -638,9 +642,9 @@ class CodexConversationBotProgram:
                 ),
             ]
         )
-        result = await asyncio.to_thread(
-            run_codex_with_context,
+        result = await run_codex_with_context(
             prompt,
+            thread_id=codex_thread_id,
             skills=CODEX_CONVERSATION_SKILLS,
             model=self.model,
             effort=self.effort,  # type: ignore[arg-type]
@@ -651,6 +655,8 @@ class CodexConversationBotProgram:
         )
         payload = _extract_json_payload(result.final_response)
         normalized = _normalize_result(payload, runtime_provider=self.runtime_provider)
+        normalized.codex_thread_id = getattr(result, "thread_id", "") or ""
+        normalized.codex_turn_id = getattr(result, "turn_id", "") or ""
         return _apply_company_source_truth_guard(
             normalized,
             latest_inbound=latest_inbound,
@@ -700,6 +706,7 @@ class ContadoresConversationBotProgram(Program):
         current_stage: str,
         latest_inbound: str,
         conversation: str,
+        codex_thread_id: str | None = None,
     ) -> ContadoresConversationBotResult:
         """Return one structured action, using DSPy only if Codex fails."""
         kwargs = {
@@ -712,6 +719,7 @@ class ContadoresConversationBotProgram(Program):
             "current_stage": current_stage,
             "latest_inbound": latest_inbound,
             "conversation": conversation,
+            "codex_thread_id": codex_thread_id,
         }
         try:
             result = await self.codex_program.aforward(**kwargs)

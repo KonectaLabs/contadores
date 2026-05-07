@@ -1,12 +1,17 @@
-"""Small helpers for driving Codex through the Python SDK."""
+"""Async helpers for driving Codex through the Python SDK."""
 
 from __future__ import annotations
 
+import asyncio
+import inspect
+import json
 import os
+import random
 import shutil
-from dataclasses import dataclass
+from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Literal
+from typing import Any, Literal
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -27,20 +32,51 @@ ServiceTierName = Literal["fast", "flex"]
 
 
 @dataclass(frozen=True)
-class CodexRunResult:
-    """Compact result for a Codex SDK run."""
+class CodexRuntimeConfig:
+    """Runtime configuration for one Codex app-server session."""
 
-    final_response: str
-    items_count: int
-    model: str
-    effort: ReasoningEffortName
-    service_tier: ServiceTierName | None
-    cwd: Path
+    cwd: Path = REPO_ROOT
+    codex_home: Path | None = None
+    codex_bin: str = DEFAULT_CODEX_BIN
+    prefer_chatgpt_login: bool = DEFAULT_PREFER_CHATGPT_LOGIN
+    model: str = DEFAULT_MODEL
+    effort: ReasoningEffortName = DEFAULT_EFFORT
+    service_tier: ServiceTierName | None = None
+    sandbox_writable_roots: list[Path] | None = None
+
+    @classmethod
+    def build(
+        cls,
+        *,
+        cwd: str | Path | None = None,
+        codex_home: str | Path | None = None,
+        codex_bin: str = DEFAULT_CODEX_BIN,
+        prefer_chatgpt_login: bool = DEFAULT_PREFER_CHATGPT_LOGIN,
+        model: str = DEFAULT_MODEL,
+        effort: ReasoningEffortName = DEFAULT_EFFORT,
+        service_tier: ServiceTierName | None = None,
+        sandbox_writable_roots: list[str | Path] | None = None,
+    ) -> "CodexRuntimeConfig":
+        """Build a normalized runtime config from endpoint-friendly values."""
+        return cls(
+            cwd=Path(cwd).expanduser().resolve() if cwd is not None else REPO_ROOT,
+            codex_home=Path(codex_home).expanduser() if codex_home else None,
+            codex_bin=codex_bin,
+            prefer_chatgpt_login=prefer_chatgpt_login,
+            model=model,
+            effort=effort,
+            service_tier=service_tier,
+            sandbox_writable_roots=[
+                Path(root).expanduser().resolve()
+                for root in (sandbox_writable_roots or [])
+            ]
+            or None,
+        )
 
 
 @dataclass(frozen=True)
 class CodexMention:
-    """Structured app/plugin mention for Codex SDK runs."""
+    """Structured app/plugin mention for Codex SDK input."""
 
     name: str
     path: str
@@ -48,10 +84,71 @@ class CodexMention:
 
 @dataclass(frozen=True)
 class CodexSkill:
-    """Structured skill mention for Codex SDK runs."""
+    """Structured skill mention for Codex SDK input."""
 
     name: str
     path: str
+
+
+@dataclass(frozen=True)
+class CodexInputContext:
+    """Input items for one Codex turn."""
+
+    prompt: str
+    skills: list[CodexSkill] = field(default_factory=list)
+    mentions: list[CodexMention] = field(default_factory=list)
+    local_images: list[Path] = field(default_factory=list)
+    remote_images: list[str] = field(default_factory=list)
+
+    @classmethod
+    def build(
+        cls,
+        prompt: str,
+        *,
+        skills: list[CodexSkill] | None = None,
+        mentions: list[CodexMention] | None = None,
+        local_images: list[str | Path] | None = None,
+        remote_images: list[str] | None = None,
+    ) -> "CodexInputContext":
+        """Build normalized input context for SDK input items."""
+        clean_prompt = prompt.strip()
+        if not clean_prompt:
+            raise ValueError("prompt must not be empty")
+        return cls(
+            prompt=clean_prompt,
+            skills=skills or [],
+            mentions=mentions or [],
+            local_images=[
+                Path(image_path).expanduser().resolve()
+                for image_path in (local_images or [])
+            ],
+            remote_images=[url.strip() for url in (remote_images or []) if url.strip()],
+        )
+
+
+@dataclass(frozen=True)
+class CodexThreadRef:
+    """A persisted Codex thread reference."""
+
+    thread_id: str
+    created: bool
+
+
+@dataclass(frozen=True)
+class CodexTurnResult:
+    """Compact result for one Codex turn."""
+
+    final_response: str
+    thread_id: str
+    turn_id: str
+    status: str
+    error: str | None
+    items_count: int
+    usage: Any | None
+    model: str
+    effort: ReasoningEffortName
+    service_tier: ServiceTierName | None
+    cwd: Path
 
 
 @dataclass(frozen=True)
@@ -66,230 +163,194 @@ class CodexAppSummary:
     mention_path: str
 
 
-def ask_codex(
+async def run_codex_text(
     prompt: str,
     *,
-    model: str = DEFAULT_MODEL,
-    effort: ReasoningEffortName = DEFAULT_EFFORT,
-    service_tier: ServiceTierName | None = None,
-    cwd: str | Path | None = None,
-    codex_home: str | Path | None = None,
-    codex_bin: str = DEFAULT_CODEX_BIN,
-    prefer_chatgpt_login: bool = DEFAULT_PREFER_CHATGPT_LOGIN,
+    thread_id: str | None = None,
+    **kwargs: Any,
 ) -> str:
-    """Run Codex with full local access and return only the final response."""
-    return run_codex(
-        prompt,
-        model=model,
-        effort=effort,
-        service_tier=service_tier,
-        cwd=cwd,
-        codex_home=codex_home,
-        codex_bin=codex_bin,
-        prefer_chatgpt_login=prefer_chatgpt_login,
-    ).final_response
+    """Run one Codex turn and return only the final assistant text."""
+    result = await run_codex_with_context(prompt, thread_id=thread_id, **kwargs)
+    return result.final_response
 
 
-def ask_codex_with_mentions(
-    prompt: str,
-    mentions: list[CodexMention],
-    *,
-    model: str = DEFAULT_MODEL,
-    effort: ReasoningEffortName = DEFAULT_EFFORT,
-    service_tier: ServiceTierName | None = None,
-    cwd: str | Path | None = None,
-    codex_home: str | Path | None = None,
-    codex_bin: str = DEFAULT_CODEX_BIN,
-    prefer_chatgpt_login: bool = DEFAULT_PREFER_CHATGPT_LOGIN,
-) -> str:
-    """Run Codex with structured app mentions and return only the final response."""
-    return run_codex_with_mentions(
-        prompt,
-        mentions,
-        model=model,
-        effort=effort,
-        service_tier=service_tier,
-        cwd=cwd,
-        codex_home=codex_home,
-        codex_bin=codex_bin,
-        prefer_chatgpt_login=prefer_chatgpt_login,
-    ).final_response
-
-
-def ask_codex_with_context(
+async def run_codex_json(
     prompt: str,
     *,
+    output_schema: dict[str, Any] | None = None,
+    thread_id: str | None = None,
+    **kwargs: Any,
+) -> tuple[dict[str, Any], CodexTurnResult]:
+    """Run one Codex turn and parse the final response as JSON."""
+    result = await run_codex_with_context(
+        prompt,
+        output_schema=output_schema,
+        thread_id=thread_id,
+        **kwargs,
+    )
+    try:
+        payload = json.loads(result.final_response)
+    except json.JSONDecodeError as error:
+        raise RuntimeError(f"Expected Codex JSON output, got: {result.final_response!r}") from error
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"Expected Codex JSON object, got: {payload!r}")
+    return payload, result
+
+
+async def run_codex_with_context(
+    prompt: str,
+    *,
+    thread_id: str | None = None,
     skills: list[CodexSkill] | None = None,
     mentions: list[CodexMention] | None = None,
     local_images: list[str | Path] | None = None,
+    remote_images: list[str] | None = None,
     model: str = DEFAULT_MODEL,
     effort: ReasoningEffortName = DEFAULT_EFFORT,
     service_tier: ServiceTierName | None = None,
     cwd: str | Path | None = None,
+    sandbox_writable_roots: list[str | Path] | None = None,
     codex_home: str | Path | None = None,
     codex_bin: str = DEFAULT_CODEX_BIN,
     prefer_chatgpt_login: bool = DEFAULT_PREFER_CHATGPT_LOGIN,
-) -> str:
-    """Run Codex with optional skills, app mentions, and local image inputs."""
-    return run_codex_with_context(
+    output_schema: dict[str, Any] | None = None,
+    personality: Any | None = None,
+    summary: Any | None = None,
+    on_turn_started: Callable[[Any], Any | Awaitable[Any]] | None = None,
+    max_attempts: int = 3,
+) -> CodexTurnResult:
+    """Run one async Codex turn with optional persisted thread continuity."""
+    runtime = CodexRuntimeConfig.build(
+        cwd=cwd,
+        codex_home=codex_home,
+        codex_bin=codex_bin,
+        prefer_chatgpt_login=prefer_chatgpt_login,
+        model=model,
+        effort=effort,
+        service_tier=service_tier,
+        sandbox_writable_roots=sandbox_writable_roots,
+    )
+    context = CodexInputContext.build(
         prompt,
         skills=skills,
         mentions=mentions,
         local_images=local_images,
-        model=model,
-        effort=effort,
-        service_tier=service_tier,
-        cwd=cwd,
-        codex_home=codex_home,
-        codex_bin=codex_bin,
-        prefer_chatgpt_login=prefer_chatgpt_login,
-    ).final_response
-
-
-def run_codex(
-    prompt: str,
-    *,
-    model: str = DEFAULT_MODEL,
-    effort: ReasoningEffortName = DEFAULT_EFFORT,
-    service_tier: ServiceTierName | None = None,
-    cwd: str | Path | None = None,
-    sandbox_writable_roots: list[str | Path] | None = None,
-    codex_home: str | Path | None = None,
-    codex_bin: str = DEFAULT_CODEX_BIN,
-    prefer_chatgpt_login: bool = DEFAULT_PREFER_CHATGPT_LOGIN,
-    on_turn_started: Callable[[Any], None] | None = None,
-) -> CodexRunResult:
-    """
-    Run Codex through app-server with no approval prompts and full filesystem access.
-
-    Defaults are intentionally permissive for local automation:
-    - approval policy: never ask;
-    - sandbox policy: dangerFullAccess;
-    - model: gpt-5.5;
-    - reasoning effort: medium;
-    - auth preference: ChatGPT login, by removing OPENAI_API_KEY from the child env.
-    """
-    if not prompt.strip():
-        raise ValueError("prompt must not be empty")
-
-    sdk = _load_codex_sdk()
-    return _run_codex_input(
-        sdk,
-        prompt,
-        model=model,
-        effort=effort,
-        service_tier=service_tier,
-        cwd=cwd,
-        sandbox_writable_roots=sandbox_writable_roots,
-        codex_home=codex_home,
-        codex_bin=codex_bin,
-        prefer_chatgpt_login=prefer_chatgpt_login,
+        remote_images=remote_images,
+    )
+    return await run_turn(
+        context,
+        runtime=runtime,
+        thread_id=thread_id,
+        output_schema=output_schema,
+        personality=personality,
+        summary=summary,
         on_turn_started=on_turn_started,
+        max_attempts=max_attempts,
     )
 
 
-def run_codex_with_mentions(
-    prompt: str,
-    mentions: list[CodexMention],
+async def start_thread(
+    codex: Any,
+    runtime: CodexRuntimeConfig,
     *,
-    model: str = DEFAULT_MODEL,
-    effort: ReasoningEffortName = DEFAULT_EFFORT,
-    service_tier: ServiceTierName | None = None,
-    cwd: str | Path | None = None,
-    sandbox_writable_roots: list[str | Path] | None = None,
-    codex_home: str | Path | None = None,
-    codex_bin: str = DEFAULT_CODEX_BIN,
-    prefer_chatgpt_login: bool = DEFAULT_PREFER_CHATGPT_LOGIN,
-    on_turn_started: Callable[[Any], None] | None = None,
-) -> CodexRunResult:
-    """Run Codex with app mentions such as app://connector_... paths."""
-    if not mentions:
-        return run_codex(
-            prompt,
-            model=model,
-            effort=effort,
-            service_tier=service_tier,
-            cwd=cwd,
-            sandbox_writable_roots=sandbox_writable_roots,
-            codex_home=codex_home,
-            codex_bin=codex_bin,
-            prefer_chatgpt_login=prefer_chatgpt_login,
-            on_turn_started=on_turn_started,
-        )
-
+    name: str | None = None,
+) -> Any:
+    """Start one Codex thread using the runtime defaults."""
     sdk = _load_codex_sdk()
-    input_items = [sdk["TextInput"](prompt)]
-    input_items.extend(
-        sdk["MentionInput"](name=mention.name, path=mention.path)
-        for mention in mentions
+    thread = await codex.thread_start(
+        model=runtime.model,
+        config={"model_reasoning_effort": runtime.effort},
+        cwd=str(runtime.cwd),
+        service_tier=sdk["ServiceTier"](runtime.service_tier) if runtime.service_tier else None,
+    )
+    if name:
+        await thread.set_name(name)
+    return thread
+
+
+async def resume_thread(
+    codex: Any,
+    thread_id: str,
+    runtime: CodexRuntimeConfig,
+) -> Any:
+    """Resume one existing Codex thread."""
+    sdk = _load_codex_sdk()
+    return await codex.thread_resume(
+        thread_id,
+        model=runtime.model,
+        config={"model_reasoning_effort": runtime.effort},
+        cwd=str(runtime.cwd),
+        service_tier=sdk["ServiceTier"](runtime.service_tier) if runtime.service_tier else None,
     )
 
-    return _run_codex_input(
-        sdk,
-        input_items,
-        model=model,
-        effort=effort,
-        service_tier=service_tier,
-        cwd=cwd,
-        sandbox_writable_roots=sandbox_writable_roots,
-        codex_home=codex_home,
-        codex_bin=codex_bin,
-        prefer_chatgpt_login=prefer_chatgpt_login,
-        on_turn_started=on_turn_started,
-    )
+
+async def read_thread(thread: Any, *, include_turns: bool = False) -> Any:
+    """Read one SDK thread."""
+    return await thread.read(include_turns=include_turns)
 
 
-def run_codex_with_context(
-    prompt: str,
+async def steer_turn(turn: Any, message: str) -> Any:
+    """Steer one active async turn."""
+    sdk = _load_codex_sdk()
+    result = turn.steer(sdk["TextInput"](message))
+    if inspect.isawaitable(result):
+        return await result
+    return result
+
+
+async def interrupt_turn(turn: Any) -> Any:
+    """Interrupt one active async turn."""
+    result = turn.interrupt()
+    if inspect.isawaitable(result):
+        return await result
+    return result
+
+
+async def stream_turn(turn: Any) -> AsyncIterator[Any]:
+    """Yield SDK events for one active async turn."""
+    async for event in turn.stream():
+        yield event
+
+
+async def run_turn(
+    context: CodexInputContext,
     *,
-    skills: list[CodexSkill] | None = None,
-    mentions: list[CodexMention] | None = None,
-    local_images: list[str | Path] | None = None,
-    model: str = DEFAULT_MODEL,
-    effort: ReasoningEffortName = DEFAULT_EFFORT,
-    service_tier: ServiceTierName | None = None,
-    cwd: str | Path | None = None,
-    sandbox_writable_roots: list[str | Path] | None = None,
-    codex_home: str | Path | None = None,
-    codex_bin: str = DEFAULT_CODEX_BIN,
-    prefer_chatgpt_login: bool = DEFAULT_PREFER_CHATGPT_LOGIN,
-    on_turn_started: Callable[[Any], None] | None = None,
-) -> CodexRunResult:
-    """Run Codex with structured skill, mention, and local image input items."""
-    if not prompt.strip():
-        raise ValueError("prompt must not be empty")
+    runtime: CodexRuntimeConfig,
+    thread_id: str | None = None,
+    output_schema: dict[str, Any] | None = None,
+    personality: Any | None = None,
+    summary: Any | None = None,
+    on_turn_started: Callable[[Any], Any | Awaitable[Any]] | None = None,
+    max_attempts: int = 3,
+) -> CodexTurnResult:
+    """Run one Codex turn with retry around overload-style errors."""
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be >= 1")
 
-    sdk = _load_codex_sdk()
-    input_items = [sdk["TextInput"](prompt)]
-    input_items.extend(
-        sdk["SkillInput"](name=skill.name, path=skill.path)
-        for skill in (skills or [])
-    )
-    input_items.extend(
-        sdk["MentionInput"](name=mention.name, path=mention.path)
-        for mention in (mentions or [])
-    )
-    input_items.extend(
-        sdk["LocalImageInput"](path=str(Path(image_path).expanduser().resolve()))
-        for image_path in (local_images or [])
-    )
-
-    return _run_codex_input(
-        sdk,
-        input_items,
-        model=model,
-        effort=effort,
-        service_tier=service_tier,
-        cwd=cwd,
-        sandbox_writable_roots=sandbox_writable_roots,
-        codex_home=codex_home,
-        codex_bin=codex_bin,
-        prefer_chatgpt_login=prefer_chatgpt_login,
-        on_turn_started=on_turn_started,
-    )
+    attempt = 0
+    delay_s = 0.25
+    while True:
+        attempt += 1
+        try:
+            return await _run_turn_once(
+                context,
+                runtime=runtime,
+                thread_id=thread_id,
+                output_schema=output_schema,
+                personality=personality,
+                summary=summary,
+                on_turn_started=on_turn_started,
+            )
+        except Exception as error:  # noqa: BLE001
+            sdk = _load_codex_sdk()
+            if attempt >= max_attempts or not sdk["is_retryable_error"](error):
+                raise
+            jitter = delay_s * 0.2
+            await asyncio.sleep(max(0.0, delay_s + random.uniform(-jitter, jitter)))
+            delay_s = min(delay_s * 2, 2.0)
 
 
-def list_codex_apps(
+async def list_codex_apps(
     *,
     query: str | None = None,
     limit: int = 100,
@@ -312,13 +373,13 @@ def list_codex_apps(
     query_text = query.casefold() if query else None
     apps: list[CodexAppSummary] = []
 
-    client = sdk["AppServerClient"](config)
-    client.start()
-    client.initialize()
+    client = sdk["AsyncAppServerClient"](config)
+    await client.start()
+    await client.initialize()
     try:
         cursor = None
         for page_index in range(max_pages):
-            response = client.request(
+            response = await client.request(
                 "app/list",
                 {
                     "cursor": cursor,
@@ -342,12 +403,12 @@ def list_codex_apps(
             if not cursor:
                 break
     finally:
-        client.close()
+        await client.close()
 
     return apps
 
 
-def find_codex_app(
+async def find_codex_app(
     name: str,
     *,
     cwd: str | Path | None = None,
@@ -356,7 +417,7 @@ def find_codex_app(
 ) -> CodexAppSummary | None:
     """Find the first app whose name exactly matches, case-insensitively."""
     wanted = name.casefold()
-    for app in list_codex_apps(
+    for app in await list_codex_apps(
         query=name,
         cwd=cwd,
         codex_bin=codex_bin,
@@ -367,85 +428,146 @@ def find_codex_app(
     return None
 
 
-def _run_codex_input(
-    sdk: dict[str, Any],
-    input_value: Any,
+async def _run_turn_once(
+    context: CodexInputContext,
     *,
-    model: str,
-    effort: ReasoningEffortName,
-    service_tier: ServiceTierName | None,
-    cwd: str | Path | None,
-    sandbox_writable_roots: list[str | Path] | None,
-    codex_home: str | Path | None,
-    codex_bin: str,
-    prefer_chatgpt_login: bool,
-    on_turn_started: Callable[[Any], None] | None,
-) -> CodexRunResult:
-    run_cwd = Path(cwd).expanduser().resolve() if cwd is not None else REPO_ROOT
+    runtime: CodexRuntimeConfig,
+    thread_id: str | None,
+    output_schema: dict[str, Any] | None,
+    personality: Any | None,
+    summary: Any | None,
+    on_turn_started: Callable[[Any], Any | Awaitable[Any]] | None,
+) -> CodexTurnResult:
+    sdk = _load_codex_sdk()
     env = _build_child_env(
-        prefer_chatgpt_login=prefer_chatgpt_login,
-        codex_home=codex_home,
+        prefer_chatgpt_login=runtime.prefer_chatgpt_login,
+        codex_home=runtime.codex_home,
     )
-
     config = sdk["AppServerConfig"](
-        codex_bin=codex_bin,
-        cwd=str(run_cwd),
+        codex_bin=runtime.codex_bin,
+        cwd=str(runtime.cwd),
         env=env,
     )
 
-    with sdk["Codex"](config) as codex:
-        thread = codex.thread_start(model=model)
-        run_kwargs = {
-            "approval_policy": sdk["AskForApproval"](
-                root=sdk["AskForApprovalValue"].never
-            ),
-            "effort": sdk["ReasoningEffort"](effort),
-            "sandbox_policy": _build_sandbox_policy(sdk, sandbox_writable_roots=sandbox_writable_roots),
-            "service_tier": sdk["ServiceTier"](service_tier) if service_tier else None,
-        }
-        if on_turn_started is None:
-            result = thread.run(input_value, **run_kwargs)
+    async with sdk["AsyncCodex"](config=config) as codex:
+        if thread_id:
+            thread = await resume_thread(codex, thread_id, runtime)
         else:
-            turn = thread.turn(input_value, **run_kwargs)
-            on_turn_started(turn)
-            stream = turn.stream()
-            try:
-                result = sdk["collect_run_result"](stream, turn_id=turn.id)
-            finally:
-                stream.close()
+            thread = await start_thread(codex, runtime)
 
-    return CodexRunResult(
-        final_response=result.final_response or "",
-        items_count=len(result.items),
-        model=model,
-        effort=effort,
-        service_tier=service_tier,
-        cwd=run_cwd,
-    )
+        input_items = _build_input_items(sdk, context)
+        turn_kwargs = {
+            "approval_policy": sdk["AskForApproval"].model_validate("never"),
+            "cwd": str(runtime.cwd),
+            "effort": sdk["ReasoningEffort"](runtime.effort),
+            "model": runtime.model,
+            "output_schema": output_schema,
+            "personality": personality,
+            "sandbox_policy": _build_sandbox_policy(sdk, runtime),
+            "service_tier": sdk["ServiceTier"](runtime.service_tier) if runtime.service_tier else None,
+            "summary": summary,
+        }
+        turn = await thread.turn(input_items, **turn_kwargs)
+        if on_turn_started is not None:
+            callback_result = on_turn_started(turn)
+            if inspect.isawaitable(callback_result):
+                await callback_result
+
+        run_result = await _collect_turn_result(sdk, turn)
+        return CodexTurnResult(
+            final_response=run_result["final_response"],
+            thread_id=thread.id,
+            turn_id=turn.id,
+            status=run_result["status"],
+            error=run_result["error"],
+            items_count=run_result["items_count"],
+            usage=run_result["usage"],
+            model=runtime.model,
+            effort=runtime.effort,
+            service_tier=runtime.service_tier,
+            cwd=runtime.cwd,
+        )
 
 
-def _build_sandbox_policy(
-    sdk: dict[str, Any],
-    *,
-    sandbox_writable_roots: list[str | Path] | None,
-) -> Any:
-    """Build the Codex sandbox policy for one run."""
-    if sandbox_writable_roots is None:
+def _build_input_items(sdk: dict[str, Any], context: CodexInputContext) -> list[Any]:
+    """Build SDK input items in the exact order callers expect."""
+    items = [sdk["TextInput"](context.prompt)]
+    items.extend(sdk["SkillInput"](name=skill.name, path=skill.path) for skill in context.skills)
+    items.extend(sdk["MentionInput"](name=mention.name, path=mention.path) for mention in context.mentions)
+    items.extend(sdk["LocalImageInput"](path=str(path)) for path in context.local_images)
+    items.extend(sdk["ImageInput"](url) for url in context.remote_images)
+    return items
+
+
+async def _collect_turn_result(sdk: dict[str, Any], turn: Any) -> dict[str, Any]:
+    """Collect final text, status, items, and usage from one turn stream."""
+    completed = None
+    items = []
+    usage = None
+
+    async for event in turn.stream():
+        payload = event.payload
+        if isinstance(payload, sdk["ItemCompletedNotification"]) and payload.turn_id == turn.id:
+            items.append(payload.item)
+            continue
+        if isinstance(payload, sdk["ThreadTokenUsageUpdatedNotification"]) and payload.turn_id == turn.id:
+            usage = payload.token_usage
+            continue
+        if isinstance(payload, sdk["TurnCompletedNotification"]) and payload.turn.id == turn.id:
+            completed = payload
+
+    if completed is None:
+        raise RuntimeError("turn completed event not received")
+
+    status = getattr(completed.turn.status, "value", str(completed.turn.status))
+    error = _turn_error_text(completed.turn)
+    if status == "failed":
+        raise RuntimeError(error or "turn failed")
+
+    return {
+        "final_response": _final_assistant_response_from_items(items) or "",
+        "status": status,
+        "error": error,
+        "items_count": len(items),
+        "usage": usage,
+    }
+
+
+def _final_assistant_response_from_items(items: list[Any]) -> str | None:
+    """Return the final assistant message from completed thread items."""
+    last_unknown_phase_response: str | None = None
+    for item in reversed(items):
+        raw_item = item.root if hasattr(item, "root") else item
+        if raw_item.__class__.__name__ != "AgentMessageThreadItem":
+            continue
+        text = getattr(raw_item, "text", None)
+        phase = getattr(getattr(raw_item, "phase", None), "value", getattr(raw_item, "phase", None))
+        if phase == "final_answer":
+            return text
+        if phase is None and last_unknown_phase_response is None:
+            last_unknown_phase_response = text
+    return last_unknown_phase_response
+
+
+def _turn_error_text(turn: Any) -> str | None:
+    error = getattr(turn, "error", None)
+    if error is None:
+        return None
+    message = getattr(error, "message", None)
+    return str(message or error)
+
+
+def _build_sandbox_policy(sdk: dict[str, Any], runtime: CodexRuntimeConfig) -> Any:
+    """Build the Codex sandbox policy for one turn."""
+    if runtime.sandbox_writable_roots is None:
         return sdk["SandboxPolicy"](
             root=sdk["DangerFullAccessSandboxPolicy"](type="dangerFullAccess")
         )
 
-    workspace_policy = sdk.get("WorkspaceWriteSandboxPolicy")
-    if workspace_policy is None:
-        raise RuntimeError("Codex SDK does not expose WorkspaceWriteSandboxPolicy")
-    writable_roots = [
-        str(Path(root).expanduser().resolve())
-        for root in sandbox_writable_roots
-    ]
     return sdk["SandboxPolicy"](
-        root=workspace_policy(
+        root=sdk["WorkspaceWriteSandboxPolicy"](
             type="workspaceWrite",
-            writable_roots=writable_roots,
+            writable_roots=[str(root) for root in runtime.sandbox_writable_roots],
             network_access=True,
         )
     )
@@ -484,22 +606,26 @@ def _app_summary_from_payload(payload: dict[str, Any]) -> CodexAppSummary:
 def _load_codex_sdk() -> dict[str, Any]:
     try:
         from codex_app_server import (
-            AppServerClient,
             AppServerConfig,
+            AsyncAppServerClient,
+            AsyncCodex,
             AskForApproval,
-            Codex,
+            ImageInput,
             LocalImageInput,
             MentionInput,
+            ReasoningEffort,
             SandboxPolicy,
+            ServiceTier,
             SkillInput,
             TextInput,
+            ThreadTokenUsageUpdatedNotification,
+            TurnCompletedNotification,
+            is_retryable_error,
         )
-        from codex_app_server.api import _collect_run_result
-        from codex_app_server import ReasoningEffort, ServiceTier
         from codex_app_server.generated.v2_all import (
             AppsListResponse,
-            AskForApprovalValue,
             DangerFullAccessSandboxPolicy,
+            ItemCompletedNotification,
             WorkspaceWriteSandboxPolicy,
         )
     except ImportError as error:
@@ -510,15 +636,14 @@ def _load_codex_sdk() -> dict[str, Any]:
         raise RuntimeError(message) from error
 
     return {
-        "AppServerClient": AppServerClient,
         "AppServerConfig": AppServerConfig,
         "AppsListResponse": AppsListResponse,
         "AskForApproval": AskForApproval,
-        "AskForApprovalValue": AskForApprovalValue,
-        "Codex": Codex,
-        "collect_run_result": _collect_run_result,
+        "AsyncAppServerClient": AsyncAppServerClient,
+        "AsyncCodex": AsyncCodex,
         "DangerFullAccessSandboxPolicy": DangerFullAccessSandboxPolicy,
-        "WorkspaceWriteSandboxPolicy": WorkspaceWriteSandboxPolicy,
+        "ImageInput": ImageInput,
+        "ItemCompletedNotification": ItemCompletedNotification,
         "LocalImageInput": LocalImageInput,
         "MentionInput": MentionInput,
         "ReasoningEffort": ReasoningEffort,
@@ -526,4 +651,8 @@ def _load_codex_sdk() -> dict[str, Any]:
         "ServiceTier": ServiceTier,
         "SkillInput": SkillInput,
         "TextInput": TextInput,
+        "ThreadTokenUsageUpdatedNotification": ThreadTokenUsageUpdatedNotification,
+        "TurnCompletedNotification": TurnCompletedNotification,
+        "WorkspaceWriteSandboxPolicy": WorkspaceWriteSandboxPolicy,
+        "is_retryable_error": is_retryable_error,
     }

@@ -211,10 +211,12 @@ def test_workstation_tool_agent_short_circuits_legacy_decision(monkeypatch, tmp_
 
     monkeypatch.setattr(workstation_endpoints, "run_codex_agent", fake_run_codex_agent)
 
-    decision = workstation_endpoints.decide_workstation_next_action_sync(
-        client=workstation,
-        lead=lead,
-        replies=[reply],
+    decision = asyncio.run(
+        workstation_endpoints.decide_workstation_next_action(
+            client=workstation,
+            lead=lead,
+            replies=[reply],
+        )
     )
 
     assert decision.action == "no_action"
@@ -4455,7 +4457,7 @@ def test_workstation_tick_generates_preview_without_blocking_on_missing_photo(mo
     )
     generated_calls: list[dict[str, object]] = []
 
-    def fake_generate_solo_page_version_sync(**kwargs) -> Path:
+    async def fake_generate_solo_page_version(**kwargs) -> Path:
         generated_calls.append(kwargs)
         version_dir = workstation_endpoints.next_landing_page_version_dir(kwargs["client"])
         (version_dir / "index.html").write_text("<html><body>Draft</body></html>", encoding="utf-8")
@@ -4469,7 +4471,7 @@ def test_workstation_tick_generates_preview_without_blocking_on_missing_photo(mo
         (version_dir / "preview.mp4").write_bytes(b"mp4")
         return version_dir
 
-    monkeypatch.setattr(workstation_endpoints, "generate_solo_page_version_sync", fake_generate_solo_page_version_sync)
+    monkeypatch.setattr(workstation_endpoints, "generate_solo_page_version", fake_generate_solo_page_version)
     monkeypatch.setattr(
         workstation_endpoints,
         "decide_workstation_next_action",
@@ -4539,10 +4541,10 @@ def test_workstation_tick_waits_twenty_minutes_before_generating_preview(monkeyp
         created_at=now_utc() - timedelta(minutes=19),
     )
 
-    def fail_generate_solo_page_version_sync(**kwargs) -> Path:
+    async def fail_generate_solo_page_version(**kwargs) -> Path:
         raise AssertionError("Workstation generated before the quiet window elapsed")
 
-    monkeypatch.setattr(workstation_endpoints, "generate_solo_page_version_sync", fail_generate_solo_page_version_sync)
+    monkeypatch.setattr(workstation_endpoints, "generate_solo_page_version", fail_generate_solo_page_version)
 
     with TestClient(app) as client:
         tick = client.post("/api/workstation/automation/tick")
@@ -4681,7 +4683,7 @@ def test_workstation_tick_revises_after_handoff_reply(monkeypatch, tmp_path) -> 
     )
     generated_calls: list[dict[str, object]] = []
 
-    def fake_generate_solo_page_version_sync(**kwargs) -> Path:
+    async def fake_generate_solo_page_version(**kwargs) -> Path:
         generated_calls.append(kwargs)
         version_dir = workstation_endpoints.next_landing_page_version_dir(kwargs["client"])
         (version_dir / "index.html").write_text("<html><body>Revision</body></html>", encoding="utf-8")
@@ -4690,7 +4692,7 @@ def test_workstation_tick_revises_after_handoff_reply(monkeypatch, tmp_path) -> 
         (version_dir / "preview.mp4").write_bytes(b"mp4")
         return version_dir
 
-    monkeypatch.setattr(workstation_endpoints, "generate_solo_page_version_sync", fake_generate_solo_page_version_sync)
+    monkeypatch.setattr(workstation_endpoints, "generate_solo_page_version", fake_generate_solo_page_version)
     monkeypatch.setattr(
         workstation_endpoints,
         "decide_workstation_next_action",
@@ -4866,7 +4868,7 @@ def test_manual_solo_page_conversion_uses_existing_chat_context(monkeypatch, tmp
 
     generated_calls: list[dict[str, object]] = []
 
-    def fake_generate_solo_page_version_sync(**kwargs) -> Path:
+    async def fake_generate_solo_page_version(**kwargs) -> Path:
         generated_calls.append(kwargs)
         version_dir = workstation_endpoints.next_landing_page_version_dir(kwargs["client"])
         (version_dir / "index.html").write_text("<html><body>Draft</body></html>", encoding="utf-8")
@@ -4875,7 +4877,7 @@ def test_manual_solo_page_conversion_uses_existing_chat_context(monkeypatch, tmp
         (version_dir / "preview.mp4").write_bytes(b"mp4")
         return version_dir
 
-    monkeypatch.setattr(workstation_endpoints, "generate_solo_page_version_sync", fake_generate_solo_page_version_sync)
+    monkeypatch.setattr(workstation_endpoints, "generate_solo_page_version", fake_generate_solo_page_version)
 
     with TestClient(app) as client:
         created = client.post(
@@ -4967,7 +4969,7 @@ def test_workstation_solo_page_codex_runs_from_repo_root(monkeypatch, tmp_path) 
     )
     calls: list[dict[str, object]] = []
 
-    def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
+    async def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
         output_marker = "Required output folder:\n"
         output_dir = Path(prompt.split(output_marker, 1)[1].splitlines()[0].strip())
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -4988,11 +4990,13 @@ def test_workstation_solo_page_codex_runs_from_repo_root(monkeypatch, tmp_path) 
     monkeypatch.setattr(workstation_endpoints, "run_codex_with_context", fake_run_codex_with_context)
     monkeypatch.setattr(workstation_endpoints, "render_landing_page_video_sync", fake_render_landing_page_video_sync)
 
-    version_dir = workstation_endpoints.generate_solo_page_version_sync(
-        client=workstation,
-        lead=lead,
-        replies=[],
-        revision=False,
+    version_dir = asyncio.run(
+        workstation_endpoints.generate_solo_page_version(
+            client=workstation,
+            lead=lead,
+            replies=[],
+            revision=False,
+        )
     )
 
     assert (version_dir / "preview.mp4").read_bytes() == b"mp4"
@@ -5041,7 +5045,7 @@ def test_workstation_solo_page_can_queue_multiple_codex_deliverables(monkeypatch
     photo_dir.mkdir(parents=True, exist_ok=True)
     (photo_dir / "professional-photo.jpg").write_bytes(b"jpg")
 
-    def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
+    async def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
         output_marker = "Required output folder:\n"
         output_dir = Path(prompt.split(output_marker, 1)[1].splitlines()[0].strip())
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -5079,11 +5083,13 @@ def test_workstation_solo_page_can_queue_multiple_codex_deliverables(monkeypatch
     monkeypatch.setattr(workstation_endpoints, "run_codex_with_context", fake_run_codex_with_context)
     monkeypatch.setattr(workstation_endpoints, "render_landing_page_video_sync", fake_render_landing_page_video_sync)
 
-    version_dir = workstation_endpoints.generate_solo_page_version_sync(
-        client=workstation,
-        lead=lead,
-        replies=ContadoresMessage.list_by_lead(lead.id),
-        revision=True,
+    version_dir = asyncio.run(
+        workstation_endpoints.generate_solo_page_version(
+            client=workstation,
+            lead=lead,
+            replies=ContadoresMessage.list_by_lead(lead.id),
+            revision=True,
+        )
     )
     rows = workstation_endpoints.queue_workstation_preview(
         client=workstation,
@@ -5163,7 +5169,7 @@ def test_workstation_solo_page_codex_falls_back_to_api_key(monkeypatch, tmp_path
     )
     calls: list[dict[str, object]] = []
 
-    def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
+    async def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
         calls.append({"prompt": prompt, **kwargs})
         if kwargs["prefer_chatgpt_login"]:
             raise RuntimeError("chatgpt codex tokens unavailable")
@@ -5182,11 +5188,13 @@ def test_workstation_solo_page_codex_falls_back_to_api_key(monkeypatch, tmp_path
     monkeypatch.setattr(workstation_endpoints, "run_codex_with_context", fake_run_codex_with_context)
     monkeypatch.setattr(workstation_endpoints, "render_landing_page_video_sync", fake_render_landing_page_video_sync)
 
-    version_dir = workstation_endpoints.generate_solo_page_version_sync(
-        client=workstation,
-        lead=lead,
-        replies=[],
-        revision=False,
+    version_dir = asyncio.run(
+        workstation_endpoints.generate_solo_page_version(
+            client=workstation,
+            lead=lead,
+            replies=[],
+            revision=False,
+        )
     )
 
     assert (version_dir / "metadata.json").exists()
@@ -5211,7 +5219,7 @@ def test_workstation_solo_page_codex_reports_both_auth_errors(monkeypatch, tmp_p
         automation_status=WorkstationAutomationStatus.INTAKE,
     )
 
-    def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
+    async def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
         del prompt
         if kwargs["prefer_chatgpt_login"]:
             raise RuntimeError("ChatGPT tokens exhausted")
@@ -5220,11 +5228,13 @@ def test_workstation_solo_page_codex_reports_both_auth_errors(monkeypatch, tmp_p
     monkeypatch.setattr(workstation_endpoints, "run_codex_with_context", fake_run_codex_with_context)
 
     try:
-        workstation_endpoints.generate_solo_page_version_sync(
-            client=workstation,
-            lead=lead,
-            replies=[],
-            revision=False,
+        asyncio.run(
+            workstation_endpoints.generate_solo_page_version(
+                client=workstation,
+                lead=lead,
+                replies=[],
+                revision=False,
+            )
         )
     except RuntimeError as error:
         message = str(error)
@@ -5260,7 +5270,7 @@ def test_manual_workstation_solo_page_work_uses_operator_prompt(monkeypatch, tmp
     )
     generated_calls: list[dict[str, object]] = []
 
-    def fake_generate_solo_page_version_sync(**kwargs) -> Path:
+    async def fake_generate_solo_page_version(**kwargs) -> Path:
         generated_calls.append(kwargs)
         version_dir = workstation_endpoints.next_landing_page_version_dir(kwargs["client"])
         (version_dir / "index.html").write_text("<html><body>Draft</body></html>", encoding="utf-8")
@@ -5273,7 +5283,7 @@ def test_manual_workstation_solo_page_work_uses_operator_prompt(monkeypatch, tmp
         (version_dir / "preview.mp4").write_bytes(b"mp4")
         return version_dir
 
-    monkeypatch.setattr(workstation_endpoints, "generate_solo_page_version_sync", fake_generate_solo_page_version_sync)
+    monkeypatch.setattr(workstation_endpoints, "generate_solo_page_version", fake_generate_solo_page_version)
 
     asyncio.run(
         workstation_endpoints.run_manual_solo_page_work(
@@ -5616,7 +5626,9 @@ def test_workstation_solo_page_steer_sends_message_to_active_codex(monkeypatch, 
         )
 
     assert response.status_code == 200
-    assert steered_messages == ["Hacelo mas sobrio y prioriza la foto profesional."]
+    assert [getattr(message, "text", message) for message in steered_messages] == [
+        "Hacelo mas sobrio y prioriza la foto profesional."
+    ]
     progress = workstation_endpoints.workstation_progress_path(workstation).read_text(encoding="utf-8")
     assert "Operator steered Codex: Hacelo mas sobrio" in progress
     workstation_endpoints.active_solo_page_codex_turns.clear()
@@ -5942,7 +5954,7 @@ def test_workstation_professional_photo_versions_use_codex_context(monkeypatch, 
     monkeypatch.setattr(database_module, "DATA_DIR", data_dir)
     calls: list[dict[str, object]] = []
 
-    def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
+    async def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
         output_marker = "Required output path:\n"
         output_path = prompt.split(output_marker, 1)[1].splitlines()[0].strip()
         Path(output_path).write_bytes(b"generated-jpg")
@@ -6006,7 +6018,7 @@ def test_workstation_professional_photo_job_can_be_polled(monkeypatch, tmp_path)
     monkeypatch.setattr(database_module, "DATA_DIR", data_dir)
     workstation_endpoints.professional_photo_jobs.clear()
 
-    def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
+    async def fake_run_codex_with_context(prompt: str, **kwargs) -> SimpleNamespace:
         output_marker = "Required output path:\n"
         output_path = prompt.split(output_marker, 1)[1].splitlines()[0].strip()
         Path(output_path).write_bytes(b"generated-job-jpg")

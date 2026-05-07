@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import asyncio
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -393,12 +394,14 @@ def generate_or_revise_solo_page(arguments: dict[str, Any]) -> dict[str, Any]:
         replies = [message for message in messages if message.id in selected]
     else:
         replies = [message for message in messages if not message.from_me][-5:]
-    version_dir = workstation_endpoints.generate_solo_page_version_sync(
-        client=client,
-        lead=lead,
-        replies=replies,
-        revision=args.revision,
-        operator_prompt=args.instruction,
+    version_dir = asyncio.run(
+        workstation_endpoints.generate_solo_page_version(
+            client=client,
+            lead=lead,
+            replies=replies,
+            revision=args.revision,
+            operator_prompt=args.instruction,
+        )
     )
     return {
         "generated": True,

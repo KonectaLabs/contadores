@@ -305,7 +305,7 @@ def test_prompt_includes_konecta_source_of_truth() -> None:
 def test_codex_conversation_bot_parses_strict_json(monkeypatch) -> None:
     calls: list[dict[str, object]] = []
 
-    def fake_run_codex_with_context(prompt, **kwargs):
+    async def fake_run_codex_with_context(prompt, **kwargs):
         calls.append({"prompt": prompt, **kwargs})
         return SimpleNamespace(
             final_response=(
@@ -334,7 +334,7 @@ def test_codex_conversation_bot_parses_strict_json(monkeypatch) -> None:
 
 
 def test_codex_conversation_bot_overrides_wrong_origin_claim(monkeypatch) -> None:
-    def fake_run_codex_with_context(prompt, **kwargs):
+    async def fake_run_codex_with_context(prompt, **kwargs):
         del prompt, kwargs
         return SimpleNamespace(
             final_response=(
@@ -366,7 +366,7 @@ def test_codex_conversation_bot_overrides_wrong_origin_claim(monkeypatch) -> Non
 
 
 def test_codex_conversation_bot_answers_italian_number_from_source_truth(monkeypatch) -> None:
-    def fake_run_codex_with_context(prompt, **kwargs):
+    async def fake_run_codex_with_context(prompt, **kwargs):
         del prompt, kwargs
         return SimpleNamespace(
             final_response=(
@@ -397,7 +397,7 @@ def test_codex_conversation_bot_answers_italian_number_from_source_truth(monkeyp
 def test_codex_conversation_bot_answers_consultation_definition_without_forcing_schedule(
     monkeypatch,
 ) -> None:
-    def fake_run_codex_with_context(prompt, **kwargs):
+    async def fake_run_codex_with_context(prompt, **kwargs):
         del prompt, kwargs
         return SimpleNamespace(
             final_response=(

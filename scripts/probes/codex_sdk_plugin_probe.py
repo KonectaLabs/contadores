@@ -1,29 +1,18 @@
 from __future__ import annotations
 
 import json
-import os
+import asyncio
 from pathlib import Path
 from typing import Any
 
-from backend.codex_utils import DEFAULT_CODEX_BIN, DEFAULT_EFFORT, DEFAULT_MODEL
+from backend.codex_utils import DEFAULT_EFFORT, DEFAULT_MODEL, run_codex_with_context
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RESULT_PATH = REPO_ROOT / "codex_sdk_plugin_probe_result.json"
 
 
-def main() -> None:
-    sdk = _load_codex_sdk()
-
-    env = dict(os.environ)
-    env.pop("OPENAI_API_KEY", None)
-
-    config = sdk["AppServerConfig"](
-        codex_bin=DEFAULT_CODEX_BIN,
-        cwd=str(REPO_ROOT),
-        env=env,
-    )
-
+async def main() -> None:
     prompt = """
 We are testing whether a Codex Python SDK/app-server run has access to account
 plugins/connectors/apps such as GitHub or Cloudflare.
@@ -58,52 +47,19 @@ Return only JSON with this shape:
 }
 """.strip()
 
-    with sdk["Codex"](config) as codex:
-        thread = codex.thread_start(model=DEFAULT_MODEL)
-        result = thread.run(
-            prompt,
-            approval_policy=sdk["AskForApproval"](
-                root=sdk["AskForApprovalValue"].never
-            ),
-            effort=sdk["ReasoningEffort"](DEFAULT_EFFORT),
-            sandbox_policy=sdk["SandboxPolicy"](
-                root=sdk["DangerFullAccessSandboxPolicy"](type="dangerFullAccess")
-            ),
-        )
+    result = await run_codex_with_context(
+        prompt,
+        model=DEFAULT_MODEL,
+        effort=DEFAULT_EFFORT,
+        cwd=REPO_ROOT,
+    )
 
     payload = {
         "final_response": result.final_response,
-        "items_count": len(result.items),
-        "item_summaries": [_summarize_item(item) for item in result.items],
+        "items_count": result.items_count,
     }
     RESULT_PATH.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
     print(json.dumps(payload, indent=2, ensure_ascii=False))
-
-
-def _load_codex_sdk() -> dict[str, Any]:
-    try:
-        from codex_app_server import AppServerConfig, AskForApproval, Codex, SandboxPolicy
-        from codex_app_server import ReasoningEffort
-        from codex_app_server.generated.v2_all import (
-            AskForApprovalValue,
-            DangerFullAccessSandboxPolicy,
-        )
-    except ImportError as error:
-        message = (
-            "Codex Python SDK is not installed. Run with: "
-            "uv run --extra codex-sdk python scripts/probes/codex_sdk_plugin_probe.py"
-        )
-        raise RuntimeError(message) from error
-
-    return {
-        "AppServerConfig": AppServerConfig,
-        "AskForApproval": AskForApproval,
-        "AskForApprovalValue": AskForApprovalValue,
-        "Codex": Codex,
-        "DangerFullAccessSandboxPolicy": DangerFullAccessSandboxPolicy,
-        "ReasoningEffort": ReasoningEffort,
-        "SandboxPolicy": SandboxPolicy,
-    }
 
 
 def _summarize_item(item: Any) -> dict[str, Any]:
@@ -143,4 +99,4 @@ def _shorten(value: Any) -> Any:
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

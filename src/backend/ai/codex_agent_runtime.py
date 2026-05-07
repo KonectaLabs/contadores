@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from backend.codex_utils import CodexRunResult, CodexSkill, run_codex_with_context
+from backend.codex_utils import CodexSkill, CodexTurnResult, run_codex_with_context
 from backend.config import (
     CONVERSATION_BOT_CODEX_API_KEY_HOME,
     CONVERSATION_BOT_CODEX_CHATGPT_HOME,
@@ -41,7 +41,7 @@ class CodexAgentRunResult:
     run_id: str
     final_response: str
     tool_calls: list[AgentToolCall]
-    codex_result: CodexRunResult
+    codex_result: CodexTurnResult
 
     @property
     def side_effect_count(self) -> int:
@@ -121,16 +121,16 @@ Finish with a short internal summary of what you did.
 """.strip()
 
 
-def _run_codex_agent_once(
+async def _run_codex_agent_once(
     *,
     prompt: str,
     skills: list[CodexSkill],
     codex_home: str | None,
     prefer_chatgpt_login: bool,
     on_turn_started=None,
-) -> CodexRunResult:
+) -> CodexTurnResult:
     """Run one Codex agent attempt."""
-    return run_codex_with_context(
+    return await run_codex_with_context(
         prompt,
         skills=skills,
         model=CONVERSATION_BOT_CODEX_MODEL,
@@ -143,7 +143,7 @@ def _run_codex_agent_once(
     )
 
 
-def run_codex_agent(
+async def run_codex_agent(
     *,
     target_type: str,
     target_id: str,
@@ -181,7 +181,7 @@ def run_codex_agent(
     selected_skills = skills or []
     try:
         try:
-            codex_result = _run_codex_agent_once(
+            codex_result = await _run_codex_agent_once(
                 prompt=prompt,
                 skills=selected_skills,
                 codex_home=CONVERSATION_BOT_CODEX_CHATGPT_HOME,
@@ -191,7 +191,7 @@ def run_codex_agent(
         except Exception as chatgpt_error:
             if not OPENAI_API_KEY.strip():
                 raise
-            codex_result = _run_codex_agent_once(
+            codex_result = await _run_codex_agent_once(
                 prompt=prompt,
                 skills=selected_skills,
                 codex_home=CONVERSATION_BOT_CODEX_API_KEY_HOME,
@@ -210,6 +210,8 @@ def run_codex_agent(
             run_id,
             status="completed",
             final_response=codex_result.final_response,
+            codex_thread_id=codex_result.thread_id,
+            codex_turn_id=codex_result.turn_id,
         )
         return CodexAgentRunResult(
             run_id=run_id,

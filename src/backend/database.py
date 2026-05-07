@@ -1024,6 +1024,7 @@ class ContadoresLead(SQLModel, table=True):
     last_outbound_at: datetime | None = Field(default=None, index=True)
     conversation_processing_started_at: datetime | None = Field(default=None, index=True)
     conversation_processing_latest_inbound_id: int | None = Field(default=None, index=True)
+    codex_conversation_thread_id: str | None = Field(default=None, index=True)
     archived_at: datetime | None = Field(default=None, index=True)
     automation_paused: bool = Field(default=False, index=True)
     automation_paused_reason: str | None = Field(default=None)
@@ -1332,6 +1333,26 @@ class ContadoresLead(SQLModel, table=True):
                 """,
                 (datetime.now(timezone.utc), lead_id, latest_inbound_id),
             )
+
+    @classmethod
+    def update_codex_conversation_thread_id(
+        cls,
+        lead_id: str,
+        *,
+        thread_id: str | None,
+    ) -> Optional["ContadoresLead"]:
+        """Persist the Codex conversation thread used for one lead."""
+        with Session(engine) as session:
+            item = session.get(cls, lead_id)
+            if item is None:
+                return None
+            item.codex_conversation_thread_id = (thread_id or "").strip() or None
+            item.updated_at = datetime.now(timezone.utc)
+            session.add(item)
+            session.commit()
+            session.refresh(item)
+            session.expunge(item)
+            return item
 
     @classmethod
     def set_tags(cls, lead_id: str, *, tags: list[str]) -> Optional["ContadoresLead"]:
@@ -2010,6 +2031,8 @@ class AgentRun(SQLModel, table=True):
     status: str = Field(default="running", index=True)
     prompt_version: str = Field(default="")
     context_path: str = Field(default="")
+    codex_thread_id: str | None = Field(default=None, index=True)
+    codex_turn_id: str | None = Field(default=None, index=True)
     final_response: str = Field(default="")
     error: str = Field(default="")
     started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
@@ -2055,6 +2078,8 @@ class AgentRun(SQLModel, table=True):
         status: str,
         final_response: str = "",
         error: str = "",
+        codex_thread_id: str | None = None,
+        codex_turn_id: str | None = None,
         finished_at: datetime | None = None,
     ) -> Optional["AgentRun"]:
         """Mark one autonomous run as completed or failed."""
@@ -2065,6 +2090,10 @@ class AgentRun(SQLModel, table=True):
             row.status = (status or "").strip() or row.status
             row.final_response = str(final_response or "")[:20000]
             row.error = str(error or "")[:12000]
+            if codex_thread_id is not None:
+                row.codex_thread_id = (codex_thread_id or "").strip() or None
+            if codex_turn_id is not None:
+                row.codex_turn_id = (codex_turn_id or "").strip() or None
             row.finished_at = finished_at or datetime.now(timezone.utc)
             session.add(row)
             session.commit()
@@ -2525,6 +2554,7 @@ class WorkstationClient(SQLModel, table=True):
         default=WorkstationAutomationStatus.NEEDS_HUMAN,
         index=True,
     )
+    codex_workstation_thread_id: str | None = Field(default=None, index=True)
     offer_price_usd: int | None = Field(default=None, index=True)
     offer_currency: str = Field(default="USD")
     display_name: str = Field(default="")
@@ -2761,6 +2791,26 @@ class WorkstationClient(SQLModel, table=True):
             if item is None:
                 return None
             item.status = normalize_workstation_client_status(status)
+            item.updated_at = datetime.now(timezone.utc)
+            session.add(item)
+            session.commit()
+            session.refresh(item)
+            session.expunge(item)
+            return item
+
+    @classmethod
+    def update_codex_workstation_thread_id(
+        cls,
+        client_id: str,
+        *,
+        thread_id: str | None,
+    ) -> Optional["WorkstationClient"]:
+        """Persist the Codex Workstation thread used for one client."""
+        with Session(engine) as session:
+            item = session.get(cls, client_id)
+            if item is None:
+                return None
+            item.codex_workstation_thread_id = (thread_id or "").strip() or None
             item.updated_at = datetime.now(timezone.utc)
             session.add(item)
             session.commit()
@@ -4602,14 +4652,17 @@ def init_db() -> None:
     ensure_contadores_closed_state_columns()
     ensure_contadores_manual_reply_columns()
     ensure_contadores_conversation_processing_columns()
+    ensure_contadores_codex_thread_columns()
     ensure_contadores_funnel_columns()
     ensure_contadores_tags_column()
     ensure_contadores_strategy_columns()
     ensure_contadores_message_delivery_columns()
     ensure_contadores_message_template_columns()
     ensure_contadores_runtime_alert_columns()
+    ensure_agent_run_codex_thread_columns()
     ensure_contadores_config_strategy_weights_column()
     ensure_workstation_client_automation_columns()
+    ensure_workstation_codex_thread_columns()
     logger.info(f"Database initialized at {DATABASE_URL}")
 
 
@@ -4768,6 +4821,49 @@ def ensure_contadores_runtime_alert_columns() -> None:
             )
 
 
+def ensure_contadores_codex_thread_columns() -> None:
+    """Add persisted Codex conversation thread metadata to leads."""
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        if "contadores_leads" not in inspector.get_table_names():
+            return
+        columns = {column["name"] for column in inspector.get_columns("contadores_leads")}
+        if "codex_conversation_thread_id" not in columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE contadores_leads ADD COLUMN codex_conversation_thread_id TEXT"
+            )
+            logger.info("Added missing contadores_leads.codex_conversation_thread_id column.")
+        connection.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_contadores_leads_codex_conversation_thread_id "
+            "ON contadores_leads (codex_conversation_thread_id)"
+        )
+
+
+def ensure_agent_run_codex_thread_columns() -> None:
+    """Add Codex thread and turn metadata to autonomous run audit rows."""
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        if "agent_runs" not in inspector.get_table_names():
+            return
+        columns = {column["name"] for column in inspector.get_columns("agent_runs")}
+        column_definitions = {
+            "codex_thread_id": "TEXT",
+            "codex_turn_id": "TEXT",
+        }
+        for column_name, column_type in column_definitions.items():
+            if column_name in columns:
+                continue
+            connection.exec_driver_sql(
+                f"ALTER TABLE agent_runs ADD COLUMN {column_name} {column_type}"
+            )
+            logger.info("Added missing agent_runs.%s column.", column_name)
+        for column_name in column_definitions:
+            connection.exec_driver_sql(
+                f"CREATE INDEX IF NOT EXISTS ix_agent_runs_{column_name} "
+                f"ON agent_runs ({column_name})"
+            )
+
+
 def ensure_workstation_client_automation_columns() -> None:
     """Add solo-page automation columns to existing Workstation tables."""
     with engine.begin() as connection:
@@ -4841,6 +4937,24 @@ def ensure_workstation_client_automation_columns() -> None:
                 f"CREATE INDEX IF NOT EXISTS ix_workstation_clients_{column_name} "
                 f"ON workstation_clients ({column_name})"
             )
+
+
+def ensure_workstation_codex_thread_columns() -> None:
+    """Add persisted Codex Workstation thread metadata to clients."""
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        if "workstation_clients" not in inspector.get_table_names():
+            return
+        columns = {column["name"] for column in inspector.get_columns("workstation_clients")}
+        if "codex_workstation_thread_id" not in columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE workstation_clients ADD COLUMN codex_workstation_thread_id TEXT"
+            )
+            logger.info("Added missing workstation_clients.codex_workstation_thread_id column.")
+        connection.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_workstation_clients_codex_workstation_thread_id "
+            "ON workstation_clients (codex_workstation_thread_id)"
+        )
 
 
 def ensure_contadores_strategy_columns() -> None:
