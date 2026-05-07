@@ -1856,6 +1856,10 @@ Requirements:
   of the previous HTML/CSS/JS/assets. Edit those files in place and keep the
   existing visual direction unless the client explicitly asked for a redesign.
 - If client information is incomplete, still create a credible first draft with honest placeholders.
+- If the client did not send photos and no professional-photo version exists,
+  do not use a portrait, headshot, default person photo, or any image from
+  another client. Use generic profession imagery instead, such as law books,
+  courtroom details, accounting documents, a calculator, or an office interior.
 - Save all files inside the required output folder only.
 - Append short progress updates to progress.md after each meaningful step: context read, files written, checks done.
 - Do not delete or rewrite old progress.md entries.

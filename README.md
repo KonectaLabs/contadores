@@ -585,6 +585,11 @@ La automatizacion de `landing-page` nunca debe usar fotos crudas de personas
 desde `media/` como retratos publicos. Si el cliente mando fotos de una o varias
 personas, primero se generan las fotos profesionales faltantes y la siguiente
 web incluye todas las fotos profesionales correspondientes.
+Si el cliente no mando ninguna foto y no existe `professional-photo/`, la pagina
+no debe mostrar retratos ni fotos default de personas. Tampoco se reutilizan
+fotos de otros clientes ni fotos personales de la plantilla base; se usa una
+imagen generica del rubro, como un estudio juridico, biblioteca legal, papeles
+contables, calculadora u oficina.
 
 Cada version de `landing-page` tambien debe traer `preview-message.txt`: Codex
 elige ahi el texto exacto que acompana al MP4 por WhatsApp. El backend solo usa

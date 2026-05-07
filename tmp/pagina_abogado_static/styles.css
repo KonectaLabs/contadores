@@ -142,8 +142,10 @@ a {
   z-index: -3;
   background:
     linear-gradient(90deg, rgba(7, 19, 29, 0.92), rgba(7, 19, 29, 0.3) 45%, rgba(7, 19, 29, 0.02)),
-    url("assets/lawyer-photo.jpg") center / cover no-repeat;
-  filter: saturate(0.3) contrast(1.05) brightness(0.64);
+    linear-gradient(135deg, rgba(196, 138, 36, 0.16), transparent 38%),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.12) 0 8px, transparent 8px 18px),
+    linear-gradient(145deg, #182737, #07131f 62%);
+  filter: saturate(0.9) contrast(1.05) brightness(0.72);
   opacity: 0.92;
   transform: scale(1.04);
 }
@@ -366,11 +368,14 @@ h1 em {
   position: relative;
 }
 
-.firm-media img {
+.generic-law-visual {
   width: 100%;
   aspect-ratio: 1.06 / 1;
-  object-fit: cover;
-  filter: grayscale(1) contrast(1.04);
+  background:
+    linear-gradient(145deg, rgba(8, 20, 31, 0.12), rgba(8, 20, 31, 0.74)),
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.12) 0 7px, transparent 7px 17px),
+    linear-gradient(135deg, #26374a, #07131f 64%);
+  filter: grayscale(0.2) contrast(1.04);
 }
 
 .case-note {
@@ -477,7 +482,7 @@ h1 em {
   text-align: center;
   background:
     linear-gradient(rgba(6, 16, 24, 0.86), rgba(6, 16, 24, 0.92)),
-    url("assets/lawyer-photo.jpg") center 38% / cover no-repeat;
+    linear-gradient(135deg, #172638, #07131f 62%);
 }
 
 .closing-content {

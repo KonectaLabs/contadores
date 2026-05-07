@@ -248,11 +248,19 @@ h1 em {
   animation: intro-in 820ms ease 120ms both;
 }
 
-.hero-media img {
+.generic-office-visual {
   width: 100%;
+  aspect-ratio: 0.94 / 1;
   max-height: 700px;
-  object-fit: cover;
+  background:
+    linear-gradient(rgba(9, 17, 29, 0.22), rgba(9, 17, 29, 0.36)),
+    url("assets/cta-office.jpg") center / cover no-repeat;
+  filter: grayscale(0.55) contrast(1.04);
   box-shadow: 0 28px 85px rgba(10, 18, 28, 0.13);
+}
+
+.generic-office-visual.tall {
+  aspect-ratio: 0.98 / 1;
 }
 
 .experience-badge {
@@ -446,10 +454,9 @@ h1 em {
   position: relative;
 }
 
-.institution-media img {
+.institution-media .generic-office-visual {
   width: 100%;
   aspect-ratio: 0.98 / 1;
-  object-fit: cover;
   box-shadow: 0 26px 80px rgba(10, 18, 28, 0.12);
 }
 

@@ -84,6 +84,12 @@ Before building or revising the page:
 When placing portraits in the page, copy the generated professional-photo files
 into `landing-page/vNNN/assets/` and reference those copies from the HTML.
 
+If no client photos were sent and no professional-photo asset exists, do not use
+any portrait, headshot, or default photo of a person. Do not reuse photos from
+another client or from the base template. Use a generic visual for the vertical
+instead, such as a law office, legal books, courtroom details, accounting desk,
+documents, calculator, or office interior.
+
 ## Page Rules
 
 - Build plain static HTML, CSS, and JavaScript. No bundlers.
@@ -115,8 +121,8 @@ into `landing-page/vNNN/assets/` and reference those copies from the HTML.
   asked for pricing to appear there.
 - If information is missing, still produce a credible first draft with restrained
   placeholders that can be revised later.
-- If no client photos were sent and no professional-photo asset exists, use
-  appropriate template assets.
+- If no client photos were sent and no professional-photo asset exists, use only
+  generic profession imagery. Do not show a person as if they were the client.
 - If the client sent a current website, logo, screenshots, or documents, reuse
   the factual information and visual direction when helpful.
 - For revisions, preserve the parts the client did not ask to change and apply
