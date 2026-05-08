@@ -5042,9 +5042,14 @@ def test_workstation_tick_revises_after_handoff_reply(monkeypatch, tmp_path) -> 
 
     with TestClient(app) as client:
         tick = client.post("/api/workstation/automation/tick")
+        pending = client.get("/api/contadores/messages/pending-delivery")
 
     assert tick.status_code == 200
     assert tick.json()["revision_videos_sent"] == 1
+    assert [item["sequence_step"] for item in pending.json()["messages"]] == [
+        "workstation_revision_video",
+        "workstation_public_page_link",
+    ]
     assert len(generated_calls) == 1
     assert generated_calls[0]["revision"] is True
     updated = WorkstationClient.get_by_lead_id(lead.id)
@@ -5811,6 +5816,59 @@ def test_workstation_solo_page_fallback_sends_professional_photo_before_preview(
     assert "foto profesional" in rows[0].text.lower()
     assert rows[1].media_path.endswith("landing-page/v001/preview.mp4")
     assert rows[1].text == "Le mando el boceto de la pagina."
+
+
+def test_workstation_solo_page_does_not_resend_professional_photo(monkeypatch, tmp_path) -> None:
+    """Professional photo delivery should happen only once per client chat."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    data_dir = tmp_path / "data"
+    monkeypatch.setattr(database_module, "DATA_DIR", data_dir)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-workstation-single-photo-delivery",
+        phone="+5491777777735",
+        full_name="Cliente Foto Unica",
+    )
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=False,
+        text="[image] foto.jpg",
+        created_at=now_utc() - timedelta(minutes=1),
+    )
+    workstation = WorkstationClient.create_for_lead(
+        lead,
+        work_type=WorkstationClientWorkType.SOLO_PAGINA,
+        status=WorkstationClientStatus.PENDING_PAYMENT,
+        automation_status=WorkstationAutomationStatus.INTAKE,
+    )
+    photo_dir = workstation_endpoints.professional_photo_root(workstation) / "v001"
+    photo_dir.mkdir(parents=True, exist_ok=True)
+    (photo_dir / "professional-photo.jpg").write_bytes(b"jpg")
+    first_version_dir = workstation_endpoints.next_landing_page_version_dir(workstation)
+    first_version_dir.mkdir(parents=True, exist_ok=True)
+    (first_version_dir / "preview.mp4").write_bytes(b"mp4")
+    (first_version_dir / "preview-message.txt").write_text("Primer boceto.", encoding="utf-8")
+
+    first_rows = workstation_endpoints.queue_workstation_preview(
+        client=workstation,
+        lead=lead,
+        version_dir=first_version_dir,
+        sequence_step=workstation_endpoints.WORKSTATION_PREVIEW_SEQUENCE_STEP,
+    )
+
+    second_version_dir = workstation_endpoints.next_landing_page_version_dir(workstation)
+    second_version_dir.mkdir(parents=True, exist_ok=True)
+    (second_version_dir / "preview.mp4").write_bytes(b"mp4")
+    (second_version_dir / "preview-message.txt").write_text("Revision.", encoding="utf-8")
+    second_rows = workstation_endpoints.queue_workstation_preview(
+        client=workstation,
+        lead=lead,
+        version_dir=second_version_dir,
+        sequence_step=workstation_endpoints.WORKSTATION_PREVIEW_SEQUENCE_STEP,
+    )
+
+    assert [row.media_type for row in first_rows] == ["image", "video"]
+    assert [row.media_type for row in second_rows] == ["video"]
+    assert all("professional-photo/" not in (row.media_path or "") for row in second_rows)
 
 
 def test_workstation_solo_page_codex_falls_back_to_api_key(monkeypatch, tmp_path) -> None:

@@ -110,10 +110,11 @@ restarting the job, and records the instruction in `progress.md`.
   awards, credentials, services, legal facts, or accounting facts.
 - If the client should receive more than the page preview, create
   `outbound-messages.json` in the page version with an ordered `messages` array.
-  Use it for separate text/media sends. When there is a professional photo,
-  send that image first as its own useful deliverable and ask if they like it,
-  then send the page preview video in the same delivery cycle. If the file is
-  absent, Workstation sends the default delivery plan.
+  Use it for separate text/media sends. When there is a professional photo that
+  has not already been sent in this client chat, send that image first as its
+  own useful deliverable and ask if they like it, then send the page preview
+  video in the same delivery cycle. Do not send the professional photo more than
+  once. If the file is absent, Workstation sends the default delivery plan.
 - Encourage clients to send any face photo when one is missing. It does not need
   to be professional; a profile photo, social media photo, or any casual photo
   where the face is visible is enough because Konecta improves it with AI.

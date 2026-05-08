@@ -375,12 +375,6 @@ def ensure_public_page_for_latest_version(client: WorkstationClient) -> Workstat
     return ensure_workstation_public_page(client, latest_version)
 
 
-def workstation_public_page_was_sent(client: WorkstationClient) -> bool:
-    """Return True when the client has already received the public trial URL."""
-    public_page = WorkstationPublicPage.get_by_client_id(client.id)
-    return public_page is not None and public_page.last_sent_at is not None
-
-
 def resolve_public_page_version_dir(public_page: WorkstationPublicPage) -> Path:
     """Resolve the version folder owned by a public trial page row."""
     path = resolve_data_path(public_page.version_path)
@@ -1026,7 +1020,7 @@ async def apply_workstation_scheduled_decision(
         version_dir=version_dir,
         sequence_step=WORKSTATION_REVISION_SEQUENCE_STEP if revision else WORKSTATION_PREVIEW_SEQUENCE_STEP,
     )
-    if revision and workstation_public_page_was_sent(fresh_client):
+    if revision:
         rows.append(
             queue_workstation_public_page_link(
                 client=fresh_client,
@@ -2067,6 +2061,9 @@ Decision rules:
 - If the client sent useful photos/content and a draft is helpful now, generate_or_revise_page is allowed.
 - If the client gave concrete changes to the current page with enough factual
   detail to edit safely, use generate_or_revise_page.
+- If the client starts giving content or concrete page changes, do not send only
+  another video; after the page is revised, the backend should also send the
+  public trial URL.
 - If the client asks to see, test, publish, or open the page online, use send_public_page_link.
 - If the client approves the preview but the public trial URL has not been sent yet, use send_public_page_link.
 - If the public trial URL was already sent and the client approves that public page, use approve_and_handoff.
@@ -2130,8 +2127,10 @@ def build_workstation_tool_agent_context(
   compact questions and wait.
 - Do not invent trajectory, experience, cases, awards, credentials, cities,
   services, or legal/accounting facts just to make a section longer.
-- If the client gave concrete page changes or useful assets with enough factual
-  detail to edit safely, use generate_or_revise_solo_page and then queue_workstation_deliverables.
+- If the client gave concrete page changes, content, or useful assets with
+  enough factual detail to edit safely, use generate_or_revise_solo_page, then
+  queue_workstation_deliverables, then send_workstation_public_page_link so they
+  can review the live page too.
 - If the client asks to see, test, publish, or open the page online, use send_workstation_public_page_link.
 - If the client approves the preview but public_trial_url_last_sent_at is never, send_workstation_public_page_link first.
 - If public_trial_url_last_sent_at exists and the client approves the public test page, use mark_preview_approved.
@@ -2403,6 +2402,9 @@ Client profile:
 Professional photo versions available:
 {photo_paths}
 
+Professional photo already sent in this chat:
+{"yes" if professional_photo_was_already_sent(lead) else "no"}
+
 Latest client messages for this version:
 {reply_text or "(no new reply text)"}
 
@@ -2414,9 +2416,11 @@ Requirements:
 - Write preview-message.txt with the exact WhatsApp message to send alongside
   the preview video. Choose copy that fits this client and this run. Ask for
   changes or approval clearly, but do not hardcode a generic template.
-- If a professional-photo version exists, treat it as a deliverable too. Prefer
+- If a professional-photo version exists and it has not already been sent in
+  this client chat, treat it as a deliverable too. Prefer
   outbound-messages.json with the standalone professional photo first, asking
-  if they like it, and the page preview video as the next message.
+  if they like it, and the page preview video as the next message. Never send
+  the same client's professional-photo deliverable more than once.
 - When the client should receive more than one WhatsApp item, also write
   outbound-messages.json with a {{"messages": [...]}} object. Each message can be
   text-only or include media_type plus media_path. Use this for deliverables
@@ -2799,6 +2803,21 @@ def build_professional_photo_outbound_message(
     )
 
 
+def is_professional_photo_outbound(message: WorkstationOutboundMessageSpec) -> bool:
+    """Return True when this message sends a generated professional photo."""
+    return bool(message.media_path and "professional-photo/" in message.media_path)
+
+
+def professional_photo_was_already_sent(lead: ContadoresLead) -> bool:
+    """Return True when this lead already received any professional-photo image."""
+    for message in ContadoresMessage.list_by_lead(lead.id):
+        if not message.from_me:
+            continue
+        if message.media_path and "professional-photo/" in message.media_path:
+            return True
+    return False
+
+
 def build_default_workstation_outbound_messages(
     *,
     client: WorkstationClient,
@@ -2930,7 +2949,11 @@ def queue_workstation_preview(
         version_dir=version_dir,
         sequence_step=sequence_step,
     )
+    skip_professional_photo = professional_photo_was_already_sent(lead)
     for message in outbound_messages:
+        if is_professional_photo_outbound(message) and skip_professional_photo:
+            append_workstation_progress(client, "Skipped professional photo delivery: it was already sent before.")
+            continue
         rows.append(
             enqueue_lead_outbound(
                 lead=lead,
@@ -2943,6 +2966,8 @@ def queue_workstation_preview(
                 media_filename=message.media_filename,
             )
         )
+        if is_professional_photo_outbound(message):
+            skip_professional_photo = True
     return rows
 
 
@@ -3094,7 +3119,7 @@ async def run_manual_solo_page_work(client_id: str, operator_prompt: str) -> Non
                     else WORKSTATION_PREVIEW_SEQUENCE_STEP
                 ),
             )
-            if revision and workstation_public_page_was_sent(fresh_client):
+            if revision:
                 rows.append(
                     queue_workstation_public_page_link(
                         client=fresh_client,
@@ -3559,14 +3584,13 @@ async def advance_solo_page_client(client: WorkstationClient, *, now: datetime) 
                 version_dir=version_dir,
                 sequence_step=WORKSTATION_REVISION_SEQUENCE_STEP,
             )
-            if workstation_public_page_was_sent(fresh_client):
-                rows.append(
-                    queue_workstation_public_page_link(
-                        client=fresh_client,
-                        lead=lead,
-                        text="Ya actualice la pagina. Puede revisarla aca y decirme si asi queda bien: {url}",
-                    )
+            rows.append(
+                queue_workstation_public_page_link(
+                    client=fresh_client,
+                    lead=lead,
+                    text="Ya actualice la pagina. Puede revisarla aca y decirme si asi queda bien: {url}",
                 )
+            )
         except WorkstationCodexStopped:
             mark_workstation_stopped_by_operator(fresh_client)
             return metrics
@@ -3706,14 +3730,13 @@ async def advance_solo_page_client(client: WorkstationClient, *, now: datetime) 
                 version_dir=version_dir,
                 sequence_step=WORKSTATION_REVISION_SEQUENCE_STEP,
             )
-            if workstation_public_page_was_sent(fresh_client):
-                rows.append(
-                    queue_workstation_public_page_link(
-                        client=fresh_client,
-                        lead=lead,
-                        text="Ya actualice la pagina. Puede revisarla aca y decirme si asi queda bien: {url}",
-                    )
+            rows.append(
+                queue_workstation_public_page_link(
+                    client=fresh_client,
+                    lead=lead,
+                    text="Ya actualice la pagina. Puede revisarla aca y decirme si asi queda bien: {url}",
                 )
+            )
         except WorkstationCodexStopped:
             mark_workstation_stopped_by_operator(fresh_client)
             return metrics

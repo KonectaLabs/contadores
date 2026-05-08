@@ -96,8 +96,12 @@ publish the stable public trial URL after your files exist.
 - If the client sent a useful photo, logo, service list, concrete copy, or
   factual change with enough detail to edit safely, and a preview is the best
   next step, then generate or revise the page.
-- First send video previews. Do not send the public trial URL just because it
-  exists.
+- First delivery can be video-first, but after the client starts giving content
+  or concrete changes for the page, do not send only another video. Generate or
+  revise the page, queue the video deliverable, and also send the public trial
+  URL so the client can review the live page.
+- Do not send the public trial URL just because it exists on a scheduled run
+  with no useful client-facing reason.
 - If the client asks to see, test, publish, open, or try the page online, use
   `send_workstation_public_page_link`.
 - If the client approves the video but the public trial URL has not been sent
@@ -168,10 +172,14 @@ documents, calculator, or office interior.
   `outbound-messages.json` with a `messages` array. This gives Codex freedom to
   send separate text messages and media attachments, for example the page
   preview video plus a standalone professional photo.
-- When a new professional-photo exists for the client, send it as its own image
-  deliverable and ask whether they like it. In the same delivery cycle, also
-  send the page preview video when it is ready; do not split this into separate
-  client turns. Prefer the order: professional photo first, page video second.
+- Send the generated professional photo as its own image deliverable only once
+  in the client chat. If a professional-photo was already sent before, do not
+  include it again in `outbound-messages.json`; send only the page/video/link
+  deliverables that are useful for the current turn.
+- When sending the professional photo for the first time, ask whether they like
+  it. In the same delivery cycle, also send the page preview video when it is
+  ready; do not split this into separate client turns. Prefer the order:
+  professional photo first, page video second.
 - Each `outbound-messages.json` item can include `text`, `media_type`,
   `media_path`, `media_caption`, `media_filename`, and optionally
   `sequence_step`. Supported media types are `image`, `video`, `audio`, and

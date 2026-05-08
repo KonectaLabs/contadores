@@ -609,11 +609,13 @@ un texto generico como fallback cuando ese archivo falta o esta vacio.
 Si Codex necesita mandar mas de un item al cliente, tambien puede escribir
 `outbound-messages.json` con una lista ordenada de mensajes y adjuntos
 (`image`, `video`, `audio` o `document`). Cuando hay foto profesional, se manda
-como imagen separada y se pregunta si le gusta; en el mismo ciclo de entrega
-tambien se manda el video de la pagina cuando termina de renderizar. El orden
-preferido es foto profesional primero y video del boceto despues. Si el archivo
-no existe o no tiene mensajes validos, Workstation arma el plan default: foto
-profesional disponible primero y MP4 con `preview-message.txt` despues.
+como imagen separada una sola vez en todo el chat del cliente y se pregunta si
+le gusta; en el mismo ciclo de entrega tambien se manda el video de la pagina
+cuando termina de renderizar. El orden preferido para esa primera entrega es
+foto profesional primero y video del boceto despues. Si el archivo no existe o
+no tiene mensajes validos, Workstation arma el plan default: foto profesional
+disponible primero solo si todavia no fue enviada y MP4 con
+`preview-message.txt` despues.
 
 El backend usa el Codex SDK async para Workstation y el bot conversacional. Cada
 lead conserva su thread en
@@ -641,13 +643,16 @@ Workstation muestra botones para abrir y copiar esa URL, y `profile.json`
 incluye `public_page` para que el agente Codex tambien la conozca.
 
 La URL de prueba se genera apenas existe `index.html` en una version y el
-backend termina de renderizar el preview. El primer envio al cliente sigue
-siendo video; el agente solo manda el link cuando el cliente pide ver/probar la
-pagina online o cuando ya aprobo el video y falta revisar la version publicada
-de prueba. Si despues pide cambios, se genera otra version y se puede reenviar
-el mismo link, que ya apunta a la version nueva. La aprobacion final llega recien
-cuando el cliente confirma la pagina publica de prueba; luego se handoffea para
-dominio, pago y publicacion final.
+backend termina de renderizar el preview. El primer envio al cliente puede ser
+video-first; cuando el cliente empieza a mandar contenido o cambios concretos,
+Workstation ya no debe mandar solo otro video: revisa/genera la pagina, encola
+el video y tambien manda el link publico para que vea la pagina online. Tambien
+manda el link cuando el cliente pide ver/probar la pagina online o cuando ya
+aprobo el video y falta revisar la version publicada de prueba. Si despues pide
+cambios, se genera otra version y se reenvia el mismo link, que ya apunta a la
+version nueva. La aprobacion final llega recien cuando el cliente confirma la
+pagina publica de prueba; luego se handoffea para dominio, pago y publicacion
+final.
 
 Workstation tambien agenda un heartbeat Codex automatico cada 12 horas para
 clientes `solo_pagina` activos. El heartbeat lee el contexto del cliente y puede
