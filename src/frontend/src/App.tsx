@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ClipboardEvent, DragEvent, FormEvent, ReactNode } from "react";
 import {
   ArrowsClockwise,
@@ -179,6 +179,39 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
   }, [delayMs, value]);
 
   return debounced;
+}
+
+function useScrollChatToLatestMessage(messages: MessageItem[], hasLead: boolean) {
+  const timelineRef = useRef<HTMLDivElement | null>(null);
+  const messageIds = messages.map((message) => message.id).join(",");
+
+  useLayoutEffect(() => {
+    if (!hasLead || !timelineRef.current || !messages.length) {
+      return;
+    }
+
+    const scrollContainer = findScrollContainer(timelineRef.current);
+    scrollContainer.scrollTop = scrollContainer.scrollHeight;
+  }, [hasLead, messages.length, messageIds]);
+
+  return timelineRef;
+}
+
+function findScrollContainer(element: HTMLElement): HTMLElement {
+  let current = element.parentElement;
+
+  while (current) {
+    const style = window.getComputedStyle(current);
+    const canScroll = /(auto|scroll)/.test(`${style.overflowY} ${style.overflow}`);
+
+    if (canScroll) {
+      return current;
+    }
+
+    current = current.parentElement;
+  }
+
+  return document.documentElement;
 }
 
 export function App() {
@@ -3828,6 +3861,8 @@ function MessageTimeline({
   acknowledgingIds: number[];
   onAcknowledgeDeliveryError: (message: MessageItem) => void | Promise<void>;
 }) {
+  const timelineRef = useScrollChatToLatestMessage(messages, hasLead);
+
   if (!hasLead) {
     return <p className="empty-note">Select a lead from the list.</p>;
   }
@@ -3839,7 +3874,7 @@ function MessageTimeline({
   }
 
   return (
-    <div className="ct-timeline">
+    <div className="ct-timeline" ref={timelineRef}>
       {messages.map((message) => {
         const direction = message.from_me ? "outbound" : "inbound";
         const deliveryStatus = String(message.delivery_status || "").toLowerCase();
