@@ -3336,6 +3336,14 @@ def run_quick_action_for_lead(
         )
         ContadoresLead.clear_conversation_processing(lead_id=lead.id)
         return updated or lead, []
+    elif normalized_action == "pause-automation":
+        updated = ContadoresLead.update_flow_state(
+            lead.id,
+            automation_paused=True,
+            automation_paused_reason="manual_pause",
+        )
+        ContadoresLead.clear_conversation_processing(lead_id=lead.id)
+        return updated or lead, []
     elif normalized_action == "send-loom":
         queued_rows = send_loom_sequence(lead=lead, config=config, assigned_by="operator")
     elif normalized_action == "send-video-check":
@@ -5290,6 +5298,14 @@ async def run_contadores_automation_tick(
                 continue
             lead = ContadoresLead.get_by_id(task.target_id)
             if lead is None or lead.funnel_id != funnel_id:
+                continue
+            if lead.automation_paused:
+                ScheduledAgentTask.mark_status(
+                    task.id,
+                    status="completed",
+                    error="skipped_automation_paused",
+                    timestamp=now,
+                )
                 continue
             ScheduledAgentTask.mark_status(task.id, status="running", timestamp=now)
             messages = ContadoresMessage.list_by_lead(lead.id)

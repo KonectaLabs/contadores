@@ -17,6 +17,7 @@ import {
   ListChecks,
   NotePencil,
   PaperPlaneTilt,
+  PauseCircle,
   Pulse,
   Robot,
   SpinnerGap,
@@ -163,6 +164,7 @@ type QuickActionName =
   | "send-calendly"
   | "send-calendly-link"
   | "manual-handoff"
+  | "pause-automation"
   | "mark-answered"
   | "mark-booked"
   | "close"
@@ -1626,6 +1628,7 @@ export function App() {
                 setShowSendModal(true);
               }}
               onManualBooked={() => runAction("mark-booked")}
+              onPauseAutomation={() => runAction("pause-automation")}
               onManualHandoff={() => runAction("manual-handoff")}
               onMarkAnswered={() => runAction("mark-answered")}
               onToggleClosed={() => runAction(selectedLead?.stage === "closed" ? "reopen" : "close")}
@@ -3645,6 +3648,7 @@ function LeadDetailHeader({
   inboxMode,
   onOpenSend,
   onManualBooked,
+  onPauseAutomation,
   onManualHandoff,
   onMarkAnswered,
   onToggleClosed,
@@ -3660,6 +3664,7 @@ function LeadDetailHeader({
   inboxMode: boolean;
   onOpenSend: () => void;
   onManualBooked: () => void;
+  onPauseAutomation: () => void;
   onManualHandoff: () => void;
   onMarkAnswered: () => void;
   onToggleClosed: () => void;
@@ -3738,6 +3743,12 @@ function LeadDetailHeader({
           <button type="button" className="ct-btn ct-btn-ghost" disabled={!lead || closed || booked || Boolean(actionBusy)} onClick={onManualBooked}>
             <CheckCircle size={15} weight="bold" />
             Booked
+          </button>
+        ) : null}
+        {!inboxMode ? (
+          <button type="button" className="ct-btn ct-btn-ghost" disabled={!lead || closed || paused || Boolean(actionBusy)} onClick={onPauseAutomation}>
+            <PauseCircle size={15} weight="bold" />
+            Pause bot
           </button>
         ) : null}
         {!inboxMode ? (

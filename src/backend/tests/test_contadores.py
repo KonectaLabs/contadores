@@ -2086,6 +2086,53 @@ def test_manual_booked_action_marks_booked_without_queueing_template(monkeypatch
     assert lead_payload["automation_paused_reason"] == "manual_booked"
 
 
+def test_pause_automation_action_keeps_stage_and_blocks_due_agent_followup(monkeypatch, tmp_path) -> None:
+    """Operators can stop bot automation without moving the lead or sending WhatsApp."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setattr(contadores_endpoints, "CODEX_AGENT_TOOLS_ENABLED", True)
+    monkeypatch.setattr(contadores_endpoints, "CODEX_AGENT_TOOLS_CONVERSATION_ENABLED", True)
+    ContadoresConfig.update(enabled=True)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-pause-automation",
+        phone="+5491888888879",
+        full_name="Paused Automation",
+    )
+    ContadoresLead.update_flow_state(
+        lead.id,
+        stage=ContadoresLeadStage.CALENDLY_SENT,
+        calendly_sent_at=now_utc() - timedelta(hours=1),
+    )
+    ScheduledAgentTask.create(
+        target_type="lead",
+        target_id=lead.id,
+        due_at=now_utc() - timedelta(minutes=1),
+        reason="follow-up test",
+        instruction="send a useful next message",
+    )
+
+    def fail_run_codex_agent(**kwargs):
+        raise AssertionError("paused lead should not wake Codex")
+
+    monkeypatch.setattr(contadores_endpoints, "run_codex_agent", fail_run_codex_agent)
+
+    with TestClient(app) as client:
+        pause_response = client.post(f"/api/contadores/leads/{lead.id}/actions/pause-automation")
+        tick_response = client.post("/api/contadores/automation/tick")
+        detail_response = client.get(f"/api/contadores/leads/{lead.id}")
+        pending_response = client.get("/api/contadores/messages/pending-delivery")
+
+    assert pause_response.status_code == 200
+    assert tick_response.status_code == 200
+    assert tick_response.json()["scheduled_agent_tasks_processed"] == 0
+    assert ScheduledAgentTask.list_due(now=now_utc()) == []
+    assert pending_response.json()["messages"] == []
+
+    lead_payload = detail_response.json()["lead"]
+    assert lead_payload["stage"] == "calendly_sent"
+    assert lead_payload["automation_paused"] is True
+    assert lead_payload["automation_paused_reason"] == "manual_pause"
+
+
 def test_booked_leads_do_not_expose_pending_manual_ping(monkeypatch, tmp_path) -> None:
     """Booked leads must stay out of WhatsApp dispatch even if a ping was queued earlier."""
     monkeypatch.setenv("FUNNELS_CONFIG_PATH", str(tmp_path / "funnels.json"))
