@@ -899,20 +899,41 @@ async def send_contadores_pending_alerts(
             )
         body = "\n".join(body_parts)
         first_receipt: DeliveryReceipt | None = None
+        failed_recipients: list[str] = []
         for recipient in recipients:
-            receipt = await email_provider.send_message(
-                inbox_id=alert_inbox.inbox_id,
-                inbox_address=alert_inbox.inbox_address,
-                recipient=recipient,
-                text=body,
-                subject=f"[{effective_funnel_label}] {subject_prefix} {item.phone}",
-                attachments=None,
-                thread_id=None,
-                in_reply_to=None,
-                references=None,
-            )
+            try:
+                receipt = await email_provider.send_message(
+                    inbox_id=alert_inbox.inbox_id,
+                    inbox_address=alert_inbox.inbox_address,
+                    recipient=recipient,
+                    text=body,
+                    subject=f"[{effective_funnel_label}] {subject_prefix} {item.phone}",
+                    attachments=None,
+                    thread_id=None,
+                    in_reply_to=None,
+                    references=None,
+                )
+            except Exception:
+                failed_recipients.append(recipient)
+                logger.exception(
+                    "Failed to send Contadores alert email for lead %s to %s.",
+                    item.lead_id,
+                    recipient,
+                )
+                continue
             if first_receipt is None:
                 first_receipt = receipt
+        if first_receipt is None:
+            outcomes.append(
+                {
+                    "lead_id": item.lead_id,
+                    "status": "failed",
+                    "reason": "alert_email_send_failed",
+                    "recipients": recipients,
+                    "failed_recipients": failed_recipients,
+                }
+            )
+            continue
         if runtime_alert and item.runtime_alert_id is not None:
             await mark_backend_contadores_runtime_alert_sent(
                 client,
@@ -926,6 +947,7 @@ async def send_contadores_pending_alerts(
                 "lead_id": item.lead_id,
                 "status": "sent",
                 "recipients": recipients,
+                "failed_recipients": failed_recipients,
             }
         )
 

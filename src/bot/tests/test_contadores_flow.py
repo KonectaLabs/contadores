@@ -710,6 +710,67 @@ def test_send_contadores_pending_alerts_includes_direct_lead_link(monkeypatch) -
     assert "2026-05-06T13:04:00Z - Lead: Ok ya lo vi, pero tengo dudas" in sent_calls[0]["text"]
 
 
+def test_send_contadores_pending_alerts_handles_provider_rejections(monkeypatch) -> None:
+    """One blocked alert recipient should not crash the worker or block other recipients."""
+    sent_calls: list[dict[str, str | None]] = []
+    marked_leads: list[str] = []
+
+    async def fake_fetch_pending_contadores_alerts(client, *, funnel_id="contadores"):
+        del client
+        del funnel_id
+        return [
+            PendingContadoresAlertItem(
+                lead_id="7bc8899e-f7ed-4c0b-90f4-ce9739b9b4fe",
+                full_name="Facu",
+                phone="+5491153484587",
+                email=None,
+                stage="needs_human",
+                latest_inbound_text="Tengo dudas",
+                conversation_transcript="Lead: Tengo dudas",
+                reason="Pidio revision humana.",
+                alert_emails=["blocked@example.com", "ops@example.com"],
+            )
+        ]
+
+    async def fake_ensure_alert_inbox():
+        return SimpleNamespace(inbox_id="alerts-inbox-1", inbox_address="alerts@example.com")
+
+    async def fake_send_message(**kwargs) -> DeliveryReceipt:
+        sent_calls.append(kwargs)
+        if kwargs["recipient"] == "blocked@example.com":
+            raise RuntimeError("Message rejected: recipient blocked")
+        return DeliveryReceipt(external_id="agentmail-alert-1")
+
+    async def fake_mark_backend_contadores_alert_sent(client, *, lead_id: str):
+        del client
+        marked_leads.append(lead_id)
+
+    monkeypatch.setattr(utils, "fetch_pending_contadores_alerts", fake_fetch_pending_contadores_alerts)
+    monkeypatch.setattr(utils, "mark_backend_contadores_alert_sent", fake_mark_backend_contadores_alert_sent)
+
+    outcomes = asyncio.run(
+        send_contadores_pending_alerts(
+            SimpleNamespace(),
+            email_provider=SimpleNamespace(
+                configured=True,
+                ensure_alert_inbox=fake_ensure_alert_inbox,
+                send_message=fake_send_message,
+            ),
+        )
+    )
+
+    assert outcomes == [
+        {
+            "lead_id": "7bc8899e-f7ed-4c0b-90f4-ce9739b9b4fe",
+            "status": "sent",
+            "recipients": ["blocked@example.com", "ops@example.com"],
+            "failed_recipients": ["blocked@example.com"],
+        }
+    ]
+    assert marked_leads == ["7bc8899e-f7ed-4c0b-90f4-ce9739b9b4fe"]
+    assert [call["recipient"] for call in sent_calls] == ["blocked@example.com", "ops@example.com"]
+
+
 def test_send_contadores_pending_alerts_handles_runtime_fallback_alert(monkeypatch) -> None:
     """Runtime Codex fallback alerts should email the error and mark the runtime alert row."""
     sent_calls: list[dict[str, str | None]] = []
