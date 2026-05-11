@@ -1887,6 +1887,26 @@ def text_shows_workstation_approval(text: str) -> bool:
     return any(marker in normalized for marker in approval_markers)
 
 
+def approval_decision_without_codex_if_obvious(
+    *, client: WorkstationClient, reply_text: str
+) -> WorkstationAgentDecision | None:
+    """When approval text is unambiguous, mirror public-link vs handoff without calling Codex."""
+    if not text_shows_workstation_approval(reply_text):
+        return None
+    public_page = ensure_public_page_for_latest_version(client)
+    if public_page is not None and public_page.last_sent_at is None:
+        return WorkstationAgentDecision(
+            action="send_public_page_link",
+            message="",
+            reason="Heuristic: approval before public trial URL was sent.",
+        )
+    return WorkstationAgentDecision(
+        action="approve_and_handoff",
+        message="",
+        reason="Heuristic: approval after public trial URL (or link already sent).",
+    )
+
+
 def parse_workstation_agent_decision(raw_text: str) -> WorkstationAgentDecision:
     """Parse Codex JSON into a conservative Workstation decision."""
     try:
@@ -3540,11 +3560,13 @@ async def advance_solo_page_client(client: WorkstationClient, *, now: datetime) 
         if not latest_inbound_is_quiet(replies, now=now):
             return metrics
         reply_text = "\n".join(message.text for message in replies if message.text.strip())
-        decision = await decide_workstation_next_action(
-            client=fresh_client,
-            lead=lead,
-            replies=replies,
-        )
+        decision = approval_decision_without_codex_if_obvious(client=fresh_client, reply_text=reply_text)
+        if decision is None:
+            decision = await decide_workstation_next_action(
+                client=fresh_client,
+                lead=lead,
+                replies=replies,
+            )
         append_workstation_progress(
             fresh_client,
             f"Agent decision: {decision.action}. {decision.reason[:240]}",
@@ -3720,12 +3742,14 @@ async def advance_solo_page_client(client: WorkstationClient, *, now: datetime) 
         if not latest_inbound_is_quiet(replies, now=now):
             return metrics
         reply_text = "\n".join(message.text for message in replies if message.text.strip())
-        decision = await decide_workstation_next_action(
-            client=fresh_client,
-            lead=lead,
-            replies=replies,
-            handoff_resume=True,
-        )
+        decision = approval_decision_without_codex_if_obvious(client=fresh_client, reply_text=reply_text)
+        if decision is None:
+            decision = await decide_workstation_next_action(
+                client=fresh_client,
+                lead=lead,
+                replies=replies,
+                handoff_resume=True,
+            )
         append_workstation_progress(
             fresh_client,
             f"Post-handoff agent decision: {decision.action}. {decision.reason[:240]}",
