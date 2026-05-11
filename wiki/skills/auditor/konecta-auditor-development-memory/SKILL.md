@@ -333,7 +333,7 @@ description: Canonical persistent memory log for Konecta Auditor. Use as the sin
     - run cheap sanity checks,
     - commit only intended files,
     - push `main`,
-    - run `bash ./deploy_to_server.sh`,
+    - run `./deploy_to_server.sh`,
     - verify server HEAD, `docker compose ps -a`, and backend `/health`.
   - if the SSH stream is interrupted and `bot` is left exited, rerun the canonical deploy instead of doing manual remote repair.
 - Reason:

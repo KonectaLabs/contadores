@@ -1,0 +1,15 @@
+{
+  "name": "loom-deck-export-negocios",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "sync-export": "node sync-deck-export-60s.mjs",
+    "pptx": "node sync-deck-export-60s.mjs && node export-pptx-60s.mjs",
+    "sync-export:60s": "node sync-deck-export-60s.mjs",
+    "pptx:60s": "node sync-deck-export-60s.mjs && node export-pptx-60s.mjs"
+  },
+  "dependencies": {
+    "pptxgenjs": "^3.12.0",
+    "playwright": "^1.49.0"
+  }
+}

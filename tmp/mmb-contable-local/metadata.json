@@ -1,0 +1,18 @@
+{
+  "created_at": "2026-05-08T00:00:00-03:00",
+  "operation": "manual_local_revision",
+  "notes": "Standalone local MMB Contable page. Not created through Workstation automation. No outbound message was queued or sent.",
+  "source_version": "data/workstation/clients/mmb-previsional-jubilaciones/landing-page/v002",
+  "generated_photo_original": "/Users/fgoiriz/.codex/generated_images/019e09c1-4aff-7982-9629-af84eee5922c/ig_0eb5ccf1dd2cd9530169fe69b989d88199863aa9afd4a3918d.png",
+  "generated_photo_copy": "tmp/mmb-contable-local/assets/mariana-professional.png",
+  "page_path": "tmp/mmb-contable-local/index.html",
+  "content_focus": [
+    "MMB Contable brand",
+    "ARCA/AFIP",
+    "embargos",
+    "inspecciones y requerimientos",
+    "ventas online y Mercado Libre",
+    "monotributo, responsable inscripto, IVA e Ingresos Brutos",
+    "IGJ y sociedades as secondary scope"
+  ]
+}

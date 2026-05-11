@@ -499,6 +499,8 @@ Use:
 Escribo desde Argentina.
 
 Somos Konecta Labs y trabajamos remoto para toda Latinoamerica.
+
+La propuesta funciona bien para su mercado: la idea es traerle clientes potenciales directo a su WhatsApp mediante una pagina web moderna y campanas enfocadas.
 ```
 
 If they ask how remote work applies locally:
@@ -508,7 +510,7 @@ Si, entiendo la duda.
 
 Escribo desde Argentina y trabajamos remoto para toda Latinoamerica.
 
-Las campanas igual se configuran para atraer personas de su zona y que le escriban directo a su WhatsApp.
+Las campanas igual se configuran para atraer personas de su zona y que le escriban directo a su WhatsApp. Eso lo acompanamos con una pagina profesional para convertir mejor esas consultas.
 ```
 
 Lead questions foreign number, Bolivia presence, and refund guarantee:
@@ -537,6 +539,21 @@ Si le interesa avanzar con esa mentalidad, con gusto lo vemos en una reunion cor
 ```
 
 ## Close / No Fit
+
+Lead after price/proposal:
+
+```text
+Mas adelante. Gracias
+```
+
+Use exactly this short diagnostic reply:
+
+```text
+1) Muy caros los 300 dolares
+2) No me sirve la pagina web + publicidades
+3) No es mi momento para invertir
+4) Otro motivo
+```
 
 Lead:
 

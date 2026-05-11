@@ -58,7 +58,7 @@ Run from repo root:
 
 ```bash
 git push origin main
-bash ./deploy_to_server.sh
+./deploy_to_server.sh
 ```
 
 Why:
@@ -111,7 +111,11 @@ Important distinction:
 ### Case 1: `deploy_to_server.sh` says permission denied
 Run:
 ```bash
-bash ./deploy_to_server.sh
+chmod +x ./deploy_to_server.sh
+git add deploy_to_server.sh
+git commit -m "Make deploy script executable"
+git push origin main
+./deploy_to_server.sh
 ```
 
 ### Case 2: Backend is healthy but bot is exited because the deploy stream was interrupted
@@ -121,7 +125,7 @@ Cause:
 Fix:
 - rerun the canonical deploy again:
 ```bash
-bash ./deploy_to_server.sh
+./deploy_to_server.sh
 ```
 - then re-check:
   - `docker compose ps -a`
