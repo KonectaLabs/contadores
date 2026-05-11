@@ -11,6 +11,7 @@ from typing import Any, Callable
 import httpx
 from pydantic import BaseModel, Field, ValidationError
 
+from backend.ai.codex_guard import assert_codex_enabled_for_target
 from backend.ai.codex_agent_runtime import (
     CodexAgentToolSpec,
     agent_memory_path,
@@ -285,6 +286,7 @@ def get_lead_context(arguments: dict[str, Any]) -> dict[str, Any]:
             "full_name": lead.full_name,
             "phone": lead.phone,
             "email": lead.email,
+            "codex_enabled": lead.codex_enabled,
             "automation_paused": lead.automation_paused,
             "automation_paused_reason": lead.automation_paused_reason,
             "last_inbound_at": lead.last_inbound_at.isoformat() if lead.last_inbound_at else None,
@@ -729,7 +731,12 @@ def get_workstation_context(arguments: dict[str, Any]) -> dict[str, Any]:
             "approved_at": client.approved_at.isoformat() if client.approved_at else None,
         },
         "public_page": public_page_payload,
-        "lead": {"id": lead.id, "full_name": lead.full_name, "phone": lead.phone},
+        "lead": {
+            "id": lead.id,
+            "full_name": lead.full_name,
+            "phone": lead.phone,
+            "codex_enabled": lead.codex_enabled,
+        },
         "messages": [
             {
                 "id": message.id,
@@ -912,6 +919,8 @@ def call_tool(*, run_id: str, tool_name: str, arguments: dict[str, Any]) -> dict
     try:
         if handler is None:
             raise AgentToolError(f"Unknown tool: {clean_tool_name}")
+        if target_type in {"lead", "workstation_client"} and target_id:
+            assert_codex_enabled_for_target(target_type, target_id)
         if clean_tool_name in RUN_AWARE_TOOLS:
             result = handler(arguments, run_id=run_id)
         else:

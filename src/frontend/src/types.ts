@@ -215,6 +215,7 @@ export interface LeadSummary {
   last_inbound_at: string | null;
   last_outbound_at: string | null;
   archived_at: string | null;
+  codex_enabled: boolean;
   strategy_assignments: StrategyAssignment[];
   workstation_client_id: string | null;
   automation_paused: boolean;

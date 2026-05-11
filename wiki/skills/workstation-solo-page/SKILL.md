@@ -69,6 +69,9 @@ publish the stable public trial URL after your files exist.
   `send_workstation_public_page_link`, `check_domain_availability`,
   `mark_preview_approved`, or `handoff_human`. Do not return a JSON plan when a
   tool call is the right action.
+- If the linked CRM lead has `codex_enabled=false`, do not run Codex work,
+  schedule heartbeats, steer an active run, generate a page, or generate/edit a
+  professional photo. Treat `codex_disabled` as a hard stop.
 - If the client asks how to give you content, ask them to send the content and
   say you will add it. When asking for a face photo, lower the friction: tell
   them any photo works, it does not need to be professional, and it can be their

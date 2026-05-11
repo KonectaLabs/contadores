@@ -165,6 +165,8 @@ type QuickActionName =
   | "send-calendly-link"
   | "manual-handoff"
   | "pause-automation"
+  | "enable-codex"
+  | "disable-codex"
   | "mark-answered"
   | "mark-booked"
   | "close"
@@ -1043,6 +1045,28 @@ export function App() {
     }
   }
 
+  async function toggleLeadCodex(lead: LeadSummary | null | undefined, enabled: boolean) {
+    if (!lead?.id) {
+      return;
+    }
+    const action: QuickActionName = enabled ? "enable-codex" : "disable-codex";
+    setActionBusy(action);
+    try {
+      await apiFetch<QuickActionResponse>(`/api/contadores/leads/${lead.id}/actions/${action}`, {
+        method: "POST",
+      });
+      await loadDashboard();
+      await loadDetail(lead.id);
+      if (selectedWorkstationClientId) {
+        await loadWorkstationDetail(selectedWorkstationClientId);
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not update Codex switch.");
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
   async function submitSendModal(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const leadId = selectedLead?.id ?? selectedLeadId;
@@ -1488,6 +1512,7 @@ export function App() {
           onStartSoloPageCodexWork={startSoloPageCodexWork}
           onStopSoloPageCodexWork={stopSoloPageCodexWork}
           onSteerSoloPageCodexWork={steerSoloPageCodexWork}
+          onToggleLeadCodex={toggleLeadCodex}
           onCloseWorkstationClient={closeWorkstationClient}
           onProfessionalPhotoEditPromptChange={updateProfessionalPhotoEditPrompt}
           onEditProfessionalPhoto={(version) => editProfessionalPhoto(version)}
@@ -1635,6 +1660,7 @@ export function App() {
               onDelete={deleteLead}
               onConvert={convertLeadToWorkstation}
               onStartSoloPage={startSoloPageWorkstation}
+              onToggleCodex={(enabled) => toggleLeadCodex(selectedLead, enabled)}
               onCopyContext={copySelectedLeadContext}
               onOpenWorkstation={openWorkstationClient}
               copyStatus={leadContextCopyStatus}
@@ -2262,6 +2288,7 @@ function WorkstationView({
   onStartSoloPageCodexWork,
   onStopSoloPageCodexWork,
   onSteerSoloPageCodexWork,
+  onToggleLeadCodex,
   onCloseWorkstationClient,
   onProfessionalPhotoEditPromptChange,
   onEditProfessionalPhoto,
@@ -2300,6 +2327,7 @@ function WorkstationView({
   onStartSoloPageCodexWork: (operatorPrompt: string) => boolean | Promise<boolean>;
   onStopSoloPageCodexWork: () => void | Promise<void>;
   onSteerSoloPageCodexWork: (message: string) => boolean | Promise<boolean>;
+  onToggleLeadCodex: (lead: LeadSummary | null | undefined, enabled: boolean) => void | Promise<void>;
   onCloseWorkstationClient: () => void | Promise<void>;
   onProfessionalPhotoEditPromptChange: (version: string, prompt: string) => void;
   onEditProfessionalPhoto: (version: string) => void;
@@ -2334,7 +2362,8 @@ function WorkstationView({
   const professionalPhotoJobBusy = currentProfessionalPhotoJob?.status === "queued" || currentProfessionalPhotoJob?.status === "running";
   const soloPageBusy = actionBusy === "solo-page-work" || Boolean(automationState?.is_live_working);
   const canStopSoloPageWork = activeClient?.work_type === "solo_pagina" && Boolean(automationState?.is_live_working);
-  const canStartSoloPageWork = activeClient?.work_type === "solo_pagina" && !soloPageBusy && !workstationClosed;
+  const codexEnabled = Boolean(selectedLead?.codex_enabled);
+  const canStartSoloPageWork = activeClient?.work_type === "solo_pagina" && codexEnabled && !soloPageBusy && !workstationClosed;
   const workstationStateIsReady = (automationState?.label ?? "").toLowerCase().includes("ready");
   const workstationHasMissingLiveProcess = activeClient?.automation_status === "drafting" || activeClient?.automation_status === "revision_requested"
     ? !automationState?.is_live_working && !automationState?.is_stale
@@ -2576,6 +2605,15 @@ function WorkstationView({
                   </div>
                 </div>
                 <div className="ct-detail-head-actions">
+                  <label className="ct-codex-switch" title={codexEnabled ? "Codex enabled for this lead" : "Codex disabled for this lead"}>
+                    <input
+                      type="checkbox"
+                      checked={codexEnabled}
+                      disabled={!selectedLead || Boolean(actionBusy)}
+                      onChange={(event) => onToggleLeadCodex(selectedLead, event.target.checked)}
+                    />
+                    <span>Codex</span>
+                  </label>
                   <div className="workstation-action-menu">
                     <button
                       type="button"
@@ -2614,7 +2652,7 @@ function WorkstationView({
                           type="button"
                           role="menuitem"
                           onClick={openSoloPageSteerModal}
-                          disabled={!canStopSoloPageWork || actionBusy === "solo-page-steer"}
+                          disabled={!codexEnabled || !canStopSoloPageWork || actionBusy === "solo-page-steer"}
                         >
                           <PaperPlaneTilt size={16} weight="bold" />
                           <span>Steer Codex</span>
@@ -2623,7 +2661,7 @@ function WorkstationView({
                           type="button"
                           role="menuitem"
                           onClick={openProfessionalPhotoModal}
-                          disabled={workstationClosed || !imageAssets.length || professionalPhotoJobBusy || actionBusy === "professional-photo-start"}
+                          disabled={!codexEnabled || workstationClosed || !imageAssets.length || professionalPhotoJobBusy || actionBusy === "professional-photo-start"}
                         >
                           <Camera size={16} weight="bold" />
                           <span>Hacer foto profesional</span>
@@ -3655,6 +3693,7 @@ function LeadDetailHeader({
   onDelete,
   onConvert,
   onStartSoloPage,
+  onToggleCodex,
   onCopyContext,
   onOpenWorkstation,
   copyStatus,
@@ -3671,6 +3710,7 @@ function LeadDetailHeader({
   onDelete: () => void;
   onConvert: () => void;
   onStartSoloPage: () => void;
+  onToggleCodex: (enabled: boolean) => void | Promise<void>;
   onCopyContext: () => void | Promise<void>;
   onOpenWorkstation: (clientId: string) => void | Promise<void>;
   copyStatus: string;
@@ -3678,6 +3718,7 @@ function LeadDetailHeader({
   const closed = lead?.stage === "closed";
   const booked = lead?.stage === "booked";
   const paused = Boolean(lead?.automation_paused);
+  const codexEnabled = Boolean(lead?.codex_enabled);
   const canMarkAnswered = lead?.manual_reply_status === "needs_reply" && !closed;
   const converted = Boolean(lead?.workstation_client_id);
 
@@ -3699,6 +3740,15 @@ function LeadDetailHeader({
         </div>
       </div>
       <div className="ct-detail-head-actions">
+        <label className="ct-codex-switch" title={codexEnabled ? "Codex enabled for this lead" : "Codex disabled for this lead"}>
+          <input
+            type="checkbox"
+            checked={codexEnabled}
+            disabled={!lead || Boolean(actionBusy)}
+            onChange={(event) => onToggleCodex(event.target.checked)}
+          />
+          <span>Codex</span>
+        </label>
         <button type="button" className="ct-btn ct-btn-primary" disabled={!lead || closed || Boolean(actionBusy)} onClick={onOpenSend}>
           <PaperPlaneTilt size={15} weight="bold" />
           Send

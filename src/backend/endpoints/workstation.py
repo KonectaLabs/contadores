@@ -23,6 +23,7 @@ from fastapi.responses import FileResponse, RedirectResponse
 from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
+from backend.ai.codex_guard import CODEX_DISABLED_MESSAGE, assert_codex_enabled_for_lead
 from backend.ai.codex_agent_runtime import run_codex_agent
 from backend.ai.codex_agent_tools import tool_specs as codex_agent_tool_specs
 import backend.database as database_module
@@ -49,6 +50,7 @@ from backend.config import (
     WA_CALLBACK_URL,
 )
 from backend.database import (
+    ContadoresLeadStage,
     ContadoresLead,
     ContadoresMessage,
     ContadoresRuntimeAlert,
@@ -66,6 +68,7 @@ from backend.endpoints.contadores import (
     ContadoresMessageResponse,
     build_lead_summary,
     build_message_response,
+    derive_effective_lead_stage,
     enqueue_lead_outbound,
     format_timestamp_seconds,
     get_effective_funnel_config,
@@ -218,6 +221,30 @@ def observed_solo_page_live_status(client_id: str) -> dict[str, object]:
         "has_active_codex_turn": has_turn,
         "live_started_at": format_timestamp_seconds(active_solo_page_codex_started_at.get(client_id)),
     }
+
+
+async def stop_workstation_codex_for_lead(lead_id: str, *, reason: str) -> None:
+    """Interrupt live Workstation Codex work for the lead, when present."""
+    client = WorkstationClient.get_by_lead_id(lead_id)
+    if client is None:
+        return
+    turn = active_solo_page_codex_turns.get(client.id)
+    if turn is not None:
+        await interrupt_turn(turn)
+    task = active_solo_page_codex_tasks.get(client.id)
+    cancel = getattr(task, "cancel", None)
+    if callable(cancel):
+        cancel()
+    manual_solo_page_work_client_ids.discard(client.id)
+    solo_page_stop_requested_client_ids.add(client.id)
+    if client.automation_status in {
+        WorkstationAutomationStatus.DRAFTING,
+        WorkstationAutomationStatus.REVISION_REQUESTED,
+    }:
+        mark_workstation_stopped_by_operator(client, clear_stop_request=False)
+    else:
+        clear_solo_page_live_work(client.id)
+    append_workstation_progress(client, reason)
 
 
 def workstation_root() -> Path:
@@ -878,6 +905,38 @@ def workstation_heartbeat_is_due(
     return now >= anchor + workstation_heartbeat_interval()
 
 
+def workstation_lead_is_closed(lead: ContadoresLead) -> bool:
+    """Return True when the linked CRM lead is already closed."""
+    return derive_effective_lead_stage(lead) == ContadoresLeadStage.CLOSED
+
+
+def assert_workstation_codex_enabled(lead: ContadoresLead | None) -> None:
+    """Block Workstation Codex work when the CRM switch is off."""
+    try:
+        assert_codex_enabled_for_lead(lead)
+    except Exception as error:
+        raise HTTPException(status_code=409, detail=CODEX_DISABLED_MESSAGE) from error
+
+
+def close_workstation_for_closed_lead(
+    client: WorkstationClient,
+    *,
+    now: datetime,
+) -> WorkstationClient:
+    """Stop Workstation automation when the source CRM lead was closed elsewhere."""
+    clear_solo_page_live_work(client.id)
+    manual_solo_page_work_client_ids.discard(client.id)
+    solo_page_stop_requested_client_ids.discard(client.id)
+    updated = WorkstationClient.update_automation_state(
+        client.id,
+        status=WorkstationClientStatus.CLOSED,
+        automation_status=WorkstationAutomationStatus.NEEDS_HUMAN,
+        last_automation_handled_at=now,
+    ) or client
+    append_workstation_progress(updated, "Linked CRM lead is closed. Workstation automation stopped.")
+    return updated
+
+
 def ensure_workstation_codex_heartbeat_tasks(*, now: datetime, limit: int = 300) -> int:
     """Create due periodic Codex heartbeat tasks for active solo-page clients."""
     if not WORKSTATION_CODEX_HEARTBEAT_ENABLED:
@@ -886,6 +945,12 @@ def ensure_workstation_codex_heartbeat_tasks(*, now: datetime, limit: int = 300)
     interval_seconds = int(workstation_heartbeat_interval().total_seconds())
     bucket = int(now.timestamp() // max(1, interval_seconds))
     for client in WorkstationClient.list_recent(limit=limit, work_type=WorkstationClientWorkType.SOLO_PAGINA):
+        lead = ContadoresLead.get_by_id(client.lead_id)
+        if lead is not None and workstation_lead_is_closed(lead):
+            close_workstation_for_closed_lead(client, now=now)
+            continue
+        if lead is None or not lead.codex_enabled:
+            continue
         if not workstation_heartbeat_client_is_candidate(client):
             continue
         if ScheduledAgentTask.get_open_for_target(
@@ -925,6 +990,8 @@ async def apply_workstation_scheduled_decision(
 ) -> dict[str, int]:
     """Apply a Codex decision produced by a scheduled Workstation heartbeat."""
     metrics = empty_workstation_metrics()
+    if not lead.codex_enabled:
+        return metrics
     fresh_client = WorkstationClient.get_by_id(client.id) or client
     reply_text = "\n".join(message.text for message in replies if message.text.strip())
     append_workstation_progress(
@@ -1101,6 +1168,24 @@ async def run_workstation_automation_tick() -> WorkstationAutomationTickResponse
             if lead is None:
                 ScheduledAgentTask.mark_status(task.id, status="failed", error="Lead not found.")
                 summary.failures += 1
+                continue
+            if workstation_lead_is_closed(lead):
+                close_workstation_for_closed_lead(client, now=now)
+                ScheduledAgentTask.mark_status(
+                    task.id,
+                    status="completed",
+                    error="Skipped because the linked CRM lead is closed.",
+                    timestamp=now,
+                )
+                summary.scheduled_agent_tasks_processed += 1
+                continue
+            if not lead.codex_enabled:
+                ScheduledAgentTask.mark_status(
+                    task.id,
+                    status="completed",
+                    error="skipped_codex_disabled",
+                    timestamp=now,
+                )
                 continue
             try:
                 messages = ContadoresMessage.list_by_lead(lead.id)
@@ -1298,6 +1383,8 @@ async def generate_professional_photo(
     context: str,
 ) -> WorkstationProfessionalPhotoVersion:
     """Run Codex SDK to create a professional photo version."""
+    lead = ContadoresLead.get_by_id(client.lead_id)
+    assert_workstation_codex_enabled(lead)
     source_paths = [resolve_media_path(asset.stored_path) for asset in assets]
     resolved_source_paths = [path for path in source_paths if path is not None]
     version_dir = next_professional_photo_version_dir(client)
@@ -1409,6 +1496,8 @@ async def edit_professional_photo(
     user_prompt: str,
 ) -> WorkstationProfessionalPhotoVersion:
     """Run Codex SDK to create an edited professional photo version."""
+    lead = ContadoresLead.get_by_id(client.lead_id)
+    assert_workstation_codex_enabled(lead)
     base_dir = professional_photo_root(client) / Path(base_version).name
     base_image = base_dir / "professional-photo.jpg"
     if not base_image.exists():
@@ -2151,6 +2240,8 @@ async def run_workstation_tool_agent(
     scheduled_instruction: str = "",
 ) -> WorkstationAgentDecision | None:
     """Let Codex act through product tools and return no fallback decision if it acted."""
+    if not lead.codex_enabled:
+        return WorkstationAgentDecision(action="no_action", reason=CODEX_DISABLED_MESSAGE)
     if not (CODEX_AGENT_TOOLS_ENABLED and CODEX_AGENT_TOOLS_WORKSTATION_ENABLED):
         return None
 
@@ -2216,6 +2307,8 @@ async def decide_workstation_next_action(
     scheduled_instruction: str = "",
 ) -> WorkstationAgentDecision:
     """Let Codex choose whether to reply, ask, revise, approve, or hand off."""
+    if not lead.codex_enabled:
+        return WorkstationAgentDecision(action="no_action", reason=CODEX_DISABLED_MESSAGE)
     reply_text = "\n".join(message.text for message in replies if message.text.strip())
     tool_decision = await run_workstation_tool_agent(
         client=client,
@@ -2512,6 +2605,7 @@ async def generate_solo_page_version(
     operator_prompt: str = "",
 ) -> Path:
     """Run Codex to create one landing-page version and render its preview video."""
+    assert_workstation_codex_enabled(lead)
     if client.id in solo_page_stop_requested_client_ids:
         raise WorkstationCodexStopped("Codex was stopped by the operator.")
     version_dir = next_landing_page_version_dir(client)
@@ -3080,6 +3174,9 @@ async def run_manual_solo_page_work(client_id: str, operator_prompt: str) -> Non
         if lead is None:
             append_workstation_progress(client, "Manual Codex run failed: source lead was not found.")
             return
+        if not lead.codex_enabled:
+            append_workstation_progress(client, f"Manual Codex run skipped: {CODEX_DISABLED_MESSAGE}")
+            return
 
         now = now_utc()
         messages = ContadoresMessage.list_by_lead(lead.id)
@@ -3261,6 +3358,9 @@ async def advance_solo_page_client(client: WorkstationClient, *, now: datetime) 
             last_automation_handled_at=now,
         )
         metrics["failures"] = 1
+        return metrics
+    if workstation_lead_is_closed(lead):
+        close_workstation_for_closed_lead(client, now=now)
         return metrics
 
     messages = ContadoresMessage.list_by_lead(lead.id)
@@ -4263,6 +4363,7 @@ async def start_workstation_solo_page_work(
         raise HTTPException(status_code=409, detail="This Workstation lead is closed.")
     if client.work_type != WorkstationClientWorkType.SOLO_PAGINA:
         raise HTTPException(status_code=400, detail="This action is only available for solo-page clients.")
+    assert_workstation_codex_enabled(ContadoresLead.get_by_id(client.lead_id))
 
     operator_prompt = command.prompt.strip()
     if not operator_prompt:
@@ -4339,6 +4440,7 @@ async def steer_workstation_solo_page_work(
     client = get_required_client(client_id)
     if client.work_type != WorkstationClientWorkType.SOLO_PAGINA:
         raise HTTPException(status_code=400, detail="This action is only available for solo-page clients.")
+    assert_workstation_codex_enabled(ContadoresLead.get_by_id(client.lead_id))
     turn = active_solo_page_codex_turns.get(client.id)
     if turn is None or client.automation_status not in {
         WorkstationAutomationStatus.DRAFTING,
@@ -4367,6 +4469,7 @@ async def start_workstation_professional_photo_job(
 ) -> WorkstationProfessionalPhotoJobResponse:
     """Start async professional portrait generation from selected client media."""
     client = get_required_client(client_id)
+    assert_workstation_codex_enabled(ContadoresLead.get_by_id(client.lead_id))
     assets = get_client_image_assets(client, command.media_asset_ids)
 
     active_job = get_active_professional_photo_job(client.id)
@@ -4413,6 +4516,7 @@ async def create_workstation_professional_photo(
 ) -> WorkstationProfessionalPhotoVersion:
     """Generate a professional portrait from selected client media images."""
     client = get_required_client(client_id)
+    assert_workstation_codex_enabled(ContadoresLead.get_by_id(client.lead_id))
     assets = get_client_image_assets(client, command.media_asset_ids)
     version = await generate_professional_photo(
         client=client,
@@ -4432,6 +4536,7 @@ async def edit_workstation_professional_photo(
 ) -> WorkstationProfessionalPhotoVersion:
     """Generate a new professional portrait version from a user edit prompt."""
     client = get_required_client(client_id)
+    assert_workstation_codex_enabled(ContadoresLead.get_by_id(client.lead_id))
     assets = get_client_image_assets(client, command.media_asset_ids) if command.media_asset_ids else []
     version = await edit_professional_photo(
         client=client,

@@ -51,6 +51,20 @@ Cada funnel contiene:
 - emails de alerta;
 - ventanas de espera.
 
+## Switch central de Codex por lead
+
+Cada lead tiene `codex_enabled`. Si esta apagado, ningun path con Codex puede
+correr para ese lead: bot conversacional Codex, agent tools, wake-ups
+agendados, Workstation solo-page, heartbeats, steer y foto profesional. La UI
+muestra el switch en el header del chat y en Workstation. Al apagarlo se limpian
+los wake-ups pendientes de ese lead y del cliente Workstation asociado, y se
+interrumpe cualquier Codex vivo de Workstation.
+
+Los leads nuevos nacen con Codex apagado salvo que se configure
+`CONTADORES_LEAD_CODEX_ENABLED_DEFAULT=true`. Las automations externas de
+follow-up reciben `codex_enabled` y la exclusion `codex_disabled`; sus endpoints
+internos rechazan mutaciones o mensajes para leads con el switch apagado.
+
 Template opener inicial:
 
 - Contadores usa `contadores_intro_nombre_pais_es_v1`.

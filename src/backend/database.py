@@ -33,6 +33,10 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 DEFAULT_DATABASE_URL = f"sqlite:///{DATA_DIR / 'database.sqlite'}"
 DATABASE_URL = os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL)
+DEFAULT_CONTADORES_LEAD_CODEX_ENABLED = (
+    os.getenv("CONTADORES_LEAD_CODEX_ENABLED_DEFAULT", "").strip().lower()
+    in {"1", "true", "yes", "on"}
+)
 
 
 def _is_sqlite_url(database_url: str) -> bool:
@@ -1027,6 +1031,7 @@ class ContadoresLead(SQLModel, table=True):
     conversation_processing_latest_inbound_id: int | None = Field(default=None, index=True)
     codex_conversation_thread_id: str | None = Field(default=None, index=True)
     archived_at: datetime | None = Field(default=None, index=True)
+    codex_enabled: bool = Field(default_factory=lambda: DEFAULT_CONTADORES_LEAD_CODEX_ENABLED, index=True)
     automation_paused: bool = Field(default=False, index=True)
     automation_paused_reason: str | None = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -1356,6 +1361,36 @@ class ContadoresLead(SQLModel, table=True):
             return item
 
     @classmethod
+    def set_codex_enabled(cls, lead_id: str, *, enabled: bool) -> Optional["ContadoresLead"]:
+        """Toggle whether Codex may run for one lead."""
+        with Session(engine) as session:
+            item = session.get(cls, lead_id)
+            if item is None:
+                return None
+            item.codex_enabled = bool(enabled)
+            item.updated_at = datetime.now(timezone.utc)
+            session.add(item)
+            session.commit()
+            session.refresh(item)
+            session.expunge(item)
+            return item
+
+    @classmethod
+    def disable_codex_for_all(cls) -> int:
+        """Disable lead-level Codex for all stored Contadores leads."""
+        with engine.begin() as connection:
+            result = connection.exec_driver_sql(
+                """
+                UPDATE contadores_leads
+                SET codex_enabled = 0,
+                    updated_at = ?
+                WHERE codex_enabled != 0
+                """,
+                (datetime.now(timezone.utc),),
+            )
+            return int(result.rowcount or 0)
+
+    @classmethod
     def set_tags(cls, lead_id: str, *, tags: list[str]) -> Optional["ContadoresLead"]:
         """Replace the operator tags for one lead."""
         with Session(engine) as session:
@@ -1443,6 +1478,7 @@ class ContadoresLead(SQLModel, table=True):
         last_outbound_at: datetime | None = None,
         archived_at: datetime | None = None,
         clear_archived_at: bool = False,
+        codex_enabled: bool | None = None,
         automation_paused: bool | None = None,
         automation_paused_reason: str | None = None,
     ) -> Optional["ContadoresLead"]:
@@ -1499,6 +1535,8 @@ class ContadoresLead(SQLModel, table=True):
                 item.archived_at = archived_at
             elif clear_archived_at:
                 item.archived_at = None
+            if codex_enabled is not None:
+                item.codex_enabled = bool(codex_enabled)
             if automation_paused is not None:
                 item.automation_paused = automation_paused
                 if automation_paused is False:
@@ -2307,6 +2345,37 @@ class ScheduledAgentTask(SQLModel, table=True):
             session.refresh(row)
             session.expunge(row)
             return row
+
+    @classmethod
+    def complete_open_for_target(
+        cls,
+        *,
+        target_type: str,
+        target_id: str,
+        error: str,
+        timestamp: datetime | None = None,
+    ) -> int:
+        """Complete pending/running wake-up tasks for one target."""
+        now = timestamp or datetime.now(timezone.utc)
+        with engine.begin() as connection:
+            result = connection.exec_driver_sql(
+                """
+                UPDATE scheduled_agent_tasks
+                SET status = 'completed',
+                    completed_at = ?,
+                    last_error = ?
+                WHERE target_type = ?
+                  AND target_id = ?
+                  AND status IN ('pending', 'running')
+                """,
+                (
+                    now,
+                    str(error or "")[:12000],
+                    (target_type or "").strip(),
+                    (target_id or "").strip(),
+                ),
+            )
+            return int(result.rowcount or 0)
 
 
 class ContadoresRuntimeAlert(SQLModel, table=True):
@@ -4791,6 +4860,7 @@ def init_db() -> None:
     ensure_company_normalized_source_url_column()
     ensure_contact_email_provider_columns()
     ensure_contadores_automation_paused_columns()
+    ensure_contadores_codex_enabled_column()
     ensure_contadores_closed_state_columns()
     ensure_contadores_manual_reply_columns()
     ensure_contadores_conversation_processing_columns()
@@ -4869,6 +4939,23 @@ def ensure_contadores_automation_paused_columns() -> None:
             logger.info("Added missing contadores_leads.automation_paused_reason column.")
         connection.exec_driver_sql(
             "CREATE INDEX IF NOT EXISTS ix_contadores_leads_automation_paused ON contadores_leads (automation_paused)"
+        )
+
+
+def ensure_contadores_codex_enabled_column() -> None:
+    """Add the lead-level Codex switch to existing contadores_leads tables."""
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        if "contadores_leads" not in inspector.get_table_names():
+            return
+        lead_columns = {column["name"] for column in inspector.get_columns("contadores_leads")}
+        if "codex_enabled" not in lead_columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE contadores_leads ADD COLUMN codex_enabled INTEGER NOT NULL DEFAULT 0"
+            )
+            logger.info("Added missing contadores_leads.codex_enabled column.")
+        connection.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_contadores_leads_codex_enabled ON contadores_leads (codex_enabled)"
         )
 
 

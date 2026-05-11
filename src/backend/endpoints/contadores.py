@@ -1411,6 +1411,7 @@ def build_lead_summary(
         last_inbound_at=format_timestamp_seconds(lead.last_inbound_at),
         last_outbound_at=format_timestamp_seconds(lead.last_outbound_at),
         archived_at=format_timestamp_seconds(lead.archived_at),
+        codex_enabled=bool(lead.codex_enabled),
         strategy_assignments=[
             build_strategy_assignment_response(assignment)
             for assignment in (strategy_assignments or [])
@@ -1492,6 +1493,7 @@ def build_followup_exclusion_reasons(
     *,
     workstation_client: WorkstationClient | None,
     latest_outbound: ContadoresMessage | None,
+    include_codex_disabled: bool = False,
 ) -> list[str]:
     """Return hard-stop reasons for CRM follow-up automation."""
     reasons: list[str] = []
@@ -1499,6 +1501,8 @@ def build_followup_exclusion_reasons(
         reasons.append("venezuela")
     if workstation_client is not None:
         reasons.append("workstation_client")
+    if include_codex_disabled and not lead.codex_enabled:
+        reasons.append("codex_disabled")
     if derive_effective_lead_stage(lead) in {
         ContadoresLeadStage.CLOSED,
         ContadoresLeadStage.BOOKED,
@@ -1520,6 +1524,8 @@ def build_active_offer_exclusion_reasons(
     reasons: list[str] = []
     if workstation_client is not None:
         reasons.append("workstation_client")
+    if not lead.codex_enabled:
+        reasons.append("codex_disabled")
     if derive_effective_lead_stage(lead) in {
         ContadoresLeadStage.CLOSED,
         ContadoresLeadStage.BOOKED,
@@ -1621,6 +1627,7 @@ def build_followup_lead_snapshot(
         lead,
         workstation_client=workstation_client,
         latest_outbound=latest_outbound,
+        include_codex_disabled=True,
     )
     suggested_buckets = build_followup_suggested_buckets(
         lead,
@@ -1650,6 +1657,7 @@ def build_followup_lead_snapshot(
         booked_at=format_timestamp_seconds(lead.booked_at),
         closed_at=format_timestamp_seconds(lead.closed_at),
         archived_at=format_timestamp_seconds(lead.archived_at),
+        codex_enabled=bool(lead.codex_enabled),
         automation_paused=bool(lead.automation_paused),
         workstation_client_id=workstation_client.id if workstation_client else None,
         excluded=bool(exclusion_reasons),
@@ -1737,6 +1745,7 @@ def build_followup_snapshot_csv(snapshots: list[ContadoresFollowupLeadSnapshot])
         "booked_at",
         "closed_at",
         "archived_at",
+        "codex_enabled",
         "automation_paused",
         "workstation_client_id",
         "latest_inbound_text",
@@ -1778,6 +1787,7 @@ def build_followup_snapshot_csv(snapshots: list[ContadoresFollowupLeadSnapshot])
                 "booked_at": snapshot.booked_at or "",
                 "closed_at": snapshot.closed_at or "",
                 "archived_at": snapshot.archived_at or "",
+                "codex_enabled": str(snapshot.codex_enabled).lower(),
                 "automation_paused": str(snapshot.automation_paused).lower(),
                 "workstation_client_id": snapshot.workstation_client_id or "",
                 "latest_inbound_text": snapshot.latest_inbound.text if snapshot.latest_inbound else "",
@@ -2050,6 +2060,7 @@ def assert_followup_lead_can_receive_outbound(lead: ContadoresLead) -> None:
         lead,
         workstation_client=workstation_client,
         latest_outbound=latest_outbound,
+        include_codex_disabled=True,
     )
     if exclusion_reasons:
         raise HTTPException(
@@ -2834,6 +2845,9 @@ async def process_conversation_reply_batch(
     ).strip()
     if not batch_text:
         return metrics
+    if not lead.codex_enabled:
+        metrics["no_actions"] = 1
+        return metrics
 
     latest_inbound = replies_in_window[-1]
     latest_inbound_at = ensure_utc_datetime(latest_inbound.created_at)
@@ -3344,6 +3358,29 @@ def run_quick_action_for_lead(
         )
         ContadoresLead.clear_conversation_processing(lead_id=lead.id)
         return updated or lead, []
+    elif normalized_action in {"enable-codex", "disable-codex"}:
+        codex_enabled = normalized_action == "enable-codex"
+        updated = ContadoresLead.update_flow_state(
+            lead.id,
+            codex_enabled=codex_enabled,
+        )
+        if not codex_enabled:
+            ContadoresLead.clear_conversation_processing(lead_id=lead.id)
+            ScheduledAgentTask.complete_open_for_target(
+                target_type="lead",
+                target_id=lead.id,
+                error="skipped_codex_disabled",
+                timestamp=now_utc(),
+            )
+            workstation_client = WorkstationClient.get_by_lead_id(lead.id)
+            if workstation_client is not None:
+                ScheduledAgentTask.complete_open_for_target(
+                    target_type="workstation_client",
+                    target_id=workstation_client.id,
+                    error="skipped_codex_disabled",
+                    timestamp=now_utc(),
+                )
+        return updated or lead, []
     elif normalized_action == "send-loom":
         queued_rows = send_loom_sequence(lead=lead, config=config, assigned_by="operator")
     elif normalized_action == "send-video-check":
@@ -3592,6 +3629,7 @@ class ContadoresLeadSummary(BaseModel):
     last_inbound_at: str | None = None
     last_outbound_at: str | None = None
     archived_at: str | None = None
+    codex_enabled: bool = False
     strategy_assignments: list[ContadoresLeadStrategyAssignmentResponse] = Field(default_factory=list)
     workstation_client_id: str | None = None
     automation_paused: bool = False
@@ -3691,6 +3729,7 @@ class ContadoresFollowupLeadSnapshot(BaseModel):
     booked_at: str | None = None
     closed_at: str | None = None
     archived_at: str | None = None
+    codex_enabled: bool = False
     automation_paused: bool = False
     workstation_client_id: str | None = None
     excluded: bool = False
@@ -3778,6 +3817,7 @@ class ContadoresFollowupLeadUpdateCommand(BaseModel):
     classification_label: str | None = None
     classification_reason: str | None = None
     manual_reply_status: Literal["needs_reply", "answered"] | None = None
+    codex_enabled: bool | None = None
     automation_paused: bool | None = None
     automation_paused_reason: str | None = None
     tags: list[str] | None = None
@@ -4531,6 +4571,8 @@ async def update_followup_lead_classification(
     lead = ContadoresLead.get_by_id(lead_id)
     if lead is None:
         raise HTTPException(status_code=404, detail="Lead not found")
+    if not lead.codex_enabled and command.codex_enabled is not True:
+        raise HTTPException(status_code=400, detail="Codex is disabled for this lead.")
 
     updated = lead
     if command.tags is not None:
@@ -4562,6 +4604,8 @@ async def update_followup_lead_classification(
         flow_updates["manual_reply_handled_at"] = now
     elif command.manual_reply_status == "needs_reply":
         flow_updates["clear_manual_reply_handled_at"] = True
+    if command.codex_enabled is not None:
+        flow_updates["codex_enabled"] = command.codex_enabled
     if command.automation_paused is not None:
         flow_updates["automation_paused"] = command.automation_paused
     if command.automation_paused_reason is not None:
@@ -4910,6 +4954,13 @@ async def run_contadores_quick_action(
         action=action,
         config=config,
     )
+    if action.strip().lower() == "disable-codex":
+        from backend.endpoints import workstation as workstation_endpoints
+
+        await workstation_endpoints.stop_workstation_codex_for_lead(
+            lead.id,
+            reason="Codex disabled from CRM lead switch.",
+        )
     return ContadoresQuickActionResponse(
         lead=build_lead_summary(updated, config=config),
         queued_message_ids=[row.id or 0 for row in queued_rows],
@@ -5307,6 +5358,14 @@ async def run_contadores_automation_tick(
                     timestamp=now,
                 )
                 continue
+            if not lead.codex_enabled:
+                ScheduledAgentTask.mark_status(
+                    task.id,
+                    status="completed",
+                    error="skipped_codex_disabled",
+                    timestamp=now,
+                )
+                continue
             ScheduledAgentTask.mark_status(task.id, status="running", timestamp=now)
             messages = ContadoresMessage.list_by_lead(lead.id)
             try:
@@ -5329,6 +5388,7 @@ async def run_contadores_automation_tick(
 - name: {lead.full_name or '-'}
 - phone: {lead.phone or lead.normalized_phone or '-'}
 - stage: {lead.stage.value}
+- codex_enabled: {lead.codex_enabled}
 - automation_paused: {lead.automation_paused}
 
 # Conversation
@@ -5392,7 +5452,7 @@ async def run_contadores_automation_tick(
             if replies_in_window:
                 async with get_conversation_bot_lock(lead.id):
                     fresh_lead = ContadoresLead.get_by_id(lead.id)
-                    if fresh_lead is None or fresh_lead.automation_paused:
+                    if fresh_lead is None or fresh_lead.automation_paused or not fresh_lead.codex_enabled:
                         continue
                     fresh_latest_outbound = ContadoresMessage.get_latest_outbound_message(fresh_lead.id)
                     fresh_workstation_client = WorkstationClient.get_by_lead_id(fresh_lead.id)
@@ -5535,7 +5595,7 @@ async def run_contadores_automation_tick(
 
         async with get_conversation_bot_lock(lead.id):
             fresh_lead = ContadoresLead.get_by_id(lead.id)
-            if fresh_lead is None or fresh_lead.automation_paused:
+            if fresh_lead is None or fresh_lead.automation_paused or not fresh_lead.codex_enabled:
                 continue
             if fresh_lead.stage not in {
                 ContadoresLeadStage.AWAITING_VIDEO_REPLY,
