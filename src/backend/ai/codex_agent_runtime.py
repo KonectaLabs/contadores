@@ -12,6 +12,8 @@ import backend.database as database_module
 from backend.ai.codex_guard import assert_codex_enabled_for_target
 from backend.codex_utils import CodexSkill, CodexTurnResult, run_codex_with_context
 from backend.config import (
+    CODEX_BACKEND_ENABLED,
+    CODEX_PREFER_CHATGPT_LOGIN,
     CONVERSATION_BOT_CODEX_API_KEY_HOME,
     CONVERSATION_BOT_CODEX_CHATGPT_HOME,
     CONVERSATION_BOT_CODEX_EFFORT,
@@ -225,6 +227,11 @@ async def run_codex_agent(
 ) -> CodexAgentRunResult:
     """Run Codex as an autonomous employee with audited product tools."""
     assert_codex_enabled_for_target(target_type, target_id)
+    if not CODEX_BACKEND_ENABLED:
+        raise RuntimeError(
+            "Codex SDK desactivado (CODEX_BACKEND_ENABLED no es true). "
+            "No se ejecuta el agente Codex ni por API key."
+        )
     run_id = uuid.uuid4().hex
     context_dir = run_context_dir(run_id)
     context_path = context_dir / "context.md"
@@ -254,30 +261,44 @@ async def run_codex_agent(
     )
     selected_skills = add_agent_harness_skill(skills)
     try:
-        try:
-            codex_result = await _run_codex_agent_once(
-                prompt=prompt,
-                skills=selected_skills,
-                codex_home=CONVERSATION_BOT_CODEX_CHATGPT_HOME,
-                prefer_chatgpt_login=True,
-                on_turn_started=on_turn_started,
-            )
-        except Exception as chatgpt_error:
+        if CODEX_PREFER_CHATGPT_LOGIN:
+            try:
+                codex_result = await _run_codex_agent_once(
+                    prompt=prompt,
+                    skills=selected_skills,
+                    codex_home=CONVERSATION_BOT_CODEX_CHATGPT_HOME or None,
+                    prefer_chatgpt_login=True,
+                    on_turn_started=on_turn_started,
+                )
+            except Exception as chatgpt_error:
+                if not OPENAI_API_KEY.strip():
+                    raise
+                codex_result = await _run_codex_agent_once(
+                    prompt=prompt,
+                    skills=selected_skills,
+                    codex_home=CONVERSATION_BOT_CODEX_API_KEY_HOME or None,
+                    prefer_chatgpt_login=False,
+                    on_turn_started=on_turn_started,
+                )
+                write_jsonl(
+                    context_dir / "runtime-events.jsonl",
+                    {
+                        "event": "chatgpt_fallback_to_api_key",
+                        "error": f"{chatgpt_error.__class__.__name__}: {chatgpt_error}",
+                    },
+                )
+        else:
             if not OPENAI_API_KEY.strip():
-                raise
+                raise RuntimeError(
+                    "OPENAI_API_KEY is not configured for Codex agent runs "
+                    "(CODEX_PREFER_CHATGPT_LOGIN is false)."
+                )
             codex_result = await _run_codex_agent_once(
                 prompt=prompt,
                 skills=selected_skills,
-                codex_home=CONVERSATION_BOT_CODEX_API_KEY_HOME,
+                codex_home=CONVERSATION_BOT_CODEX_API_KEY_HOME or None,
                 prefer_chatgpt_login=False,
                 on_turn_started=on_turn_started,
-            )
-            write_jsonl(
-                context_dir / "runtime-events.jsonl",
-                {
-                    "event": "chatgpt_fallback_to_api_key",
-                    "error": f"{chatgpt_error.__class__.__name__}: {chatgpt_error}",
-                },
             )
         tool_calls = AgentToolCall.list_by_run(run_id)
         AgentRun.finish(

@@ -313,8 +313,10 @@ Bot conversacional post-video y post-Calendly:
   memoria durable, iniciar Workstation, actualizar estado o pasar a humano.
   Si ese runtime falla antes de ejecutar side effects, se conserva el fallback
   legacy.
-- Orden de fallback: primero ChatGPT Codex, despues Codex autenticado con API
-  key, y recien despues DSPy/Grok. Si falla ChatGPT Codex, el lead no se pausa
+- Codex SDK (`run_codex_with_context`) solo corre si `CODEX_BACKEND_ENABLED=true`
+  (opt-in explicito; por defecto no gasta tokens Codex). Con Codex activo, el
+  orden es ChatGPT Codex solo si `CODEX_PREFER_CHATGPT_LOGIN=true`, sino Codex
+  con `OPENAI_API_KEY`, y despues DSPy/Grok. Si falla ChatGPT Codex, el lead no se pausa
   por eso: se crea una alerta runtime por email con link/comando para
   reautenticar y se responde con el siguiente fallback disponible. El fallback usa
   `OPENROUTER_GROK_4_3_MODEL=openrouter/x-ai/grok-4.3` cuando hay

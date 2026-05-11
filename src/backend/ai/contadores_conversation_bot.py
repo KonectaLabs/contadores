@@ -19,6 +19,8 @@ from backend.ai.contadores_conversation_prompt import (
 from backend.base import Program
 from backend.codex_utils import CodexSkill, REPO_ROOT, run_codex_with_context
 from backend.config import (
+    CODEX_BACKEND_ENABLED,
+    CODEX_PREFER_CHATGPT_LOGIN,
     CONVERSATION_BOT_CODEX_API_KEY_HOME,
     CONVERSATION_BOT_CODEX_CHATGPT_HOME,
     CONVERSATION_BOT_CODEX_EFFORT,
@@ -600,16 +602,25 @@ class CodexConversationBotProgram:
         model: str = CONVERSATION_BOT_CODEX_MODEL,
         effort: str = CONVERSATION_BOT_CODEX_EFFORT,
         service_tier: str | None = CONVERSATION_BOT_CODEX_SERVICE_TIER,
-        prefer_chatgpt_login: bool = True,
-        codex_home: str | None = CONVERSATION_BOT_CODEX_CHATGPT_HOME,
-        runtime_provider: str = "codex_chatgpt",
+        prefer_chatgpt_login: bool | None = None,
+        codex_home: str | None = None,
+        runtime_provider: str | None = None,
     ):
+        prefer = CODEX_PREFER_CHATGPT_LOGIN if prefer_chatgpt_login is None else prefer_chatgpt_login
+        if codex_home is None:
+            resolved_home = CONVERSATION_BOT_CODEX_CHATGPT_HOME if prefer else CONVERSATION_BOT_CODEX_API_KEY_HOME
+        else:
+            resolved_home = codex_home
+        if runtime_provider is None:
+            resolved_provider = "codex_chatgpt" if prefer else "codex_api_key"
+        else:
+            resolved_provider = runtime_provider
         self.model = model
         self.effort = effort
         self.service_tier = service_tier
-        self.prefer_chatgpt_login = prefer_chatgpt_login
-        self.codex_home = (codex_home or "").strip() or None
-        self.runtime_provider = runtime_provider
+        self.prefer_chatgpt_login = prefer
+        self.codex_home = (resolved_home or "").strip() or None
+        self.runtime_provider = resolved_provider
 
     async def aforward(
         self,
@@ -666,7 +677,7 @@ class CodexConversationBotProgram:
 
 
 class ContadoresConversationBotProgram(Program):
-    """ChatGPT Codex primary, API-key Codex fallback, then Grok/DSPy fallback."""
+    """Codex SDK (API key by default; optional ChatGPT session), then Grok/DSPy fallback."""
 
     def __init__(
         self,
@@ -678,14 +689,23 @@ class ContadoresConversationBotProgram(Program):
     ):
         self.dspy_fallback = dspy_program or DspyConversationBotProgram(lm=lm)
         super().__init__(lm=self.dspy_fallback.lm)
-        self.codex_program = codex_program or CodexConversationBotProgram(
-            prefer_chatgpt_login=True,
-            codex_home=CONVERSATION_BOT_CODEX_CHATGPT_HOME,
-            runtime_provider="codex_chatgpt",
-        )
+        if codex_program is not None:
+            self.codex_program = codex_program
+        elif CODEX_PREFER_CHATGPT_LOGIN:
+            self.codex_program = CodexConversationBotProgram(
+                prefer_chatgpt_login=True,
+                codex_home=CONVERSATION_BOT_CODEX_CHATGPT_HOME,
+                runtime_provider="codex_chatgpt",
+            )
+        else:
+            self.codex_program = CodexConversationBotProgram(
+                prefer_chatgpt_login=False,
+                codex_home=CONVERSATION_BOT_CODEX_API_KEY_HOME,
+                runtime_provider="codex_api_key",
+            )
         if codex_api_key_program is not None:
             self.codex_api_key_program = codex_api_key_program
-        elif codex_program is None:
+        elif codex_program is None and CODEX_PREFER_CHATGPT_LOGIN:
             self.codex_api_key_program = CodexConversationBotProgram(
                 prefer_chatgpt_login=False,
                 codex_home=CONVERSATION_BOT_CODEX_API_KEY_HOME,
@@ -721,6 +741,33 @@ class ContadoresConversationBotProgram(Program):
             "conversation": conversation,
             "codex_thread_id": codex_thread_id,
         }
+        if not CODEX_BACKEND_ENABLED:
+            primary_runtime_error = (
+                "Codex SDK desactivado (CODEX_BACKEND_ENABLED no es true); no se llama Codex ni por API key."
+            )
+            api_key_error_text = ""
+            try:
+                fallback = await self.dspy_fallback.aforward(**kwargs)
+                fallback.runtime_provider = "dspy_fallback"
+                fallback.runtime_error = primary_runtime_error
+                return _apply_company_source_truth_guard(
+                    fallback,
+                    latest_inbound=latest_inbound,
+                    funnel_id=funnel_id,
+                    conversation=conversation,
+                )
+            except Exception as fallback_error:
+                return ContadoresConversationBotResult(
+                    action="handoff_human",
+                    classification_label="needs_human",
+                    reason="Codex desactivado y el fallback DSPy fallo.",
+                    runtime_provider="failed",
+                    runtime_error=(
+                        f"{primary_runtime_error}; "
+                        f"DSPy failed: {fallback_error.__class__.__name__}: {fallback_error}"
+                    ),
+                )
+
         try:
             result = await self.codex_program.aforward(**kwargs)
             return _apply_company_source_truth_guard(
@@ -732,8 +779,10 @@ class ContadoresConversationBotProgram(Program):
         except Exception as chatgpt_error:
             chatgpt_error_text = f"{chatgpt_error.__class__.__name__}: {chatgpt_error}"
 
-        chatgpt_runtime_error = (
+        primary_runtime_error = (
             f"Codex ChatGPT failed: {chatgpt_error_text}. {CODEX_CHATGPT_REAUTH_HELP}"
+            if CODEX_PREFER_CHATGPT_LOGIN
+            else f"Codex failed: {chatgpt_error_text}"
         )
 
         api_key_error_text = ""
@@ -741,7 +790,7 @@ class ContadoresConversationBotProgram(Program):
             try:
                 api_key_result = await self.codex_api_key_program.aforward(**kwargs)
                 api_key_result.runtime_provider = "codex_api_key_fallback"
-                api_key_result.runtime_error = chatgpt_runtime_error
+                api_key_result.runtime_error = primary_runtime_error
                 return _apply_company_source_truth_guard(
                     api_key_result,
                     latest_inbound=latest_inbound,
@@ -755,9 +804,9 @@ class ContadoresConversationBotProgram(Program):
             fallback = await self.dspy_fallback.aforward(**kwargs)
             fallback.runtime_provider = "dspy_fallback"
             fallback.runtime_error = (
-                f"{chatgpt_runtime_error}; Codex API key failed: {api_key_error_text}"
+                f"{primary_runtime_error}; Codex API key failed: {api_key_error_text}"
                 if api_key_error_text
-                else chatgpt_runtime_error
+                else primary_runtime_error
             )
             return _apply_company_source_truth_guard(
                 fallback,
@@ -772,7 +821,7 @@ class ContadoresConversationBotProgram(Program):
                 reason="Codex y el fallback DSPy fallaron.",
                 runtime_provider="failed",
                 runtime_error=(
-                    f"{chatgpt_runtime_error}; "
+                    f"{primary_runtime_error}; "
                     f"Codex API key failed: {api_key_error_text or 'not configured'}; "
                     f"DSPy failed: {fallback_error.__class__.__name__}: {fallback_error}"
                 ),

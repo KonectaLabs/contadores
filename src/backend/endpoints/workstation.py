@@ -31,6 +31,8 @@ from backend.codex_utils import CodexSkill, interrupt_turn, run_codex_with_conte
 from backend.config import (
     CODEX_AGENT_TOOLS_ENABLED,
     CODEX_AGENT_TOOLS_WORKSTATION_ENABLED,
+    CODEX_BACKEND_ENABLED,
+    CODEX_PREFER_CHATGPT_LOGIN,
     CONVERSATION_BOT_CODEX_API_KEY_HOME,
     CONVERSATION_BOT_CODEX_CHATGPT_HOME,
     CONVERSATION_BOT_CODEX_EFFORT,
@@ -2569,7 +2571,12 @@ async def run_solo_page_codex_with_fallback(
     thread_id: str | None = None,
     skills: list[CodexSkill] | None = None,
 ):
-    """Run solo-page Codex with ChatGPT auth first, then API-key auth."""
+    """Run solo-page Codex; optional ChatGPT session first, then API-key Codex."""
+    if not CODEX_BACKEND_ENABLED:
+        raise RuntimeError(
+            "Codex SDK desactivado (CODEX_BACKEND_ENABLED no es true). "
+            "No se ejecuta Codex por ChatGPT ni por OPENAI_API_KEY para no gastar tokens sin opt-in."
+        )
     selected_skills = skills
     if selected_skills is None:
         selected_skills = [
@@ -2586,34 +2593,37 @@ async def run_solo_page_codex_with_fallback(
         "cwd": REPO_ROOT,
         "on_turn_started": on_turn_started,
     }
-    try:
-        return await run_codex_with_context(
-            prompt,
-            thread_id=thread_id,
-            codex_home=CONVERSATION_BOT_CODEX_CHATGPT_HOME,
-            prefer_chatgpt_login=True,
-            **common_kwargs,
-        )
-    except Exception as chatgpt_error:
-        chatgpt_error_text = f"{chatgpt_error.__class__.__name__}: {chatgpt_error}"
+    chatgpt_error_text = ""
+    if CODEX_PREFER_CHATGPT_LOGIN:
+        try:
+            return await run_codex_with_context(
+                prompt,
+                thread_id=thread_id,
+                codex_home=CONVERSATION_BOT_CODEX_CHATGPT_HOME or None,
+                prefer_chatgpt_login=True,
+                **common_kwargs,
+            )
+        except Exception as chatgpt_error:
+            chatgpt_error_text = f"{chatgpt_error.__class__.__name__}: {chatgpt_error}"
 
     api_key_error_text = "OPENAI_API_KEY is not configured"
     if OPENAI_API_KEY.strip():
         try:
             return await run_codex_with_context(
                 prompt,
-                codex_home=CONVERSATION_BOT_CODEX_API_KEY_HOME,
+                thread_id=thread_id,
+                codex_home=CONVERSATION_BOT_CODEX_API_KEY_HOME or None,
                 prefer_chatgpt_login=False,
                 **common_kwargs,
             )
         except Exception as api_key_error:
             api_key_error_text = f"{api_key_error.__class__.__name__}: {api_key_error}"
 
-    raise RuntimeError(
-        "Codex ChatGPT failed: "
-        f"{chatgpt_error_text}. {CODEX_CHATGPT_REAUTH_HELP}; "
-        f"Codex API key failed: {api_key_error_text}"
-    )
+    parts: list[str] = []
+    if chatgpt_error_text:
+        parts.append(f"Codex ChatGPT failed: {chatgpt_error_text}. {CODEX_CHATGPT_REAUTH_HELP}")
+    parts.append(f"Codex API key failed: {api_key_error_text}")
+    raise RuntimeError("; ".join(parts))
 
 
 async def generate_solo_page_version(

@@ -28,6 +28,14 @@ AUDIO_TRANSCRIPTION_PROMPT = os.getenv(
 CONVERSATION_BOT_CODEX_MODEL = os.getenv("CONVERSATION_BOT_CODEX_MODEL", "gpt-5.5")
 CONVERSATION_BOT_CODEX_EFFORT = os.getenv("CONVERSATION_BOT_CODEX_EFFORT", "medium")
 CONVERSATION_BOT_CODEX_SERVICE_TIER = (os.getenv("CONVERSATION_BOT_CODEX_SERVICE_TIER", "") or "").strip() or None
+
+
+def _env_truthy(name: str, default: str = "false") -> bool:
+    return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
+
+
+CODEX_BACKEND_ENABLED = _env_truthy("CODEX_BACKEND_ENABLED")
+CODEX_PREFER_CHATGPT_LOGIN = _env_truthy("CODEX_PREFER_CHATGPT_LOGIN")
 _CODEX_HOME = (os.getenv("CODEX_HOME", "") or "").strip()
 CONVERSATION_BOT_CODEX_CHATGPT_HOME = (
     os.getenv("CONVERSATION_BOT_CODEX_CHATGPT_HOME", _CODEX_HOME) or ""

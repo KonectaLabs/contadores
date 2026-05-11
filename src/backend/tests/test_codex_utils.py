@@ -10,6 +10,11 @@ import pytest
 from backend import codex_utils
 
 
+@pytest.fixture(autouse=True)
+def enable_codex_sdk_for_codex_utils_tests(monkeypatch):
+    monkeypatch.setenv("CODEX_BACKEND_ENABLED", "true")
+
+
 class FakeValue:
     def __init__(self, value):
         self.value = value
@@ -156,6 +161,7 @@ def test_run_codex_with_context_starts_thread_and_passes_defaults(monkeypatch, t
             model="test-model",
             cwd=tmp_path,
             codex_bin="/bin/codex",
+            prefer_chatgpt_login=False,
         )
     )
 
@@ -166,7 +172,7 @@ def test_run_codex_with_context_starts_thread_and_passes_defaults(monkeypatch, t
     assert result.cwd == tmp_path
     assert calls["config"]["codex_bin"] == "/bin/codex"
     assert calls["config"]["cwd"] == str(tmp_path)
-    assert "OPENAI_API_KEY" not in calls["config"]["env"]
+    assert calls["config"]["env"].get("OPENAI_API_KEY") == "sk-test"
     assert calls["thread_start"]["model"] == "test-model"
     assert calls["input_value"] == [{"type": "text", "text": "do the thing"}]
 

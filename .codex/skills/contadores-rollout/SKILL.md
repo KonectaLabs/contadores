@@ -44,14 +44,14 @@ OpenAI speech-to-text, and the env should keep
 `OPENAI_AUDIO_TRANSCRIPTION_MODEL=gpt-4o-transcribe` unless deliberately
 overridden.
 
-The conversational bot uses ChatGPT-authenticated Codex SDK as primary runtime
-(`CONVERSATION_BOT_CODEX_MODEL=gpt-5.5`, medium effort), Codex API-key auth as
-the first fallback, and Grok/DSPy after that. Deploys must preserve both
-`CONVERSATION_BOT_CODEX_CHATGPT_HOME` and
-`CONVERSATION_BOT_CODEX_API_KEY_HOME` in the data volume so auth persists.
-ChatGPT Codex failures create runtime email alerts with the device-login link
-and reauth command, but should not pause leads when the API-key Codex fallback
-or Grok/DSPy answered safely.
+The conversational bot never calls the Codex SDK unless
+`CODEX_BACKEND_ENABLED=true` (default false: no Codex tokens, ChatGPT or API key).
+With Codex on, use `CODEX_PREFER_CHATGPT_LOGIN=true` only if you want the
+ChatGPT session path first; otherwise Codex uses `OPENAI_API_KEY` only, then
+Grok/DSPy. Optional homes: `CONVERSATION_BOT_CODEX_CHATGPT_HOME`,
+`CONVERSATION_BOT_CODEX_API_KEY_HOME`. ChatGPT Codex failures can still alert
+with reauth hints when that path is enabled, but leads should not pause when a
+safe fallback answered.
 
 Autonomous Codex tools are rollout-gated. Keep
 `CODEX_AGENT_TOOLS_ENABLED=false` by default until a controlled server test
@@ -65,12 +65,11 @@ Lead-level Codex is also gated by `contadores_leads.codex_enabled`; keep
 turns Codex on by default for new leads. The UI switch is the source of truth
 for enabling one lead.
 
-Workstation solo-page generation follows the same first two Codex auth paths:
-ChatGPT Codex with `CONVERSATION_BOT_CODEX_CHATGPT_HOME`, then Codex with
-`OPENAI_API_KEY` and `CONVERSATION_BOT_CODEX_API_KEY_HOME`. If both fail, the
-Workstation client moves to `failed` with an operator-visible alert containing
-both underlying errors; the UI should not hide those errors behind a generic
-request timeout.
+Workstation solo-page Codex runs are also gated by `CODEX_BACKEND_ENABLED`.
+When off, generation fails fast without calling the SDK. When on, optional
+ChatGPT-first path matches `CODEX_PREFER_CHATGPT_LOGIN`, then API-key Codex.
+If both fail, the Workstation client moves to `failed` with an operator-visible
+alert; the UI should not hide those errors behind a generic request timeout.
 Set `WORKSTATION_PUBLIC_PAGE_BASE_URL` on the server to the public origin served
 by Traefik, without a trailing slash. Workstation uses that origin to build the
 unguessable `/p/{token}/` trial URLs for solo-page clients. These are review

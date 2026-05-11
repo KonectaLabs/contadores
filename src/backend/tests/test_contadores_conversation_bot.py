@@ -16,6 +16,12 @@ from backend.ai.contadores_conversation_bot import (
 )
 from backend.ai.contadores_conversation_prompt import build_conversation_bot_prompt
 from backend.config import CONVERSATION_BOT_CODEX_EFFORT, CONVERSATION_BOT_CODEX_MODEL
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def enable_codex_backend_for_conversation_bot_tests(monkeypatch):
+    monkeypatch.setattr(conversation_bot_module, "CODEX_BACKEND_ENABLED", True)
 
 
 def bot_kwargs(**overrides):
@@ -40,11 +46,9 @@ def test_conversation_bot_program_uses_codex_primary_and_configured_fallback_mod
 
     assert program.codex_program.model == CONVERSATION_BOT_CODEX_MODEL
     assert program.codex_program.effort == CONVERSATION_BOT_CODEX_EFFORT
-    assert program.codex_program.prefer_chatgpt_login is True
-    assert program.codex_program.runtime_provider == "codex_chatgpt"
-    assert program.codex_api_key_program is not None
-    assert program.codex_api_key_program.prefer_chatgpt_login is False
-    assert program.codex_api_key_program.runtime_provider == "codex_api_key"
+    assert program.codex_program.prefer_chatgpt_login is False
+    assert program.codex_program.runtime_provider == "codex_api_key"
+    assert program.codex_api_key_program is None
     assert program.lm.model in {"openrouter/x-ai/grok-4.3", "openai/gpt-5.4-mini"}
 
 
@@ -322,11 +326,11 @@ def test_codex_conversation_bot_parses_strict_json(monkeypatch) -> None:
 
     assert result.action == "send_reply"
     assert result.message_text == "Son 300 USD, pago unico."
-    assert result.runtime_provider == "codex_chatgpt"
+    assert result.runtime_provider == "codex_api_key"
     assert calls[0]["model"] == CONVERSATION_BOT_CODEX_MODEL
     assert calls[0]["effort"] == CONVERSATION_BOT_CODEX_EFFORT
     assert calls[0]["effort"] == "medium"
-    assert calls[0]["prefer_chatgpt_login"] is True
+    assert calls[0]["prefer_chatgpt_login"] is False
     assert "You may inspect repository files" in str(calls[0]["prompt"])
     assert "Do not inspect or modify repository files" not in str(calls[0]["prompt"])
     assert "do not use tools" not in str(calls[0]["prompt"])
@@ -438,7 +442,8 @@ def test_codex_conversation_bot_answers_consultation_definition_without_forcing_
     assert result.missing_fields == []
 
 
-def test_orchestrator_uses_codex_api_key_fallback_when_chatgpt_codex_fails() -> None:
+def test_orchestrator_uses_codex_api_key_fallback_when_chatgpt_codex_fails(monkeypatch) -> None:
+    monkeypatch.setattr(conversation_bot_module, "CODEX_PREFER_CHATGPT_LOGIN", True)
     class FailingCodex:
         async def aforward(self, **kwargs):
             del kwargs
@@ -468,7 +473,8 @@ def test_orchestrator_uses_codex_api_key_fallback_when_chatgpt_codex_fails() -> 
     assert "https://auth.openai.com/codex/device" in result.runtime_error
 
 
-def test_orchestrator_uses_dspy_fallback_when_both_codex_auth_paths_fail() -> None:
+def test_orchestrator_uses_dspy_fallback_when_both_codex_auth_paths_fail(monkeypatch) -> None:
+    monkeypatch.setattr(conversation_bot_module, "CODEX_PREFER_CHATGPT_LOGIN", True)
     class FailingChatgptCodex:
         async def aforward(self, **kwargs):
             del kwargs
@@ -506,7 +512,8 @@ def test_orchestrator_uses_dspy_fallback_when_both_codex_auth_paths_fail() -> No
     assert "Codex API key failed" in result.runtime_error
 
 
-def test_orchestrator_handoff_when_codex_and_fallback_fail() -> None:
+def test_orchestrator_handoff_when_codex_and_fallback_fail(monkeypatch) -> None:
+    monkeypatch.setattr(conversation_bot_module, "CODEX_PREFER_CHATGPT_LOGIN", True)
     class FailingCodex:
         async def aforward(self, **kwargs):
             del kwargs

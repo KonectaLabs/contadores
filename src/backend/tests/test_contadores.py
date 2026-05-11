@@ -14,6 +14,7 @@ import zipfile
 from fastapi.testclient import TestClient
 from sqlmodel import SQLModel, create_engine
 
+import backend.ai.contadores_conversation_bot as contadores_conversation_bot_module
 import backend.database as database_module
 import backend.endpoints.contadores as contadores_endpoints
 import backend.endpoints.workstation as workstation_endpoints
@@ -54,6 +55,9 @@ def configure_contadores_db(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(contadores_endpoints, "CODEX_AGENT_TOOLS_CONVERSATION_ENABLED", False)
     monkeypatch.setattr(workstation_endpoints, "CODEX_AGENT_TOOLS_ENABLED", False)
     monkeypatch.setattr(workstation_endpoints, "CODEX_AGENT_TOOLS_WORKSTATION_ENABLED", False)
+    monkeypatch.setattr(workstation_endpoints, "CODEX_BACKEND_ENABLED", True)
+    monkeypatch.setattr(contadores_conversation_bot_module, "CODEX_BACKEND_ENABLED", True)
+    monkeypatch.setattr(codex_agent_runtime, "CODEX_BACKEND_ENABLED", True)
     monkeypatch.setattr(database_module, "DEFAULT_CONTADORES_LEAD_CODEX_ENABLED", True)
     db_path = tmp_path / "contadores.sqlite"
     engine = create_engine(
@@ -6003,6 +6007,7 @@ def test_workstation_solo_page_codex_falls_back_to_api_key(monkeypatch, tmp_path
     configure_contadores_db(monkeypatch, tmp_path)
     data_dir = tmp_path / "data"
     monkeypatch.setattr(database_module, "DATA_DIR", data_dir)
+    monkeypatch.setattr(workstation_endpoints, "CODEX_PREFER_CHATGPT_LOGIN", True)
     monkeypatch.setattr(workstation_endpoints, "OPENAI_API_KEY", "sk-test")
     monkeypatch.setattr(workstation_endpoints, "CONVERSATION_BOT_CODEX_CHATGPT_HOME", "/chatgpt-home")
     monkeypatch.setattr(workstation_endpoints, "CONVERSATION_BOT_CODEX_API_KEY_HOME", "/api-key-home")
@@ -6056,6 +6061,7 @@ def test_workstation_solo_page_codex_reports_both_auth_errors(monkeypatch, tmp_p
     """Operator alerts should show the real Codex auth failures, not a generic timeout."""
     configure_contadores_db(monkeypatch, tmp_path)
     monkeypatch.setattr(database_module, "DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr(workstation_endpoints, "CODEX_PREFER_CHATGPT_LOGIN", True)
     monkeypatch.setattr(workstation_endpoints, "OPENAI_API_KEY", "sk-test")
     lead = ContadoresLead.upsert(
         external_lead_id="sheet-row-workstation-codex-auth-errors",

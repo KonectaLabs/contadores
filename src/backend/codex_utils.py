@@ -21,7 +21,7 @@ DEFAULT_CODEX_BIN = os.getenv(
 )
 DEFAULT_MODEL = "gpt-5.5"
 DEFAULT_EFFORT = "medium"
-DEFAULT_PREFER_CHATGPT_LOGIN = os.getenv("CODEX_PREFER_CHATGPT_LOGIN", "true").lower() not in {
+DEFAULT_PREFER_CHATGPT_LOGIN = os.getenv("CODEX_PREFER_CHATGPT_LOGIN", "false").lower() not in {
     "0",
     "false",
     "no",
@@ -29,6 +29,10 @@ DEFAULT_PREFER_CHATGPT_LOGIN = os.getenv("CODEX_PREFER_CHATGPT_LOGIN", "true").l
 
 ReasoningEffortName = Literal["none", "minimal", "low", "medium", "high", "xhigh"]
 ServiceTierName = Literal["fast", "flex"]
+
+
+def _codex_backend_enabled() -> bool:
+    return os.getenv("CODEX_BACKEND_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 
 @dataclass(frozen=True)
@@ -237,6 +241,11 @@ async def run_codex_with_context(
         local_images=local_images,
         remote_images=remote_images,
     )
+    if not _codex_backend_enabled():
+        raise RuntimeError(
+            "Codex SDK runs are disabled. Set CODEX_BACKEND_ENABLED=true only when you "
+            "intend to execute the Codex app-server from this process."
+        )
     return await run_turn(
         context,
         runtime=runtime,
