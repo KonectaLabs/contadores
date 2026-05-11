@@ -79,6 +79,15 @@ LOG_STATE = BotLogState()
 CALENDLY_WEBHOOK_SIGNING_KEY = (os.getenv("CALENDLY_WEBHOOK_SIGNING_KEY", "") or "").strip()
 
 
+def build_sheet_sync_log_summary(sheet_summary: dict[str, Any]) -> dict[str, Any]:
+    """Return a compact sheet sync summary that is safe for routine logs."""
+    log_summary = {key: value for key, value in sheet_summary.items() if key != "lead_ids"}
+    lead_ids = sheet_summary.get("lead_ids")
+    if isinstance(lead_ids, list):
+        log_summary["lead_count"] = len(lead_ids)
+    return log_summary
+
+
 def verify_calendly_signature(*, payload: bytes, signature_header: str | None) -> bool:
     """Best-effort Calendly webhook signature verification."""
     if not CALENDLY_WEBHOOK_SIGNING_KEY:
@@ -246,7 +255,11 @@ async def run_worker_loop(
                         logger.exception("%s sheet sync iteration failed.", funnel.label)
                     else:
                         if sheet_summary.get("status") == "ok":
-                            logger.info("%s sheet sync summary: %s", funnel.label, sheet_summary)
+                            logger.info(
+                                "%s sheet sync summary: %s",
+                                funnel.label,
+                                build_sheet_sync_log_summary(sheet_summary),
+                            )
             except httpx.HTTPStatusError as exc:
                 status_code = exc.response.status_code if exc.response else "unknown"
                 request_url = str(exc.request.url) if exc.request else "unknown"

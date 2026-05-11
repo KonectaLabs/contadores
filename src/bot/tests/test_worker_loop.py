@@ -8,6 +8,27 @@ from types import SimpleNamespace
 import main as bot_main
 
 
+def test_build_sheet_sync_log_summary_omits_lead_ids() -> None:
+    """Routine sheet logs should stay compact when hundreds of leads sync."""
+    summary = bot_main.build_sheet_sync_log_summary(
+        {
+            "status": "ok",
+            "imported": 1,
+            "updated": 2,
+            "skipped": 3,
+            "lead_ids": ["lead-1", "lead-2", "lead-3"],
+        }
+    )
+
+    assert summary == {
+        "status": "ok",
+        "imported": 1,
+        "updated": 2,
+        "skipped": 3,
+        "lead_count": 3,
+    }
+
+
 def test_worker_iteration_dispatches_pending_messages_without_campaign_funnels(monkeypatch) -> None:
     """Queued WhatsApp messages should not wait on an active campaign funnel."""
     dispatched_limits: list[int] = []
