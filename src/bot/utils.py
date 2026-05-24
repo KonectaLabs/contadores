@@ -105,6 +105,44 @@ class FunnelListPayload(BaseModel):
     funnels: list[FunnelConfigPayload] = Field(default_factory=list)
 
 
+class ClientLeadSourcePayload(BaseModel):
+    """One Delivery source configured in the backend."""
+
+    id: str
+    label: str
+    enabled: bool = True
+    sheet_poll_seconds: int = 30
+    last_sync_at: str | None = None
+    last_sync_status: str | None = None
+    last_sync_note: str | None = None
+
+
+class ClientLeadSourceListPayload(BaseModel):
+    """Configured Delivery sources payload."""
+
+    sources: list[ClientLeadSourcePayload] = Field(default_factory=list)
+
+
+class PendingClientLeadNotification(BaseModel):
+    """One client lead notification awaiting WhatsApp template dispatch."""
+
+    delivery_id: str
+    source_id: str
+    source_label: str
+    recipient_phone: str
+    normalized_recipient_phone: str
+    template_name: str
+    template_language: str
+    template_body_params: list[str] = Field(default_factory=list)
+    delivered_text: str
+
+
+class PendingClientLeadNotificationResponse(BaseModel):
+    """Pending Delivery notifications payload."""
+
+    notifications: list[PendingClientLeadNotification] = Field(default_factory=list)
+
+
 class PendingContadoresDeliveryMessage(BaseModel):
     """One Contadores outbound message awaiting WhatsApp dispatch."""
 
@@ -212,7 +250,7 @@ class WorkstationAutomationTickResponse(BaseModel):
 class DispatchResult(BaseModel):
     """One outbound dispatch result for operator logging."""
 
-    message_id: int
+    message_id: int | str
     contact_id: str
     channel: str
     status: str
@@ -277,6 +315,29 @@ async def fetch_funnels(client: httpx.AsyncClient) -> list[FunnelConfigPayload]:
     return FunnelListPayload.model_validate(response.json()).funnels
 
 
+async def fetch_client_lead_sources(client: httpx.AsyncClient) -> list[ClientLeadSourcePayload]:
+    """Fetch enabled and disabled Delivery sources from the backend."""
+    response = await client.get(backend_url("/api/client-lead-sources"))
+    response.raise_for_status()
+    return ClientLeadSourceListPayload.model_validate(response.json()).sources
+
+
+async def run_client_lead_source_sync_iteration(
+    client: httpx.AsyncClient,
+    *,
+    source: ClientLeadSourcePayload,
+) -> dict[str, Any]:
+    """Ask the backend to sync one Delivery source."""
+    response = await client.post(backend_url(f"/api/client-lead-sources/{source.id}/sync"))
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict):
+        return {"status": "invalid", "source_id": source.id, "source_label": source.label}
+    payload["source_id"] = source.id
+    payload["source_label"] = source.label
+    return payload
+
+
 async def fetch_pending_contadores_outbound(
     client: httpx.AsyncClient,
     *,
@@ -290,6 +351,21 @@ async def fetch_pending_contadores_outbound(
     response.raise_for_status()
     payload = PendingContadoresDeliveryResponse.model_validate(response.json())
     return payload.messages
+
+
+async def fetch_pending_client_lead_notifications(
+    client: httpx.AsyncClient,
+    *,
+    limit: int = 200,
+) -> list[PendingClientLeadNotification]:
+    """Fetch Delivery notifications ready for WhatsApp dispatch."""
+    response = await client.get(
+        backend_url("/api/client-lead-deliveries/pending"),
+        params={"limit": limit},
+    )
+    response.raise_for_status()
+    payload = PendingClientLeadNotificationResponse.model_validate(response.json())
+    return payload.notifications
 
 
 def build_contadores_sheet_csv_url(config: ContadoresConfigPayload) -> str | None:
@@ -573,6 +649,82 @@ async def mark_backend_contadores_message_status(
     return payload if isinstance(payload, dict) else {"status": "updated"}
 
 
+async def mark_backend_client_lead_notification_sent(
+    client: httpx.AsyncClient,
+    *,
+    delivery_id: str,
+    receipt: DeliveryReceipt,
+) -> None:
+    """Mark one Delivery notification as accepted by WhatsApp."""
+    response = await client.put(
+        backend_url(f"/api/client-lead-deliveries/{delivery_id}/delivery"),
+        json={
+            "status": "sent",
+            "external_id": receipt.external_id,
+        },
+    )
+    response.raise_for_status()
+
+
+async def record_backend_client_lead_notification_failure(
+    client: httpx.AsyncClient,
+    *,
+    delivery_id: str,
+    error: str,
+    error_code: int | None = None,
+    error_title: str | None = None,
+    error_message: str | None = None,
+    error_details: str | None = None,
+    error_user_message: str | None = None,
+) -> None:
+    """Persist one failed Delivery WhatsApp send attempt for retry."""
+    response = await client.post(
+        backend_url(f"/api/client-lead-deliveries/{delivery_id}/delivery-failure"),
+        json={
+            "error": error,
+            "error_code": error_code,
+            "error_title": error_title,
+            "error_message": error_message,
+            "error_details": error_details,
+            "error_user_message": error_user_message,
+            "max_attempts": CONTADORES_DELIVERY_MAX_ATTEMPTS,
+            "retry_delay_seconds": CONTADORES_DELIVERY_RETRY_DELAY_SECONDS,
+        },
+    )
+    response.raise_for_status()
+
+
+async def mark_backend_client_lead_delivery_status(
+    client: httpx.AsyncClient,
+    *,
+    external_id: str,
+    status: str,
+    error: str | None = None,
+    error_code: int | None = None,
+    error_title: str | None = None,
+    error_message: str | None = None,
+    error_details: str | None = None,
+    error_user_message: str | None = None,
+) -> dict[str, Any]:
+    """Update one Delivery notification by provider external id."""
+    response = await client.put(
+        backend_url("/api/client-lead-deliveries/delivery/by-external-id"),
+        json={
+            "external_id": external_id,
+            "status": status,
+            "error": error,
+            "error_code": error_code,
+            "error_title": error_title,
+            "error_message": error_message,
+            "error_details": error_details,
+            "error_user_message": error_user_message,
+        },
+    )
+    response.raise_for_status()
+    payload = response.json()
+    return payload if isinstance(payload, dict) else {"status": "updated"}
+
+
 async def process_contadores_whatsapp_inbound_event(
     client: httpx.AsyncClient,
     *,
@@ -657,7 +809,7 @@ async def process_whatsapp_message_status_event(
     *,
     event: WhatsAppMessageStatusEvent,
 ) -> dict[str, Any]:
-    """Persist one outbound WhatsApp provider status update in Contadores."""
+    """Persist one outbound WhatsApp provider status update."""
     target_status = map_whatsapp_provider_status(event.status)
     try:
         result = await mark_backend_contadores_message_status(
@@ -673,12 +825,30 @@ async def process_whatsapp_message_status_event(
         )
     except httpx.HTTPStatusError as exc:
         if exc.response is not None and exc.response.status_code == 404:
-            return {
-                "status": "ignored",
-                "reason": "external_id_not_found",
-                "external_id": event.external_id,
-                "provider_status": event.status,
-            }
+            try:
+                result = await mark_backend_client_lead_delivery_status(
+                    client,
+                    external_id=event.external_id,
+                    status=target_status,
+                    error=event.error,
+                    error_code=event.error_code,
+                    error_title=event.error_title,
+                    error_message=event.error_message,
+                    error_details=event.error_details,
+                    error_user_message=event.error_user_message,
+                )
+            except httpx.HTTPStatusError as client_lead_exc:
+                if client_lead_exc.response is not None and client_lead_exc.response.status_code == 404:
+                    return {
+                        "status": "ignored",
+                        "reason": "external_id_not_found",
+                        "external_id": event.external_id,
+                        "provider_status": event.status,
+                    }
+                raise
+            result["provider_status"] = event.status
+            result["route"] = "client_leads"
+            return result
         raise
 
     result["provider_status"] = event.status
@@ -1099,6 +1269,101 @@ async def dispatch_pending_contadores_messages(
                 )
             )
 
+    return results
+
+
+async def dispatch_one_client_lead_notification(
+    *,
+    item: PendingClientLeadNotification,
+    whatsapp_provider: WhatsAppProvider,
+) -> DeliveryReceipt:
+    """Dispatch one Delivery alert through the approved WhatsApp template."""
+    to_phone = item.recipient_phone or item.normalized_recipient_phone
+    if not str(to_phone or "").strip():
+        raise ValueError("missing_whatsapp_phone: Delivery source has no recipient phone")
+    if len("".join(ch for ch in str(to_phone) if ch.isdigit())) < 8:
+        raise ValueError(f"invalid_whatsapp_phone: {to_phone}")
+    return await whatsapp_provider.send_template_message(
+        to=to_phone,
+        template_name=item.template_name,
+        template_language=item.template_language or "es",
+        body_params=item.template_body_params,
+        delivered_text=item.delivered_text,
+    )
+
+
+async def dispatch_pending_client_lead_notifications(
+    client: httpx.AsyncClient,
+    *,
+    pending: list[PendingClientLeadNotification],
+    whatsapp_provider: WhatsAppProvider,
+) -> list[DispatchResult]:
+    """Dispatch pending client lead Delivery notifications through WhatsApp."""
+    if not pending:
+        return []
+    if not whatsapp_provider.configured:
+        return [
+            DispatchResult(
+                message_id=item.delivery_id,
+                contact_id=item.source_id,
+                channel="whatsapp",
+                status="deferred",
+                contact_value=item.recipient_phone,
+                error="whatsapp_provider_not_configured",
+            )
+            for item in pending
+        ]
+
+    results: list[DispatchResult] = []
+    for item in pending:
+        try:
+            receipt = await dispatch_one_client_lead_notification(
+                item=item,
+                whatsapp_provider=whatsapp_provider,
+            )
+            await mark_backend_client_lead_notification_sent(
+                client,
+                delivery_id=item.delivery_id,
+                receipt=receipt,
+            )
+            results.append(
+                DispatchResult(
+                    message_id=item.delivery_id,
+                    contact_id=item.source_id,
+                    channel="whatsapp",
+                    status="delivered",
+                    contact_value=item.recipient_phone,
+                )
+            )
+        except Exception as exc:
+            error_payload = build_exception_delivery_error(exc)
+            try:
+                await record_backend_client_lead_notification_failure(
+                    client,
+                    delivery_id=item.delivery_id,
+                    **error_payload,
+                )
+            except Exception:
+                logger.exception(
+                    "Could not persist Delivery dispatch failure for delivery_id=%s source_id=%s",
+                    item.delivery_id,
+                    item.source_id,
+                )
+            logger.exception(
+                "Failed Delivery dispatch for delivery_id=%s source_id=%s",
+                item.delivery_id,
+                item.source_id,
+            )
+            results.append(
+                DispatchResult(
+                    message_id=item.delivery_id,
+                    contact_id=item.source_id,
+                    channel="whatsapp",
+                    status="failed",
+                    contact_value=item.recipient_phone,
+                    error=str(error_payload["error"]),
+                )
+            )
     return results
 
 

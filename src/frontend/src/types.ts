@@ -7,6 +7,20 @@ export type LeadStage =
   | "closed"
   | "archived";
 
+export type FunnelKind = "campaign" | "inbox";
+export type FunnelStrategyDelivery = "link" | "video";
+
+export interface RuntimeFunnelSettings {
+  id: string;
+  label: string;
+  kind: FunnelKind;
+  enabled: boolean;
+  sheet_configured: boolean;
+  sheet_url_configured: boolean;
+  sheet_gid: string;
+  sheet_poll_seconds: number;
+}
+
 export interface RuntimeSettings {
   enabled: boolean;
   ready: boolean;
@@ -17,10 +31,11 @@ export interface RuntimeSettings {
   loom_url_configured: boolean;
   calendly_base_url: string;
   alert_emails: string[];
+  funnel_config_path: string;
+  enabled_campaign_funnels: string[];
+  ready_campaign_funnels: string[];
+  funnels: RuntimeFunnelSettings[];
 }
-
-export type FunnelKind = "campaign" | "inbox";
-export type FunnelStrategyDelivery = "link" | "video";
 
 export interface FunnelStrategyDefinition {
   step: string;
@@ -65,7 +80,9 @@ export interface FunnelDefinition {
 }
 
 export interface FunnelListResponse {
+  seed_config_path: string;
   config_path: string;
+  config_errors: string[];
   funnels: FunnelDefinition[];
 }
 
@@ -434,5 +451,67 @@ export interface WorkstationClientDetailResponse {
 }
 
 export interface WorkstationCopyAllResponse {
+  text: string;
+}
+
+export interface ClientLeadSourceCounts {
+  total?: number;
+  pending?: number;
+  queued?: number;
+  sent?: number;
+  delivered?: number;
+  failed?: number;
+  blocked?: number;
+  [key: string]: number | undefined;
+}
+
+export interface ClientLeadSource {
+  id: string;
+  label: string;
+  enabled: boolean;
+  sheet_url: string | null;
+  sheet_gid: string | null;
+  sheet_poll_seconds: number;
+  recipient_name: string | null;
+  recipient_phone: string | null;
+  template_name: string | null;
+  template_language: string | null;
+  prefilled_reply_text: string | null;
+  column_mapping: Record<string, string>;
+  last_sync_at: string | null;
+  last_sync_status: string | null;
+  last_sync_note: string | null;
+  counts: ClientLeadSourceCounts;
+}
+
+export interface ClientLeadSourceListResponse {
+  sources: ClientLeadSource[];
+}
+
+export interface ClientLead {
+  id: string;
+  source_id: string;
+  row_number: number;
+  raw_row: Record<string, unknown>;
+  created_time: string | null;
+  full_name: string | null;
+  phone_number: string | null;
+  email: string | null;
+  wa_link: string | null;
+  notification_text: string | null;
+  delivery_status: string | null;
+  delivery_attempts: number;
+  last_delivery_error: string | null;
+  block_reason: string | null;
+  sent_at: string | null;
+  delivered_at: string | null;
+}
+
+export interface ClientLeadListResponse {
+  leads: ClientLead[];
+  source?: ClientLeadSource;
+}
+
+export interface ClientLeadCopyAllResponse {
   text: string;
 }

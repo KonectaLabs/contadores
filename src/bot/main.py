@@ -29,13 +29,17 @@ try:
         BACKEND_BOOT_TIMEOUT_SECONDS,
         BOT_TICK_SECONDS,
         build_backend_client,
+        dispatch_pending_client_lead_notifications,
         dispatch_pending_contadores_messages,
+        fetch_client_lead_sources,
         fetch_funnels,
+        fetch_pending_client_lead_notifications,
         fetch_pending_contadores_outbound,
         process_contadores_alert_email_reply,
         process_whatsapp_inbound_event,
         process_whatsapp_message_status_event,
         register_contadores_calendly_event,
+        run_client_lead_source_sync_iteration,
         run_contadores_automation_iteration,
         run_workstation_automation_iteration,
         run_contadores_sheet_sync_iteration,
@@ -59,13 +63,17 @@ except ImportError:
         BACKEND_BOOT_TIMEOUT_SECONDS,
         BOT_TICK_SECONDS,
         build_backend_client,
+        dispatch_pending_client_lead_notifications,
         dispatch_pending_contadores_messages,
+        fetch_client_lead_sources,
         fetch_funnels,
+        fetch_pending_client_lead_notifications,
         fetch_pending_contadores_outbound,
         process_contadores_alert_email_reply,
         process_whatsapp_inbound_event,
         process_whatsapp_message_status_event,
         register_contadores_calendly_event,
+        run_client_lead_source_sync_iteration,
         run_contadores_automation_iteration,
         run_workstation_automation_iteration,
         run_contadores_sheet_sync_iteration,
@@ -211,6 +219,14 @@ async def run_worker_iteration(
     )
     log_dispatch_activity(logger, contadores_dispatch_results, LOG_STATE)
 
+    pending_client_leads = await fetch_pending_client_lead_notifications(backend_client, limit=200)
+    client_lead_dispatch_results = await dispatch_pending_client_lead_notifications(
+        backend_client,
+        pending=pending_client_leads,
+        whatsapp_provider=whatsapp_provider,
+    )
+    log_dispatch_activity(logger, client_lead_dispatch_results, LOG_STATE)
+
 
 async def run_worker_loop(
     *,
@@ -221,10 +237,12 @@ async def run_worker_loop(
 ) -> None:
     """Run the continuous Contadores worker loop."""
     last_sheet_sync_at_by_funnel: dict[str, float] = {}
+    last_client_lead_sync_at_by_source: dict[str, float] = {}
     try:
         while True:
             try:
                 funnels = await fetch_funnels(backend_client)
+                client_lead_sources = await fetch_client_lead_sources(backend_client)
                 await run_worker_iteration(
                     backend_client=backend_client,
                     email_provider=email_provider,
@@ -259,6 +277,29 @@ async def run_worker_loop(
                                 "%s sheet sync summary: %s",
                                 funnel.label,
                                 build_sheet_sync_log_summary(sheet_summary),
+                            )
+
+                for source in client_lead_sources:
+                    if not source.enabled:
+                        continue
+                    sheet_poll_seconds = max(30, int(source.sheet_poll_seconds or 30))
+                    last_sync_at = last_client_lead_sync_at_by_source.get(source.id, 0.0)
+                    if now - last_sync_at < sheet_poll_seconds:
+                        continue
+                    last_client_lead_sync_at_by_source[source.id] = now
+                    try:
+                        delivery_summary = await run_client_lead_source_sync_iteration(
+                            backend_client,
+                            source=source,
+                        )
+                    except Exception:
+                        logger.exception("%s Delivery sync iteration failed.", source.label)
+                    else:
+                        if delivery_summary.get("status") == "ok":
+                            logger.info(
+                                "%s Delivery sync summary: %s",
+                                source.label,
+                                build_sheet_sync_log_summary(delivery_summary),
                             )
             except httpx.HTTPStatusError as exc:
                 status_code = exc.response.status_code if exc.response else "unknown"

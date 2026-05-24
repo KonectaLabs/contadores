@@ -273,6 +273,34 @@ Entrada Click-to-WhatsApp:
 - El backend trata `external_id`/`wamid` inbound como idempotente. Si Meta
   reintenta un webhook ya guardado, devuelve `processed` sin duplicar el mensaje.
 
+Client Lead Delivery:
+
+- Delivery es una superficie separada del CRM, Workstation y Runner para leads que
+  se generan para clientes de Konecta.
+- Cada fuente guarda URL/GID del Google Sheet, intervalo de polling, destinatario
+  WhatsApp, mapping de columnas, template Meta y texto prellenado para responderle
+  al lead por `wa.me`.
+- Las filas importadas se guardan en tablas dedicadas:
+  `client_lead_sources` y `client_lead_deliveries`. No contaminan
+  `contadores_leads`, alertas humanas ni Workstation.
+- Primer sync: importa todas las filas validas existentes y deja sus
+  notificaciones `pending`. Los siguientes syncs son idempotentes por
+  `(source_id, source_row_key)` y solo agregan filas nuevas.
+- Filas con telefono de lead faltante o invalido quedan visibles como `blocked`
+  con motivo; no se mandan por WhatsApp.
+- Endpoints principales:
+  `GET/POST /api/client-lead-sources`,
+  `PUT/DELETE /api/client-lead-sources/{id}`,
+  `POST /api/client-lead-sources/{id}/sync`,
+  `GET /api/client-lead-sources/{id}/leads`,
+  `GET /api/client-leads/{id}/copy-all`,
+  `POST /api/client-lead-deliveries/{id}/retry`.
+- El bot consume `/api/client-lead-deliveries/pending`, manda el template
+  `konecta_client_lead_alert_es_v1` por Meta y registra `sent`, `delivered` o
+  `failed` por id externo del provider.
+- Para sheets privados, configurar `CONTADORES_GOOGLE_SERVICE_ACCOUNT_FILE` o
+  reutilizar `GOOGLE_SERVICE_ACCOUNT_FILE`.
+
 Buzon General:
 
 - `general` es un inbox, no una campaña: no tiene pipeline de fases ni sheet sync.

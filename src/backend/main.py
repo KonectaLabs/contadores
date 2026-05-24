@@ -21,6 +21,9 @@ from backend.auth import (
 from backend.database import init_db
 from backend.endpoints import (
     auth_router,
+    client_lead_deliveries_router,
+    client_leads_actions_router,
+    client_leads_router,
     contadores_router,
     funnels_router,
     public_workstation_router,
@@ -74,6 +77,8 @@ def is_internal_bot_api_path(path: str) -> bool:
     """Return True when a path belongs to bot-consumed internal APIs."""
     return (
         path.startswith("/api/contadores/")
+        or path.startswith("/api/client-lead-sources")
+        or path.startswith("/api/client-lead-deliveries")
         or path.startswith("/api/workstation/automation/")
         or path == "/api/runtime"
         or path == "/api/funnels"
@@ -131,6 +136,10 @@ app = FastAPI(
             "description": "Converted paid clients, delivery notes, media files, and Codex-ready exports.",
         },
         {
+            "name": "client-leads",
+            "description": "Delivery sources for client-owned campaign leads and WhatsApp notifications.",
+        },
+        {
             "name": "system",
             "description": "System endpoints and frontend serving.",
         },
@@ -148,6 +157,9 @@ if STATIC_DIR.exists():
 app.include_router(auth_router)
 app.include_router(public_workstation_router)
 app.include_router(contadores_router)
+app.include_router(client_leads_router)
+app.include_router(client_lead_deliveries_router)
+app.include_router(client_leads_actions_router)
 app.include_router(funnels_router)
 app.include_router(workstation_router)
 

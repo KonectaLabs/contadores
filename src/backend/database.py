@@ -519,6 +519,17 @@ class MessageDeliveryStatus(str, Enum):
     FAILED = "failed"
 
 
+class ClientLeadDeliveryStatus(str, Enum):
+    """Delivery state for client-owned lead notifications."""
+
+    PENDING = "pending"
+    SENT = "sent"
+    DELIVERED = "delivered"
+    FAILED = "failed"
+    BLOCKED = "blocked"
+    SKIPPED = "skipped"
+
+
 class CrmMessageDirection(str, Enum):
     """Direction for one CRM email message."""
 
@@ -2052,6 +2063,522 @@ class ContadoresMessage(SQLModel, table=True):
             if lead:
                 lead.updated_at = datetime.now(timezone.utc)
                 session.add(lead)
+            session.commit()
+            session.refresh(row)
+            session.expunge(row)
+            return row
+
+
+CLIENT_LEAD_DEFAULT_TEMPLATE_NAME = "konecta_client_lead_alert_es_v1"
+CLIENT_LEAD_DEFAULT_TEMPLATE_LANGUAGE = "es"
+CLIENT_LEAD_DEFAULT_PREFILLED_REPLY_TEXT = (
+    "Hola {name}, vi tu consulta. Te escribo para entender mejor que necesitas y ver como te puedo ayudar."
+)
+CLIENT_LEAD_DEFAULT_COLUMN_MAPPING = {
+    "source_id": "id",
+    "created_time": "created_time",
+    "full_name": "full_name",
+    "phone_number": "phone_number",
+    "email": "email",
+}
+
+
+def normalize_client_lead_column_mapping(value: Any) -> dict[str, str]:
+    """Normalize operator-provided column names for client lead sheets."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value or "{}")
+        except json.JSONDecodeError:
+            value = {}
+    if not isinstance(value, dict):
+        value = {}
+
+    mapping: dict[str, str] = {}
+    for key, default_value in CLIENT_LEAD_DEFAULT_COLUMN_MAPPING.items():
+        raw_value = value.get(key, default_value)
+        clean_value = " ".join(str(raw_value or "").split()).strip()
+        if clean_value:
+            mapping[key] = clean_value
+    for raw_key, raw_value in value.items():
+        key = " ".join(str(raw_key or "").split()).strip()
+        if not key or key in mapping:
+            continue
+        clean_value = " ".join(str(raw_value or "").split()).strip()
+        if clean_value:
+            mapping[key] = clean_value
+    return mapping
+
+
+def client_lead_default_column_mapping_json() -> str:
+    """Return the JSON default for client lead column mapping."""
+    return json.dumps(CLIENT_LEAD_DEFAULT_COLUMN_MAPPING, ensure_ascii=True)
+
+
+class ClientLeadSource(SQLModel, table=True):
+    """One client-owned lead source that polls a Google Sheet and notifies a recipient."""
+
+    __tablename__ = "client_lead_sources"
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    label: str = Field(index=True)
+    enabled: bool = Field(default=True, index=True)
+    sheet_url: str = Field(default="")
+    sheet_gid: str | None = Field(default=None)
+    sheet_poll_seconds: int = Field(default=30)
+    recipient_name: str | None = Field(default=None)
+    recipient_phone: str = Field(default="")
+    normalized_recipient_phone: str = Field(default="", index=True)
+    template_name: str = Field(default=CLIENT_LEAD_DEFAULT_TEMPLATE_NAME)
+    template_language: str = Field(default=CLIENT_LEAD_DEFAULT_TEMPLATE_LANGUAGE)
+    prefilled_reply_text: str = Field(default=CLIENT_LEAD_DEFAULT_PREFILLED_REPLY_TEXT)
+    column_mapping_json: str = Field(default_factory=client_lead_default_column_mapping_json)
+    last_sync_at: datetime | None = Field(default=None, index=True)
+    last_sync_status: str | None = Field(default=None)
+    last_sync_note: str | None = Field(default=None)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @property
+    def column_mapping(self) -> dict[str, str]:
+        """Return normalized column mapping."""
+        return normalize_client_lead_column_mapping(self.column_mapping_json)
+
+    @classmethod
+    def normalize_enabled(cls, enabled: bool | None) -> bool:
+        """Normalize optional enabled flags."""
+        return True if enabled is None else bool(enabled)
+
+    @classmethod
+    def get_by_id(cls, source_id: str) -> Optional["ClientLeadSource"]:
+        """Get one source by id."""
+        with Session(engine) as session:
+            item = session.get(cls, source_id)
+            if item:
+                session.expunge(item)
+            return item
+
+    @classmethod
+    def list_all(cls) -> list["ClientLeadSource"]:
+        """List every client lead source."""
+        with Session(engine) as session:
+            statement = select(cls).order_by(cls.updated_at.desc(), cls.created_at.desc(), cls.label)
+            items = list(session.exec(statement).all())
+            for item in items:
+                session.expunge(item)
+            return items
+
+    @classmethod
+    def list_enabled(cls) -> list["ClientLeadSource"]:
+        """List enabled sources for bot polling."""
+        with Session(engine) as session:
+            statement = select(cls).where(cls.enabled.is_(True)).order_by(cls.label, cls.id)
+            items = list(session.exec(statement).all())
+            for item in items:
+                session.expunge(item)
+            return items
+
+    @classmethod
+    def upsert(
+        cls,
+        *,
+        source_id: str | None = None,
+        label: str,
+        enabled: bool | None = True,
+        sheet_url: str,
+        sheet_gid: str | None = None,
+        sheet_poll_seconds: int = 30,
+        recipient_name: str | None = None,
+        recipient_phone: str,
+        template_name: str | None = None,
+        template_language: str | None = None,
+        prefilled_reply_text: str | None = None,
+        column_mapping: dict[str, str] | None = None,
+    ) -> "ClientLeadSource":
+        """Create or update one client lead source."""
+        clean_label = " ".join((label or "").split()).strip()
+        if not clean_label:
+            raise ValueError("label is required")
+        clean_sheet_url = (sheet_url or "").strip()
+        clean_recipient_phone = (recipient_phone or "").strip()
+        normalized_recipient_phone = normalize_phone(clean_recipient_phone)
+        now = datetime.now(timezone.utc)
+
+        with Session(engine) as session:
+            item = session.get(cls, source_id) if source_id else None
+            if item is None:
+                item = cls(id=source_id or str(uuid.uuid4()), label=clean_label, created_at=now)
+
+            item.label = clean_label
+            item.enabled = cls.normalize_enabled(enabled)
+            item.sheet_url = clean_sheet_url
+            item.sheet_gid = (sheet_gid or "").strip() or None
+            item.sheet_poll_seconds = max(30, int(sheet_poll_seconds or 30))
+            item.recipient_name = " ".join((recipient_name or "").split()).strip() or None
+            item.recipient_phone = clean_recipient_phone
+            item.normalized_recipient_phone = normalized_recipient_phone
+            item.template_name = (template_name or CLIENT_LEAD_DEFAULT_TEMPLATE_NAME).strip()
+            item.template_language = (template_language or CLIENT_LEAD_DEFAULT_TEMPLATE_LANGUAGE).strip() or "es"
+            item.prefilled_reply_text = (
+                (prefilled_reply_text or CLIENT_LEAD_DEFAULT_PREFILLED_REPLY_TEXT).strip()
+                or CLIENT_LEAD_DEFAULT_PREFILLED_REPLY_TEXT
+            )
+            item.column_mapping_json = json.dumps(
+                normalize_client_lead_column_mapping(column_mapping or item.column_mapping),
+                ensure_ascii=True,
+            )
+            item.updated_at = now
+            session.add(item)
+            session.commit()
+            session.refresh(item)
+            session.expunge(item)
+            return item
+
+    @classmethod
+    def delete(cls, source_id: str) -> bool:
+        """Delete one source and its imported client leads."""
+        with Session(engine) as session:
+            item = session.get(cls, source_id)
+            if item is None:
+                return False
+            deliveries = session.exec(select(ClientLeadDelivery).where(ClientLeadDelivery.source_id == source_id)).all()
+            for delivery in deliveries:
+                session.delete(delivery)
+            session.delete(item)
+            session.commit()
+            return True
+
+    @classmethod
+    def mark_sync(
+        cls,
+        source_id: str,
+        *,
+        status: str,
+        note: str | None = None,
+        synced_at: datetime | None = None,
+    ) -> Optional["ClientLeadSource"]:
+        """Persist the latest sync result for one source."""
+        with Session(engine) as session:
+            item = session.get(cls, source_id)
+            if item is None:
+                return None
+            now = synced_at or datetime.now(timezone.utc)
+            item.last_sync_at = now
+            item.last_sync_status = (status or "").strip() or None
+            item.last_sync_note = " ".join(str(note or "").split()).strip()[:1000] or None
+            item.updated_at = now
+            session.add(item)
+            session.commit()
+            session.refresh(item)
+            session.expunge(item)
+            return item
+
+
+class ClientLeadDelivery(SQLModel, table=True):
+    """One imported lead row from a client's campaign sheet."""
+
+    __tablename__ = "client_lead_deliveries"
+    __table_args__ = (
+        UniqueConstraint("source_id", "source_row_key", name="uq_client_lead_deliveries_source_row_key"),
+    )
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    source_id: str = Field(foreign_key="client_lead_sources.id", index=True)
+    source_row_key: str = Field(index=True)
+    row_number: int = Field(default=0, index=True)
+    raw_row_json: str = Field(default="{}")
+    created_time: datetime | None = Field(default=None, index=True)
+    full_name: str | None = Field(default=None, index=True)
+    phone_number: str = Field(default="")
+    normalized_phone: str = Field(default="", index=True)
+    email: str | None = Field(default=None, index=True)
+    wa_link: str = Field(default="")
+    notification_text: str = Field(default="")
+    delivery_status: ClientLeadDeliveryStatus = Field(default=ClientLeadDeliveryStatus.PENDING, index=True)
+    external_id: str | None = Field(default=None, index=True)
+    delivery_attempts: int = Field(default=0, index=True)
+    last_delivery_error: str | None = Field(default=None)
+    last_delivery_error_at: datetime | None = Field(default=None)
+    block_reason: str | None = Field(default=None)
+    dispatch_after: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
+    sent_at: datetime | None = Field(default=None, index=True)
+    delivered_at: datetime | None = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
+
+    @property
+    def raw_row(self) -> dict[str, str]:
+        """Return stored sheet row values."""
+        try:
+            payload = json.loads(self.raw_row_json or "{}")
+        except json.JSONDecodeError:
+            return {}
+        if not isinstance(payload, dict):
+            return {}
+        return {str(key): str(value) for key, value in payload.items()}
+
+    @classmethod
+    def normalize_status(
+        cls,
+        status: ClientLeadDeliveryStatus | str | None,
+    ) -> ClientLeadDeliveryStatus:
+        """Normalize one delivery status."""
+        if isinstance(status, ClientLeadDeliveryStatus):
+            return status
+        value = (status or "").strip().lower()
+        for candidate in ClientLeadDeliveryStatus:
+            if candidate.value == value:
+                return candidate
+        return ClientLeadDeliveryStatus.PENDING
+
+    @classmethod
+    def get_by_id(cls, delivery_id: str) -> Optional["ClientLeadDelivery"]:
+        """Get one imported client lead row by id."""
+        with Session(engine) as session:
+            item = session.get(cls, delivery_id)
+            if item:
+                session.expunge(item)
+            return item
+
+    @classmethod
+    def list_by_source(
+        cls,
+        source_id: str,
+        *,
+        limit: int = 500,
+    ) -> list["ClientLeadDelivery"]:
+        """List imported lead rows for one source."""
+        with Session(engine) as session:
+            statement = (
+                select(cls)
+                .where(cls.source_id == source_id)
+                .order_by(cls.row_number.desc(), cls.created_at.desc(), cls.id.desc())
+                .limit(limit)
+            )
+            items = list(session.exec(statement).all())
+            for item in items:
+                session.expunge(item)
+            return items
+
+    @classmethod
+    def list_pending_notification(cls, *, limit: int = 100) -> list["ClientLeadDelivery"]:
+        """List pending client lead notifications ready for WhatsApp dispatch."""
+        now = datetime.now(timezone.utc)
+        with Session(engine) as session:
+            statement = (
+                select(cls)
+                .join(ClientLeadSource, ClientLeadSource.id == cls.source_id)
+                .where(
+                    ClientLeadSource.enabled.is_(True),
+                    cls.delivery_status == ClientLeadDeliveryStatus.PENDING,
+                    cls.dispatch_after <= now,
+                )
+                .order_by(cls.dispatch_after, cls.created_at, cls.id)
+                .limit(limit)
+            )
+            items = list(session.exec(statement).all())
+            for item in items:
+                session.expunge(item)
+            return items
+
+    @classmethod
+    def count_by_status_for_sources(cls) -> dict[str, dict[str, int]]:
+        """Return per-source delivery status counts."""
+        with Session(engine) as session:
+            rows = session.exec(select(cls.source_id, cls.delivery_status)).all()
+        counts: dict[str, dict[str, int]] = {}
+        for source_id, status in rows:
+            by_status = counts.setdefault(source_id, {})
+            status_key = str(status.value if isinstance(status, ClientLeadDeliveryStatus) else status)
+            by_status[status_key] = by_status.get(status_key, 0) + 1
+            by_status["total"] = by_status.get("total", 0) + 1
+        return counts
+
+    @classmethod
+    def upsert_from_sheet_row(
+        cls,
+        *,
+        source: ClientLeadSource,
+        source_row_key: str,
+        row_number: int,
+        raw_row: dict[str, str],
+        full_name: str | None,
+        phone_number: str,
+        email: str | None,
+        created_time: datetime | None,
+        wa_link: str,
+        notification_text: str,
+        block_reason: str | None = None,
+    ) -> tuple["ClientLeadDelivery", bool]:
+        """Create or update one imported sheet row without double-notifying."""
+        normalized_phone = normalize_phone(phone_number)
+        now = datetime.now(timezone.utc)
+        next_status = (
+            ClientLeadDeliveryStatus.BLOCKED
+            if block_reason
+            else ClientLeadDeliveryStatus.PENDING
+        )
+
+        with Session(engine) as session:
+            statement = (
+                select(cls)
+                .where(cls.source_id == source.id, cls.source_row_key == source_row_key)
+                .limit(1)
+            )
+            item = session.exec(statement).first()
+            created = item is None
+            if item is None:
+                item = cls(
+                    source_id=source.id,
+                    source_row_key=source_row_key,
+                    delivery_status=next_status,
+                    dispatch_after=now,
+                    created_at=now,
+                )
+
+            item.row_number = row_number
+            item.raw_row_json = json.dumps(raw_row, ensure_ascii=False, sort_keys=True)
+            item.created_time = created_time
+            item.full_name = " ".join((full_name or "").split()).strip() or None
+            item.phone_number = (phone_number or "").strip()
+            item.normalized_phone = normalized_phone
+            item.email = (normalize_email(email) or None) if email else None
+            item.wa_link = (wa_link or "").strip()
+            item.notification_text = (notification_text or "").strip()
+            item.block_reason = (block_reason or "").strip() or None
+            item.updated_at = now
+
+            if block_reason:
+                item.delivery_status = ClientLeadDeliveryStatus.BLOCKED
+            elif item.delivery_status in {
+                ClientLeadDeliveryStatus.BLOCKED,
+                ClientLeadDeliveryStatus.SKIPPED,
+            }:
+                item.delivery_status = ClientLeadDeliveryStatus.PENDING
+                item.dispatch_after = now
+                item.delivery_attempts = 0
+                item.last_delivery_error = None
+                item.last_delivery_error_at = None
+
+            session.add(item)
+            session.commit()
+            session.refresh(item)
+            session.expunge(item)
+            return item, created
+
+    @classmethod
+    def update_delivery_status(
+        cls,
+        *,
+        delivery_id: str,
+        delivery_status: ClientLeadDeliveryStatus | str,
+        external_id: str | None = None,
+        last_delivery_error: str | None = None,
+        clear_delivery_error: bool = False,
+    ) -> Optional["ClientLeadDelivery"]:
+        """Update one client lead notification delivery status."""
+        with Session(engine) as session:
+            row = session.get(cls, delivery_id)
+            if row is None:
+                return None
+            now = datetime.now(timezone.utc)
+            row.delivery_status = cls.normalize_status(delivery_status)
+            if external_id is not None:
+                row.external_id = (external_id or "").strip() or None
+            if row.delivery_status == ClientLeadDeliveryStatus.SENT:
+                row.sent_at = now
+            if row.delivery_status == ClientLeadDeliveryStatus.DELIVERED:
+                row.delivered_at = now
+            if clear_delivery_error:
+                row.last_delivery_error = None
+                row.last_delivery_error_at = None
+            elif last_delivery_error is not None:
+                row.last_delivery_error = " ".join(str(last_delivery_error).split()).strip()[:2000] or None
+                row.last_delivery_error_at = now if row.last_delivery_error else None
+            row.updated_at = now
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            session.expunge(row)
+            return row
+
+    @classmethod
+    def update_delivery_status_by_external_id(
+        cls,
+        *,
+        external_id: str,
+        delivery_status: ClientLeadDeliveryStatus | str,
+        last_delivery_error: str | None = None,
+    ) -> Optional["ClientLeadDelivery"]:
+        """Update a client lead notification by provider message id."""
+        clean_external_id = (external_id or "").strip()
+        if not clean_external_id:
+            return None
+        with Session(engine) as session:
+            statement = select(cls).where(cls.external_id == clean_external_id).limit(1)
+            row = session.exec(statement).first()
+            if row is None:
+                return None
+            now = datetime.now(timezone.utc)
+            row.delivery_status = cls.normalize_status(delivery_status)
+            if row.delivery_status == ClientLeadDeliveryStatus.DELIVERED:
+                row.delivered_at = now
+            if last_delivery_error is not None:
+                row.last_delivery_error = " ".join(str(last_delivery_error).split()).strip()[:2000] or None
+                row.last_delivery_error_at = now if row.last_delivery_error else None
+            row.updated_at = now
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            session.expunge(row)
+            return row
+
+    @classmethod
+    def record_delivery_failure(
+        cls,
+        *,
+        delivery_id: str,
+        error: str,
+        max_attempts: int = 3,
+        retry_delay_seconds: int = 60,
+    ) -> Optional["ClientLeadDelivery"]:
+        """Store a failed notification attempt and retry until the budget is spent."""
+        with Session(engine) as session:
+            row = session.get(cls, delivery_id)
+            if row is None:
+                return None
+            now = datetime.now(timezone.utc)
+            attempts = max(0, int(row.delivery_attempts or 0)) + 1
+            row.delivery_attempts = attempts
+            row.last_delivery_error = " ".join(str(error).split()).strip()[:2000] or "unknown delivery error"
+            row.last_delivery_error_at = now
+            if attempts < max_attempts:
+                row.delivery_status = ClientLeadDeliveryStatus.PENDING
+                row.dispatch_after = now + timedelta(seconds=max(0, retry_delay_seconds))
+            else:
+                row.delivery_status = ClientLeadDeliveryStatus.FAILED
+            row.updated_at = now
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            session.expunge(row)
+            return row
+
+    @classmethod
+    def requeue_failed(cls, delivery_id: str, *, reset_attempts: bool = True) -> Optional["ClientLeadDelivery"]:
+        """Requeue one failed client lead notification."""
+        with Session(engine) as session:
+            row = session.get(cls, delivery_id)
+            if row is None:
+                return None
+            row.delivery_status = ClientLeadDeliveryStatus.PENDING
+            row.dispatch_after = datetime.now(timezone.utc)
+            row.last_delivery_error = None
+            row.last_delivery_error_at = None
+            row.block_reason = None
+            if reset_attempts:
+                row.delivery_attempts = 0
+            row.updated_at = datetime.now(timezone.utc)
+            session.add(row)
             session.commit()
             session.refresh(row)
             session.expunge(row)

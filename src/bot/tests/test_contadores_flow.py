@@ -910,7 +910,18 @@ def test_process_whatsapp_message_status_event_ignores_missing_contadores_messag
         response = httpx.Response(404, request=request)
         raise httpx.HTTPStatusError("not found", request=request, response=response)
 
+    async def fake_mark_backend_client_lead_delivery_status(client, *, external_id: str, status: str, **kwargs):
+        del client, external_id, status, kwargs
+        request = httpx.Request("PUT", "http://backend/api/client-lead-deliveries/delivery/by-external-id")
+        response = httpx.Response(404, request=request)
+        raise httpx.HTTPStatusError("not found", request=request, response=response)
+
     monkeypatch.setattr(utils, "mark_backend_contadores_message_status", fake_mark_backend_contadores_message_status)
+    monkeypatch.setattr(
+        utils,
+        "mark_backend_client_lead_delivery_status",
+        fake_mark_backend_client_lead_delivery_status,
+    )
 
     result = asyncio.run(
         process_whatsapp_message_status_event(

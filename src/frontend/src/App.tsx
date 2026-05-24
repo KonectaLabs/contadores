@@ -32,6 +32,11 @@ import { apiFetch } from "./api";
 import { compactNumber, humanize, lastInteractionAt, relativeTime, shortDate } from "./format";
 import type {
   BulkActionResponse,
+  ClientLead,
+  ClientLeadCopyAllResponse,
+  ClientLeadListResponse,
+  ClientLeadSource,
+  ClientLeadSourceListResponse,
   ContadoresConfig,
   ContadoresMetrics,
   FunnelDefinition,
@@ -65,10 +70,39 @@ const DASHBOARD_STAGE_STORAGE_KEY = "contadores.dashboard.stageFilter";
 const DASHBOARD_SECTION_STORAGE_KEY = "contadores.dashboard.activeSection";
 
 type StageFilterValue = LeadStage | "all" | "manual_attention";
-type ActiveSection = "crm" | "workstation" | "runner";
+type ActiveSection = "crm" | "workstation" | "delivery" | "runner";
 type LoadWorkstationDetailOptions = {
   syncNotes?: boolean;
   showLoading?: boolean;
+};
+type DeliveryEditorMode = "edit" | "create";
+type ClientLeadSourceDraft = {
+  id: string;
+  label: string;
+  enabled: boolean;
+  sheet_url: string;
+  sheet_gid: string;
+  sheet_poll_seconds: number;
+  recipient_name: string;
+  recipient_phone: string;
+  template_name: string;
+  template_language: string;
+  prefilled_reply_text: string;
+  column_mapping_text: string;
+};
+type ClientLeadSourceMutationPayload = {
+  id: string;
+  label: string;
+  enabled: boolean;
+  sheet_url: string | null;
+  sheet_gid: string | null;
+  sheet_poll_seconds: number;
+  recipient_name: string | null;
+  recipient_phone: string | null;
+  template_name: string | null;
+  template_language: string | null;
+  prefilled_reply_text: string | null;
+  column_mapping: Record<string, string>;
 };
 
 const stageFilters: Array<{
@@ -116,7 +150,7 @@ function readStoredStageFilter(): StageFilterValue {
 
 function readStoredActiveSection(): ActiveSection {
   const value = readStoredValue(DASHBOARD_SECTION_STORAGE_KEY);
-  return value === "workstation" || value === "runner" ? value : "crm";
+  return value === "workstation" || value === "delivery" || value === "runner" ? value : "crm";
 }
 
 const moveStageOptions: Array<{ value: LeadStage; label: string }> = [
@@ -223,6 +257,7 @@ export function App() {
   const [runtime, setRuntime] = useState<RuntimeSettings | null>(null);
   const [funnels, setFunnels] = useState<FunnelDefinition[]>([]);
   const [funnelConfigPath, setFunnelConfigPath] = useState("");
+  const [funnelConfigErrors, setFunnelConfigErrors] = useState<string[]>([]);
   const [selectedFunnelId, setSelectedFunnelId] = useState(readStoredFunnelId);
   const [leadList, setLeadList] = useState<LeadListResponse | null>(null);
   const [manualAttentionList, setManualAttentionList] = useState<LeadSummary[]>([]);
@@ -263,11 +298,20 @@ export function App() {
   const [professionalPhotoEditPrompts, setProfessionalPhotoEditPrompts] = useState<Record<string, string>>({});
   const [professionalPhotoJob, setProfessionalPhotoJob] = useState<WorkstationProfessionalPhotoJobResponse | null>(null);
   const [workstationLoading, setWorkstationLoading] = useState(false);
+  const [deliverySources, setDeliverySources] = useState<ClientLeadSource[]>([]);
+  const [deliveryLeads, setDeliveryLeads] = useState<ClientLead[]>([]);
+  const [selectedDeliverySourceId, setSelectedDeliverySourceId] = useState<string | null>(null);
+  const [deliveryEditorMode, setDeliveryEditorMode] = useState<DeliveryEditorMode>("edit");
+  const [deliverySourceDraft, setDeliverySourceDraft] = useState<ClientLeadSourceDraft>(buildBlankClientLeadSourceDraft);
+  const [deliveryLoading, setDeliveryLoading] = useState(false);
+  const [deliveryLeadsLoading, setDeliveryLeadsLoading] = useState(false);
+  const [deliveryCopyStatus, setDeliveryCopyStatus] = useState("");
   const [runnerStatus, setRunnerStatus] = useState<RunnerStatusResponse | null>(null);
   const [runnerLoading, setRunnerLoading] = useState(false);
   const [acknowledgingDeliveryErrorIds, setAcknowledgingDeliveryErrorIds] = useState<number[]>([]);
   const [leadContextCopyStatus, setLeadContextCopyStatus] = useState("");
   const detailRequestId = useRef(0);
+  const deliveryDraftSourceId = useRef<string | null>(null);
   const debouncedQuery = useDebouncedValue(query, 250);
   const debouncedWorkstationQuery = useDebouncedValue(workstationQuery, 250);
 
@@ -275,8 +319,10 @@ export function App() {
   const tagOptions = leadList?.tag_options ?? [];
   const config = leadList?.config ?? detail?.config ?? null;
   const selectedFunnel = funnels.find((funnel) => funnel.id === selectedFunnelId) ?? funnels[0] ?? null;
+  const selectedFunnelSetupIssues = buildFunnelSetupIssues(selectedFunnel);
   const isContadoresFunnel = true;
   const isInboxFunnel = selectedFunnel?.kind === "inbox";
+  const canEditLegacyRuntimeConfig = selectedFunnel?.id === "contadores";
 
   const selectedLead = useMemo(() => {
     if (detail?.lead.id === selectedLeadId) {
@@ -297,6 +343,10 @@ export function App() {
   const bulkCustomBlockedCount = selectedVisibleLeads.filter((lead) => customMessageBlockReason(lead)).length;
   const bulkClosedCount = selectedVisibleLeads.filter((lead) => lead.stage === "closed").length;
   const workstationClients = workstationList?.clients ?? [];
+  const selectedDeliverySource = deliveryEditorMode === "edit"
+    ? deliverySources.find((source) => source.id === selectedDeliverySourceId) ?? null
+    : null;
+  const deliveryLeadTotal = deliverySources.reduce((total, source) => total + deliverySourceCount(source, "total"), 0);
   const selectedVisibleCount = selectedLeadIds.filter((leadId) => visibleLeadIds.includes(leadId)).length;
   const allVisibleSelected = visibleLeadIds.length > 0 && selectedVisibleCount === visibleLeadIds.length;
 
@@ -311,6 +361,7 @@ export function App() {
     setRuntime(runtimePayload);
     setFunnels(funnelPayload.funnels ?? []);
     setFunnelConfigPath(funnelPayload.config_path || "");
+    setFunnelConfigErrors(funnelPayload.config_errors ?? []);
     setManualAttentionCounts(attentionCountsPayload.counts ?? {});
 
     if (!selectedFunnelId || !funnelPayload.funnels.some((funnel) => funnel.id === selectedFunnelId)) {
@@ -394,6 +445,29 @@ export function App() {
       return payload.clients[0]?.id ?? null;
     });
   }, [debouncedWorkstationQuery, selectedFunnelId]);
+
+  const loadDeliverySources = useCallback(async () => {
+    const payload = await apiFetch<ClientLeadSourceListResponse | ClientLeadSource[]>("/api/client-lead-sources");
+    const sources = unpackClientLeadSources(payload);
+    setDeliverySources(sources);
+    setSelectedDeliverySourceId((current) => {
+      if (deliveryEditorMode === "create") {
+        return current;
+      }
+      if (current && sources.some((source) => source.id === current)) {
+        return current;
+      }
+      return sources[0]?.id ?? null;
+    });
+    return sources;
+  }, [deliveryEditorMode]);
+
+  const loadDeliveryLeads = useCallback(async (sourceId: string) => {
+    const payload = await apiFetch<ClientLeadListResponse | ClientLead[]>(
+      `/api/client-lead-sources/${encodeURIComponent(sourceId)}/leads`,
+    );
+    setDeliveryLeads(unpackClientLeads(payload));
+  }, []);
 
   const loadRunnerStatus = useCallback(async () => {
     const payload = await apiFetch<RunnerStatusResponse>(
@@ -485,7 +559,13 @@ export function App() {
   useEffect(() => {
     const timer = window.setInterval(() => {
       if (document.visibilityState === "visible") {
-        const loaders = [loadDashboard()];
+        const loaders: Array<Promise<unknown>> = [loadDashboard()];
+        if (activeSection === "delivery") {
+          loaders.push(loadDeliverySources());
+          if (selectedDeliverySourceId) {
+            loaders.push(loadDeliveryLeads(selectedDeliverySourceId));
+          }
+        }
         if (activeSection === "runner") {
           loaders.push(loadRunnerStatus());
         }
@@ -495,7 +575,7 @@ export function App() {
       }
     }, REFRESH_MS);
     return () => window.clearInterval(timer);
-  }, [activeSection, loadDashboard, loadRunnerStatus]);
+  }, [activeSection, loadDashboard, loadDeliveryLeads, loadDeliverySources, loadRunnerStatus, selectedDeliverySourceId]);
 
   useEffect(() => {
     if (!selectedLeadId || !isContadoresFunnel) {
@@ -518,6 +598,70 @@ export function App() {
       setError(reason instanceof Error ? reason.message : "Could not load Workstation.");
     });
   }, [loadWorkstation]);
+
+  useEffect(() => {
+    if (activeSection !== "delivery") {
+      return;
+    }
+    let cancelled = false;
+    setDeliveryLoading(true);
+    loadDeliverySources()
+      .catch((reason) => {
+        if (!cancelled) {
+          setError(reason instanceof Error ? reason.message : "Could not load Delivery sources.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setDeliveryLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSection, loadDeliverySources]);
+
+  useEffect(() => {
+    if (deliveryEditorMode === "create") {
+      deliveryDraftSourceId.current = null;
+      setDeliveryLeads([]);
+      return;
+    }
+
+    const source = deliverySources.find((item) => item.id === selectedDeliverySourceId) ?? null;
+    if (!source) {
+      deliveryDraftSourceId.current = null;
+      setDeliverySourceDraft(buildBlankClientLeadSourceDraft());
+      setDeliveryLeads([]);
+      return;
+    }
+
+    if (deliveryDraftSourceId.current !== source.id) {
+      deliveryDraftSourceId.current = source.id;
+      setDeliverySourceDraft(clientLeadSourceToDraft(source));
+      setDeliveryCopyStatus("");
+    }
+    if (activeSection !== "delivery") {
+      return;
+    }
+
+    let cancelled = false;
+    setDeliveryLeadsLoading(true);
+    loadDeliveryLeads(source.id)
+      .catch((reason) => {
+        if (!cancelled) {
+          setError(reason instanceof Error ? reason.message : "Could not load Delivery leads.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setDeliveryLeadsLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSection, deliveryEditorMode, deliverySources, loadDeliveryLeads, selectedDeliverySourceId]);
 
   useEffect(() => {
     if (activeSection !== "runner") {
@@ -631,6 +775,12 @@ export function App() {
       if (selectedWorkstationClientId) {
         await loadWorkstationDetail(selectedWorkstationClientId);
       }
+      if (activeSection === "delivery") {
+        await loadDeliverySources();
+        if (selectedDeliverySourceId) {
+          await loadDeliveryLeads(selectedDeliverySourceId);
+        }
+      }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not refresh funnels.");
     } finally {
@@ -659,6 +809,123 @@ export function App() {
     } catch {
       setLeadContextCopyStatus("");
       setError("Could not copy lead context.");
+    }
+  }
+
+  function startNewDeliverySource() {
+    setDeliveryEditorMode("create");
+    setSelectedDeliverySourceId(null);
+    deliveryDraftSourceId.current = null;
+    setDeliveryLeads([]);
+    setDeliveryCopyStatus("");
+    setDeliverySourceDraft(buildBlankClientLeadSourceDraft());
+  }
+
+  async function saveDeliverySource(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setActionBusy("delivery-save");
+    try {
+      const payload = clientLeadSourcePayloadFromDraft(deliverySourceDraft);
+      const existingSource = deliverySources.find((source) => source.id === payload.id);
+      const method = existingSource && deliveryEditorMode === "edit" ? "PUT" : "POST";
+      const path = method === "PUT"
+        ? `/api/client-lead-sources/${encodeURIComponent(existingSource?.id ?? payload.id)}`
+        : "/api/client-lead-sources";
+      const saved = await apiFetch<ClientLeadSource>(path, {
+        method,
+        body: JSON.stringify(payload),
+      });
+      setDeliveryEditorMode("edit");
+      setSelectedDeliverySourceId(saved.id || payload.id);
+      deliveryDraftSourceId.current = saved.id || payload.id;
+      setDeliverySourceDraft(clientLeadSourceToDraft(saved));
+      await loadDeliverySources();
+      await loadDeliveryLeads(saved.id || payload.id);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not save Delivery source.");
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
+  async function deleteDeliverySource() {
+    const sourceId = selectedDeliverySource?.id;
+    const label = selectedDeliverySource?.label || sourceId;
+    if (!sourceId || !window.confirm(`Delete Delivery source ${label}?`)) {
+      return;
+    }
+    setActionBusy("delivery-delete");
+    try {
+      await apiFetch(`/api/client-lead-sources/${encodeURIComponent(sourceId)}`, { method: "DELETE" });
+      setSelectedDeliverySourceId(null);
+      deliveryDraftSourceId.current = null;
+      setDeliveryLeads([]);
+      setDeliveryCopyStatus("");
+      await loadDeliverySources();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not delete Delivery source.");
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
+  async function syncDeliverySource() {
+    const sourceId = selectedDeliverySource?.id ?? deliverySourceDraft.id;
+    if (!sourceId || deliveryEditorMode === "create") {
+      return;
+    }
+    setActionBusy("delivery-sync");
+    try {
+      await apiFetch(`/api/client-lead-sources/${encodeURIComponent(sourceId)}/sync`, { method: "POST" });
+      await loadDeliverySources();
+      await loadDeliveryLeads(sourceId);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not sync Delivery source.");
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
+  async function copyClientLeadInfo(lead: ClientLead) {
+    try {
+      await copyTextToClipboard(buildClientLeadText(lead));
+      setDeliveryCopyStatus(`Copied ${lead.full_name || lead.phone_number || `row ${lead.row_number}`}.`);
+    } catch {
+      setDeliveryCopyStatus("");
+      setError("Could not copy lead info.");
+    }
+  }
+
+  async function copyClientLeadAll(lead: ClientLead) {
+    setActionBusy(`delivery-copy-${lead.id}`);
+    try {
+      const payload = await apiFetch<ClientLeadCopyAllResponse | string>(
+        `/api/client-leads/${encodeURIComponent(lead.id)}/copy-all`,
+      );
+      const text = typeof payload === "string" ? payload : payload.text;
+      await copyTextToClipboard(text || buildClientLeadText(lead));
+      setDeliveryCopyStatus(`Copied all for ${lead.full_name || lead.phone_number || `row ${lead.row_number}`}.`);
+    } catch (reason) {
+      setDeliveryCopyStatus("");
+      setError(reason instanceof Error ? reason.message : "Could not copy all lead info.");
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
+  async function retryClientLeadNotification(lead: ClientLead) {
+    if (!isRetryableClientLead(lead)) {
+      return;
+    }
+    setActionBusy(`delivery-retry-${lead.id}`);
+    try {
+      await apiFetch(`/api/client-leads/${encodeURIComponent(lead.id)}/retry`, { method: "POST" });
+      await loadDeliverySources();
+      await loadDeliveryLeads(lead.source_id || selectedDeliverySourceId || deliverySourceDraft.id);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not retry this notification.");
+    } finally {
+      setActionBusy(null);
     }
   }
 
@@ -1327,11 +1594,25 @@ export function App() {
 
   const visibleCount = leadList?.leads.length ?? 0;
   const totalCount = metrics?.total ?? 0;
+  const selectedFunnelNeedsSetup = Boolean(
+    activeSection === "crm"
+      && selectedFunnel
+      && selectedFunnel.kind === "campaign"
+      && selectedFunnelSetupIssues.length
+      && totalCount === 0,
+  );
   const totalManualAttentionCount = Object.values(manualAttentionCounts).reduce((total, count) => total + count, 0);
   const showGlobalCrmAttentionBadge = activeSection !== "crm" && totalManualAttentionCount > 0;
   const workstationTitle = selectedFunnel
     ? `Workstation · ${selectedFunnel.label}`
     : "Workstation";
+  const activeTitle = activeSection === "runner"
+    ? "Runner"
+    : activeSection === "workstation"
+      ? workstationTitle
+      : activeSection === "delivery"
+        ? "Delivery"
+        : selectedFunnel?.label || "Funnels";
   const syncStatus = activeSection === "runner"
     ? runnerStatus?.running
       ? `Running${runnerStatus.pid ? ` · pid ${runnerStatus.pid}` : ""}`
@@ -1340,22 +1621,29 @@ export function App() {
         : "Runner idle"
     : activeSection === "workstation"
     ? `${workstationClients.length} converted ${workstationClients.length === 1 ? "client" : "clients"}`
+    : activeSection === "delivery"
+    ? selectedDeliverySource?.last_sync_status
+      ? `${selectedDeliverySource.last_sync_status} · ${selectedDeliverySource.last_sync_at ? relativeTime(selectedDeliverySource.last_sync_at) : "never"}`
+      : `${deliverySources.length} ${deliverySources.length === 1 ? "source" : "sources"} · ${compactNumber(deliveryLeadTotal)} leads`
     : config?.last_sheet_sync_status
     ? `${config.last_sheet_sync_status} · ${config.last_sheet_sync_at ? relativeTime(config.last_sheet_sync_at) : "never"}`
     : runtime
       ? (runtime.ready ? "Ready" : "Review config")
       : "Sync idle";
+  const syncBadgeIsOk = activeSection === "delivery"
+    ? selectedDeliverySource?.last_sync_status === "ok"
+    : config?.last_sheet_sync_status === "ok";
 
   return (
     <section id="contadoresView" className="contadores-view" data-app="contadores">
       <header className="ct-topbar">
         <div className="ct-topbar-brand">
-          <span className="ct-brand-mark" aria-hidden="true">{monogram(selectedFunnel?.label || "Funnels")}</span>
+          <span className="ct-brand-mark" aria-hidden="true">{monogram(activeTitle)}</span>
           <div className="ct-brand-copy">
             <p className="ct-brand-word">
-              {activeSection === "runner" ? "Runner" : activeSection === "workstation" ? workstationTitle : selectedFunnel?.label || "Funnels"}
+              {activeTitle}
             </p>
-            <span className={`ct-sync-badge ${config?.last_sheet_sync_status === "ok" ? "has-unread" : ""}`}>{syncStatus}</span>
+            <span className={`ct-sync-badge ${syncBadgeIsOk ? "has-unread" : ""}`}>{syncStatus}</span>
           </div>
         </div>
 
@@ -1377,6 +1665,13 @@ export function App() {
             onClick={() => setActiveSection("workstation")}
           >
             Workstation
+          </button>
+          <button
+            type="button"
+            className={activeSection === "delivery" ? "active" : ""}
+            onClick={() => setActiveSection("delivery")}
+          >
+            Delivery
           </button>
           <button
             type="button"
@@ -1438,13 +1733,13 @@ export function App() {
             />
           </label>
           ) : null}
-          {activeSection !== "runner" ? (
+          {activeSection === "crm" || activeSection === "workstation" ? (
             <button type="button" className="ct-icon-btn" onClick={openEditFunnel} disabled={!selectedFunnel}>Funnel</button>
           ) : null}
-          {activeSection === "crm" && isContadoresFunnel ? (
+          {activeSection === "crm" && canEditLegacyRuntimeConfig ? (
             <button type="button" className="ct-icon-btn" onClick={() => setShowConfig(true)}>Runtime</button>
           ) : null}
-          <button type="button" className="ct-icon-btn" onClick={refreshAll} disabled={loading}>Refresh</button>
+          <button type="button" className="ct-icon-btn" onClick={refreshAll} disabled={loading || deliveryLoading}>Refresh</button>
         </div>
       </header>
 
@@ -1453,6 +1748,12 @@ export function App() {
           <div className="ct-error" role="alert">
             <span>{error}</span>
             <button type="button" className="ct-icon-btn" onClick={() => setError(null)}>Dismiss</button>
+          </div>
+        ) : null}
+        {funnelConfigErrors.length ? (
+          <div className="ct-error" role="alert">
+            <span>{funnelConfigErrors.join(" ")}</span>
+            <button type="button" className="ct-icon-btn" onClick={() => setFunnelConfigErrors([])}>Dismiss</button>
           </div>
         ) : null}
 
@@ -1517,14 +1818,46 @@ export function App() {
           onProfessionalPhotoEditPromptChange={updateProfessionalPhotoEditPrompt}
           onEditProfessionalPhoto={(version) => editProfessionalPhoto(version)}
         />
-        ) : !isContadoresFunnel ? (
+        ) : activeSection === "delivery" ? (
+        <ClientLeadDeliveryView
+          sources={deliverySources}
+          leads={deliveryLeads}
+          selectedSource={selectedDeliverySource}
+          selectedSourceId={selectedDeliverySourceId}
+          editorMode={deliveryEditorMode}
+          draft={deliverySourceDraft}
+          loading={deliveryLoading}
+          leadsLoading={deliveryLeadsLoading}
+          actionBusy={actionBusy}
+          copyStatus={deliveryCopyStatus}
+          onSelectSource={(sourceId) => {
+            setDeliveryEditorMode("edit");
+            setSelectedDeliverySourceId(sourceId);
+          }}
+          onNewSource={startNewDeliverySource}
+          onDraftChange={setDeliverySourceDraft}
+          onSaveSource={saveDeliverySource}
+          onDeleteSource={deleteDeliverySource}
+          onSyncSource={syncDeliverySource}
+          onCopyLead={copyClientLeadInfo}
+          onCopyLeadAll={copyClientLeadAll}
+          onRetryLead={retryClientLeadNotification}
+        />
+        ) : selectedFunnelNeedsSetup ? (
         <FunnelSetupView
           funnel={selectedFunnel}
           configPath={funnelConfigPath}
+          setupIssues={selectedFunnelSetupIssues}
           onEdit={openEditFunnel}
         />
         ) : (
       <div className="ct-surface">
+        {selectedFunnel && selectedFunnel.kind === "campaign" && selectedFunnelSetupIssues.length ? (
+          <FunnelSetupBanner
+            setupIssues={selectedFunnelSetupIssues}
+            onEdit={openEditFunnel}
+          />
+        ) : null}
         {!isInboxFunnel ? (
           <section className="ct-pipeline" aria-label="Lead stages">
             {stageFilters.map((filter) => {
@@ -1787,6 +2120,360 @@ export function App() {
         />
       ) : null}
     </section>
+  );
+}
+
+function ClientLeadDeliveryView({
+  sources,
+  leads,
+  selectedSource,
+  selectedSourceId,
+  editorMode,
+  draft,
+  loading,
+  leadsLoading,
+  actionBusy,
+  copyStatus,
+  onSelectSource,
+  onNewSource,
+  onDraftChange,
+  onSaveSource,
+  onDeleteSource,
+  onSyncSource,
+  onCopyLead,
+  onCopyLeadAll,
+  onRetryLead,
+}: {
+  sources: ClientLeadSource[];
+  leads: ClientLead[];
+  selectedSource: ClientLeadSource | null;
+  selectedSourceId: string | null;
+  editorMode: DeliveryEditorMode;
+  draft: ClientLeadSourceDraft;
+  loading: boolean;
+  leadsLoading: boolean;
+  actionBusy: string | null;
+  copyStatus: string;
+  onSelectSource: (sourceId: string) => void;
+  onNewSource: () => void;
+  onDraftChange: (draft: ClientLeadSourceDraft) => void;
+  onSaveSource: (event: FormEvent<HTMLFormElement>) => void;
+  onDeleteSource: () => void;
+  onSyncSource: () => void;
+  onCopyLead: (lead: ClientLead) => void | Promise<void>;
+  onCopyLeadAll: (lead: ClientLead) => void | Promise<void>;
+  onRetryLead: (lead: ClientLead) => void | Promise<void>;
+}) {
+  const isExisting = editorMode === "edit" && Boolean(selectedSource);
+  const totalLeads = sources.reduce((total, source) => total + deliverySourceCount(source, "total"), 0);
+  const failedLeads = sources.reduce((total, source) => total + deliverySourceCount(source, "failed"), 0);
+  const selectedLabel = editorMode === "create" ? "New source" : selectedSource?.label || "Select a source";
+
+  function updateDraft<K extends keyof ClientLeadSourceDraft>(key: K, value: ClientLeadSourceDraft[K]) {
+    onDraftChange({ ...draft, [key]: value });
+  }
+
+  return (
+    <div className="ct-surface delivery-surface">
+      <div className="ct-secondary delivery-summary">
+        <p className="ct-secondary-note">
+          {sources.length
+            ? `${sources.length} ${sources.length === 1 ? "source" : "sources"} · ${compactNumber(totalLeads)} leads · ${compactNumber(failedLeads)} failed`
+            : "No delivery sources configured yet"}
+        </p>
+        {copyStatus ? <p className="delivery-copy-status" aria-live="polite">{copyStatus}</p> : null}
+      </div>
+
+      <div className="ct-workspace delivery-workspace">
+        <aside className="ct-leads delivery-sources">
+          <div className="ct-leads-head">
+            <h3>Sources</h3>
+            <button type="button" className="ct-btn ct-btn-ghost delivery-small-btn" onClick={onNewSource}>+ Source</button>
+          </div>
+          <div className="ct-leads-list delivery-source-list">
+            {loading && !sources.length ? (
+              <p className="ct-empty">Loading delivery sources...</p>
+            ) : sources.length ? sources.map((source) => {
+              const active = editorMode === "edit" && source.id === selectedSourceId;
+              return (
+                <button
+                  type="button"
+                  className={`delivery-source-row ${active ? "active" : ""} ${source.enabled ? "" : "disabled"}`}
+                  key={source.id}
+                  onClick={() => onSelectSource(source.id)}
+                >
+                  <div className="delivery-source-row-top">
+                    <strong>{source.label || source.id}</strong>
+                    <span className="delivery-status-pill" data-tone={deliverySourceTone(source)}>
+                      {source.enabled ? humanize(source.last_sync_status || "enabled") : "Paused"}
+                    </span>
+                  </div>
+                  <div className="delivery-source-counts">
+                    <span>Total <strong>{compactNumber(deliverySourceCount(source, "total"))}</strong></span>
+                    <span>Sent <strong>{compactNumber(deliverySourceCount(source, "sent") + deliverySourceCount(source, "delivered"))}</strong></span>
+                    <span>Failed <strong>{compactNumber(deliverySourceCount(source, "failed"))}</strong></span>
+                    <span>Blocked <strong>{compactNumber(deliverySourceCount(source, "blocked"))}</strong></span>
+                  </div>
+                  <p>{source.recipient_name || "No recipient"}{source.recipient_phone ? ` · ${source.recipient_phone}` : ""}</p>
+                  <small>{sourceSyncSummary(source)}</small>
+                </button>
+              );
+            }) : (
+              <p className="ct-empty">Create a source to pull sheet leads and deliver notifications.</p>
+            )}
+          </div>
+        </aside>
+
+        <section className="ct-detail delivery-detail">
+          <header className="ct-detail-head delivery-detail-head">
+            <div className="ct-detail-head-main">
+              <div className="ct-detail-avatar">{monogram(selectedLabel)}</div>
+              <div className="ct-detail-head-copy">
+                <p className="ct-detail-kicker">Client Lead Delivery</p>
+                <h3>{selectedLabel}</h3>
+                <p className="ct-detail-meta">
+                  {isExisting
+                    ? [selectedSource?.recipient_name || "-", selectedSource?.recipient_phone || "-", selectedSource?.template_name || "-"].join(" · ")
+                    : "Create a sheet source, recipient, and WhatsApp template mapping."}
+                </p>
+              </div>
+            </div>
+            <div className="ct-detail-head-actions">
+              <button
+                type="button"
+                className="ct-btn ct-btn-primary"
+                disabled={!isExisting || actionBusy === "delivery-sync"}
+                onClick={onSyncSource}
+              >
+                <ArrowsClockwise size={15} weight="bold" />
+                {actionBusy === "delivery-sync" ? "Syncing..." : "Sync"}
+              </button>
+              <button type="button" className="ct-btn ct-btn-ghost" onClick={onNewSource}>New source</button>
+              <button
+                type="button"
+                className="ct-btn ct-btn-ghost btn-destructive"
+                disabled={!isExisting || actionBusy === "delivery-delete"}
+                onClick={onDeleteSource}
+              >
+                <Trash size={15} weight="bold" />
+                {actionBusy === "delivery-delete" ? "Deleting..." : "Delete"}
+              </button>
+            </div>
+          </header>
+
+          <div className="delivery-detail-body">
+            <form className="delivery-source-form" onSubmit={onSaveSource}>
+              <div className="workstation-panel-head">
+                <div>
+                  <span>Source config</span>
+                  <strong>{editorMode === "create" ? "New delivery source" : "Sheet and template"}</strong>
+                </div>
+              </div>
+
+              <div className="ct-field-grid">
+                <label className="ct-field">
+                  <span>Source ID</span>
+                  <input
+                    value={draft.id}
+                    disabled={isExisting}
+                    onChange={(event) => updateDraft("id", slugifyClient(event.target.value))}
+                    placeholder="client-name"
+                  />
+                </label>
+                <label className="ct-field">
+                  <span>Label</span>
+                  <input value={draft.label} onChange={(event) => updateDraft("label", event.target.value)} placeholder="Cliente · Sheet delivery" />
+                </label>
+              </div>
+
+              <label className="ct-field ct-field-toggle">
+                <span>Enabled</span>
+                <div className="ct-toggle-row">
+                  <input type="checkbox" checked={draft.enabled} onChange={(event) => updateDraft("enabled", event.target.checked)} />
+                  <p className="ct-field-hint">Disabled sources stay visible but should not poll or notify recipients.</p>
+                </div>
+              </label>
+
+              <label className="ct-field">
+                <span>Sheet URL</span>
+                <input value={draft.sheet_url} onChange={(event) => updateDraft("sheet_url", event.target.value)} placeholder="https://docs.google.com/spreadsheets/..." />
+              </label>
+
+              <div className="ct-field-grid">
+                <label className="ct-field">
+                  <span>Sheet GID</span>
+                  <input value={draft.sheet_gid} onChange={(event) => updateDraft("sheet_gid", event.target.value)} placeholder="0" />
+                </label>
+                <label className="ct-field">
+                  <span>Poll seconds</span>
+                  <input
+                    type="number"
+                    min="30"
+                    value={draft.sheet_poll_seconds}
+                    onChange={(event) => updateDraft("sheet_poll_seconds", Number(event.target.value) || 30)}
+                  />
+                </label>
+              </div>
+
+              <div className="ct-field-grid">
+                <label className="ct-field">
+                  <span>Recipient name</span>
+                  <input value={draft.recipient_name} onChange={(event) => updateDraft("recipient_name", event.target.value)} placeholder="Client operator" />
+                </label>
+                <label className="ct-field">
+                  <span>Recipient phone</span>
+                  <input value={draft.recipient_phone} onChange={(event) => updateDraft("recipient_phone", event.target.value)} placeholder="+54..." />
+                </label>
+              </div>
+
+              <div className="ct-field-grid">
+                <label className="ct-field">
+                  <span>Template name</span>
+                  <input value={draft.template_name} onChange={(event) => updateDraft("template_name", event.target.value)} placeholder="client_lead_delivery_es" />
+                </label>
+                <label className="ct-field">
+                  <span>Template language</span>
+                  <input value={draft.template_language} onChange={(event) => updateDraft("template_language", event.target.value)} placeholder="es" />
+                </label>
+              </div>
+
+              <label className="ct-field">
+                <span>Prefilled reply text</span>
+                <textarea
+                  value={draft.prefilled_reply_text}
+                  onChange={(event) => updateDraft("prefilled_reply_text", event.target.value)}
+                  rows={3}
+                  placeholder="Hola, vi tu consulta y queria ayudarte..."
+                />
+              </label>
+
+              <label className="ct-field">
+                <span>Column mapping JSON</span>
+                <textarea
+                  value={draft.column_mapping_text}
+                  onChange={(event) => updateDraft("column_mapping_text", event.target.value)}
+                  rows={6}
+                  spellCheck={false}
+                />
+              </label>
+
+              <div className="delivery-form-actions">
+                <button type="submit" className="ct-btn ct-btn-primary" disabled={actionBusy === "delivery-save" || !draft.label.trim()}>
+                  <Check size={15} weight="bold" />
+                  {actionBusy === "delivery-save" ? "Saving..." : editorMode === "create" ? "Create source" : "Save source"}
+                </button>
+              </div>
+            </form>
+
+            <section className="delivery-lead-panel">
+              <div className="workstation-panel-head">
+                <div>
+                  <span>Leads</span>
+                  <strong>{isExisting ? `${leads.length} loaded` : "Select or create a source"}</strong>
+                </div>
+                {selectedSource?.last_sync_note ? <em>{selectedSource.last_sync_note}</em> : null}
+              </div>
+
+              {!isExisting ? (
+                <p className="ct-empty">Save the source before syncing and inspecting delivery rows.</p>
+              ) : leadsLoading && !leads.length ? (
+                <p className="ct-empty">Loading source leads...</p>
+              ) : leads.length ? (
+                <div className="delivery-table-wrap">
+                  <table className="delivery-table">
+                    <thead>
+                      <tr>
+                        <th>Lead</th>
+                        <th>Notification</th>
+                        <th>Status</th>
+                        <th>Raw fields</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {leads.map((lead) => {
+                        const waLink = lead.wa_link || buildWaLink(lead.phone_number);
+                        const retryable = isRetryableClientLead(lead);
+                        return (
+                          <tr key={lead.id}>
+                            <td>
+                              <div className="delivery-lead-identity">
+                                <strong>{lead.full_name || lead.phone_number || `Row ${lead.row_number}`}</strong>
+                                <span>{lead.phone_number || "-"}{lead.email ? ` · ${lead.email}` : ""}</span>
+                                <small>Row {lead.row_number}{lead.created_time ? ` · ${shortDate(lead.created_time)}` : ""}</small>
+                                {waLink ? (
+                                  <a href={waLink} target="_blank" rel="noreferrer">
+                                    <ArrowSquareOut size={13} weight="bold" />
+                                    wa.me
+                                  </a>
+                                ) : null}
+                              </div>
+                            </td>
+                            <td>
+                              <p className="delivery-notification-text">{lead.notification_text || "-"}</p>
+                            </td>
+                            <td>
+                              <div className="delivery-status-cell">
+                                <span className="delivery-status-pill" data-tone={clientLeadDeliveryTone(lead)}>
+                                  {humanize(lead.delivery_status || (lead.block_reason ? "blocked" : "pending"))}
+                                </span>
+                                <small>{lead.delivery_attempts ? `${lead.delivery_attempts} attempts` : "No attempts"}</small>
+                                {lead.sent_at ? <small>Sent {shortDate(lead.sent_at)}</small> : null}
+                                {lead.delivered_at ? <small>Delivered {shortDate(lead.delivered_at)}</small> : null}
+                                {lead.last_delivery_error || lead.block_reason ? (
+                                  <p>{lead.last_delivery_error || lead.block_reason}</p>
+                                ) : null}
+                              </div>
+                            </td>
+                            <td>
+                              <div className="delivery-raw-fields">
+                                {rawRowEntries(lead.raw_row).slice(0, 6).map(([key, value]) => (
+                                  <span key={key} title={`${key}: ${formatRawValue(value)}`}>
+                                    <strong>{key}</strong>
+                                    {truncate(formatRawValue(value), 44)}
+                                  </span>
+                                ))}
+                              </div>
+                            </td>
+                            <td>
+                              <div className="delivery-row-actions">
+                                <button type="button" className="ct-btn ct-btn-ghost" onClick={() => onCopyLead(lead)}>
+                                  <Copy size={14} weight="bold" />
+                                  Copy
+                                </button>
+                                <button
+                                  type="button"
+                                  className="ct-btn ct-btn-ghost"
+                                  disabled={actionBusy === `delivery-copy-${lead.id}`}
+                                  onClick={() => onCopyLeadAll(lead)}
+                                >
+                                  {actionBusy === `delivery-copy-${lead.id}` ? "Copying..." : "Copy all"}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="ct-btn ct-btn-ghost"
+                                  disabled={!retryable || actionBusy === `delivery-retry-${lead.id}`}
+                                  onClick={() => onRetryLead(lead)}
+                                >
+                                  <ArrowsClockwise size={14} weight="bold" />
+                                  {actionBusy === `delivery-retry-${lead.id}` ? "Retrying..." : "Retry"}
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="ct-empty">No leads loaded for this source yet. Run a manual sync after saving the config.</p>
+              )}
+            </section>
+          </div>
+        </section>
+      </div>
+    </div>
   );
 }
 
@@ -3235,10 +3922,12 @@ function ProfessionalPhotoModal({
 function FunnelSetupView({
   funnel,
   configPath,
+  setupIssues,
   onEdit,
 }: {
   funnel: FunnelDefinition | null;
   configPath: string;
+  setupIssues: string[];
   onEdit: () => void;
 }) {
   if (!funnel) {
@@ -3250,20 +3939,27 @@ function FunnelSetupView({
   }
 
   const mp4Strategy = funnel.strategies.find((strategy) => strategy.delivery === "video");
+  const readyItems = buildFunnelReadyItems(funnel);
 
   return (
     <section className="ct-funnel-setup" aria-label="Funnel setup">
       <header className="ct-funnel-hero">
         <div>
-          <p className="ct-detail-kicker">Niche funnel</p>
+          <p className="ct-detail-kicker">Funnel setup</p>
           <h2>{funnel.label}</h2>
-          <p>
-            This funnel is configured but does not have a dedicated lead workspace yet. Edit the funnel copy,
-            sheet source, video strategy, and Calendly step here; Contadores remains the primary operational section.
-          </p>
+          <p>{setupIssues.length ? "Complete the missing fields before turning this funnel into a live campaign." : "This funnel has the fields needed to sync leads and run the CRM flow."}</p>
         </div>
         <button type="button" className="ct-btn ct-btn-primary" onClick={onEdit}>Edit funnel</button>
       </header>
+
+      <div className="ct-setup-checklist" aria-label="Setup checklist">
+        {readyItems.map((item) => (
+          <div className={`ct-setup-check ${item.ready ? "ready" : "blocked"}`} key={item.label}>
+            {item.ready ? <Check size={16} weight="bold" /> : <WarningCircle size={16} weight="bold" />}
+            <span>{item.label}</span>
+          </div>
+        ))}
+      </div>
 
       <div className="ct-funnel-grid">
         <article className="ct-funnel-card">
@@ -3311,6 +4007,25 @@ function FunnelSetupView({
       </section>
 
       <p className="ct-config-path">Config file: {configPath || "data/funnels.json"}</p>
+    </section>
+  );
+}
+
+function FunnelSetupBanner({
+  setupIssues,
+  onEdit,
+}: {
+  setupIssues: string[];
+  onEdit: () => void;
+}) {
+  return (
+    <section className="ct-setup-callout" aria-label="Funnel setup warning">
+      <WarningCircle size={18} weight="bold" />
+      <div>
+        <strong>Funnel setup incomplete</strong>
+        <p>{setupIssues.slice(0, 3).join(" ")}</p>
+      </div>
+      <button type="button" className="ct-btn ct-btn-ghost" onClick={onEdit}>Edit funnel</button>
     </section>
   );
 }
@@ -4648,28 +5363,216 @@ function BulkSendModal({
   );
 }
 
+function buildBlankClientLeadSourceDraft(): ClientLeadSourceDraft {
+  return {
+    id: "nuevo-cliente",
+    label: "Nuevo cliente",
+    enabled: false,
+    sheet_url: "",
+    sheet_gid: "",
+    sheet_poll_seconds: 60,
+    recipient_name: "",
+    recipient_phone: "",
+    template_name: "konecta_client_lead_alert_es_v1",
+    template_language: "es",
+    prefilled_reply_text: "Hola {name}, vi tu consulta. Te escribo para entender mejor que necesitas y ver como te puedo ayudar.",
+    column_mapping_text: JSON.stringify({
+      source_id: "id",
+      created_time: "created_time",
+      full_name: "full_name",
+      phone_number: "phone_number",
+      email: "email",
+    }, null, 2),
+  };
+}
+
+function clientLeadSourceToDraft(source: ClientLeadSource): ClientLeadSourceDraft {
+  return {
+    id: source.id,
+    label: source.label,
+    enabled: source.enabled,
+    sheet_url: source.sheet_url ?? "",
+    sheet_gid: source.sheet_gid ?? "",
+    sheet_poll_seconds: source.sheet_poll_seconds || 60,
+    recipient_name: source.recipient_name ?? "",
+    recipient_phone: source.recipient_phone ?? "",
+    template_name: source.template_name ?? "",
+    template_language: source.template_language ?? "es",
+    prefilled_reply_text: source.prefilled_reply_text ?? "",
+    column_mapping_text: JSON.stringify(source.column_mapping ?? {}, null, 2),
+  };
+}
+
+function clientLeadSourcePayloadFromDraft(draft: ClientLeadSourceDraft): ClientLeadSourceMutationPayload {
+  const id = slugifyClient(draft.id || draft.label);
+  const label = draft.label.trim() || id;
+  return {
+    id,
+    label,
+    enabled: draft.enabled,
+    sheet_url: draft.sheet_url.trim() || null,
+    sheet_gid: draft.sheet_gid.trim() || null,
+    sheet_poll_seconds: Math.max(30, Number(draft.sheet_poll_seconds) || 60),
+    recipient_name: draft.recipient_name.trim() || null,
+    recipient_phone: draft.recipient_phone.trim() || null,
+    template_name: draft.template_name.trim() || null,
+    template_language: draft.template_language.trim() || null,
+    prefilled_reply_text: draft.prefilled_reply_text.trim() || null,
+    column_mapping: parseClientLeadColumnMapping(draft.column_mapping_text),
+  };
+}
+
+function parseClientLeadColumnMapping(value: string): Record<string, string> {
+  if (!value.trim()) {
+    return {};
+  }
+  const parsed = JSON.parse(value) as unknown;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Column mapping must be a JSON object.");
+  }
+  return Object.fromEntries(
+    Object.entries(parsed).map(([key, rawValue]) => [key, String(rawValue ?? "").trim()]).filter(([, rawValue]) => rawValue),
+  );
+}
+
+function unpackClientLeadSources(payload: ClientLeadSourceListResponse | ClientLeadSource[]): ClientLeadSource[] {
+  return Array.isArray(payload) ? payload : payload.sources ?? [];
+}
+
+function unpackClientLeads(payload: ClientLeadListResponse | ClientLead[]): ClientLead[] {
+  return Array.isArray(payload) ? payload : payload.leads ?? [];
+}
+
+function deliverySourceCount(source: ClientLeadSource, key: keyof ClientLeadSource["counts"]): number {
+  const value = source.counts?.[key] ?? 0;
+  return Number.isFinite(value) ? Number(value) : 0;
+}
+
+function deliverySourceTone(source: ClientLeadSource): "success" | "warn" | "danger" | "muted" | "accent" {
+  if (!source.enabled) {
+    return "muted";
+  }
+  const status = String(source.last_sync_status || "").toLowerCase();
+  if (status === "ok" || status === "success") {
+    return "success";
+  }
+  if (status === "failed" || status === "error") {
+    return "danger";
+  }
+  if (status === "running" || status === "syncing") {
+    return "warn";
+  }
+  return "accent";
+}
+
+function sourceSyncSummary(source: ClientLeadSource): string {
+  if (!source.last_sync_at && !source.last_sync_note) {
+    return "Never synced";
+  }
+  const syncTime = source.last_sync_at ? relativeTime(source.last_sync_at) : "No sync time";
+  return source.last_sync_note ? `${syncTime} · ${source.last_sync_note}` : syncTime;
+}
+
+function buildClientLeadText(lead: ClientLead): string {
+  const rawRows = rawRowEntries(lead.raw_row).map(([key, value]) => `${key}: ${formatRawValue(value)}`);
+  const lines = [
+    `Lead: ${lead.full_name || "-"}`,
+    `Phone: ${lead.phone_number || "-"}`,
+    `Email: ${lead.email || "-"}`,
+    `WhatsApp: ${lead.wa_link || buildWaLink(lead.phone_number) || "-"}`,
+    `Source: ${lead.source_id}`,
+    `Row: ${lead.row_number}`,
+    `Status: ${humanize(lead.delivery_status || (lead.block_reason ? "blocked" : "pending"))}`,
+    `Attempts: ${lead.delivery_attempts || 0}`,
+    `Sent: ${lead.sent_at ? shortDate(lead.sent_at) : "-"}`,
+    `Delivered: ${lead.delivered_at ? shortDate(lead.delivered_at) : "-"}`,
+  ];
+
+  if (lead.last_delivery_error) {
+    lines.push(`Error: ${lead.last_delivery_error}`);
+  }
+  if (lead.block_reason) {
+    lines.push(`Blocked: ${lead.block_reason}`);
+  }
+
+  lines.push("", "Notification:", lead.notification_text || "-", "", "Raw row:");
+  lines.push(...(rawRows.length ? rawRows : ["-"]));
+  return lines.join("\n");
+}
+
+function buildWaLink(phone: string | null | undefined): string {
+  const digits = (phone || "").replace(/\D/g, "");
+  return digits ? `https://wa.me/${digits}` : "";
+}
+
+function rawRowEntries(rawRow: Record<string, unknown> | null | undefined): Array<[string, unknown]> {
+  return Object.entries(rawRow ?? {}).filter(([, value]) => value !== null && value !== undefined && String(value).trim() !== "");
+}
+
+function formatRawValue(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (value === null || value === undefined) {
+    return "";
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function clientLeadDeliveryTone(lead: ClientLead): "success" | "warn" | "danger" | "muted" | "accent" {
+  if (lead.block_reason) {
+    return "warn";
+  }
+  const status = String(lead.delivery_status || "").toLowerCase();
+  if (status === "delivered" || status === "sent") {
+    return "success";
+  }
+  if (status === "failed" || status === "error") {
+    return "danger";
+  }
+  if (status === "blocked") {
+    return "warn";
+  }
+  if (status === "skipped" || status === "cancelled") {
+    return "muted";
+  }
+  return "accent";
+}
+
+function isRetryableClientLead(lead: ClientLead): boolean {
+  const status = String(lead.delivery_status || "").toLowerCase();
+  return status === "failed" || status === "blocked" || Boolean(lead.last_delivery_error);
+}
+
 function buildBlankFunnel(): FunnelDefinition {
   return {
     id: "nuevo-funnel",
     label: "Nuevo Funnel",
     kind: "campaign",
-    enabled: true,
+    enabled: false,
     sheet_url: null,
     sheet_gid: null,
     sheet_source_filter: null,
     sheet_poll_seconds: 30,
     template_language: "es",
     opener_text: "Hola, completaste el formulario sobre como podemos ayudarte. Es correcto?",
-    opener_template_name: "",
+    opener_template_name: null,
     opener_followup_text: "Queria compartirte informacion sobre la propuesta que viste en el anuncio.",
-    opener_followup_template_name: "",
+    opener_followup_template_name: null,
     manual_ping_text: "Hola, queria saber en que situacion quedamos y si queres que retomemos la conversacion",
-    manual_ping_template_name: "",
+    manual_ping_template_name: null,
     loom_intro_text: "Perfecto. Te cuento rapido como funciona y que obtenes si trabajamos juntos:",
     loom_url: "",
     video_check_text: "conseguiste ver el video?",
     calendly_intro_text: "Para avanzar, el siguiente paso es elegir un horario en el calendario:",
-    calendly_base_url: "https://calendly.com/facundogoiriz/crecimiento",
+    calendly_base_url: "",
     alert_emails: [],
     whatsapp_referral_source_ids: [],
     initial_reply_quiet_seconds: 30,
@@ -4690,6 +5593,42 @@ function buildBlankFunnel(): FunnelDefinition {
       },
     ],
   };
+}
+
+function buildFunnelSetupIssues(funnel: FunnelDefinition | null): string[] {
+  if (!funnel) {
+    return ["Create or select one campaign funnel."];
+  }
+  if (funnel.kind === "inbox") {
+    return [];
+  }
+
+  const videoStrategy = funnel.strategies.find((strategy) => strategy.delivery === "video");
+  const checks = buildFunnelReadyItems(funnel, videoStrategy);
+  return checks.filter((item) => !item.ready).map((item) => `${item.label}.`);
+}
+
+function buildFunnelReadyItems(
+  funnel: FunnelDefinition,
+  videoStrategy = funnel.strategies.find((strategy) => strategy.delivery === "video"),
+): Array<{ label: string; ready: boolean }> {
+  return [
+    { label: "Funnel enabled", ready: funnel.enabled },
+    { label: "Sheet URL", ready: Boolean(funnel.sheet_url?.trim()) },
+    { label: "Sheet GID", ready: Boolean(funnel.sheet_gid?.trim()) },
+    { label: "Opener template", ready: Boolean(funnel.opener_template_name?.trim()) },
+    { label: "Opener text", ready: Boolean(funnel.opener_text.trim()) },
+    { label: "Follow-up template", ready: Boolean(funnel.opener_followup_template_name?.trim()) },
+    { label: "Follow-up text", ready: Boolean(funnel.opener_followup_text.trim()) },
+    { label: "Manual ping template", ready: Boolean(funnel.manual_ping_template_name?.trim()) },
+    { label: "Manual ping text", ready: Boolean(funnel.manual_ping_text.trim()) },
+    { label: "Video intro text", ready: Boolean(funnel.loom_intro_text.trim()) },
+    { label: "WhatsApp MP4 path", ready: Boolean(videoStrategy?.media_path?.trim()) },
+    { label: "Video check text", ready: Boolean(funnel.video_check_text.trim()) },
+    { label: "Calendly text", ready: Boolean(funnel.calendly_intro_text.trim()) },
+    { label: "Calendly URL", ready: Boolean(funnel.calendly_base_url.trim()) },
+    { label: "Alert emails", ready: funnel.alert_emails.length > 0 },
+  ];
 }
 
 function buildTemplateChoices(funnel: FunnelDefinition): TemplateChoice[] {
