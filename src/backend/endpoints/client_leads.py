@@ -17,6 +17,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from backend.client_lead_config import ClientLeadConfigSyncResult, sync_client_lead_sources_from_config
 from backend.database import (
     CLIENT_LEAD_DEFAULT_COLUMN_MAPPING,
     CLIENT_LEAD_DEFAULT_PREFILLED_REPLY_TEXT,
@@ -715,6 +716,12 @@ async def list_client_lead_sources() -> ClientLeadSourceListResponse:
     return ClientLeadSourceListResponse(
         sources=[build_source_response(source, counts) for source in ClientLeadSource.list_all()]
     )
+
+
+@client_leads_router.post("/config/reload", response_model=ClientLeadConfigSyncResult)
+async def reload_client_lead_sources_config() -> ClientLeadConfigSyncResult:
+    """Reload file-backed Delivery sources into the database."""
+    return sync_client_lead_sources_from_config()
 
 
 @client_leads_router.post("", response_model=ClientLeadSourceResponse)

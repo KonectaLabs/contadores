@@ -21,6 +21,7 @@ ENV CODEX_BIN=/usr/local/bin/codex
 RUN uv sync --frozen --no-dev
 RUN uv run playwright install chromium --with-deps
 COPY src/backend/ ./src/backend/
+COPY config/ ./config/
 COPY .codex/skills/ ./.codex/skills/
 COPY tmp/pagina_abogado_static/ ./tmp/pagina_abogado_static/
 COPY tmp/pagina_contador_static/ ./tmp/pagina_contador_static/

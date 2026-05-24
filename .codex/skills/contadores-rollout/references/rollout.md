@@ -8,6 +8,13 @@ configured sheet for each enabled campaign funnel.
 Funnel definitions are stored in `FUNNELS_CONFIG_PATH` or `data/funnels.json`.
 That file is the shared UI/Codex config surface for niche funnels.
 
+Client Lead Delivery source definitions can be stored in
+`CLIENT_LEAD_SOURCES_CONFIG_PATH` or `data/client-lead-sources.json`. That file
+is the preferred surface when Facu asks Codex to create a client Delivery flow
+from a sheet URL/GID plus WhatsApp recipient numbers. The backend imports it on
+startup; call `POST /api/client-lead-sources/config/reload` after editing it on
+a running server.
+
 Click-to-WhatsApp routing uses each funnel's `whatsapp_referral_source_ids`.
 These values are Meta webhook `referral.source_id` values. Do not add broad
 text routing because the user can edit the prefilled WhatsApp message. The
@@ -36,6 +43,7 @@ conversion mirrors any image files that arrived before the workspace existed.
 - `CONTADORES_SHEET_GID=...`
 - Calendly fijo del producto: `https://calendly.com/facundogoiriz/crecimiento`
 - `FUNNELS_CONFIG_PATH=data/funnels.json`
+- `CLIENT_LEAD_SOURCES_CONFIG_PATH=data/client-lead-sources.json`
 
 `/api/runtime` should report `ready=true` only after both `CONTADORES_SHEET_URL`
 and `CONTADORES_SHEET_GID` are present.

@@ -145,14 +145,19 @@ template `konecta_client_lead_alert_es_v1`.
 
 Before enabling a live Delivery source:
 
-1. Confirm the source has `sheet_url`, `sheet_gid`, recipient phone, column
-   mapping, template name, and template language.
-2. Decide whether the first sync should notify historical rows. First sync
+1. Prefer a file-backed source when Facu provides sheet + WhatsApp recipients.
+   Edit the server override at `CLIENT_LEAD_SOURCES_CONFIG_PATH`, usually
+   `/root/projects/contadores/data/client-lead-sources.json`. The versioned
+   seed is `config/default-client-lead-sources.json`.
+2. Confirm the source has `sheet_url`, `sheet_gid`, recipient phone or
+   `recipients`, column mapping, template name, and template language.
+   Multiple `recipients` are expanded into one DB source per recipient.
+3. Decide whether the first sync should notify historical rows. First sync
    imports all non-empty rows and queues valid new rows immediately.
-3. If the sheet is private, set `CONTADORES_GOOGLE_SERVICE_ACCOUNT_FILE` or
+4. If the sheet is private, set `CONTADORES_GOOGLE_SERVICE_ACCOUNT_FILE` or
    `GOOGLE_SERVICE_ACCOUNT_FILE` on the server and share the sheet with that
    service account.
-4. Validate the template spec locally:
+5. Validate the template spec locally:
 
 ```bash
 uv run python src/scripts/whatsapp_templates.py create \
@@ -160,7 +165,7 @@ uv run python src/scripts/whatsapp_templates.py create \
   --dry-run
 ```
 
-5. On the server, check that the Meta template exists and is approved:
+6. On the server, check that the Meta template exists and is approved:
 
 ```bash
 uv run python src/scripts/whatsapp_templates.py check \
@@ -173,6 +178,9 @@ Server verification:
 ```bash
 curl -fsS -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
   http://127.0.0.1:8000/api/client-lead-sources
+
+curl -fsS -X POST -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
+  http://127.0.0.1:8000/api/client-lead-sources/config/reload
 
 curl -fsS -X POST -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
   http://127.0.0.1:8000/api/client-lead-sources/{source_id}/sync

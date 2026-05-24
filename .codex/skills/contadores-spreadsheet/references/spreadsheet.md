@@ -17,6 +17,19 @@ For new niche funnels, spreadsheet config belongs in the funnel definition file:
 - `FUNNELS_CONFIG_PATH`, usually `data/funnels.json`
 - per-funnel fields: `sheet_url`, `sheet_gid`, `sheet_source_filter`
 
+For Client Lead Delivery, sheet config belongs in the Delivery source config
+file rather than in funnel config:
+
+- `CLIENT_LEAD_SOURCES_CONFIG_PATH`, usually `data/client-lead-sources.json`
+- seed: `config/default-client-lead-sources.json`
+- per-source fields: `sheet_url`, `sheet_gid`, `sheet_poll_seconds`,
+  `recipient_phone` or `recipients`, `prefilled_reply_text`, and
+  `column_mapping`
+
+Multiple `recipients` are expanded into separate DB sources that share the same
+sheet. This lets Codex create one client Delivery flow from one sheet and
+several WhatsApp recipient numbers without using the UI.
+
 The current Contadores env vars remain backwards-compatible defaults.
 Click-to-WhatsApp ads do not need a sheet row. They use the WhatsApp webhook
 `referral.source_id` and the funnel field `whatsapp_referral_source_ids`.

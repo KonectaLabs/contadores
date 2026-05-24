@@ -18,6 +18,7 @@ from backend.auth import (
     auth_manager,
     has_valid_internal_api_token,
 )
+from backend.client_lead_config import sync_client_lead_sources_from_config
 from backend.database import init_db
 from backend.endpoints import (
     auth_router,
@@ -104,6 +105,15 @@ async def lifespan(app: FastAPI):
         logger.warning("INTERNAL_API_TOKEN is not configured; bot routes will reject internal requests.")
     logger.info("Backend online.")
     init_db()
+    client_lead_config_sync = sync_client_lead_sources_from_config()
+    if client_lead_config_sync.configured:
+        logger.info(
+            "Delivery config sources=%s upserted=%s.",
+            client_lead_config_sync.configured,
+            len(client_lead_config_sync.upserted),
+        )
+    for error in client_lead_config_sync.errors:
+        logger.warning("Delivery config warning: %s", error)
     from backend.endpoints.workstation import backfill_workstation_public_pages
 
     published_pages = backfill_workstation_public_pages()

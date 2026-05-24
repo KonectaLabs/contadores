@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 from sqlmodel import SQLModel, create_engine
 
+import backend.client_lead_config as client_lead_config
 import backend.database as database_module
 import backend.endpoints.client_leads as client_leads_endpoints
 from backend.database import ClientLeadDelivery, ClientLeadDeliveryStatus
@@ -185,3 +186,57 @@ def test_client_lead_sheet_helpers_parse_common_targets() -> None:
         [{"<html><body>Sign in</body></html>": ""}],
         {"full_name": "Nombre", "phone_number": "Telefono"},
     )
+
+
+def test_client_lead_sources_load_from_config_file(monkeypatch, tmp_path) -> None:
+    """File-backed Delivery sources are expanded per recipient and upserted."""
+    configure_delivery_db(monkeypatch, tmp_path)
+    seed_path = tmp_path / "seed-client-lead-sources.json"
+    config_path = tmp_path / "client-lead-sources.json"
+    seed_path.write_text('{"version": 1, "sources": []}', encoding="utf-8")
+    config_path.write_text(
+        """
+        {
+          "version": 1,
+          "sources": [
+            {
+              "id": "mmb-ads",
+              "label": "MMB Ads",
+              "enabled": true,
+              "sheet_url": "https://docs.google.com/spreadsheets/d/sheet-id/edit#gid=123",
+              "sheet_gid": "123",
+              "sheet_poll_seconds": 45,
+              "recipients": [
+                {"id": "ana", "name": "Ana", "phone": "+5491111111111"},
+                {"id": "luis", "name": "Luis", "phone": "+5492222222222"}
+              ],
+              "column_mapping": {
+                "source_id": "id",
+                "created_time": "timestamp",
+                "full_name": "name",
+                "phone_number": "phone",
+                "email": "email"
+              }
+            }
+          ]
+        }
+        """,
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CLIENT_LEAD_SOURCES_SEED_CONFIG_PATH", str(seed_path))
+    monkeypatch.setenv("CLIENT_LEAD_SOURCES_CONFIG_PATH", str(config_path))
+
+    result = client_lead_config.sync_client_lead_sources_from_config()
+
+    assert result.configured == 2
+    assert result.upserted == ["mmb-ads-ana", "mmb-ads-luis"]
+    assert result.errors == []
+
+    with TestClient(app) as client:
+        payload = client.get("/api/client-lead-sources").json()
+
+    sources = {source["id"]: source for source in payload["sources"]}
+    assert set(sources) == {"mmb-ads-ana", "mmb-ads-luis"}
+    assert sources["mmb-ads-ana"]["label"] == "MMB Ads · Ana"
+    assert sources["mmb-ads-luis"]["sheet_poll_seconds"] == 45
+    assert sources["mmb-ads-luis"]["column_mapping"]["created_time"] == "timestamp"

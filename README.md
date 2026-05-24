@@ -280,6 +280,15 @@ Client Lead Delivery:
 - Cada fuente guarda URL/GID del Google Sheet, intervalo de polling, destinatario
   WhatsApp, mapping de columnas, template Meta y texto prellenado para responderle
   al lead por `wa.me`.
+- Las fuentes tambien se pueden declarar por archivo. El seed versionado es
+  `config/default-client-lead-sources.json`; el override editable del server es
+  `CLIENT_LEAD_SOURCES_CONFIG_PATH` o `data/client-lead-sources.json`.
+- El backend importa ese archivo a `client_lead_sources` al arrancar. Para
+  aplicar un cambio sin reiniciar, llamar `POST /api/client-lead-sources/config/reload`
+  con `X-Internal-Token`.
+- El archivo acepta `recipient_name` / `recipient_phone` para un destinatario o
+  `recipients` para varios. Si hay varios, el loader crea una fuente por
+  destinatario usando el mismo sheet y labels como `Cliente · Ana`.
 - Las filas importadas se guardan en tablas dedicadas:
   `client_lead_sources` y `client_lead_deliveries`. No contaminan
   `contadores_leads`, alertas humanas ni Workstation.
@@ -288,13 +297,43 @@ Client Lead Delivery:
   `(source_id, source_row_key)` y solo agregan filas nuevas.
 - Filas con telefono de lead faltante o invalido quedan visibles como `blocked`
   con motivo; no se mandan por WhatsApp.
+- Ejemplo de archivo:
+
+```json
+{
+  "version": 1,
+  "sources": [
+    {
+      "id": "mmb-ads",
+      "label": "MMB Ads",
+      "enabled": true,
+      "sheet_url": "https://docs.google.com/spreadsheets/d/...",
+      "sheet_gid": "0",
+      "sheet_poll_seconds": 30,
+      "recipients": [
+        {"id": "dueno", "name": "Duenio", "phone": "+5491122223333"}
+      ],
+      "prefilled_reply_text": "Hola {name}, vi tu consulta. Te escribo para entender mejor que necesitas y ver como te puedo ayudar.",
+      "column_mapping": {
+        "source_id": "id",
+        "created_time": "timestamp",
+        "full_name": "name",
+        "phone_number": "phone",
+        "email": "email"
+      }
+    }
+  ]
+}
+```
+
 - Endpoints principales:
   `GET/POST /api/client-lead-sources`,
+  `POST /api/client-lead-sources/config/reload`,
   `PUT/DELETE /api/client-lead-sources/{id}`,
   `POST /api/client-lead-sources/{id}/sync`,
   `GET /api/client-lead-sources/{id}/leads`,
   `GET /api/client-leads/{id}/copy-all`,
-  `POST /api/client-lead-deliveries/{id}/retry`.
+  `POST /api/client-leads/{id}/retry`.
 - El bot consume `/api/client-lead-deliveries/pending`, manda el template
   `konecta_client_lead_alert_es_v1` por Meta y registra `sent`, `delivered` o
   `failed` por id externo del provider.

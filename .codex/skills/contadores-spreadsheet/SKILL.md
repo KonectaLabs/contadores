@@ -89,7 +89,21 @@ Dedicated tables:
 - `client_lead_sources`: one sheet source plus recipient/template config.
 - `client_lead_deliveries`: imported sheet rows and WhatsApp notification state.
 
-Each source is configured through the API/UI:
+Each source can be configured through the API/UI or through file-backed config.
+The file-backed path is preferred when Facu asks Codex to create a new client
+Delivery flow without using the UI.
+
+Config files:
+
+- seed: `CLIENT_LEAD_SOURCES_SEED_CONFIG_PATH`, default
+  `config/default-client-lead-sources.json`;
+- server override: `CLIENT_LEAD_SOURCES_CONFIG_PATH`, default
+  `data/client-lead-sources.json`;
+- the backend imports those files into `client_lead_sources` on startup;
+- after editing the server override without restarting, call
+  `POST /api/client-lead-sources/config/reload`.
+
+Each configured source supports:
 
 - `label`
 - `enabled`
@@ -98,6 +112,8 @@ Each source is configured through the API/UI:
 - `sheet_poll_seconds`, minimum 30
 - `recipient_name`
 - `recipient_phone`
+- or `recipients`, a list of `{id, name, phone}` entries. Multiple recipients
+  are expanded into one DB source per recipient using the same sheet config.
 - `template_name`, default `konecta_client_lead_alert_es_v1`
 - `template_language`, default `es`
 - `prefilled_reply_text`
@@ -135,6 +151,7 @@ instead of crashing the sync.
 Endpoints:
 
 - `GET /api/client-lead-sources`
+- `POST /api/client-lead-sources/config/reload`
 - `POST /api/client-lead-sources`
 - `PUT /api/client-lead-sources/{source_id}`
 - `DELETE /api/client-lead-sources/{source_id}`
