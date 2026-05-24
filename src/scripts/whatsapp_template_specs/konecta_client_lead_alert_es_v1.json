@@ -5,7 +5,7 @@
       "language": "es",
       "category": "UTILITY",
       "parameter_format": "POSITIONAL",
-      "body": "Nueva consulta de {{1}}\n\nNombre: {{2}}\nWhatsApp: {{3}}\nEmail: {{4}}\n\nResponder: {{5}}",
+      "body": "Hola, tienes una nueva consulta generada por Konecta para {{1}}. Revisala apenas puedas y responde al lead desde WhatsApp.\n\nDatos del lead:\nNombre: {{2}}\nWhatsApp: {{3}}\nEmail: {{4}}\n\nPara abrir el chat con un mensaje prearmado, usa este enlace:\n{{5}}\n\nSi el enlace no abre automaticamente, copia el telefono y responde manualmente.",
       "example_values": [
         "Contadores",
         "Eva Suarez",
