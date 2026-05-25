@@ -2126,6 +2126,7 @@ class ClientLeadSource(SQLModel, table=True):
     normalized_recipient_phone: str = Field(default="", index=True)
     template_name: str = Field(default=CLIENT_LEAD_DEFAULT_TEMPLATE_NAME)
     template_language: str = Field(default=CLIENT_LEAD_DEFAULT_TEMPLATE_LANGUAGE)
+    prefilled_reply_text: str = Field(default="")
     column_mapping_json: str = Field(default_factory=client_lead_default_column_mapping_json)
     last_sync_at: datetime | None = Field(default=None, index=True)
     last_sync_status: str | None = Field(default=None)
@@ -2187,6 +2188,7 @@ class ClientLeadSource(SQLModel, table=True):
         recipient_phone: str,
         template_name: str | None = None,
         template_language: str | None = None,
+        prefilled_reply_text: str | None = None,
         column_mapping: dict[str, str] | None = None,
     ) -> "ClientLeadSource":
         """Create or update one client lead source."""
@@ -2214,6 +2216,7 @@ class ClientLeadSource(SQLModel, table=True):
             item.normalized_recipient_phone = normalized_recipient_phone
             item.template_name = (template_name or CLIENT_LEAD_DEFAULT_TEMPLATE_NAME).strip()
             item.template_language = (template_language or CLIENT_LEAD_DEFAULT_TEMPLATE_LANGUAGE).strip() or "es"
+            item.prefilled_reply_text = " ".join((prefilled_reply_text or "").split()).strip()
             item.column_mapping_json = json.dumps(
                 normalize_client_lead_column_mapping(column_mapping or item.column_mapping),
                 ensure_ascii=True,
@@ -5382,6 +5385,7 @@ def init_db() -> None:
     """Create all persistence tables."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     SQLModel.metadata.create_all(engine)
+    ensure_client_lead_source_prefilled_reply_text_column()
     drop_legacy_contadores_events_table()
     ensure_company_tags_column()
     ensure_company_normalized_source_url_column()
@@ -5860,6 +5864,21 @@ def ensure_client_lead_source_sheet_tab_name_column() -> None:
             "ALTER TABLE client_lead_sources ADD COLUMN sheet_tab_name TEXT"
         )
         logger.info("Added missing client_lead_sources.sheet_tab_name column.")
+
+
+def ensure_client_lead_source_prefilled_reply_text_column() -> None:
+    """Keep older Delivery databases compatible after the reply-text removal."""
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        if "client_lead_sources" not in inspector.get_table_names():
+            return
+        columns = {column["name"] for column in inspector.get_columns("client_lead_sources")}
+        if "prefilled_reply_text" in columns:
+            return
+        connection.exec_driver_sql(
+            "ALTER TABLE client_lead_sources ADD COLUMN prefilled_reply_text TEXT NOT NULL DEFAULT ''"
+        )
+        logger.info("Added missing client_lead_sources.prefilled_reply_text column.")
 
 
 def ensure_contadores_config_strategy_weights_column() -> None:
