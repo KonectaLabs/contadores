@@ -292,6 +292,15 @@ async def run_worker_loop(
                             backend_client,
                             source=source,
                         )
+                    except httpx.HTTPStatusError as exc:
+                        status_code = exc.response.status_code if exc.response else "unknown"
+                        detail = exc.response.text[:300] if exc.response else ""
+                        logger.warning(
+                            "%s Delivery sync failed with HTTP %s. %s",
+                            source.label,
+                            status_code,
+                            detail,
+                        )
                     except Exception:
                         logger.exception("%s Delivery sync iteration failed.", source.label)
                     else:
