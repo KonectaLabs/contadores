@@ -295,6 +295,9 @@ Client Lead Delivery:
 - Primer sync: importa todas las filas validas existentes y deja sus
   notificaciones `pending`. Los siguientes syncs son idempotentes por
   `(source_id, source_row_key)` y solo agregan filas nuevas.
+- La UI de Delivery no muestra un boton de sync manual: al seleccionar un
+  contacto, refresca la fuente automaticamente cada 10 segundos y deja la
+  configuracion escondida detras del boton `Config`.
 - Filas con telefono de lead faltante o invalido quedan visibles como `blocked`
   con motivo; no se mandan por WhatsApp.
 - Ejemplo de archivo:
@@ -309,7 +312,7 @@ Client Lead Delivery:
       "enabled": true,
       "sheet_url": "https://docs.google.com/spreadsheets/d/...",
       "sheet_gid": "0",
-      "sheet_poll_seconds": 30,
+      "sheet_poll_seconds": 10,
       "recipients": [
         {"id": "dueno", "name": "Duenio", "phone": "+5491122223333"}
       ],

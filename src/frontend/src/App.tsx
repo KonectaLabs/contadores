@@ -14,10 +14,12 @@ import {
   CurrencyDollar,
   DownloadSimple,
   FolderOpen,
+  GearSix,
   ListChecks,
   NotePencil,
   PaperPlaneTilt,
   PauseCircle,
+  Plus,
   Pulse,
   Robot,
   SpinnerGap,
@@ -64,6 +66,7 @@ import type {
 
 const REFRESH_MS = 12000;
 const WORKSTATION_DETAIL_REFRESH_MS = 4000;
+const DELIVERY_AUTO_SYNC_MS = 10000;
 const WHATSAPP_CUSTOM_WINDOW_MS = 24 * 60 * 60 * 1000;
 const DASHBOARD_FUNNEL_STORAGE_KEY = "contadores.dashboard.selectedFunnelId";
 const DASHBOARD_STAGE_STORAGE_KEY = "contadores.dashboard.stageFilter";
@@ -726,6 +729,50 @@ export function App() {
   }, [activeSection, loadWorkstation, loadWorkstationDetail, selectedWorkstationClientId]);
 
   useEffect(() => {
+    if (activeSection !== "delivery" || deliveryEditorMode !== "edit" || !selectedDeliverySourceId) {
+      return;
+    }
+
+    let cancelled = false;
+    let inFlight = false;
+
+    const autoSyncDelivery = async () => {
+      if (document.visibilityState !== "visible" || inFlight) {
+        return;
+      }
+
+      inFlight = true;
+      try {
+        await apiFetch(`/api/client-lead-sources/${encodeURIComponent(selectedDeliverySourceId)}/sync`, { method: "POST" });
+        if (cancelled) {
+          return;
+        }
+        await Promise.all([
+          loadDeliverySources(),
+          loadDeliveryLeads(selectedDeliverySourceId),
+        ]);
+      } catch (reason) {
+        if (!cancelled) {
+          setError(reason instanceof Error ? reason.message : "Could not auto-refresh Delivery.");
+        }
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    const timer = window.setInterval(() => {
+      autoSyncDelivery();
+    }, DELIVERY_AUTO_SYNC_MS);
+
+    autoSyncDelivery();
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [activeSection, deliveryEditorMode, loadDeliveryLeads, loadDeliverySources, selectedDeliverySourceId]);
+
+  useEffect(() => {
     if (!professionalPhotoJob || !["queued", "running"].includes(professionalPhotoJob.status)) {
       return;
     }
@@ -864,23 +911,6 @@ export function App() {
       await loadDeliverySources();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not delete Delivery source.");
-    } finally {
-      setActionBusy(null);
-    }
-  }
-
-  async function syncDeliverySource() {
-    const sourceId = selectedDeliverySource?.id ?? deliverySourceDraft.id;
-    if (!sourceId || deliveryEditorMode === "create") {
-      return;
-    }
-    setActionBusy("delivery-sync");
-    try {
-      await apiFetch(`/api/client-lead-sources/${encodeURIComponent(sourceId)}/sync`, { method: "POST" });
-      await loadDeliverySources();
-      await loadDeliveryLeads(sourceId);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not sync Delivery source.");
     } finally {
       setActionBusy(null);
     }
@@ -1624,7 +1654,7 @@ export function App() {
     : activeSection === "delivery"
     ? selectedDeliverySource?.last_sync_status
       ? `${selectedDeliverySource.last_sync_status} · ${selectedDeliverySource.last_sync_at ? relativeTime(selectedDeliverySource.last_sync_at) : "never"}`
-      : `${deliverySources.length} ${deliverySources.length === 1 ? "source" : "sources"} · ${compactNumber(deliveryLeadTotal)} leads`
+      : `${deliverySources.length} ${deliverySources.length === 1 ? "contact" : "contacts"} · ${compactNumber(deliveryLeadTotal)} leads`
     : config?.last_sheet_sync_status
     ? `${config.last_sheet_sync_status} · ${config.last_sheet_sync_at ? relativeTime(config.last_sheet_sync_at) : "never"}`
     : runtime
@@ -1838,7 +1868,6 @@ export function App() {
           onDraftChange={setDeliverySourceDraft}
           onSaveSource={saveDeliverySource}
           onDeleteSource={deleteDeliverySource}
-          onSyncSource={syncDeliverySource}
           onCopyLead={copyClientLeadInfo}
           onCopyLeadAll={copyClientLeadAll}
           onRetryLead={retryClientLeadNotification}
@@ -2139,7 +2168,6 @@ function ClientLeadDeliveryView({
   onDraftChange,
   onSaveSource,
   onDeleteSource,
-  onSyncSource,
   onCopyLead,
   onCopyLeadAll,
   onRetryLead,
@@ -2159,15 +2187,33 @@ function ClientLeadDeliveryView({
   onDraftChange: (draft: ClientLeadSourceDraft) => void;
   onSaveSource: (event: FormEvent<HTMLFormElement>) => void;
   onDeleteSource: () => void;
-  onSyncSource: () => void;
   onCopyLead: (lead: ClientLead) => void | Promise<void>;
   onCopyLeadAll: (lead: ClientLead) => void | Promise<void>;
   onRetryLead: (lead: ClientLead) => void | Promise<void>;
 }) {
+  const [configOpen, setConfigOpen] = useState(editorMode === "create");
   const isExisting = editorMode === "edit" && Boolean(selectedSource);
   const totalLeads = sources.reduce((total, source) => total + deliverySourceCount(source, "total"), 0);
   const failedLeads = sources.reduce((total, source) => total + deliverySourceCount(source, "failed"), 0);
-  const selectedLabel = editorMode === "create" ? "New source" : selectedSource?.label || "Select a source";
+  const deliveredLeads = sources.reduce((total, source) => total + deliverySourceCount(source, "sent") + deliverySourceCount(source, "delivered"), 0);
+  const selectedTotalLeads = selectedSource ? deliverySourceCount(selectedSource, "total") : 0;
+  const selectedDeliveredLeads = selectedSource ? deliverySourceCount(selectedSource, "sent") + deliverySourceCount(selectedSource, "delivered") : 0;
+  const selectedBlockedLeads = selectedSource ? deliverySourceCount(selectedSource, "blocked") : 0;
+  const selectedLabel = editorMode === "create" ? "New contact" : selectedSource?.label || "Select a contact";
+  const lastSyncText = selectedSource?.last_sync_at ? relativeTime(selectedSource.last_sync_at) : "waiting";
+  const sourceStatus = selectedSource?.enabled ? humanize(selectedSource.last_sync_status || "active") : "Paused";
+
+  useEffect(() => {
+    if (editorMode === "create") {
+      setConfigOpen(true);
+    }
+  }, [editorMode]);
+
+  useEffect(() => {
+    if (editorMode === "edit" && selectedSourceId) {
+      setConfigOpen(false);
+    }
+  }, [editorMode, selectedSourceId]);
 
   function updateDraft<K extends keyof ClientLeadSourceDraft>(key: K, value: ClientLeadSourceDraft[K]) {
     onDraftChange({ ...draft, [key]: value });
@@ -2178,8 +2224,8 @@ function ClientLeadDeliveryView({
       <div className="ct-secondary delivery-summary">
         <p className="ct-secondary-note">
           {sources.length
-            ? `${sources.length} ${sources.length === 1 ? "source" : "sources"} · ${compactNumber(totalLeads)} leads · ${compactNumber(failedLeads)} failed`
-            : "No delivery sources configured yet"}
+            ? `${sources.length} ${sources.length === 1 ? "contact" : "contacts"} · ${compactNumber(totalLeads)} leads · ${compactNumber(deliveredLeads)} notified · ${compactNumber(failedLeads)} failed`
+            : "No delivery contacts configured yet"}
         </p>
         {copyStatus ? <p className="delivery-copy-status" aria-live="polite">{copyStatus}</p> : null}
       </div>
@@ -2187,12 +2233,15 @@ function ClientLeadDeliveryView({
       <div className="ct-workspace delivery-workspace">
         <aside className="ct-leads delivery-sources">
           <div className="ct-leads-head">
-            <h3>Sources</h3>
-            <button type="button" className="ct-btn ct-btn-ghost delivery-small-btn" onClick={onNewSource}>+ Source</button>
+            <h3>Delivery contacts</h3>
+            <button type="button" className="ct-btn ct-btn-ghost delivery-small-btn" onClick={onNewSource}>
+              <Plus size={13} weight="bold" />
+              Contact
+            </button>
           </div>
           <div className="ct-leads-list delivery-source-list">
             {loading && !sources.length ? (
-              <p className="ct-empty">Loading delivery sources...</p>
+              <p className="ct-empty">Loading delivery contacts...</p>
             ) : sources.length ? sources.map((source) => {
               const active = editorMode === "edit" && source.id === selectedSourceId;
               return (
@@ -2210,7 +2259,7 @@ function ClientLeadDeliveryView({
                   </div>
                   <div className="delivery-source-counts">
                     <span>Total <strong>{compactNumber(deliverySourceCount(source, "total"))}</strong></span>
-                    <span>Sent <strong>{compactNumber(deliverySourceCount(source, "sent") + deliverySourceCount(source, "delivered"))}</strong></span>
+                    <span>Notified <strong>{compactNumber(deliverySourceCount(source, "sent") + deliverySourceCount(source, "delivered"))}</strong></span>
                     <span>Failed <strong>{compactNumber(deliverySourceCount(source, "failed"))}</strong></span>
                     <span>Blocked <strong>{compactNumber(deliverySourceCount(source, "blocked"))}</strong></span>
                   </div>
@@ -2219,7 +2268,7 @@ function ClientLeadDeliveryView({
                 </button>
               );
             }) : (
-              <p className="ct-empty">Create a source to pull sheet leads and deliver notifications.</p>
+              <p className="ct-empty">Create a contact to pull sheet leads and deliver notifications.</p>
             )}
           </div>
         </aside>
@@ -2233,174 +2282,196 @@ function ClientLeadDeliveryView({
                 <h3>{selectedLabel}</h3>
                 <p className="ct-detail-meta">
                   {isExisting
-                    ? [selectedSource?.recipient_name || "-", selectedSource?.recipient_phone || "-", selectedSource?.template_name || "-"].join(" · ")
-                    : "Create a sheet source, recipient, and WhatsApp template mapping."}
+                    ? [selectedSource?.recipient_name || "-", selectedSource?.recipient_phone || "-", `auto ${Math.round(DELIVERY_AUTO_SYNC_MS / 1000)}s`].join(" · ")
+                    : "Create a sheet contact, recipient, and WhatsApp template mapping."}
                 </p>
               </div>
             </div>
             <div className="ct-detail-head-actions">
+              <span className="delivery-live-pill" data-tone={selectedSource ? deliverySourceTone(selectedSource) : "muted"}>
+                {isExisting ? `${sourceStatus} · ${lastSyncText}` : "Draft"}
+              </span>
+              <button type="button" className="ct-btn ct-btn-ghost" onClick={onNewSource}>New contact</button>
               <button
                 type="button"
-                className="ct-btn ct-btn-primary"
-                disabled={!isExisting || actionBusy === "delivery-sync"}
-                onClick={onSyncSource}
+                className="ct-btn ct-btn-ghost"
+                onClick={() => setConfigOpen((current) => !current)}
               >
-                <ArrowsClockwise size={15} weight="bold" />
-                {actionBusy === "delivery-sync" ? "Syncing..." : "Sync"}
-              </button>
-              <button type="button" className="ct-btn ct-btn-ghost" onClick={onNewSource}>New source</button>
-              <button
-                type="button"
-                className="ct-btn ct-btn-ghost btn-destructive"
-                disabled={!isExisting || actionBusy === "delivery-delete"}
-                onClick={onDeleteSource}
-              >
-                <Trash size={15} weight="bold" />
-                {actionBusy === "delivery-delete" ? "Deleting..." : "Delete"}
+                <GearSix size={15} weight="bold" />
+                Config
               </button>
             </div>
           </header>
 
           <div className="delivery-detail-body">
-            <form className="delivery-source-form" onSubmit={onSaveSource}>
-              <div className="workstation-panel-head">
-                <div>
-                  <span>Source config</span>
-                  <strong>{editorMode === "create" ? "New delivery source" : "Sheet and template"}</strong>
+            {configOpen ? (
+              <form className="delivery-source-form delivery-config-panel" onSubmit={onSaveSource}>
+                <div className="workstation-panel-head">
+                  <div>
+                    <span>Config</span>
+                    <strong>{editorMode === "create" ? "New delivery contact" : "Sheet and template"}</strong>
+                  </div>
                 </div>
-              </div>
 
-              <div className="ct-field-grid">
+                <div className="ct-field-grid">
+                  <label className="ct-field">
+                    <span>Source ID</span>
+                    <input
+                      value={draft.id}
+                      disabled={isExisting}
+                      onChange={(event) => updateDraft("id", slugifyClient(event.target.value))}
+                      placeholder="client-name"
+                    />
+                  </label>
+                  <label className="ct-field">
+                    <span>Label</span>
+                    <input value={draft.label} onChange={(event) => updateDraft("label", event.target.value)} placeholder="Cliente · Sheet delivery" />
+                  </label>
+                  <label className="ct-field">
+                    <span>Recipient name</span>
+                    <input value={draft.recipient_name} onChange={(event) => updateDraft("recipient_name", event.target.value)} placeholder="Client operator" />
+                  </label>
+                  <label className="ct-field">
+                    <span>Recipient phone</span>
+                    <input value={draft.recipient_phone} onChange={(event) => updateDraft("recipient_phone", event.target.value)} placeholder="+54..." />
+                  </label>
+                </div>
+
+                <label className="ct-field ct-field-toggle">
+                  <span>Enabled</span>
+                  <div className="ct-toggle-row">
+                    <input type="checkbox" checked={draft.enabled} onChange={(event) => updateDraft("enabled", event.target.checked)} />
+                    <p className="ct-field-hint">Disabled contacts stay visible but do not poll or notify recipients.</p>
+                  </div>
+                </label>
+
                 <label className="ct-field">
-                  <span>Source ID</span>
-                  <input
-                    value={draft.id}
-                    disabled={isExisting}
-                    onChange={(event) => updateDraft("id", slugifyClient(event.target.value))}
-                    placeholder="client-name"
+                  <span>Sheet URL</span>
+                  <input value={draft.sheet_url} onChange={(event) => updateDraft("sheet_url", event.target.value)} placeholder="https://docs.google.com/spreadsheets/..." />
+                </label>
+
+                <div className="ct-field-grid">
+                  <label className="ct-field">
+                    <span>Sheet GID</span>
+                    <input value={draft.sheet_gid} onChange={(event) => updateDraft("sheet_gid", event.target.value)} placeholder="0" />
+                  </label>
+                  <label className="ct-field">
+                    <span>Poll seconds</span>
+                    <input
+                      type="number"
+                      min="5"
+                      value={draft.sheet_poll_seconds}
+                      onChange={(event) => updateDraft("sheet_poll_seconds", Number(event.target.value) || 10)}
+                    />
+                  </label>
+                </div>
+
+                <div className="ct-field-grid">
+                  <label className="ct-field">
+                    <span>Template name</span>
+                    <input value={draft.template_name} onChange={(event) => updateDraft("template_name", event.target.value)} placeholder="client_lead_delivery_es" />
+                  </label>
+                  <label className="ct-field">
+                    <span>Template language</span>
+                    <input value={draft.template_language} onChange={(event) => updateDraft("template_language", event.target.value)} placeholder="es" />
+                  </label>
+                </div>
+
+                <label className="ct-field">
+                  <span>Prefilled reply text</span>
+                  <textarea
+                    value={draft.prefilled_reply_text}
+                    onChange={(event) => updateDraft("prefilled_reply_text", event.target.value)}
+                    rows={3}
+                    placeholder="Hola, vi tu consulta y queria ayudarte..."
                   />
                 </label>
-                <label className="ct-field">
-                  <span>Label</span>
-                  <input value={draft.label} onChange={(event) => updateDraft("label", event.target.value)} placeholder="Cliente · Sheet delivery" />
-                </label>
-              </div>
 
-              <label className="ct-field ct-field-toggle">
-                <span>Enabled</span>
-                <div className="ct-toggle-row">
-                  <input type="checkbox" checked={draft.enabled} onChange={(event) => updateDraft("enabled", event.target.checked)} />
-                  <p className="ct-field-hint">Disabled sources stay visible but should not poll or notify recipients.</p>
-                </div>
-              </label>
-
-              <label className="ct-field">
-                <span>Sheet URL</span>
-                <input value={draft.sheet_url} onChange={(event) => updateDraft("sheet_url", event.target.value)} placeholder="https://docs.google.com/spreadsheets/..." />
-              </label>
-
-              <div className="ct-field-grid">
                 <label className="ct-field">
-                  <span>Sheet GID</span>
-                  <input value={draft.sheet_gid} onChange={(event) => updateDraft("sheet_gid", event.target.value)} placeholder="0" />
-                </label>
-                <label className="ct-field">
-                  <span>Poll seconds</span>
-                  <input
-                    type="number"
-                    min="30"
-                    value={draft.sheet_poll_seconds}
-                    onChange={(event) => updateDraft("sheet_poll_seconds", Number(event.target.value) || 30)}
+                  <span>Column mapping</span>
+                  <textarea
+                    value={draft.column_mapping_text}
+                    onChange={(event) => updateDraft("column_mapping_text", event.target.value)}
+                    rows={5}
+                    spellCheck={false}
                   />
                 </label>
-              </div>
 
-              <div className="ct-field-grid">
-                <label className="ct-field">
-                  <span>Recipient name</span>
-                  <input value={draft.recipient_name} onChange={(event) => updateDraft("recipient_name", event.target.value)} placeholder="Client operator" />
-                </label>
-                <label className="ct-field">
-                  <span>Recipient phone</span>
-                  <input value={draft.recipient_phone} onChange={(event) => updateDraft("recipient_phone", event.target.value)} placeholder="+54..." />
-                </label>
-              </div>
-
-              <div className="ct-field-grid">
-                <label className="ct-field">
-                  <span>Template name</span>
-                  <input value={draft.template_name} onChange={(event) => updateDraft("template_name", event.target.value)} placeholder="client_lead_delivery_es" />
-                </label>
-                <label className="ct-field">
-                  <span>Template language</span>
-                  <input value={draft.template_language} onChange={(event) => updateDraft("template_language", event.target.value)} placeholder="es" />
-                </label>
-              </div>
-
-              <label className="ct-field">
-                <span>Prefilled reply text</span>
-                <textarea
-                  value={draft.prefilled_reply_text}
-                  onChange={(event) => updateDraft("prefilled_reply_text", event.target.value)}
-                  rows={3}
-                  placeholder="Hola, vi tu consulta y queria ayudarte..."
-                />
-              </label>
-
-              <label className="ct-field">
-                <span>Column mapping JSON</span>
-                <textarea
-                  value={draft.column_mapping_text}
-                  onChange={(event) => updateDraft("column_mapping_text", event.target.value)}
-                  rows={6}
-                  spellCheck={false}
-                />
-              </label>
-
-              <div className="delivery-form-actions">
-                <button type="submit" className="ct-btn ct-btn-primary" disabled={actionBusy === "delivery-save" || !draft.label.trim()}>
-                  <Check size={15} weight="bold" />
-                  {actionBusy === "delivery-save" ? "Saving..." : editorMode === "create" ? "Create source" : "Save source"}
-                </button>
-              </div>
-            </form>
+                <div className="delivery-form-actions">
+                  {isExisting ? (
+                    <button
+                      type="button"
+                      className="ct-btn ct-btn-ghost btn-destructive"
+                      disabled={actionBusy === "delivery-delete"}
+                      onClick={onDeleteSource}
+                    >
+                      <Trash size={15} weight="bold" />
+                      {actionBusy === "delivery-delete" ? "Deleting..." : "Delete"}
+                    </button>
+                  ) : null}
+                  <button type="submit" className="ct-btn ct-btn-primary" disabled={actionBusy === "delivery-save" || !draft.label.trim()}>
+                    <Check size={15} weight="bold" />
+                    {actionBusy === "delivery-save" ? "Saving..." : editorMode === "create" ? "Create contact" : "Save config"}
+                  </button>
+                </div>
+              </form>
+            ) : null}
 
             <section className="delivery-lead-panel">
               <div className="workstation-panel-head">
                 <div>
-                  <span>Leads</span>
-                  <strong>{isExisting ? `${leads.length} loaded` : "Select or create a source"}</strong>
+                  <span>Leads from sheet</span>
+                  <strong>{isExisting ? `${leads.length} visible` : "Select or create a contact"}</strong>
                 </div>
-                {selectedSource?.last_sync_note ? <em>{selectedSource.last_sync_note}</em> : null}
+                <div className="delivery-sheet-metrics">
+                  <span>{compactNumber(selectedTotalLeads)} total</span>
+                  <span>{compactNumber(selectedDeliveredLeads)} notified</span>
+                  <span>{compactNumber(selectedBlockedLeads)} blocked</span>
+                </div>
               </div>
 
               {!isExisting ? (
-                <p className="ct-empty">Save the source before syncing and inspecting delivery rows.</p>
+                <p className="ct-empty">Pick a Delivery contact to inspect the sheet leads.</p>
               ) : leadsLoading && !leads.length ? (
-                <p className="ct-empty">Loading source leads...</p>
+                <p className="ct-empty">Loading contact leads...</p>
               ) : leads.length ? (
                 <div className="delivery-table-wrap">
                   <table className="delivery-table">
                     <thead>
                       <tr>
+                        <th>Ingresó</th>
                         <th>Lead</th>
-                        <th>Notification</th>
-                        <th>Status</th>
-                        <th>Raw fields</th>
-                        <th>Actions</th>
+                        <th>Contacto</th>
+                        <th>Sheet</th>
+                        <th>Notificación</th>
+                        <th />
                       </tr>
                     </thead>
                     <tbody>
                       {leads.map((lead) => {
                         const waLink = lead.wa_link || buildWaLink(lead.phone_number);
                         const retryable = isRetryableClientLead(lead);
+                        const campaign = firstRawValue(lead, ["campaign_name", "adset_name", "ad_name", "form_name"]);
+                        const city = firstRawValue(lead, ["city", "platform"]);
                         return (
                           <tr key={lead.id}>
                             <td>
+                              <div className="delivery-age-cell">
+                                <strong>{clientLeadAgeText(lead)}</strong>
+                                <span>Row {lead.row_number}</span>
+                                {lead.created_time ? <small>{shortDate(lead.created_time)}</small> : null}
+                              </div>
+                            </td>
+                            <td>
                               <div className="delivery-lead-identity">
                                 <strong>{lead.full_name || lead.phone_number || `Row ${lead.row_number}`}</strong>
-                                <span>{lead.phone_number || "-"}{lead.email ? ` · ${lead.email}` : ""}</span>
-                                <small>Row {lead.row_number}{lead.created_time ? ` · ${shortDate(lead.created_time)}` : ""}</small>
+                                <span>{firstRawValue(lead, ["lead_status"]) || "new lead"}</span>
+                              </div>
+                            </td>
+                            <td>
+                              <div className="delivery-contact-cell">
+                                <strong>{displayLeadPhone(lead.phone_number)}</strong>
+                                <span>{lead.email || "No email"}</span>
                                 {waLink ? (
                                   <a href={waLink} target="_blank" rel="noreferrer">
                                     <ArrowSquareOut size={13} weight="bold" />
@@ -2410,29 +2481,20 @@ function ClientLeadDeliveryView({
                               </div>
                             </td>
                             <td>
-                              <p className="delivery-notification-text">{lead.notification_text || "-"}</p>
+                              <div className="delivery-sheet-cell">
+                                <strong>{city || "-"}</strong>
+                                <span>{campaign || "-"}</span>
+                              </div>
                             </td>
                             <td>
                               <div className="delivery-status-cell">
                                 <span className="delivery-status-pill" data-tone={clientLeadDeliveryTone(lead)}>
                                   {humanize(lead.delivery_status || (lead.block_reason ? "blocked" : "pending"))}
                                 </span>
-                                <small>{lead.delivery_attempts ? `${lead.delivery_attempts} attempts` : "No attempts"}</small>
-                                {lead.sent_at ? <small>Sent {shortDate(lead.sent_at)}</small> : null}
-                                {lead.delivered_at ? <small>Delivered {shortDate(lead.delivered_at)}</small> : null}
+                                <small>{deliveryStatusDetail(lead)}</small>
                                 {lead.last_delivery_error || lead.block_reason ? (
                                   <p>{lead.last_delivery_error || lead.block_reason}</p>
                                 ) : null}
-                              </div>
-                            </td>
-                            <td>
-                              <div className="delivery-raw-fields">
-                                {rawRowEntries(lead.raw_row).slice(0, 6).map(([key, value]) => (
-                                  <span key={key} title={`${key}: ${formatRawValue(value)}`}>
-                                    <strong>{key}</strong>
-                                    {truncate(formatRawValue(value), 44)}
-                                  </span>
-                                ))}
                               </div>
                             </td>
                             <td>
@@ -2467,7 +2529,7 @@ function ClientLeadDeliveryView({
                   </table>
                 </div>
               ) : (
-                <p className="ct-empty">No leads loaded for this source yet. Run a manual sync after saving the config.</p>
+                <p className="ct-empty">No leads loaded for this contact yet.</p>
               )}
             </section>
           </div>
@@ -5370,7 +5432,7 @@ function buildBlankClientLeadSourceDraft(): ClientLeadSourceDraft {
     enabled: false,
     sheet_url: "",
     sheet_gid: "",
-    sheet_poll_seconds: 60,
+    sheet_poll_seconds: 10,
     recipient_name: "",
     recipient_phone: "",
     template_name: "konecta_client_lead_alert_es_v1",
@@ -5393,7 +5455,7 @@ function clientLeadSourceToDraft(source: ClientLeadSource): ClientLeadSourceDraf
     enabled: source.enabled,
     sheet_url: source.sheet_url ?? "",
     sheet_gid: source.sheet_gid ?? "",
-    sheet_poll_seconds: source.sheet_poll_seconds || 60,
+    sheet_poll_seconds: source.sheet_poll_seconds || 10,
     recipient_name: source.recipient_name ?? "",
     recipient_phone: source.recipient_phone ?? "",
     template_name: source.template_name ?? "",
@@ -5412,7 +5474,7 @@ function clientLeadSourcePayloadFromDraft(draft: ClientLeadSourceDraft): ClientL
     enabled: draft.enabled,
     sheet_url: draft.sheet_url.trim() || null,
     sheet_gid: draft.sheet_gid.trim() || null,
-    sheet_poll_seconds: Math.max(30, Number(draft.sheet_poll_seconds) || 60),
+    sheet_poll_seconds: Math.max(5, Number(draft.sheet_poll_seconds) || 10),
     recipient_name: draft.recipient_name.trim() || null,
     recipient_phone: draft.recipient_phone.trim() || null,
     template_name: draft.template_name.trim() || null,
@@ -5467,25 +5529,20 @@ function deliverySourceTone(source: ClientLeadSource): "success" | "warn" | "dan
 
 function sourceSyncSummary(source: ClientLeadSource): string {
   if (!source.last_sync_at && !source.last_sync_note) {
-    return "Never synced";
+    return "Waiting for first automatic check";
   }
   const syncTime = source.last_sync_at ? relativeTime(source.last_sync_at) : "No sync time";
-  return source.last_sync_note ? `${syncTime} · ${source.last_sync_note}` : syncTime;
+  return `Last checked ${syncTime}`;
 }
 
 function buildClientLeadText(lead: ClientLead): string {
-  const rawRows = rawRowEntries(lead.raw_row).map(([key, value]) => `${key}: ${formatRawValue(value)}`);
   const lines = [
     `Lead: ${lead.full_name || "-"}`,
-    `Phone: ${lead.phone_number || "-"}`,
+    `Phone: ${displayLeadPhone(lead.phone_number)}`,
     `Email: ${lead.email || "-"}`,
     `WhatsApp: ${lead.wa_link || buildWaLink(lead.phone_number) || "-"}`,
-    `Source: ${lead.source_id}`,
     `Row: ${lead.row_number}`,
     `Status: ${humanize(lead.delivery_status || (lead.block_reason ? "blocked" : "pending"))}`,
-    `Attempts: ${lead.delivery_attempts || 0}`,
-    `Sent: ${lead.sent_at ? shortDate(lead.sent_at) : "-"}`,
-    `Delivered: ${lead.delivered_at ? shortDate(lead.delivered_at) : "-"}`,
   ];
 
   if (lead.last_delivery_error) {
@@ -5495,14 +5552,49 @@ function buildClientLeadText(lead: ClientLead): string {
     lines.push(`Blocked: ${lead.block_reason}`);
   }
 
-  lines.push("", "Notification:", lead.notification_text || "-", "", "Raw row:");
-  lines.push(...(rawRows.length ? rawRows : ["-"]));
+  lines.push("", "Notification:", lead.notification_text || "-");
   return lines.join("\n");
 }
 
 function buildWaLink(phone: string | null | undefined): string {
   const digits = (phone || "").replace(/\D/g, "");
   return digits ? `https://wa.me/${digits}` : "";
+}
+
+function displayLeadPhone(phone: string | null | undefined): string {
+  const value = (phone || "").trim().replace(/^p:/i, "");
+  return value || "-";
+}
+
+function clientLeadAgeText(lead: ClientLead): string {
+  return lead.created_time ? relativeTime(lead.created_time) : `Row ${lead.row_number}`;
+}
+
+function firstRawValue(lead: ClientLead, keys: string[]): string {
+  for (const key of keys) {
+    const value = lead.raw_row?.[key];
+    const formatted = formatRawValue(value).trim();
+    if (formatted) {
+      return formatted;
+    }
+  }
+  return "";
+}
+
+function deliveryStatusDetail(lead: ClientLead): string {
+  if (lead.delivered_at) {
+    return `Delivered ${relativeTime(lead.delivered_at)}`;
+  }
+  if (lead.sent_at) {
+    return `Sent ${relativeTime(lead.sent_at)}`;
+  }
+  if (lead.block_reason) {
+    return "Not sent";
+  }
+  if (lead.delivery_attempts > 0) {
+    return `${lead.delivery_attempts} ${lead.delivery_attempts === 1 ? "attempt" : "attempts"}`;
+  }
+  return "Queued";
 }
 
 function rawRowEntries(rawRow: Record<string, unknown> | null | undefined): Array<[string, unknown]> {

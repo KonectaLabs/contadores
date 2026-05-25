@@ -52,7 +52,7 @@ class ClientLeadSourceCommand(BaseModel):
     enabled: bool = True
     sheet_url: str | None = ""
     sheet_gid: str | None = None
-    sheet_poll_seconds: int = Field(default=30, ge=30)
+    sheet_poll_seconds: int = Field(default=10, ge=5)
     recipient_name: str | None = None
     recipient_phone: str | None = ""
     template_name: str | None = CLIENT_LEAD_DEFAULT_TEMPLATE_NAME
@@ -687,7 +687,7 @@ def build_copy_text(source: ClientLeadSource, item: ClientLeadDelivery) -> str:
             f"Email: {item.email or '-'}",
             f"Link: {item.wa_link or '-'}",
             "",
-            "Fila original:",
+            "Datos completos del sheet:",
             *raw_lines,
         ]
     ).strip() + "\n"

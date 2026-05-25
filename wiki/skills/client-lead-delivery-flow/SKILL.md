@@ -58,7 +58,7 @@ Schema:
       "enabled": false,
       "sheet_url": "https://docs.google.com/spreadsheets/d/...",
       "sheet_gid": "0",
-      "sheet_poll_seconds": 30,
+      "sheet_poll_seconds": 10,
       "recipients": [
         {"id": "owner", "name": "Owner", "phone": "+5491122223333"}
       ],
@@ -79,6 +79,10 @@ Schema:
 
 If the user gives multiple WhatsApp numbers, put them in `recipients`. The
 backend expands them into one Delivery source per recipient.
+
+The Delivery UI hides source settings behind `Config`. The selected contact
+auto-refreshes through the sync endpoint every 10 seconds, so do not add manual
+sync controls to the main lead surface.
 
 Use `enabled: false` when the template is not approved yet or when historical
 rows should not be notified until the user confirms.
@@ -106,7 +110,7 @@ uv run python src/scripts/whatsapp_templates.py check \
 ```
 
 5. If approved and the user wants it live, set `enabled: true`, reload config,
-   run one manual sync, then inspect leads and pending notifications:
+   run one controlled API sync for verification, then inspect leads and pending notifications:
 
 ```bash
 curl -fsS -X POST -H "X-Internal-Token: $INTERNAL_API_TOKEN" \

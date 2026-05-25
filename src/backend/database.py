@@ -2124,7 +2124,7 @@ class ClientLeadSource(SQLModel, table=True):
     enabled: bool = Field(default=True, index=True)
     sheet_url: str = Field(default="")
     sheet_gid: str | None = Field(default=None)
-    sheet_poll_seconds: int = Field(default=30)
+    sheet_poll_seconds: int = Field(default=10)
     recipient_name: str | None = Field(default=None)
     recipient_phone: str = Field(default="")
     normalized_recipient_phone: str = Field(default="", index=True)
@@ -2186,7 +2186,7 @@ class ClientLeadSource(SQLModel, table=True):
         enabled: bool | None = True,
         sheet_url: str,
         sheet_gid: str | None = None,
-        sheet_poll_seconds: int = 30,
+        sheet_poll_seconds: int = 10,
         recipient_name: str | None = None,
         recipient_phone: str,
         template_name: str | None = None,
@@ -2212,7 +2212,7 @@ class ClientLeadSource(SQLModel, table=True):
             item.enabled = cls.normalize_enabled(enabled)
             item.sheet_url = clean_sheet_url
             item.sheet_gid = (sheet_gid or "").strip() or None
-            item.sheet_poll_seconds = max(30, int(sheet_poll_seconds or 30))
+            item.sheet_poll_seconds = max(5, int(sheet_poll_seconds or 10))
             item.recipient_name = " ".join((recipient_name or "").split()).strip() or None
             item.recipient_phone = clean_recipient_phone
             item.normalized_recipient_phone = normalized_recipient_phone

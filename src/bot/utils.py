@@ -96,7 +96,7 @@ class FunnelConfigPayload(BaseModel):
     enabled: bool
     sheet_url: str | None = None
     sheet_gid: str | None = None
-    sheet_poll_seconds: int = 30
+    sheet_poll_seconds: int = 10
 
 
 class FunnelListPayload(BaseModel):
@@ -111,7 +111,7 @@ class ClientLeadSourcePayload(BaseModel):
     id: str
     label: str
     enabled: bool = True
-    sheet_poll_seconds: int = 30
+    sheet_poll_seconds: int = 10
     last_sync_at: str | None = None
     last_sync_status: str | None = None
     last_sync_note: str | None = None

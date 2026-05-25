@@ -282,7 +282,7 @@ async def run_worker_loop(
                 for source in client_lead_sources:
                     if not source.enabled:
                         continue
-                    sheet_poll_seconds = max(30, int(source.sheet_poll_seconds or 30))
+                    sheet_poll_seconds = max(5, int(source.sheet_poll_seconds or 10))
                     last_sync_at = last_client_lead_sync_at_by_source.get(source.id, 0.0)
                     if now - last_sync_at < sheet_poll_seconds:
                         continue

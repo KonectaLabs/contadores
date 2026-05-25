@@ -88,7 +88,7 @@ class ClientLeadSourceFileEntry(BaseModel):
     enabled: bool = True
     sheet_url: str = ""
     sheet_gid: str | None = None
-    sheet_poll_seconds: int = Field(default=30, ge=30)
+    sheet_poll_seconds: int = Field(default=10, ge=5)
     recipient_name: str | None = None
     recipient_phone: str = ""
     template_name: str = CLIENT_LEAD_DEFAULT_TEMPLATE_NAME
@@ -105,7 +105,7 @@ class ClientLeadSourceDefinition(BaseModel):
     enabled: bool = True
     sheet_url: str | None = ""
     sheet_gid: str | None = None
-    sheet_poll_seconds: int = Field(default=30, ge=30)
+    sheet_poll_seconds: int = Field(default=10, ge=5)
     recipient_name: str | None = None
     recipient_phone: str | None = ""
     recipients: list[ClientLeadRecipientDefinition] = Field(default_factory=list)
