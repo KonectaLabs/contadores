@@ -2488,6 +2488,10 @@ class ClientLeadDelivery(SQLModel, table=True):
                 row.external_id = (external_id or "").strip() or None
             if row.delivery_status == ClientLeadDeliveryStatus.SENT:
                 row.sent_at = now
+            if row.delivery_status in {
+                ClientLeadDeliveryStatus.SENT,
+                ClientLeadDeliveryStatus.DELIVERED,
+            }:
                 clean_sent_text = " ".join(str(sent_text or row.notification_text or "").split()).strip()
                 row.sent_text = clean_sent_text or row.sent_text or row.notification_text
             if row.delivery_status == ClientLeadDeliveryStatus.DELIVERED:
@@ -5821,12 +5825,33 @@ def ensure_client_lead_delivery_sent_text_column() -> None:
         if "client_lead_deliveries" not in inspector.get_table_names():
             return
         columns = {column["name"] for column in inspector.get_columns("client_lead_deliveries")}
-        if "sent_text" in columns:
-            return
-        connection.exec_driver_sql(
-            "ALTER TABLE client_lead_deliveries ADD COLUMN sent_text TEXT NOT NULL DEFAULT ''"
+        if "sent_text" not in columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE client_lead_deliveries ADD COLUMN sent_text TEXT NOT NULL DEFAULT ''"
+            )
+            logger.info("Added missing client_lead_deliveries.sent_text column.")
+
+        result = connection.exec_driver_sql(
+            """
+            UPDATE client_lead_deliveries
+            SET sent_text = notification_text
+            WHERE COALESCE(sent_text, '') = ''
+              AND COALESCE(notification_text, '') != ''
+              AND delivery_status IN (
+                'sent',
+                'delivered',
+                'SENT',
+                'DELIVERED',
+                'ClientLeadDeliveryStatus.SENT',
+                'ClientLeadDeliveryStatus.DELIVERED'
+              )
+            """
         )
-        logger.info("Added missing client_lead_deliveries.sent_text column.")
+        if result.rowcount and result.rowcount > 0:
+            logger.info(
+                "Backfilled %s client_lead_deliveries.sent_text snapshots.",
+                result.rowcount,
+            )
 
 
 def ensure_contadores_config_strategy_weights_column() -> None:
