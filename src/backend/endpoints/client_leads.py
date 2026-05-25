@@ -516,7 +516,7 @@ def public_csv_url(sheet_url: str, sheet_gid: str | None, sheet_tab_name: str | 
     if clean_tab_name:
         return (
             f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/gviz/tq"
-            f"?tqx=out:csv&sheet={quote(clean_tab_name)}"
+            f"?tqx=out:csv&sheet={quote(clean_tab_name, safe='')}"
         )
     suffix = f"&gid={gid}" if gid else ""
     return f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/export?format=csv{suffix}"
@@ -670,6 +670,7 @@ async def fetch_sheet_records(source: ClientLeadSource) -> list[dict[str, str]]:
     if not source.sheet_url.strip():
         raise RuntimeError("Sheet URL is required.")
 
+    public_access_errors: list[str] = []
     async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0), follow_redirects=True) as client:
         try:
             response = await client.get(public_csv_url(source.sheet_url, source.sheet_gid, source.sheet_tab_name))
@@ -681,6 +682,7 @@ async def fetch_sheet_records(source: ClientLeadSource) -> list[dict[str, str]]:
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code not in {401, 403, 404}:
                 raise
+            public_access_errors.append(f"public CSV returned HTTP {exc.response.status_code}")
 
         try:
             response = await client.get(public_xlsx_url(source.sheet_url))
@@ -691,6 +693,11 @@ async def fetch_sheet_records(source: ClientLeadSource) -> list[dict[str, str]]:
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code not in {401, 403, 404}:
                 raise
+            public_access_errors.append(f"public XLSX returned HTTP {exc.response.status_code}")
+
+    if not service_account_file() and public_access_errors:
+        details = "; ".join(public_access_errors)
+        raise RuntimeError(f"No pude leer el Google Sheet ({details}) y no hay service account configurada.")
 
     private_records = read_records_with_service_account(source)
     if records_have_mappable_headers(private_records, source.column_mapping):

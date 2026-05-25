@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import httpx
 from fastapi.testclient import TestClient
 from sqlmodel import SQLModel, create_engine
 
@@ -202,6 +203,9 @@ def test_client_lead_sheet_helpers_parse_common_targets() -> None:
     assert client_leads_endpoints.public_csv_url("abc123", None, "simple form setup").endswith(
         "/gviz/tq?tqx=out:csv&sheet=simple%20form%20setup"
     )
+    assert client_leads_endpoints.public_csv_url("abc123", None, "simple setup 22/5/26").endswith(
+        "/gviz/tq?tqx=out:csv&sheet=simple%20setup%2022%2F5%2F26"
+    )
     assert client_leads_endpoints.rows_to_records([["Name", "phone"], ["Ana", "+5491111111111"]]) == [
         {"Name": "Ana", "phone": "+5491111111111"}
     ]
@@ -213,6 +217,48 @@ def test_client_lead_sheet_helpers_parse_common_targets() -> None:
         [{"<html><body>Sign in</body></html>": ""}],
         {"full_name": "Nombre", "phone_number": "Telefono"},
     )
+
+
+def test_client_lead_private_sheet_without_service_account_marks_sync_failed(monkeypatch, tmp_path) -> None:
+    """Private public exports should fail visibly when no service account is configured."""
+    configure_delivery_db(monkeypatch, tmp_path)
+
+    class PrivateSheetResponse:
+        status_code = 401
+        text = ""
+        content = b""
+        request = httpx.Request("GET", "https://docs.google.com/private")
+
+        def raise_for_status(self) -> None:
+            raise httpx.HTTPStatusError("private", request=self.request, response=self)
+
+    class PrivateSheetClient:
+        def __init__(self, *args, **kwargs) -> None:
+            del args, kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback) -> None:
+            del exc_type, exc, traceback
+
+        async def get(self, url: str) -> PrivateSheetResponse:
+            del url
+            return PrivateSheetResponse()
+
+    monkeypatch.setattr(client_leads_endpoints.httpx, "AsyncClient", PrivateSheetClient)
+    monkeypatch.setattr(client_leads_endpoints, "service_account_file", lambda: None)
+
+    with TestClient(app) as client:
+        source_id = client.post("/api/client-lead-sources", json=source_payload()).json()["id"]
+        sync = client.post(f"/api/client-lead-sources/{source_id}/sync")
+        assert sync.status_code == 502
+        assert "no hay service account configurada" in sync.json()["detail"]
+
+        sources = client.get("/api/client-lead-sources").json()["sources"]
+        failed_source = next(source for source in sources if source["id"] == source_id)
+        assert failed_source["last_sync_status"] == "failed"
+        assert "public CSV returned HTTP 401" in failed_source["last_sync_note"]
 
 
 def test_client_lead_sources_load_from_config_file(monkeypatch, tmp_path) -> None:
