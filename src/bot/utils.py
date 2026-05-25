@@ -661,6 +661,7 @@ async def mark_backend_client_lead_notification_sent(
         json={
             "status": "sent",
             "external_id": receipt.external_id,
+            "sent_text": receipt.delivered_text,
         },
     )
     response.raise_for_status()

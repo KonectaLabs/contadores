@@ -2293,6 +2293,7 @@ class ClientLeadDelivery(SQLModel, table=True):
     email: str | None = Field(default=None, index=True)
     wa_link: str = Field(default="")
     notification_text: str = Field(default="")
+    sent_text: str = Field(default="")
     delivery_status: ClientLeadDeliveryStatus = Field(default=ClientLeadDeliveryStatus.PENDING, index=True)
     external_id: str | None = Field(default=None, index=True)
     delivery_attempts: int = Field(default=0, index=True)
@@ -2472,6 +2473,7 @@ class ClientLeadDelivery(SQLModel, table=True):
         delivery_id: str,
         delivery_status: ClientLeadDeliveryStatus | str,
         external_id: str | None = None,
+        sent_text: str | None = None,
         last_delivery_error: str | None = None,
         clear_delivery_error: bool = False,
     ) -> Optional["ClientLeadDelivery"]:
@@ -2486,6 +2488,8 @@ class ClientLeadDelivery(SQLModel, table=True):
                 row.external_id = (external_id or "").strip() or None
             if row.delivery_status == ClientLeadDeliveryStatus.SENT:
                 row.sent_at = now
+                clean_sent_text = " ".join(str(sent_text or row.notification_text or "").split()).strip()
+                row.sent_text = clean_sent_text or row.sent_text or row.notification_text
             if row.delivery_status == ClientLeadDeliveryStatus.DELIVERED:
                 row.delivered_at = now
             if clear_delivery_error:
@@ -5397,6 +5401,7 @@ def init_db() -> None:
     ensure_contadores_strategy_columns()
     ensure_contadores_message_delivery_columns()
     ensure_contadores_message_template_columns()
+    ensure_client_lead_delivery_sent_text_column()
     ensure_contadores_runtime_alert_columns()
     ensure_agent_run_codex_thread_columns()
     ensure_contadores_config_strategy_weights_column()
@@ -5807,6 +5812,21 @@ def ensure_contadores_message_template_columns() -> None:
             "CREATE INDEX IF NOT EXISTS ix_contadores_messages_whatsapp_template_name "
             "ON contadores_messages (whatsapp_template_name)"
         )
+
+
+def ensure_client_lead_delivery_sent_text_column() -> None:
+    """Add immutable sent-text snapshot storage to existing Delivery rows."""
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        if "client_lead_deliveries" not in inspector.get_table_names():
+            return
+        columns = {column["name"] for column in inspector.get_columns("client_lead_deliveries")}
+        if "sent_text" in columns:
+            return
+        connection.exec_driver_sql(
+            "ALTER TABLE client_lead_deliveries ADD COLUMN sent_text TEXT NOT NULL DEFAULT ''"
+        )
+        logger.info("Added missing client_lead_deliveries.sent_text column.")
 
 
 def ensure_contadores_config_strategy_weights_column() -> None:

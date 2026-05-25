@@ -499,6 +499,7 @@ export interface ClientLead {
   email: string | null;
   wa_link: string | null;
   notification_text: string | null;
+  sent_text: string | null;
   delivery_status: string | null;
   delivery_attempts: number;
   last_delivery_error: string | null;
@@ -510,6 +511,41 @@ export interface ClientLead {
 export interface ClientLeadListResponse {
   leads: ClientLead[];
   source?: ClientLeadSource;
+}
+
+export interface ClientLeadRecipientCrmLead {
+  id: string;
+  funnel_id: string;
+  full_name: string | null;
+  phone: string;
+  normalized_phone: string;
+  stage: string;
+  updated_at: string;
+}
+
+export interface ClientLeadRecipientChatMessage {
+  delivery_id: string;
+  row_number: number;
+  lead_name: string | null;
+  lead_phone: string;
+  lead_email: string | null;
+  text: string;
+  delivery_status: string;
+  external_id: string | null;
+  sent_at: string | null;
+  delivered_at: string | null;
+  last_delivery_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ClientLeadRecipientChatResponse {
+  source: ClientLeadSource;
+  recipient_name: string | null;
+  recipient_phone: string;
+  normalized_recipient_phone: string;
+  crm_leads: ClientLeadRecipientCrmLead[];
+  messages: ClientLeadRecipientChatMessage[];
 }
 
 export interface ClientLeadCopyAllResponse {

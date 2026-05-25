@@ -85,7 +85,11 @@ def test_fetch_and_dispatch_client_lead_notifications(monkeypatch) -> None:
     assert requests[-1] == (
         "PUT",
         "/api/client-lead-deliveries/delivery-1/delivery",
-        {"status": "sent", "external_id": "wamid.delivery.1"},
+        {
+            "status": "sent",
+            "external_id": "wamid.delivery.1",
+            "sent_text": "Nueva consulta de MMB Ads",
+        },
     )
 
 

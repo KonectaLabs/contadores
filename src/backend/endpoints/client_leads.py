@@ -26,6 +26,8 @@ from backend.database import (
     ClientLeadDelivery,
     ClientLeadDeliveryStatus,
     ClientLeadSource,
+    ContadoresLead,
+    ContadoresLeadStage,
     normalize_client_lead_column_mapping,
     normalize_phone,
 )
@@ -106,6 +108,7 @@ class ClientLeadDeliveryResponse(BaseModel):
     email: str | None
     wa_link: str
     notification_text: str
+    sent_text: str
     delivery_status: str
     external_id: str | None
     delivery_attempts: int
@@ -124,6 +127,47 @@ class ClientLeadDeliveryListResponse(BaseModel):
 
     source: ClientLeadSourceResponse
     leads: list[ClientLeadDeliveryResponse]
+
+
+class ClientLeadRecipientCrmLeadResponse(BaseModel):
+    """Existing CRM lead that matches the Delivery recipient phone."""
+
+    id: str
+    funnel_id: str
+    full_name: str | None
+    phone: str
+    normalized_phone: str
+    stage: str
+    updated_at: str
+
+
+class ClientLeadRecipientChatMessageResponse(BaseModel):
+    """One WhatsApp notification sent to the Delivery recipient."""
+
+    delivery_id: str
+    row_number: int
+    lead_name: str | None
+    lead_phone: str
+    lead_email: str | None
+    text: str
+    delivery_status: str
+    external_id: str | None
+    sent_at: str | None
+    delivered_at: str | None
+    last_delivery_error: str | None
+    created_at: str
+    updated_at: str
+
+
+class ClientLeadRecipientChatResponse(BaseModel):
+    """Audit view for messages sent from Delivery to the recipient."""
+
+    source: ClientLeadSourceResponse
+    recipient_name: str | None
+    recipient_phone: str
+    normalized_recipient_phone: str
+    crm_leads: list[ClientLeadRecipientCrmLeadResponse]
+    messages: list[ClientLeadRecipientChatMessageResponse]
 
 
 class ClientLeadSyncResponse(BaseModel):
@@ -164,6 +208,7 @@ class ClientLeadDeliveryUpdateCommand(BaseModel):
 
     status: str = Field(min_length=1)
     external_id: str | None = None
+    sent_text: str | None = None
 
 
 class ClientLeadDeliveryByExternalIdCommand(BaseModel):
@@ -251,6 +296,7 @@ def build_delivery_response(item: ClientLeadDelivery) -> ClientLeadDeliveryRespo
         email=item.email,
         wa_link=item.wa_link,
         notification_text=item.notification_text,
+        sent_text=item.sent_text,
         delivery_status=delivery_status,
         external_id=item.external_id,
         delivery_attempts=item.delivery_attempts,
@@ -263,6 +309,60 @@ def build_delivery_response(item: ClientLeadDelivery) -> ClientLeadDeliveryRespo
         created_at=format_timestamp_seconds(item.created_at) or "",
         updated_at=format_timestamp_seconds(item.updated_at) or "",
     )
+
+
+def build_recipient_crm_lead_response(lead: ContadoresLead) -> ClientLeadRecipientCrmLeadResponse:
+    """Serialize a matching CRM lead without importing CRM endpoint models."""
+    stage = lead.stage.value if isinstance(lead.stage, ContadoresLeadStage) else str(lead.stage)
+    return ClientLeadRecipientCrmLeadResponse(
+        id=lead.id,
+        funnel_id=lead.funnel_id,
+        full_name=lead.full_name,
+        phone=lead.phone,
+        normalized_phone=lead.normalized_phone,
+        stage=stage,
+        updated_at=format_timestamp_seconds(lead.updated_at) or "",
+    )
+
+
+def build_recipient_chat_message_response(item: ClientLeadDelivery) -> ClientLeadRecipientChatMessageResponse:
+    """Serialize one sent/attempted Delivery notification as chat-like audit."""
+    delivery_status = (
+        item.delivery_status.value
+        if isinstance(item.delivery_status, ClientLeadDeliveryStatus)
+        else str(item.delivery_status)
+    )
+    return ClientLeadRecipientChatMessageResponse(
+        delivery_id=item.id,
+        row_number=item.row_number,
+        lead_name=item.full_name,
+        lead_phone=item.phone_number,
+        lead_email=item.email,
+        text=item.sent_text or item.notification_text,
+        delivery_status=delivery_status,
+        external_id=item.external_id,
+        sent_at=format_timestamp_seconds(item.sent_at),
+        delivered_at=format_timestamp_seconds(item.delivered_at),
+        last_delivery_error=item.last_delivery_error,
+        created_at=format_timestamp_seconds(item.created_at) or "",
+        updated_at=format_timestamp_seconds(item.updated_at) or "",
+    )
+
+
+def should_show_recipient_chat_message(item: ClientLeadDelivery) -> bool:
+    """Return True when this row represents a notification attempted to the recipient."""
+    status = item.delivery_status.value if isinstance(item.delivery_status, ClientLeadDeliveryStatus) else str(item.delivery_status)
+    if status in {ClientLeadDeliveryStatus.PENDING.value, ClientLeadDeliveryStatus.BLOCKED.value}:
+        return False
+    return bool(item.sent_text.strip() or item.notification_text.strip() or item.external_id or item.last_delivery_error)
+
+
+def recipient_chat_sort_key(item: ClientLeadDelivery) -> tuple[datetime, int, str]:
+    """Sort recipient chat messages chronologically."""
+    timestamp = item.sent_at or item.delivered_at or item.last_delivery_error_at or item.updated_at or item.created_at
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=timezone.utc)
+    return (timestamp, item.row_number, item.id)
 
 
 def normalize_header(value: str) -> str:
@@ -785,6 +885,31 @@ async def list_client_leads_for_source(
     )
 
 
+@client_leads_router.get("/{source_id}/recipient-chat", response_model=ClientLeadRecipientChatResponse)
+async def get_client_lead_recipient_chat(
+    source_id: str,
+    limit: int = Query(default=100, ge=1, le=500),
+) -> ClientLeadRecipientChatResponse:
+    """Return the Delivery recipient's sent-notification audit thread."""
+    source = get_required_source(source_id)
+    counts = ClientLeadDelivery.count_by_status_for_sources()
+    crm_leads = ContadoresLead.list_by_normalized_phone(source.normalized_recipient_phone, include_archived=False)
+    deliveries = [
+        item
+        for item in ClientLeadDelivery.list_by_source(source.id, limit=5000)
+        if should_show_recipient_chat_message(item)
+    ]
+    deliveries = sorted(deliveries, key=recipient_chat_sort_key)[-limit:]
+    return ClientLeadRecipientChatResponse(
+        source=build_source_response(source, counts),
+        recipient_name=source.recipient_name,
+        recipient_phone=source.recipient_phone,
+        normalized_recipient_phone=source.normalized_recipient_phone,
+        crm_leads=[build_recipient_crm_lead_response(lead) for lead in crm_leads],
+        messages=[build_recipient_chat_message_response(item) for item in deliveries],
+    )
+
+
 @client_leads_actions_router.get("/{delivery_id}/copy-all", response_model=ClientLeadCopyAllResponse)
 async def get_client_lead_copy_all(delivery_id: str) -> ClientLeadCopyAllResponse:
     """Return one client lead as clipboard-friendly text."""
@@ -868,6 +993,7 @@ async def update_client_lead_delivery_status(
         delivery_id=delivery_id,
         delivery_status=command.status,
         external_id=command.external_id,
+        sent_text=command.sent_text,
         clear_delivery_error=True,
     )
     if updated is None:

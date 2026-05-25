@@ -298,6 +298,12 @@ Client Lead Delivery:
 - La UI de Delivery no muestra un boton de sync manual: al seleccionar un
   contacto, refresca la fuente automaticamente cada 10 segundos y deja la
   configuracion escondida detras del boton `Config`.
+- Los envios de notificacion quedan visibles en `Sent chat` con el texto exacto
+  enviado/snapshotteado, `external_id` de Meta, estado, timestamps y errores.
+- Esos envios son auditoria de Delivery: no contaminan `contadores_messages` ni
+  el historial de conversacion del CRM.
+- El boton de chat CRM aparece solo cuando el telefono destinatario de Delivery
+  matchea un lead del CRM.
 - Filas con telefono de lead faltante o invalido quedan visibles como `blocked`
   con motivo; no se mandan por WhatsApp.
 - Ejemplo de archivo:

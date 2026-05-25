@@ -4893,6 +4893,7 @@ body {
 }
 
 #contadoresView .delivery-source-form,
+#contadoresView .delivery-recipient-chat-panel,
 #contadoresView .delivery-lead-panel {
   min-width: 0;
   min-height: 0;
@@ -4919,6 +4920,116 @@ body {
   gap: 8px;
   justify-content: flex-end;
   padding-top: 4px;
+}
+
+#contadoresView .delivery-recipient-chat-panel {
+  width: 100%;
+  max-width: 100%;
+  flex: 0 0 auto;
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px 16px;
+  border: 1px solid var(--ct-line);
+  border-radius: var(--ct-radius);
+  background: #fbfdfc;
+}
+
+#contadoresView .delivery-recipient-chat-panel .workstation-panel-head {
+  align-items: center;
+}
+
+#contadoresView .delivery-recipient-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+#contadoresView .delivery-recipient-actions > span {
+  display: inline-flex;
+  min-height: 26px;
+  align-items: center;
+  padding: 0 9px;
+  border: 1px solid var(--ct-line-soft);
+  border-radius: var(--ct-radius-sm);
+  background: var(--ct-surface);
+  color: var(--ct-ink-muted);
+  font: 800 10px/1 var(--font-mono);
+}
+
+#contadoresView .delivery-recipient-actions .ct-btn {
+  height: 28px;
+  padding-inline: 9px;
+  font-size: 10px;
+}
+
+#contadoresView .delivery-recipient-messages {
+  max-height: min(32dvh, 320px);
+  display: grid;
+  gap: 8px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+#contadoresView .delivery-recipient-message {
+  display: grid;
+  gap: 7px;
+  padding: 10px 11px;
+  border: 1px solid var(--ct-line-soft);
+  border-radius: var(--ct-radius-sm);
+  background: var(--ct-surface);
+}
+
+#contadoresView .delivery-recipient-message-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+#contadoresView .delivery-recipient-message-head div {
+  min-width: 0;
+}
+
+#contadoresView .delivery-recipient-message strong,
+#contadoresView .delivery-recipient-message span,
+#contadoresView .delivery-recipient-message small,
+#contadoresView .delivery-recipient-message em {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+#contadoresView .delivery-recipient-message strong {
+  color: var(--ct-ink);
+  font: 700 13px/1.25 var(--font-sans);
+}
+
+#contadoresView .delivery-recipient-message span,
+#contadoresView .delivery-recipient-message small {
+  color: var(--ct-ink-muted);
+  font: 600 11px/1.3 var(--font-mono);
+}
+
+#contadoresView .delivery-recipient-message p {
+  margin: 0;
+  color: var(--ct-ink);
+  font: 500 12px/1.45 var(--font-sans);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+#contadoresView .delivery-recipient-message em {
+  width: max-content;
+  max-width: 100%;
+  padding: 6px 8px;
+  border: 1px solid rgba(190, 18, 60, 0.2);
+  border-radius: var(--ct-radius-sm);
+  background: #fff1f2;
+  color: #9f1239;
+  font: 600 11px/1.3 var(--font-sans);
+  font-style: normal;
 }
 
 #contadoresView .delivery-lead-panel {

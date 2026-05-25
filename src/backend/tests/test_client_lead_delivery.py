@@ -8,7 +8,7 @@ from sqlmodel import SQLModel, create_engine
 import backend.client_lead_config as client_lead_config
 import backend.database as database_module
 import backend.endpoints.client_leads as client_leads_endpoints
-from backend.database import ClientLeadDelivery, ClientLeadDeliveryStatus
+from backend.database import ClientLeadDelivery, ClientLeadDeliveryStatus, ContadoresLead
 from backend.main import app
 
 
@@ -111,10 +111,15 @@ def test_client_lead_source_sync_queues_existing_valid_rows(monkeypatch, tmp_pat
 
         sent = client.put(
             f"/api/client-lead-deliveries/{pending[0]['delivery_id']}/delivery",
-            json={"status": "sent", "external_id": "wamid.delivery.1"},
+            json={
+                "status": "sent",
+                "external_id": "wamid.delivery.1",
+                "sent_text": "Snapshot enviado a Guido",
+            },
         )
         assert sent.status_code == 200
         assert sent.json()["delivery_status"] == "sent"
+        assert sent.json()["sent_text"] == "Snapshot enviado a Guido"
 
         delivered = client.put(
             "/api/client-lead-deliveries/delivery/by-external-id",
@@ -122,6 +127,24 @@ def test_client_lead_source_sync_queues_existing_valid_rows(monkeypatch, tmp_pat
         )
         assert delivered.status_code == 200
         assert delivered.json()["delivery_status"] == "delivered"
+
+        ContadoresLead.upsert(
+            funnel_id="general",
+            external_lead_id="guido-chat",
+            phone="+5491122223333",
+            full_name="Cliente MMB",
+        )
+        recipient_chat = client.get(f"/api/client-lead-sources/{source_id}/recipient-chat")
+        assert recipient_chat.status_code == 200
+        recipient_payload = recipient_chat.json()
+        assert recipient_payload["recipient_phone"] == "+5491122223333"
+        assert recipient_payload["crm_leads"][0]["id"]
+        assert recipient_payload["crm_leads"][0]["funnel_id"] == "general"
+        assert len(recipient_payload["messages"]) == 1
+        assert recipient_payload["messages"][0]["delivery_id"] == pending[0]["delivery_id"]
+        assert recipient_payload["messages"][0]["delivery_status"] == "delivered"
+        assert recipient_payload["messages"][0]["external_id"] == "wamid.delivery.1"
+        assert recipient_payload["messages"][0]["text"] == "Snapshot enviado a Guido"
 
 
 def test_client_lead_failure_and_retry(monkeypatch, tmp_path) -> None:

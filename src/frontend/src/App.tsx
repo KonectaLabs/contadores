@@ -37,6 +37,9 @@ import type {
   ClientLead,
   ClientLeadCopyAllResponse,
   ClientLeadListResponse,
+  ClientLeadRecipientChatResponse,
+  ClientLeadRecipientCrmLead,
+  ClientLeadRecipientChatMessage,
   ClientLeadSource,
   ClientLeadSourceListResponse,
   ContadoresConfig,
@@ -308,6 +311,8 @@ export function App() {
   const [deliverySourceDraft, setDeliverySourceDraft] = useState<ClientLeadSourceDraft>(buildBlankClientLeadSourceDraft);
   const [deliveryLoading, setDeliveryLoading] = useState(false);
   const [deliveryLeadsLoading, setDeliveryLeadsLoading] = useState(false);
+  const [deliveryRecipientChat, setDeliveryRecipientChat] = useState<ClientLeadRecipientChatResponse | null>(null);
+  const [deliveryRecipientChatLoading, setDeliveryRecipientChatLoading] = useState(false);
   const [deliveryCopyStatus, setDeliveryCopyStatus] = useState("");
   const [runnerStatus, setRunnerStatus] = useState<RunnerStatusResponse | null>(null);
   const [runnerLoading, setRunnerLoading] = useState(false);
@@ -472,6 +477,13 @@ export function App() {
     setDeliveryLeads(unpackClientLeads(payload));
   }, []);
 
+  const loadDeliveryRecipientChat = useCallback(async (sourceId: string) => {
+    const payload = await apiFetch<ClientLeadRecipientChatResponse>(
+      `/api/client-lead-sources/${encodeURIComponent(sourceId)}/recipient-chat`,
+    );
+    setDeliveryRecipientChat(payload);
+  }, []);
+
   const loadRunnerStatus = useCallback(async () => {
     const payload = await apiFetch<RunnerStatusResponse>(
       "/api/contadores/followup/runner/status?log_tail_lines=160&log_limit=12",
@@ -567,6 +579,7 @@ export function App() {
           loaders.push(loadDeliverySources());
           if (selectedDeliverySourceId) {
             loaders.push(loadDeliveryLeads(selectedDeliverySourceId));
+            loaders.push(loadDeliveryRecipientChat(selectedDeliverySourceId));
           }
         }
         if (activeSection === "runner") {
@@ -578,7 +591,7 @@ export function App() {
       }
     }, REFRESH_MS);
     return () => window.clearInterval(timer);
-  }, [activeSection, loadDashboard, loadDeliveryLeads, loadDeliverySources, loadRunnerStatus, selectedDeliverySourceId]);
+  }, [activeSection, loadDashboard, loadDeliveryLeads, loadDeliveryRecipientChat, loadDeliverySources, loadRunnerStatus, selectedDeliverySourceId]);
 
   useEffect(() => {
     if (!selectedLeadId || !isContadoresFunnel) {
@@ -628,6 +641,7 @@ export function App() {
     if (deliveryEditorMode === "create") {
       deliveryDraftSourceId.current = null;
       setDeliveryLeads([]);
+      setDeliveryRecipientChat(null);
       return;
     }
 
@@ -636,6 +650,7 @@ export function App() {
       deliveryDraftSourceId.current = null;
       setDeliverySourceDraft(buildBlankClientLeadSourceDraft());
       setDeliveryLeads([]);
+      setDeliveryRecipientChat(null);
       return;
     }
 
@@ -650,7 +665,11 @@ export function App() {
 
     let cancelled = false;
     setDeliveryLeadsLoading(true);
-    loadDeliveryLeads(source.id)
+    setDeliveryRecipientChatLoading(true);
+    Promise.all([
+      loadDeliveryLeads(source.id),
+      loadDeliveryRecipientChat(source.id),
+    ])
       .catch((reason) => {
         if (!cancelled) {
           setError(reason instanceof Error ? reason.message : "Could not load Delivery leads.");
@@ -659,12 +678,13 @@ export function App() {
       .finally(() => {
         if (!cancelled) {
           setDeliveryLeadsLoading(false);
+          setDeliveryRecipientChatLoading(false);
         }
       });
     return () => {
       cancelled = true;
     };
-  }, [activeSection, deliveryEditorMode, deliverySources, loadDeliveryLeads, selectedDeliverySourceId]);
+  }, [activeSection, deliveryEditorMode, deliverySources, loadDeliveryLeads, loadDeliveryRecipientChat, selectedDeliverySourceId]);
 
   useEffect(() => {
     if (activeSection !== "runner") {
@@ -750,6 +770,7 @@ export function App() {
         await Promise.all([
           loadDeliverySources(),
           loadDeliveryLeads(selectedDeliverySourceId),
+          loadDeliveryRecipientChat(selectedDeliverySourceId),
         ]);
       } catch (reason) {
         if (!cancelled) {
@@ -770,7 +791,7 @@ export function App() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [activeSection, deliveryEditorMode, loadDeliveryLeads, loadDeliverySources, selectedDeliverySourceId]);
+  }, [activeSection, deliveryEditorMode, loadDeliveryLeads, loadDeliveryRecipientChat, loadDeliverySources, selectedDeliverySourceId]);
 
   useEffect(() => {
     if (!professionalPhotoJob || !["queued", "running"].includes(professionalPhotoJob.status)) {
@@ -826,6 +847,7 @@ export function App() {
         await loadDeliverySources();
         if (selectedDeliverySourceId) {
           await loadDeliveryLeads(selectedDeliverySourceId);
+          await loadDeliveryRecipientChat(selectedDeliverySourceId);
         }
       }
     } catch (reason) {
@@ -864,6 +886,7 @@ export function App() {
     setSelectedDeliverySourceId(null);
     deliveryDraftSourceId.current = null;
     setDeliveryLeads([]);
+    setDeliveryRecipientChat(null);
     setDeliveryCopyStatus("");
     setDeliverySourceDraft(buildBlankClientLeadSourceDraft());
   }
@@ -888,6 +911,7 @@ export function App() {
       setDeliverySourceDraft(clientLeadSourceToDraft(saved));
       await loadDeliverySources();
       await loadDeliveryLeads(saved.id || payload.id);
+      await loadDeliveryRecipientChat(saved.id || payload.id);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not save Delivery source.");
     } finally {
@@ -907,6 +931,7 @@ export function App() {
       setSelectedDeliverySourceId(null);
       deliveryDraftSourceId.current = null;
       setDeliveryLeads([]);
+      setDeliveryRecipientChat(null);
       setDeliveryCopyStatus("");
       await loadDeliverySources();
     } catch (reason) {
@@ -950,8 +975,10 @@ export function App() {
     setActionBusy(`delivery-retry-${lead.id}`);
     try {
       await apiFetch(`/api/client-leads/${encodeURIComponent(lead.id)}/retry`, { method: "POST" });
+      const sourceId = lead.source_id || selectedDeliverySourceId || deliverySourceDraft.id;
       await loadDeliverySources();
-      await loadDeliveryLeads(lead.source_id || selectedDeliverySourceId || deliverySourceDraft.id);
+      await loadDeliveryLeads(sourceId);
+      await loadDeliveryRecipientChat(sourceId);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not retry this notification.");
     } finally {
@@ -1030,6 +1057,15 @@ export function App() {
   }
 
   function openCrmLeadFromWorkstation(lead: LeadSummary | null | undefined) {
+    if (!lead) {
+      return;
+    }
+    setSelectedFunnelId(lead.funnel_id || "contadores");
+    setSelectedLeadId(lead.id);
+    setActiveSection("crm");
+  }
+
+  function openCrmLeadFromDelivery(lead: ClientLeadRecipientCrmLead | null | undefined) {
     if (!lead) {
       return;
     }
@@ -1858,6 +1894,8 @@ export function App() {
           draft={deliverySourceDraft}
           loading={deliveryLoading}
           leadsLoading={deliveryLeadsLoading}
+          recipientChat={deliveryRecipientChat}
+          recipientChatLoading={deliveryRecipientChatLoading}
           actionBusy={actionBusy}
           copyStatus={deliveryCopyStatus}
           onSelectSource={(sourceId) => {
@@ -1871,6 +1909,7 @@ export function App() {
           onCopyLead={copyClientLeadInfo}
           onCopyLeadAll={copyClientLeadAll}
           onRetryLead={retryClientLeadNotification}
+          onOpenCrmLead={openCrmLeadFromDelivery}
         />
         ) : selectedFunnelNeedsSetup ? (
         <FunnelSetupView
@@ -2161,6 +2200,8 @@ function ClientLeadDeliveryView({
   draft,
   loading,
   leadsLoading,
+  recipientChat,
+  recipientChatLoading,
   actionBusy,
   copyStatus,
   onSelectSource,
@@ -2171,6 +2212,7 @@ function ClientLeadDeliveryView({
   onCopyLead,
   onCopyLeadAll,
   onRetryLead,
+  onOpenCrmLead,
 }: {
   sources: ClientLeadSource[];
   leads: ClientLead[];
@@ -2180,6 +2222,8 @@ function ClientLeadDeliveryView({
   draft: ClientLeadSourceDraft;
   loading: boolean;
   leadsLoading: boolean;
+  recipientChat: ClientLeadRecipientChatResponse | null;
+  recipientChatLoading: boolean;
   actionBusy: string | null;
   copyStatus: string;
   onSelectSource: (sourceId: string) => void;
@@ -2190,8 +2234,10 @@ function ClientLeadDeliveryView({
   onCopyLead: (lead: ClientLead) => void | Promise<void>;
   onCopyLeadAll: (lead: ClientLead) => void | Promise<void>;
   onRetryLead: (lead: ClientLead) => void | Promise<void>;
+  onOpenCrmLead: (lead: ClientLeadRecipientCrmLead) => void;
 }) {
   const [configOpen, setConfigOpen] = useState(editorMode === "create");
+  const [sentChatOpen, setSentChatOpen] = useState(true);
   const isExisting = editorMode === "edit" && Boolean(selectedSource);
   const totalLeads = sources.reduce((total, source) => total + deliverySourceCount(source, "total"), 0);
   const failedLeads = sources.reduce((total, source) => total + deliverySourceCount(source, "failed"), 0);
@@ -2202,6 +2248,9 @@ function ClientLeadDeliveryView({
   const selectedLabel = editorMode === "create" ? "New contact" : selectedSource?.label || "Select a contact";
   const lastSyncText = selectedSource?.last_sync_at ? relativeTime(selectedSource.last_sync_at) : "waiting";
   const sourceStatus = selectedSource?.enabled ? humanize(selectedSource.last_sync_status || "active") : "Paused";
+  const recipientMessages = recipientChat?.messages ?? [];
+  const recipientDeliveredCount = recipientMessages.filter((message) => message.delivery_status === "delivered").length;
+  const recipientCrmLead = recipientChat?.crm_leads?.[0] ?? null;
 
   useEffect(() => {
     if (editorMode === "create") {
@@ -2212,6 +2261,7 @@ function ClientLeadDeliveryView({
   useEffect(() => {
     if (editorMode === "edit" && selectedSourceId) {
       setConfigOpen(false);
+      setSentChatOpen(true);
     }
   }, [editorMode, selectedSourceId]);
 
@@ -2292,6 +2342,15 @@ function ClientLeadDeliveryView({
                 {isExisting ? `${sourceStatus} · ${lastSyncText}` : "Draft"}
               </span>
               <button type="button" className="ct-btn ct-btn-ghost" onClick={onNewSource}>New contact</button>
+              <button
+                type="button"
+                className="ct-btn ct-btn-ghost"
+                disabled={!isExisting}
+                onClick={() => setSentChatOpen((current) => !current)}
+              >
+                <ChatCircleText size={15} weight="bold" />
+                Sent chat
+              </button>
               <button
                 type="button"
                 className="ct-btn ct-btn-ghost"
@@ -2415,6 +2474,67 @@ function ClientLeadDeliveryView({
                   </button>
                 </div>
               </form>
+            ) : null}
+
+            {isExisting && sentChatOpen ? (
+              <section className="delivery-recipient-chat-panel">
+                <div className="workstation-panel-head">
+                  <div>
+                    <span>Sent chat</span>
+                    <strong>
+                      {(recipientChat?.recipient_name || selectedSource?.recipient_name || "Recipient")}
+                      {" · "}
+                      {recipientChat?.recipient_phone || selectedSource?.recipient_phone || "-"}
+                    </strong>
+                  </div>
+                  <div className="delivery-recipient-actions">
+                    <span>{recipientMessages.length} messages</span>
+                    <span>{recipientDeliveredCount} delivered</span>
+                    <button
+                      type="button"
+                      className="ct-btn ct-btn-ghost"
+                      disabled={!recipientCrmLead}
+                      onClick={() => {
+                        if (recipientCrmLead) {
+                          onOpenCrmLead(recipientCrmLead);
+                        }
+                      }}
+                      title={recipientCrmLead ? "Open matching CRM chat" : "No CRM chat found for this recipient phone"}
+                    >
+                      <ChatCircleText size={14} weight="bold" />
+                      CRM chat
+                    </button>
+                  </div>
+                </div>
+
+                {recipientChatLoading && !recipientMessages.length ? (
+                  <p className="ct-empty">Loading sent messages...</p>
+                ) : recipientMessages.length ? (
+                  <div className="delivery-recipient-messages">
+                    {recipientMessages.map((message) => (
+                      <article className="delivery-recipient-message" key={message.delivery_id}>
+                        <div className="delivery-recipient-message-head">
+                          <div>
+                            <strong>{message.lead_name || message.lead_phone || `Row ${message.row_number}`}</strong>
+                            <span>Row {message.row_number}{message.lead_email ? ` · ${message.lead_email}` : ""}</span>
+                          </div>
+                          <span className="delivery-status-pill" data-tone={recipientChatMessageTone(message)}>
+                            {humanize(message.delivery_status)}
+                          </span>
+                        </div>
+                        <p>{message.text || "-"}</p>
+                        <small>
+                          {recipientChatMessageDetail(message)}
+                          {message.external_id ? ` · Meta ${truncate(message.external_id, 24)}` : ""}
+                        </small>
+                        {message.last_delivery_error ? <em>{message.last_delivery_error}</em> : null}
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="ct-empty">No sent Delivery messages to this recipient yet.</p>
+                )}
+              </section>
             ) : null}
 
             <section className="delivery-lead-panel">
@@ -5595,6 +5715,36 @@ function deliveryStatusDetail(lead: ClientLead): string {
     return `${lead.delivery_attempts} ${lead.delivery_attempts === 1 ? "attempt" : "attempts"}`;
   }
   return "Queued";
+}
+
+function recipientChatMessageDetail(message: ClientLeadRecipientChatMessage): string {
+  if (message.delivered_at) {
+    return `Delivered ${relativeTime(message.delivered_at)}`;
+  }
+  if (message.sent_at) {
+    return `Sent ${relativeTime(message.sent_at)}`;
+  }
+  if (message.last_delivery_error) {
+    return "Failed";
+  }
+  return message.updated_at ? `Updated ${relativeTime(message.updated_at)}` : "Queued";
+}
+
+function recipientChatMessageTone(message: ClientLeadRecipientChatMessage): "success" | "warn" | "danger" | "muted" | "accent" {
+  const status = String(message.delivery_status || "").toLowerCase();
+  if (status === "delivered" || status === "sent") {
+    return "success";
+  }
+  if (status === "failed" || status === "error") {
+    return "danger";
+  }
+  if (status === "blocked") {
+    return "warn";
+  }
+  if (status === "skipped" || status === "cancelled") {
+    return "muted";
+  }
+  return "accent";
 }
 
 function rawRowEntries(rawRow: Record<string, unknown> | null | undefined): Array<[string, unknown]> {

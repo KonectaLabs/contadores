@@ -84,6 +84,12 @@ The Delivery UI hides source settings behind `Config`. The selected contact
 auto-refreshes through the sync endpoint every 10 seconds, so do not add manual
 sync controls to the main lead surface.
 
+Delivery notification sends are visible in `Sent chat` with the exact
+sent/snapshotted text, Meta `external_id`, status, timestamps, and errors. These
+sends are Delivery audit data only; they must not pollute `contadores_messages`
+or CRM conversation history. The CRM chat button appears only when the Delivery
+recipient phone matches a CRM lead.
+
 Use `enabled: false` when the template is not approved yet or when historical
 rows should not be notified until the user confirms.
 
