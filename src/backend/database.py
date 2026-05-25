@@ -2119,6 +2119,7 @@ class ClientLeadSource(SQLModel, table=True):
     enabled: bool = Field(default=True, index=True)
     sheet_url: str = Field(default="")
     sheet_gid: str | None = Field(default=None)
+    sheet_tab_name: str | None = Field(default=None)
     sheet_poll_seconds: int = Field(default=10)
     recipient_name: str | None = Field(default=None)
     recipient_phone: str = Field(default="")
@@ -2180,6 +2181,7 @@ class ClientLeadSource(SQLModel, table=True):
         enabled: bool | None = True,
         sheet_url: str,
         sheet_gid: str | None = None,
+        sheet_tab_name: str | None = None,
         sheet_poll_seconds: int = 10,
         recipient_name: str | None = None,
         recipient_phone: str,
@@ -2205,6 +2207,7 @@ class ClientLeadSource(SQLModel, table=True):
             item.enabled = cls.normalize_enabled(enabled)
             item.sheet_url = clean_sheet_url
             item.sheet_gid = (sheet_gid or "").strip() or None
+            item.sheet_tab_name = " ".join((sheet_tab_name or "").split()).strip() or None
             item.sheet_poll_seconds = max(5, int(sheet_poll_seconds or 10))
             item.recipient_name = " ".join((recipient_name or "").split()).strip() or None
             item.recipient_phone = clean_recipient_phone
@@ -5394,6 +5397,7 @@ def init_db() -> None:
     ensure_contadores_strategy_columns()
     ensure_contadores_message_delivery_columns()
     ensure_contadores_message_template_columns()
+    ensure_client_lead_source_sheet_tab_name_column()
     ensure_client_lead_delivery_sent_text_column()
     ensure_contadores_runtime_alert_columns()
     ensure_agent_run_codex_thread_columns()
@@ -5841,6 +5845,21 @@ def ensure_client_lead_delivery_sent_text_column() -> None:
                 "Backfilled %s client_lead_deliveries.sent_text snapshots.",
                 result.rowcount,
             )
+
+
+def ensure_client_lead_source_sheet_tab_name_column() -> None:
+    """Add optional Google Sheet tab-name selection to existing Delivery sources."""
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        if "client_lead_sources" not in inspector.get_table_names():
+            return
+        columns = {column["name"] for column in inspector.get_columns("client_lead_sources")}
+        if "sheet_tab_name" in columns:
+            return
+        connection.exec_driver_sql(
+            "ALTER TABLE client_lead_sources ADD COLUMN sheet_tab_name TEXT"
+        )
+        logger.info("Added missing client_lead_sources.sheet_tab_name column.")
 
 
 def ensure_contadores_config_strategy_weights_column() -> None:

@@ -33,6 +33,7 @@ def source_payload(**overrides):
         "enabled": True,
         "sheet_url": "https://docs.google.com/spreadsheets/d/sheet-id/edit#gid=123",
         "sheet_gid": "123",
+        "sheet_tab_name": "Leads",
         "sheet_poll_seconds": 30,
         "recipient_name": "Cliente MMB",
         "recipient_phone": "+5491122223333",
@@ -56,6 +57,7 @@ def test_client_lead_source_sync_queues_existing_valid_rows(monkeypatch, tmp_pat
 
     async def fake_fetch_sheet_records(source):
         assert source.sheet_gid == "123"
+        assert source.sheet_tab_name == "Leads"
         return [
             {
                 "id": "lead-1",
@@ -197,6 +199,9 @@ def test_client_lead_sheet_helpers_parse_common_targets() -> None:
     assert spreadsheet_id == "abc123"
     assert gid == "456"
     assert client_leads_endpoints.public_csv_url("abc123", "789").endswith("/export?format=csv&gid=789")
+    assert client_leads_endpoints.public_csv_url("abc123", None, "simple form setup").endswith(
+        "/gviz/tq?tqx=out:csv&sheet=simple%20form%20setup"
+    )
     assert client_leads_endpoints.rows_to_records([["Name", "phone"], ["Ana", "+5491111111111"]]) == [
         {"Name": "Ana", "phone": "+5491111111111"}
     ]
@@ -225,9 +230,21 @@ def test_client_lead_sources_load_from_config_file(monkeypatch, tmp_path) -> Non
               "id": "mmb-ads",
               "label": "MMB Ads",
               "enabled": true,
-              "sheet_url": "https://docs.google.com/spreadsheets/d/sheet-id/edit#gid=123",
-              "sheet_gid": "123",
               "sheet_poll_seconds": 45,
+              "sheets": [
+                {
+                  "id": "deuda",
+                  "label": "Deuda",
+                  "sheet_url": "https://docs.google.com/spreadsheets/d/deuda-sheet/edit",
+                  "sheet_tab_name": "deuda"
+                },
+                {
+                  "id": "simple",
+                  "label": "Simple Form Setup",
+                  "sheet_url": "https://docs.google.com/spreadsheets/d/simple-sheet/edit",
+                  "sheet_tab_name": "simple form setup 2026-05-25"
+                }
+              ],
               "recipients": [
                 {"id": "ana", "name": "Ana", "phone": "+5491111111111"},
                 {"id": "luis", "name": "Luis", "phone": "+5492222222222"}
@@ -250,15 +267,16 @@ def test_client_lead_sources_load_from_config_file(monkeypatch, tmp_path) -> Non
 
     result = client_lead_config.sync_client_lead_sources_from_config()
 
-    assert result.configured == 2
-    assert result.upserted == ["mmb-ads-ana", "mmb-ads-luis"]
+    assert result.configured == 4
+    assert result.upserted == ["mmb-ads-deuda-ana", "mmb-ads-deuda-luis", "mmb-ads-simple-ana", "mmb-ads-simple-luis"]
     assert result.errors == []
 
     with TestClient(app) as client:
         payload = client.get("/api/client-lead-sources").json()
 
     sources = {source["id"]: source for source in payload["sources"]}
-    assert set(sources) == {"mmb-ads-ana", "mmb-ads-luis"}
-    assert sources["mmb-ads-ana"]["label"] == "MMB Ads · Ana"
-    assert sources["mmb-ads-luis"]["sheet_poll_seconds"] == 45
-    assert sources["mmb-ads-luis"]["column_mapping"]["created_time"] == "timestamp"
+    assert set(sources) == {"mmb-ads-deuda-ana", "mmb-ads-deuda-luis", "mmb-ads-simple-ana", "mmb-ads-simple-luis"}
+    assert sources["mmb-ads-deuda-ana"]["label"] == "MMB Ads · Deuda · Ana"
+    assert sources["mmb-ads-simple-luis"]["sheet_tab_name"] == "simple form setup 2026-05-25"
+    assert sources["mmb-ads-simple-luis"]["sheet_poll_seconds"] == 45
+    assert sources["mmb-ads-simple-luis"]["column_mapping"]["created_time"] == "timestamp"

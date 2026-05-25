@@ -88,6 +88,7 @@ type ClientLeadSourceDraft = {
   enabled: boolean;
   sheet_url: string;
   sheet_gid: string;
+  sheet_tab_name: string;
   sheet_poll_seconds: number;
   recipient_name: string;
   recipient_phone: string;
@@ -101,6 +102,7 @@ type ClientLeadSourceMutationPayload = {
   enabled: boolean;
   sheet_url: string | null;
   sheet_gid: string | null;
+  sheet_tab_name: string | null;
   sheet_poll_seconds: number;
   recipient_name: string | null;
   recipient_phone: string | null;
@@ -2412,6 +2414,13 @@ function ClientLeadDeliveryView({
                     <span>Sheet GID</span>
                     <input value={draft.sheet_gid} onChange={(event) => updateDraft("sheet_gid", event.target.value)} placeholder="0" />
                   </label>
+                  <label className="ct-field">
+                    <span>Tab name</span>
+                    <input value={draft.sheet_tab_name} onChange={(event) => updateDraft("sheet_tab_name", event.target.value)} placeholder="deuda" />
+                  </label>
+                </div>
+
+                <div className="ct-field-grid">
                   <label className="ct-field">
                     <span>Poll seconds</span>
                     <input
@@ -5540,6 +5549,7 @@ function buildBlankClientLeadSourceDraft(): ClientLeadSourceDraft {
     enabled: false,
     sheet_url: "",
     sheet_gid: "",
+    sheet_tab_name: "",
     sheet_poll_seconds: 10,
     recipient_name: "",
     recipient_phone: "",
@@ -5562,6 +5572,7 @@ function clientLeadSourceToDraft(source: ClientLeadSource): ClientLeadSourceDraf
     enabled: source.enabled,
     sheet_url: source.sheet_url ?? "",
     sheet_gid: source.sheet_gid ?? "",
+    sheet_tab_name: source.sheet_tab_name ?? "",
     sheet_poll_seconds: source.sheet_poll_seconds || 10,
     recipient_name: source.recipient_name ?? "",
     recipient_phone: source.recipient_phone ?? "",
@@ -5580,6 +5591,7 @@ function clientLeadSourcePayloadFromDraft(draft: ClientLeadSourceDraft): ClientL
     enabled: draft.enabled,
     sheet_url: draft.sheet_url.trim() || null,
     sheet_gid: draft.sheet_gid.trim() || null,
+    sheet_tab_name: draft.sheet_tab_name.trim() || null,
     sheet_poll_seconds: Math.max(5, Number(draft.sheet_poll_seconds) || 10),
     recipient_name: draft.recipient_name.trim() || null,
     recipient_phone: draft.recipient_phone.trim() || null,

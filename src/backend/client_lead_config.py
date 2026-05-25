@@ -79,6 +79,32 @@ class ClientLeadRecipientDefinition(BaseModel):
         return (value or "").strip()
 
 
+class ClientLeadSheetDefinition(BaseModel):
+    """One Google Sheet/tab feeding a file-backed Delivery source."""
+
+    id: str | None = None
+    label: str | None = None
+    sheet_url: str = ""
+    sheet_gid: str | None = None
+    sheet_tab_name: str | None = None
+
+    @field_validator("id")
+    @classmethod
+    def normalize_id(cls, value: str | None) -> str | None:
+        """Normalize sheet ids when provided."""
+        if not (value or "").strip():
+            return None
+        return slugify_client_lead_source_id(value or "")
+
+    @field_validator("label", "sheet_url", "sheet_gid", "sheet_tab_name")
+    @classmethod
+    def strip_text(cls, value: str | None) -> str | None:
+        """Strip optional sheet fields."""
+        if value is None:
+            return None
+        return str(value).strip()
+
+
 class ClientLeadSourceFileEntry(BaseModel):
     """One DB-ready Delivery source loaded from config files."""
 
@@ -87,6 +113,7 @@ class ClientLeadSourceFileEntry(BaseModel):
     enabled: bool = True
     sheet_url: str = ""
     sheet_gid: str | None = None
+    sheet_tab_name: str | None = None
     sheet_poll_seconds: int = Field(default=10, ge=5)
     recipient_name: str | None = None
     recipient_phone: str = ""
@@ -103,6 +130,8 @@ class ClientLeadSourceDefinition(BaseModel):
     enabled: bool = True
     sheet_url: str | None = ""
     sheet_gid: str | None = None
+    sheet_tab_name: str | None = None
+    sheets: list[ClientLeadSheetDefinition] = Field(default_factory=list)
     sheet_poll_seconds: int = Field(default=10, ge=5)
     recipient_name: str | None = None
     recipient_phone: str | None = ""
@@ -121,6 +150,7 @@ class ClientLeadSourceDefinition(BaseModel):
         "label",
         "sheet_url",
         "sheet_gid",
+        "sheet_tab_name",
         "recipient_name",
         "recipient_phone",
         "template_name",
@@ -140,35 +170,61 @@ class ClientLeadSourceDefinition(BaseModel):
         return normalize_client_lead_column_mapping(value)
 
     def expand_recipients(self) -> list[ClientLeadSourceFileEntry]:
-        """Return DB-ready sources, expanding multiple WhatsApp recipients."""
+        """Return DB-ready sources, expanding multiple sheets and recipients."""
+        sheets = self.sheets or [
+            ClientLeadSheetDefinition(
+                id=None,
+                label=None,
+                sheet_url=self.sheet_url or "",
+                sheet_gid=self.sheet_gid,
+                sheet_tab_name=self.sheet_tab_name,
+            )
+        ]
         recipients = self.recipients or [
             ClientLeadRecipientDefinition(name=self.recipient_name, phone=self.recipient_phone or "")
         ]
         entries: list[ClientLeadSourceFileEntry] = []
+        has_multiple_sheets = len(sheets) > 1
         has_multiple_recipients = len(recipients) > 1
 
-        for recipient in recipients:
-            recipient_suffix = recipient.id or slugify_client_lead_source_id(
-                normalize_phone(recipient.phone) or recipient.name or recipient.phone
+        for sheet in sheets:
+            sheet_suffix = sheet.id or slugify_client_lead_source_id(
+                sheet.label or sheet.sheet_tab_name or sheet.sheet_gid or sheet.sheet_url
             )
-            source_id = self.id if not has_multiple_recipients else f"{self.id}-{recipient_suffix}"
-            recipient_label = recipient.name or recipient.phone or recipient_suffix
-            label = self.label if not has_multiple_recipients else f"{self.label} · {recipient_label}"
-            entries.append(
-                ClientLeadSourceFileEntry(
-                    id=source_id,
-                    label=label,
-                    enabled=self.enabled,
-                    sheet_url=self.sheet_url or "",
-                    sheet_gid=self.sheet_gid or None,
-                    sheet_poll_seconds=self.sheet_poll_seconds,
-                    recipient_name=recipient.name or self.recipient_name,
-                    recipient_phone=recipient.phone,
-                    template_name=(self.template_name or CLIENT_LEAD_DEFAULT_TEMPLATE_NAME).strip(),
-                    template_language=(self.template_language or CLIENT_LEAD_DEFAULT_TEMPLATE_LANGUAGE).strip() or "es",
-                    column_mapping=self.column_mapping,
+            sheet_label = sheet.label or sheet.sheet_tab_name or sheet.sheet_gid or sheet_suffix
+            for recipient in recipients:
+                recipient_suffix = recipient.id or slugify_client_lead_source_id(
+                    normalize_phone(recipient.phone) or recipient.name or recipient.phone
                 )
-            )
+                suffixes = []
+                if has_multiple_sheets:
+                    suffixes.append(sheet_suffix)
+                if has_multiple_recipients:
+                    suffixes.append(recipient_suffix)
+                source_id = self.id if not suffixes else "-".join([self.id, *suffixes])
+
+                label_parts = [self.label]
+                if has_multiple_sheets:
+                    label_parts.append(sheet_label)
+                if has_multiple_recipients:
+                    label_parts.append(recipient.name or recipient.phone or recipient_suffix)
+
+                entries.append(
+                    ClientLeadSourceFileEntry(
+                        id=source_id,
+                        label=" · ".join(label_parts),
+                        enabled=self.enabled,
+                        sheet_url=sheet.sheet_url or "",
+                        sheet_gid=sheet.sheet_gid or None,
+                        sheet_tab_name=sheet.sheet_tab_name or None,
+                        sheet_poll_seconds=self.sheet_poll_seconds,
+                        recipient_name=recipient.name or self.recipient_name,
+                        recipient_phone=recipient.phone,
+                        template_name=(self.template_name or CLIENT_LEAD_DEFAULT_TEMPLATE_NAME).strip(),
+                        template_language=(self.template_language or CLIENT_LEAD_DEFAULT_TEMPLATE_LANGUAGE).strip() or "es",
+                        column_mapping=self.column_mapping,
+                    )
+                )
         return entries
 
 
@@ -237,6 +293,7 @@ def sync_client_lead_sources_from_config() -> ClientLeadConfigSyncResult:
                 enabled=entry.enabled,
                 sheet_url=entry.sheet_url,
                 sheet_gid=entry.sheet_gid,
+                sheet_tab_name=entry.sheet_tab_name,
                 sheet_poll_seconds=entry.sheet_poll_seconds,
                 recipient_name=entry.recipient_name,
                 recipient_phone=entry.recipient_phone,

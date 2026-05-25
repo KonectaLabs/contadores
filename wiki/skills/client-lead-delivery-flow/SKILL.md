@@ -15,7 +15,8 @@ lead.
 Get or infer:
 
 - source id and label;
-- Google Sheet URL and GID;
+- Google Sheet URL plus GID or tab name;
+- optional multiple `sheets` when one client has multiple campaign sheets;
 - one or more WhatsApp recipients: `{id, name, phone}`;
 - whether first sync should notify existing rows;
 - optional column mapping.
@@ -54,6 +55,7 @@ Schema:
       "enabled": false,
       "sheet_url": "https://docs.google.com/spreadsheets/d/...",
       "sheet_gid": "0",
+      "sheet_tab_name": "deuda",
       "sheet_poll_seconds": 10,
       "recipients": [
         {"id": "owner", "name": "Owner", "phone": "+5491122223333"}
@@ -74,6 +76,11 @@ Schema:
 
 If the user gives multiple WhatsApp numbers, put them in `recipients`. The
 backend expands them into one Delivery source per recipient.
+
+If the user gives multiple campaign spreadsheets for the same client, put them
+in `sheets`. Each item supports `id`, `label`, `sheet_url`, `sheet_gid`, and
+`sheet_tab_name`. The backend expands each sheet into its own Delivery source
+with labels like `Client Ads · Deuda`, while using the same recipient/template.
 
 The Delivery UI hides source settings behind `Config`. The selected contact
 auto-refreshes through the sync endpoint every 10 seconds, so do not add manual

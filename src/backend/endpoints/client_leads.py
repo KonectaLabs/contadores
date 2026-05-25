@@ -11,7 +11,7 @@ import unicodedata
 from datetime import datetime, timedelta, timezone
 from io import BytesIO, StringIO
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query
@@ -53,6 +53,7 @@ class ClientLeadSourceCommand(BaseModel):
     enabled: bool = True
     sheet_url: str | None = ""
     sheet_gid: str | None = None
+    sheet_tab_name: str | None = None
     sheet_poll_seconds: int = Field(default=10, ge=5)
     recipient_name: str | None = None
     recipient_phone: str | None = ""
@@ -69,6 +70,7 @@ class ClientLeadSourceResponse(BaseModel):
     enabled: bool
     sheet_url: str
     sheet_gid: str | None
+    sheet_tab_name: str | None
     sheet_poll_seconds: int
     recipient_name: str | None
     recipient_phone: str
@@ -256,6 +258,7 @@ def build_source_response(source: ClientLeadSource, counts: dict[str, dict[str, 
         enabled=source.enabled,
         sheet_url=source.sheet_url,
         sheet_gid=source.sheet_gid,
+        sheet_tab_name=source.sheet_tab_name,
         sheet_poll_seconds=source.sheet_poll_seconds,
         recipient_name=source.recipient_name,
         recipient_phone=source.recipient_phone,
@@ -504,11 +507,17 @@ def parse_sheet_target(sheet_url: str, sheet_gid: str | None) -> tuple[str, str 
     return match.group(1), gid
 
 
-def public_csv_url(sheet_url: str, sheet_gid: str | None) -> str:
+def public_csv_url(sheet_url: str, sheet_gid: str | None, sheet_tab_name: str | None = None) -> str:
     """Build a public CSV export URL for a Google Sheet."""
     if any(marker in sheet_url for marker in ["output=csv", "format=csv", "tqx=out:csv"]):
         return sheet_url
     spreadsheet_id, gid = parse_sheet_target(sheet_url, sheet_gid)
+    clean_tab_name = " ".join((sheet_tab_name or "").split()).strip()
+    if clean_tab_name:
+        return (
+            f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/gviz/tq"
+            f"?tqx=out:csv&sheet={quote(clean_tab_name)}"
+        )
     suffix = f"&gid={gid}" if gid else ""
     return f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/export?format=csv{suffix}"
 
@@ -552,8 +561,8 @@ def records_have_mappable_headers(records: list[dict[str, str]], mapping: dict[s
     return any(header in lookup for header in expected_headers if header)
 
 
-def read_xlsx_records(content: bytes) -> list[dict[str, str]]:
-    """Read the first worksheet in an XLSX export."""
+def read_xlsx_records(content: bytes, sheet_tab_name: str | None = None) -> list[dict[str, str]]:
+    """Read a named worksheet, or the first non-empty worksheet, in an XLSX export."""
     try:
         import openpyxl
     except ImportError as exc:
@@ -561,7 +570,12 @@ def read_xlsx_records(content: bytes) -> list[dict[str, str]]:
 
     workbook = openpyxl.load_workbook(BytesIO(content), read_only=True, data_only=True)
     try:
-        for worksheet in workbook.worksheets:
+        clean_tab_name = " ".join((sheet_tab_name or "").split()).strip()
+        worksheets = workbook.worksheets
+        if clean_tab_name:
+            matches = [worksheet for worksheet in worksheets if worksheet.title.casefold() == clean_tab_name.casefold()]
+            worksheets = matches or []
+        for worksheet in worksheets:
             raw_rows = list(worksheet.iter_rows(values_only=True))
             records = rows_to_records([
                 ["" if value is None else str(value) for value in raw_row]
@@ -603,8 +617,13 @@ def quote_sheet_title(title: str) -> str:
     return f"'{escaped}'"
 
 
-def resolve_range_from_gid(service: Any, spreadsheet_id: str, gid: str | None) -> str:
-    """Resolve a sheet gid to the corresponding tab title."""
+def resolve_range_from_gid(
+    service: Any,
+    spreadsheet_id: str,
+    gid: str | None,
+    sheet_tab_name: str | None = None,
+) -> str:
+    """Resolve a sheet tab name or gid to the corresponding A1 range."""
     metadata = (
         service.spreadsheets()
         .get(spreadsheetId=spreadsheet_id, fields="sheets(properties(sheetId,title))")
@@ -613,6 +632,13 @@ def resolve_range_from_gid(service: Any, spreadsheet_id: str, gid: str | None) -
     sheets = metadata.get("sheets", [])
     if not sheets:
         raise RuntimeError("La spreadsheet no tiene pestañas visibles.")
+    clean_tab_name = " ".join((sheet_tab_name or "").split()).strip()
+    if clean_tab_name:
+        for sheet in sheets:
+            title = str(sheet.get("properties", {}).get("title") or "")
+            if title.casefold() == clean_tab_name.casefold():
+                return quote_sheet_title(title)
+        raise RuntimeError(f"No encontré ninguna pestaña llamada {clean_tab_name!r}.")
     if gid is None:
         return quote_sheet_title(sheets[0]["properties"]["title"])
     for sheet in sheets:
@@ -629,7 +655,7 @@ def read_records_with_service_account(source: ClientLeadSource) -> list[dict[str
         return []
     spreadsheet_id, gid = parse_sheet_target(source.sheet_url, source.sheet_gid)
     service = build_sheets_service(credentials_path)
-    resolved_range = resolve_range_from_gid(service, spreadsheet_id, gid)
+    resolved_range = resolve_range_from_gid(service, spreadsheet_id, gid, source.sheet_tab_name)
     response = (
         service.spreadsheets()
         .values()
@@ -646,7 +672,7 @@ async def fetch_sheet_records(source: ClientLeadSource) -> list[dict[str, str]]:
 
     async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0), follow_redirects=True) as client:
         try:
-            response = await client.get(public_csv_url(source.sheet_url, source.sheet_gid))
+            response = await client.get(public_csv_url(source.sheet_url, source.sheet_gid, source.sheet_tab_name))
             response.raise_for_status()
             records = [dict(row) for row in csv.DictReader(StringIO(response.text))]
             records = [row for row in records if not row_is_empty(row)]
@@ -659,7 +685,7 @@ async def fetch_sheet_records(source: ClientLeadSource) -> list[dict[str, str]]:
         try:
             response = await client.get(public_xlsx_url(source.sheet_url))
             response.raise_for_status()
-            records = read_xlsx_records(response.content)
+            records = read_xlsx_records(response.content, source.sheet_tab_name)
             if records_have_mappable_headers(records, source.column_mapping):
                 return records
         except httpx.HTTPStatusError as exc:

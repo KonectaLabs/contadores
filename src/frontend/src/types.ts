@@ -471,6 +471,7 @@ export interface ClientLeadSource {
   enabled: boolean;
   sheet_url: string | null;
   sheet_gid: string | null;
+  sheet_tab_name: string | null;
   sheet_poll_seconds: number;
   recipient_name: string | null;
   recipient_phone: string | null;

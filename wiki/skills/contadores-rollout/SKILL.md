@@ -152,8 +152,10 @@ Before enabling a live Delivery source:
    `/root/projects/contadores/data/client-lead-sources.json`. The versioned
    seed is `config/default-client-lead-sources.json`.
 2. Confirm the source has `sheet_url`, `sheet_gid`, recipient phone or
-   `recipients`, column mapping, template name, and template language.
-   Multiple `recipients` are expanded into one DB source per recipient.
+   `sheet_tab_name`, recipient phone or `recipients`, column mapping, template
+   name, and template language. Multiple `recipients` are expanded into one DB
+   source per recipient. Multiple `sheets` are expanded into one DB source per
+   sheet/campaign.
 3. Decide whether the first sync should notify historical rows. First sync
    imports all non-empty rows and queues valid new rows immediately.
 4. If the sheet is private, set `CONTADORES_GOOGLE_SERVICE_ACCOUNT_FILE` or

@@ -109,7 +109,10 @@ Each configured source supports:
 - `enabled`
 - `sheet_url`
 - `sheet_gid`
-- `sheet_poll_seconds`, minimum 30
+- `sheet_tab_name` when the desired tab is not the first tab or a gid is not known
+- `sheets`, a list of `{id, label, sheet_url, sheet_gid, sheet_tab_name}` entries
+  for multiple campaign sheets feeding the same client recipient
+- `sheet_poll_seconds`, minimum 5
 - `recipient_name`
 - `recipient_phone`
 - or `recipients`, a list of `{id, name, phone}` entries. Multiple recipients
@@ -135,7 +138,7 @@ curl -fsS -X POST -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
 
 Sheet access order:
 
-1. public CSV export using `sheet_gid`;
+1. public CSV export using `sheet_tab_name` when present, otherwise `sheet_gid`;
 2. public XLSX export;
 3. Google Sheets API through a service account.
 

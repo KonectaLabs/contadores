@@ -288,6 +288,9 @@ Client Lead Delivery:
 - El archivo acepta `recipient_name` / `recipient_phone` para un destinatario o
   `recipients` para varios. Si hay varios, el loader crea una fuente por
   destinatario usando el mismo sheet y labels como `Cliente · Ana`.
+- Tambien acepta `sheet_tab_name` cuando la pestaña no es la primera. Para dos
+  campañas del mismo cliente, usar `sheets` y el loader crea una fuente por
+  sheet/campaña con el mismo destinatario.
 - Las filas importadas se guardan en tablas dedicadas:
   `client_lead_sources` y `client_lead_deliveries`. No contaminan
   `contadores_leads`, alertas humanas ni Workstation.
@@ -319,6 +322,7 @@ Client Lead Delivery:
       "enabled": true,
       "sheet_url": "https://docs.google.com/spreadsheets/d/...",
       "sheet_gid": "0",
+      "sheet_tab_name": "deuda",
       "sheet_poll_seconds": 10,
       "recipients": [
         {"id": "dueno", "name": "Duenio", "phone": "+5491122223333"}
@@ -332,6 +336,31 @@ Client Lead Delivery:
       }
     }
   ]
+}
+```
+
+Ejemplo con dos sheets para el mismo destinatario:
+
+```json
+{
+  "id": "cliente-ads",
+  "label": "Cliente Ads",
+  "enabled": true,
+  "sheet_poll_seconds": 10,
+  "recipients": [
+    {"id": "dueno", "name": "Duenio", "phone": "+5491122223333"}
+  ],
+  "sheets": [
+    {"id": "deuda", "label": "Deuda", "sheet_url": "https://docs.google.com/spreadsheets/d/...", "sheet_tab_name": "deuda"},
+    {"id": "simple", "label": "Simple Form Setup", "sheet_url": "https://docs.google.com/spreadsheets/d/...", "sheet_tab_name": "simple form setup 2026-05-25"}
+  ],
+  "column_mapping": {
+    "source_id": "id",
+    "created_time": "timestamp",
+    "full_name": "name",
+    "phone_number": "phone",
+    "email": "email"
+  }
 }
 ```
 
