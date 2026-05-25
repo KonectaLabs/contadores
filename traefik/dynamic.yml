@@ -7,13 +7,13 @@ http:
         - web
       service: didactiqo-education
     backend:
-      rule: "HostRegexp(`.+\\..+`) && !HostRegexp(`\\d+\\.\\d+\\.\\d+\\.\\d+`) && PathPrefix(`/`)"
+      rule: "(Host(`crm.fgoiriz.com`) || Host(`chatterface.fgoiriz.com`)) && PathPrefix(`/`)"
       priority: 1
       entryPoints:
         - web
       service: backend
     bot:
-      rule: "HostRegexp(`.+\\..+`) && !HostRegexp(`\\d+\\.\\d+\\.\\d+\\.\\d+`) && PathPrefix(`/webhook`)"
+      rule: "(Host(`crm.fgoiriz.com`) || Host(`chatterface.fgoiriz.com`)) && PathPrefix(`/webhook`)"
       priority: 10
       entryPoints:
         - web

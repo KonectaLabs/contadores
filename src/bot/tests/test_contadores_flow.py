@@ -703,7 +703,7 @@ def test_send_contadores_pending_alerts_includes_direct_lead_link(monkeypatch) -
     assert len(sent_calls) == 1
     assert (
         "Lead link: "
-        "https://chatterface.fgoiriz.com/?section=contadores&contadores_lead=7bc8899e-f7ed-4c0b-90f4-ce9739b9b4fe"
+        "https://crm.fgoiriz.com/?section=contadores&contadores_lead=7bc8899e-f7ed-4c0b-90f4-ce9739b9b4fe"
     ) in sent_calls[0]["text"]
     assert "Conversacion reciente:" in sent_calls[0]["text"]
     assert "2026-05-06T12:50:00Z - Konecta: Te paso el video" in sent_calls[0]["text"]
@@ -851,7 +851,7 @@ def test_send_contadores_pending_alerts_handles_runtime_fallback_alert(monkeypat
     assert "Error Codex: Codex failed: timeout" in sent_calls[0]["text"]
     assert "Link: https://auth.openai.com/codex/device" in sent_calls[0]["text"]
     assert "codex login --device-auth" in sent_calls[0]["text"]
-    assert "Lead link: https://chatterface.fgoiriz.com/?section=contadores&contadores_lead=runtime-lead-1" in sent_calls[0]["text"]
+    assert "Lead link: https://crm.fgoiriz.com/?section=contadores&contadores_lead=runtime-lead-1" in sent_calls[0]["text"]
 
 
 def test_agentmail_webhook_forwards_operator_reply_and_acknowledges(monkeypatch) -> None:

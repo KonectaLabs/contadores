@@ -151,7 +151,7 @@ set -a
 source .env >/dev/null 2>&1
 set +a
 curl -fsS \
-  -H "Host: contadores.fgoiriz.com" \
+  -H "Host: crm.fgoiriz.com" \
   -H "X-Internal-Token: ${INTERNAL_API_TOKEN}" \
   "http://149.50.136.121/api/contadores/followup/snapshot?limit=20000&messages_per_lead=30" \
   -o /tmp/contadores-followup-snapshot.json
@@ -645,7 +645,7 @@ Send template:
 ```bash
 jq -n --arg text "$TEXT" '{text:$text,dedupe_hours:24}' \
   | curl -fsS \
-    -H "Host: contadores.fgoiriz.com" \
+    -H "Host: crm.fgoiriz.com" \
     -H "X-Internal-Token: ${INTERNAL_API_TOKEN}" \
     -H "Content-Type: application/json" \
     -X POST --data-binary @- \

@@ -124,7 +124,7 @@ append_runner_history() {
 fetch_followup_snapshot() {
   local output_file="$1"
   curl -fsS \
-    -H "Host: contadores.fgoiriz.com" \
+    -H "Host: crm.fgoiriz.com" \
     -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
     "$SNAPSHOT_URL" \
     -o "$output_file"

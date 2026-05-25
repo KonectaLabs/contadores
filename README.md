@@ -145,7 +145,7 @@ curl -X POST -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
 Snapshot read-only para automations de follow-up:
 
 ```bash
-curl -H "Host: contadores.fgoiriz.com" \
+curl -H "Host: crm.fgoiriz.com" \
   -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
   "http://149.50.136.121/api/contadores/followup/snapshot?limit=20000&messages_per_lead=12"
 ```
@@ -153,7 +153,7 @@ curl -H "Host: contadores.fgoiriz.com" \
 Export CSV del mismo snapshot:
 
 ```bash
-curl -H "Host: contadores.fgoiriz.com" \
+curl -H "Host: crm.fgoiriz.com" \
   -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
   "http://149.50.136.121/api/contadores/followup/snapshot.csv?limit=20000&messages_per_lead=12"
 ```
@@ -816,7 +816,8 @@ aprobados. Los nombres son configurables por `.env`:
 - `WORKSTATION_PING_TEMPLATE_1_NAME=konecta_workstation_ping_1_es_v1`
 - `WORKSTATION_PING_TEMPLATE_2_NAME=konecta_workstation_ping_2_es_v1`
 - `WORKSTATION_HANDOFF_TEMPLATE_NAME=konecta_workstation_handoff_es_v1`
-- `WORKSTATION_PUBLIC_PAGE_BASE_URL=https://dominio-publico`
+- `WORKSTATION_PUBLIC_PAGE_BASE_URL=https://crm.fgoiriz.com`
+- `CONTADORES_REVIEW_BASE_URL=https://crm.fgoiriz.com`
 - `WORKSTATION_CODEX_HEARTBEAT_ENABLED=true`
 - `WORKSTATION_CODEX_HEARTBEAT_INTERVAL_HOURS=12`
 

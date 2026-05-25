@@ -40,7 +40,7 @@ SHEET_IMPORT_HEADERS = {"id", "phone_number"}
 
 BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "http://backend:8000").strip().rstrip("/")
 CONTADORES_REVIEW_BASE_URL = (
-    os.getenv("CONTADORES_REVIEW_BASE_URL", "https://chatterface.fgoiriz.com").strip().rstrip("/")
+    os.getenv("CONTADORES_REVIEW_BASE_URL", "https://crm.fgoiriz.com").strip().rstrip("/")
 )
 CODEX_CHATGPT_REAUTH_URL = os.getenv(
     "CODEX_CHATGPT_REAUTH_URL",

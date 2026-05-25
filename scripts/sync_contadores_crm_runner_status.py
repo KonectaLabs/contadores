@@ -13,7 +13,7 @@ from pathlib import Path
 
 
 DEFAULT_STATUS_URL = "http://149.50.136.121/api/contadores/followup/runner/status"
-DEFAULT_HOST_HEADER = "contadores.fgoiriz.com"
+DEFAULT_HOST_HEADER = "crm.fgoiriz.com"
 
 
 def read_text(path: Path) -> str:

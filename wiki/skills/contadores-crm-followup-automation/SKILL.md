@@ -49,7 +49,7 @@ Also read these skills when relevant:
 - For read-only hourly analysis, prefer the production snapshot endpoint over
   SSH. Fetch all Contadores/Abogados chats, not only attention-needed chats:
   `GET http://149.50.136.121/api/contadores/followup/snapshot?limit=20000&messages_per_lead=12`.
-  Send `Host: contadores.fgoiriz.com` and `X-Internal-Token`.
+  Send `Host: crm.fgoiriz.com` and `X-Internal-Token`.
 - For spreadsheet-style analysis, use
   `GET http://149.50.136.121/api/contadores/followup/snapshot.csv?limit=20000&messages_per_lead=12`
   with the same headers.
@@ -114,7 +114,7 @@ Also read these skills when relevant:
 
 Every request below must include:
 
-- `Host: contadores.fgoiriz.com`
+- `Host: crm.fgoiriz.com`
 - `X-Internal-Token: <INTERNAL_API_TOKEN>`
 
 Read current CRM state:
