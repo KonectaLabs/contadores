@@ -476,7 +476,6 @@ export interface ClientLeadSource {
   recipient_phone: string | null;
   template_name: string | null;
   template_language: string | null;
-  prefilled_reply_text: string | null;
   column_mapping: Record<string, string>;
   last_sync_at: string | null;
   last_sync_status: string | null;

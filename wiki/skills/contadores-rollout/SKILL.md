@@ -141,10 +141,9 @@ then verify that funnel against its configured sheet and WhatsApp routing.
 
 Client Lead Delivery rollout is separate from the funnel readiness check. It
 uses dedicated tables (`client_lead_sources`, `client_lead_deliveries`) and the
-template `konecta_client_lead_alert_es_v1`. Reply URLs sent in that template
-should be short public `/w/{token}` links based on
-`CLIENT_LEAD_REPLY_LINK_BASE_URL`, which redirect to the long prefilled `wa.me`
-target.
+template `konecta_client_lead_alert_es_v2`. Reply URLs sent in that template
+should be direct plain `https://wa.me/{phone}` chat links without a `text=`
+parameter.
 
 Before enabling a live Delivery source:
 
@@ -164,7 +163,7 @@ Before enabling a live Delivery source:
 
 ```bash
 uv run python src/scripts/whatsapp_templates.py create \
-  --spec-file src/scripts/whatsapp_template_specs/konecta_client_lead_alert_es_v1.json \
+  --spec-file src/scripts/whatsapp_template_specs/konecta_client_lead_alert_es_v2.json \
   --dry-run
 ```
 
@@ -172,7 +171,7 @@ uv run python src/scripts/whatsapp_templates.py create \
 
 ```bash
 uv run python src/scripts/whatsapp_templates.py check \
-  --spec-file src/scripts/whatsapp_template_specs/konecta_client_lead_alert_es_v1.json \
+  --spec-file src/scripts/whatsapp_template_specs/konecta_client_lead_alert_es_v2.json \
   --fail-on-unapproved
 ```
 

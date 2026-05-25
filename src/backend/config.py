@@ -97,12 +97,6 @@ WORKSTATION_PING_2_TEXT = os.getenv(
     "Le escribo para retomar lo de su pagina. Quiere que sigamos con el boceto?",
 ).strip()
 WA_CALLBACK_URL = os.getenv("WA_CALLBACK_URL", "").strip()
-CLIENT_LEAD_REPLY_LINK_BASE_URL = (
-    os.getenv("CLIENT_LEAD_REPLY_LINK_BASE_URL")
-    or os.getenv("CONTADORES_REVIEW_BASE_URL")
-    or os.getenv("WORKSTATION_PUBLIC_PAGE_BASE_URL")
-    or "https://crm.fgoiriz.com"
-).strip().rstrip("/")
 WORKSTATION_PUBLIC_PAGE_BASE_URL = os.getenv("WORKSTATION_PUBLIC_PAGE_BASE_URL", "").strip().rstrip("/")
 WORKSTATION_CODEX_HEARTBEAT_ENABLED = os.getenv(
     "WORKSTATION_CODEX_HEARTBEAT_ENABLED",

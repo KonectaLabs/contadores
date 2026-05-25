@@ -4,7 +4,6 @@ from backend.endpoints.auth import auth_router
 from backend.endpoints.client_leads import (
     client_lead_deliveries_router,
     client_leads_actions_router,
-    client_leads_public_router,
     client_leads_router,
 )
 from backend.endpoints.contadores import contadores_router
@@ -15,7 +14,6 @@ __all__ = [
     "auth_router",
     "client_lead_deliveries_router",
     "client_leads_actions_router",
-    "client_leads_public_router",
     "client_leads_router",
     "contadores_router",
     "funnels_router",

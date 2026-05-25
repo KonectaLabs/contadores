@@ -12,7 +12,6 @@ from pydantic import BaseModel, Field, field_validator
 
 from backend.database import (
     CLIENT_LEAD_DEFAULT_COLUMN_MAPPING,
-    CLIENT_LEAD_DEFAULT_PREFILLED_REPLY_TEXT,
     CLIENT_LEAD_DEFAULT_TEMPLATE_LANGUAGE,
     CLIENT_LEAD_DEFAULT_TEMPLATE_NAME,
     DATA_DIR,
@@ -93,7 +92,6 @@ class ClientLeadSourceFileEntry(BaseModel):
     recipient_phone: str = ""
     template_name: str = CLIENT_LEAD_DEFAULT_TEMPLATE_NAME
     template_language: str = CLIENT_LEAD_DEFAULT_TEMPLATE_LANGUAGE
-    prefilled_reply_text: str = CLIENT_LEAD_DEFAULT_PREFILLED_REPLY_TEXT
     column_mapping: dict[str, str] = Field(default_factory=lambda: dict(CLIENT_LEAD_DEFAULT_COLUMN_MAPPING))
 
 
@@ -111,7 +109,6 @@ class ClientLeadSourceDefinition(BaseModel):
     recipients: list[ClientLeadRecipientDefinition] = Field(default_factory=list)
     template_name: str | None = CLIENT_LEAD_DEFAULT_TEMPLATE_NAME
     template_language: str | None = CLIENT_LEAD_DEFAULT_TEMPLATE_LANGUAGE
-    prefilled_reply_text: str | None = CLIENT_LEAD_DEFAULT_PREFILLED_REPLY_TEXT
     column_mapping: dict[str, str] = Field(default_factory=lambda: dict(CLIENT_LEAD_DEFAULT_COLUMN_MAPPING))
 
     @field_validator("id")
@@ -128,7 +125,6 @@ class ClientLeadSourceDefinition(BaseModel):
         "recipient_phone",
         "template_name",
         "template_language",
-        "prefilled_reply_text",
     )
     @classmethod
     def strip_optional_text(cls, value: str | None) -> str | None:
@@ -170,10 +166,6 @@ class ClientLeadSourceDefinition(BaseModel):
                     recipient_phone=recipient.phone,
                     template_name=(self.template_name or CLIENT_LEAD_DEFAULT_TEMPLATE_NAME).strip(),
                     template_language=(self.template_language or CLIENT_LEAD_DEFAULT_TEMPLATE_LANGUAGE).strip() or "es",
-                    prefilled_reply_text=(
-                        (self.prefilled_reply_text or CLIENT_LEAD_DEFAULT_PREFILLED_REPLY_TEXT).strip()
-                        or CLIENT_LEAD_DEFAULT_PREFILLED_REPLY_TEXT
-                    ),
                     column_mapping=self.column_mapping,
                 )
             )
@@ -250,7 +242,6 @@ def sync_client_lead_sources_from_config() -> ClientLeadConfigSyncResult:
                 recipient_phone=entry.recipient_phone,
                 template_name=entry.template_name,
                 template_language=entry.template_language,
-                prefilled_reply_text=entry.prefilled_reply_text,
                 column_mapping=entry.column_mapping,
             )
         except Exception as exc:

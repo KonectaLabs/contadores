@@ -114,9 +114,8 @@ Each configured source supports:
 - `recipient_phone`
 - or `recipients`, a list of `{id, name, phone}` entries. Multiple recipients
   are expanded into one DB source per recipient using the same sheet config.
-- `template_name`, default `konecta_client_lead_alert_es_v1`
+- `template_name`, default `konecta_client_lead_alert_es_v2`
 - `template_language`, default `es`
-- `prefilled_reply_text`
 - `column_mapping` for `source_id`, `created_time`, `full_name`,
   `phone_number`, and `email`
 
@@ -165,10 +164,9 @@ Endpoints:
 - `PUT /api/client-lead-deliveries/delivery/by-external-id`
 
 The default WhatsApp template spec is versioned at
-`src/scripts/whatsapp_template_specs/konecta_client_lead_alert_es_v1.json`.
+`src/scripts/whatsapp_template_specs/konecta_client_lead_alert_es_v2.json`.
 It uses positional params: source label, lead name, lead phone, email, and the
-short public `/w/{token}` reply link. The backend redirects that short link to
-the final `wa.me` URL with the prefilled reply text.
+plain `https://wa.me/{phone}` chat link without a `text=` parameter.
 
 ## Quick Start
 

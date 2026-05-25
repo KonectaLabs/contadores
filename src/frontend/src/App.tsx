@@ -93,7 +93,6 @@ type ClientLeadSourceDraft = {
   recipient_phone: string;
   template_name: string;
   template_language: string;
-  prefilled_reply_text: string;
   column_mapping_text: string;
 };
 type ClientLeadSourceMutationPayload = {
@@ -107,7 +106,6 @@ type ClientLeadSourceMutationPayload = {
   recipient_phone: string | null;
   template_name: string | null;
   template_language: string | null;
-  prefilled_reply_text: string | null;
   column_mapping: Record<string, string>;
 };
 
@@ -2437,16 +2435,6 @@ function ClientLeadDeliveryView({
                 </div>
 
                 <label className="ct-field">
-                  <span>Prefilled reply text</span>
-                  <textarea
-                    value={draft.prefilled_reply_text}
-                    onChange={(event) => updateDraft("prefilled_reply_text", event.target.value)}
-                    rows={3}
-                    placeholder="Hola, vi tu consulta y queria ayudarte..."
-                  />
-                </label>
-
-                <label className="ct-field">
                   <span>Column mapping</span>
                   <textarea
                     value={draft.column_mapping_text}
@@ -2595,7 +2583,7 @@ function ClientLeadDeliveryView({
                                 {waLink ? (
                                   <a href={waLink} target="_blank" rel="noreferrer">
                                     <ArrowSquareOut size={13} weight="bold" />
-                                    Reply link
+                                    Chat
                                   </a>
                                 ) : null}
                               </div>
@@ -5555,9 +5543,8 @@ function buildBlankClientLeadSourceDraft(): ClientLeadSourceDraft {
     sheet_poll_seconds: 10,
     recipient_name: "",
     recipient_phone: "",
-    template_name: "konecta_client_lead_alert_es_v1",
+    template_name: "konecta_client_lead_alert_es_v2",
     template_language: "es",
-    prefilled_reply_text: "Hola {name}, vi tu consulta. Te escribo para entender mejor que necesitas y ver como te puedo ayudar.",
     column_mapping_text: JSON.stringify({
       source_id: "id",
       created_time: "created_time",
@@ -5580,7 +5567,6 @@ function clientLeadSourceToDraft(source: ClientLeadSource): ClientLeadSourceDraf
     recipient_phone: source.recipient_phone ?? "",
     template_name: source.template_name ?? "",
     template_language: source.template_language ?? "es",
-    prefilled_reply_text: source.prefilled_reply_text ?? "",
     column_mapping_text: JSON.stringify(source.column_mapping ?? {}, null, 2),
   };
 }
@@ -5599,7 +5585,6 @@ function clientLeadSourcePayloadFromDraft(draft: ClientLeadSourceDraft): ClientL
     recipient_phone: draft.recipient_phone.trim() || null,
     template_name: draft.template_name.trim() || null,
     template_language: draft.template_language.trim() || null,
-    prefilled_reply_text: draft.prefilled_reply_text.trim() || null,
     column_mapping: parseClientLeadColumnMapping(draft.column_mapping_text),
   };
 }

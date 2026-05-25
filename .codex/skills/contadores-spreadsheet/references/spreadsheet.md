@@ -23,8 +23,7 @@ file rather than in funnel config:
 - `CLIENT_LEAD_SOURCES_CONFIG_PATH`, usually `data/client-lead-sources.json`
 - seed: `config/default-client-lead-sources.json`
 - per-source fields: `sheet_url`, `sheet_gid`, `sheet_poll_seconds`,
-  `recipient_phone` or `recipients`, `prefilled_reply_text`, and
-  `column_mapping`
+  `recipient_phone` or `recipients`, and `column_mapping`
 
 Multiple `recipients` are expanded into separate DB sources that share the same
 sheet. This lets Codex create one client Delivery flow from one sheet and

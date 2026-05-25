@@ -278,8 +278,7 @@ Client Lead Delivery:
 - Delivery es una superficie separada del CRM, Workstation y Runner para leads que
   se generan para clientes de Konecta.
 - Cada fuente guarda URL/GID del Google Sheet, intervalo de polling, destinatario
-  WhatsApp, mapping de columnas, template Meta y texto prellenado para responderle
-  al lead por WhatsApp.
+  WhatsApp, mapping de columnas y template Meta.
 - Las fuentes tambien se pueden declarar por archivo. El seed versionado es
   `config/default-client-lead-sources.json`; el override editable del server es
   `CLIENT_LEAD_SOURCES_CONFIG_PATH` o `data/client-lead-sources.json`.
@@ -302,8 +301,8 @@ Client Lead Delivery:
   enviado/snapshotteado, `external_id` de Meta, estado, timestamps y errores.
 - Esos envios son auditoria de Delivery: no contaminan `contadores_messages` ni
   el historial de conversacion del CRM.
-- El link que recibe el cliente es corto: `CLIENT_LEAD_REPLY_LINK_BASE_URL/w/{token}`.
-  Ese endpoint publico redirige al `wa.me` largo con el mensaje prellenado.
+- El link que recibe el cliente es un `https://wa.me/{telefono}` directo, sin
+  parametro `text=`.
 - El boton de chat CRM aparece solo cuando el telefono destinatario de Delivery
   matchea un lead del CRM.
 - Filas con telefono de lead faltante o invalido quedan visibles como `blocked`
@@ -324,7 +323,6 @@ Client Lead Delivery:
       "recipients": [
         {"id": "dueno", "name": "Duenio", "phone": "+5491122223333"}
       ],
-      "prefilled_reply_text": "Hola {name}, vi tu consulta. Te escribo para entender mejor que necesitas y ver como te puedo ayudar.",
       "column_mapping": {
         "source_id": "id",
         "created_time": "timestamp",
@@ -344,10 +342,9 @@ Client Lead Delivery:
   `POST /api/client-lead-sources/{id}/sync`,
   `GET /api/client-lead-sources/{id}/leads`,
   `GET /api/client-leads/{id}/copy-all`,
-  `POST /api/client-leads/{id}/retry`,
-  `GET /w/{token}`.
+  `POST /api/client-leads/{id}/retry`.
 - El bot consume `/api/client-lead-deliveries/pending`, manda el template
-  `konecta_client_lead_alert_es_v1` por Meta y registra `sent`, `delivered` o
+  `konecta_client_lead_alert_es_v2` por Meta y registra `sent`, `delivered` o
   `failed` por id externo del provider.
 - Para sheets privados, configurar `CONTADORES_GOOGLE_SERVICE_ACCOUNT_FILE` o
   reutilizar `GOOGLE_SERVICE_ACCOUNT_FILE`.

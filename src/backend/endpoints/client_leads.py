@@ -11,18 +11,15 @@ import unicodedata
 from datetime import datetime, timedelta, timezone
 from io import BytesIO, StringIO
 from typing import Any
-from urllib.parse import parse_qs, quote, urlparse
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
 from backend.client_lead_config import ClientLeadConfigSyncResult, sync_client_lead_sources_from_config
-from backend.config import CLIENT_LEAD_REPLY_LINK_BASE_URL
 from backend.database import (
     CLIENT_LEAD_DEFAULT_COLUMN_MAPPING,
-    CLIENT_LEAD_DEFAULT_PREFILLED_REPLY_TEXT,
     CLIENT_LEAD_DEFAULT_TEMPLATE_LANGUAGE,
     CLIENT_LEAD_DEFAULT_TEMPLATE_NAME,
     ClientLeadDelivery,
@@ -30,12 +27,10 @@ from backend.database import (
     ClientLeadSource,
     ContadoresLead,
     ContadoresLeadStage,
-    build_client_lead_reply_link_token,
     normalize_client_lead_column_mapping,
     normalize_phone,
 )
 
-client_leads_public_router = APIRouter(tags=["client-leads"])
 client_leads_router = APIRouter(prefix="/api/client-lead-sources", tags=["client-leads"])
 client_lead_deliveries_router = APIRouter(prefix="/api/client-lead-deliveries", tags=["client-leads"])
 client_leads_actions_router = APIRouter(prefix="/api/client-leads", tags=["client-leads"])
@@ -63,7 +58,6 @@ class ClientLeadSourceCommand(BaseModel):
     recipient_phone: str | None = ""
     template_name: str | None = CLIENT_LEAD_DEFAULT_TEMPLATE_NAME
     template_language: str | None = CLIENT_LEAD_DEFAULT_TEMPLATE_LANGUAGE
-    prefilled_reply_text: str | None = CLIENT_LEAD_DEFAULT_PREFILLED_REPLY_TEXT
     column_mapping: dict[str, str] = Field(default_factory=lambda: dict(CLIENT_LEAD_DEFAULT_COLUMN_MAPPING))
 
 
@@ -81,7 +75,6 @@ class ClientLeadSourceResponse(BaseModel):
     normalized_recipient_phone: str
     template_name: str
     template_language: str
-    prefilled_reply_text: str
     column_mapping: dict[str, str]
     last_sync_at: str | None
     last_sync_status: str | None
@@ -269,7 +262,6 @@ def build_source_response(source: ClientLeadSource, counts: dict[str, dict[str, 
         normalized_recipient_phone=source.normalized_recipient_phone,
         template_name=source.template_name,
         template_language=source.template_language,
-        prefilled_reply_text=source.prefilled_reply_text,
         column_mapping=source.column_mapping,
         last_sync_at=format_timestamp_seconds(source.last_sync_at),
         last_sync_status=source.last_sync_status,
@@ -440,44 +432,10 @@ def source_row_key_for(row: dict[str, str], *, row_number: int, source_id_value:
     return f"row:{row_number}:{stable_row_hash(row)}"
 
 
-def render_prefilled_reply(source: ClientLeadSource, *, name: str, phone: str, email: str | None) -> str:
-    """Render the client's prefilled WhatsApp reply text."""
-    display_name = name or "Hola"
-    template = source.prefilled_reply_text or CLIENT_LEAD_DEFAULT_PREFILLED_REPLY_TEXT
-    try:
-        return template.format(
-            name=display_name,
-            phone=phone or "",
-            email=email or "",
-        )
-    except (KeyError, ValueError):
-        return CLIENT_LEAD_DEFAULT_PREFILLED_REPLY_TEXT.format(
-            name=display_name,
-            phone=phone or "",
-            email=email or "",
-        )
-
-
-def build_direct_wa_link(source: ClientLeadSource, *, name: str, phone: str, email: str | None) -> str:
-    """Build the final wa.me target with prefilled copy."""
+def build_wa_link(*, phone: str) -> str:
+    """Build a plain wa.me chat link without a text query parameter."""
     normalized_phone = normalize_phone(phone)
-    if not normalized_phone:
-        return ""
-    reply_text = render_prefilled_reply(source, name=name, phone=normalized_phone, email=email)
-    return f"https://wa.me/{normalized_phone}?text={quote(reply_text)}"
-
-
-def build_reply_link_token(source: ClientLeadSource, source_row_key: str) -> str:
-    """Build the stable public redirect token for one Delivery row."""
-    return build_client_lead_reply_link_token(source.id, source_row_key)
-
-
-def build_reply_link(source: ClientLeadSource, source_row_key: str) -> str:
-    """Build the short public link sent to the client."""
-    base_url = CLIENT_LEAD_REPLY_LINK_BASE_URL.rstrip("/")
-    if not base_url:
-        return ""
-    return f"{base_url}/w/{build_reply_link_token(source, source_row_key)}"
+    return f"https://wa.me/{normalized_phone}" if normalized_phone else ""
 
 
 def build_notification_text(
@@ -495,7 +453,7 @@ def build_notification_text(
             f"Nombre: {name or '-'}",
             f"WhatsApp: {phone or '-'}",
             f"Email: {email or '-'}",
-            f"Responder: {wa_link or '-'}",
+            f"Chat: {wa_link or '-'}",
         ]
     )
 
@@ -742,7 +700,7 @@ def import_sheet_records(source: ClientLeadSource, records: list[dict[str, str]]
             block_reason = "lead_phone_invalid"
         elif not recipient_valid:
             block_reason = "recipient_phone_invalid"
-        wa_link = build_reply_link(source, source_row_key) if normalized_phone else ""
+        wa_link = build_wa_link(phone=phone)
         notification_text = build_notification_text(
             source,
             name=name,
@@ -825,26 +783,6 @@ def get_required_delivery(delivery_id: str) -> ClientLeadDelivery:
     if item is None:
         raise HTTPException(status_code=404, detail="Client lead not found.")
     return item
-
-
-@client_leads_public_router.get("/w/{reply_token}")
-async def redirect_client_lead_reply_link(reply_token: str) -> RedirectResponse:
-    """Redirect a short Delivery reply link to the final wa.me URL."""
-    item = ClientLeadDelivery.get_by_reply_link_token(reply_token)
-    if item is None:
-        raise HTTPException(status_code=404, detail="Reply link not found.")
-    source = ClientLeadSource.get_by_id(item.source_id)
-    if source is None:
-        raise HTTPException(status_code=404, detail="Reply link source not found.")
-    target = build_direct_wa_link(
-        source,
-        name=item.full_name or "",
-        phone=item.normalized_phone or item.phone_number,
-        email=item.email,
-    )
-    if not target:
-        raise HTTPException(status_code=404, detail="Reply link target not available.")
-    return RedirectResponse(url=target, status_code=307)
 
 
 @client_leads_router.get("", response_model=ClientLeadSourceListResponse)

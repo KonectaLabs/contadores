@@ -18,18 +18,14 @@ Get or infer:
 - Google Sheet URL and GID;
 - one or more WhatsApp recipients: `{id, name, phone}`;
 - whether first sync should notify existing rows;
-- optional prefilled reply text;
 - optional column mapping.
 
-Default reply text:
-
-```text
-Hola {name}, vi tu consulta. Te escribo para entender mejor que necesitas y ver como te puedo ayudar.
-```
+Delivery sends a plain `https://wa.me/{phone}` chat link without a `text=`
+parameter.
 
 Default template:
 
-- name: `konecta_client_lead_alert_es_v1`
+- name: `konecta_client_lead_alert_es_v2`
 - language: `es`
 
 ## Config File
@@ -62,9 +58,8 @@ Schema:
       "recipients": [
         {"id": "owner", "name": "Owner", "phone": "+5491122223333"}
       ],
-      "template_name": "konecta_client_lead_alert_es_v1",
+      "template_name": "konecta_client_lead_alert_es_v2",
       "template_language": "es",
-      "prefilled_reply_text": "Hola {name}, vi tu consulta. Te escribo para entender mejor que necesitas y ver como te puedo ayudar.",
       "column_mapping": {
         "source_id": "id",
         "created_time": "timestamp",
@@ -90,9 +85,8 @@ sends are Delivery audit data only; they must not pollute `contadores_messages`
 or CRM conversation history. The CRM chat button appears only when the Delivery
 recipient phone matches a CRM lead.
 
-Reply links in templates should be short public `/w/{token}` links using
-`CLIENT_LEAD_REPLY_LINK_BASE_URL`; the backend redirects those links to the long
-`wa.me` URL with the prefilled reply text.
+Reply links in templates must be direct plain `https://wa.me/{phone}` chat links
+without a `text=` parameter.
 
 Use `enabled: false` when the template is not approved yet or when historical
 rows should not be notified until the user confirms.
@@ -115,7 +109,7 @@ curl -fsS -X POST -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
 
 ```bash
 uv run python src/scripts/whatsapp_templates.py check \
-  --spec-file src/scripts/whatsapp_template_specs/konecta_client_lead_alert_es_v1.json \
+  --spec-file src/scripts/whatsapp_template_specs/konecta_client_lead_alert_es_v2.json \
   --fail-on-unapproved
 ```
 

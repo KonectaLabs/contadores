@@ -44,7 +44,6 @@ conversion mirrors any image files that arrived before the workspace existed.
 - Calendly fijo del producto: `https://calendly.com/facundogoiriz/crecimiento`
 - `FUNNELS_CONFIG_PATH=data/funnels.json`
 - `CLIENT_LEAD_SOURCES_CONFIG_PATH=data/client-lead-sources.json`
-- `CLIENT_LEAD_REPLY_LINK_BASE_URL=https://crm.fgoiriz.com`
 
 `/api/runtime` should report `ready=true` only after both `CONTADORES_SHEET_URL`
 and `CONTADORES_SHEET_GID` are present.
