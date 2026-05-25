@@ -81,6 +81,8 @@ If the user gives multiple campaign spreadsheets for the same client, put them
 in `sheets`. Each item supports `id`, `label`, `sheet_url`, `sheet_gid`, and
 `sheet_tab_name`. The backend expands each sheet into its own Delivery source
 with labels like `Client Ads · Deuda`, while using the same recipient/template.
+The frontend groups those expanded sources back into one contact by recipient
+phone, with internal sheet filters and a stable contact-list order.
 
 The Delivery UI hides source settings behind `Config`. The selected contact
 auto-refreshes through the sync endpoint every 10 seconds, so do not add manual

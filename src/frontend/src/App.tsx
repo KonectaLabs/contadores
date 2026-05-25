@@ -320,6 +320,7 @@ export function App() {
   const [leadContextCopyStatus, setLeadContextCopyStatus] = useState("");
   const detailRequestId = useRef(0);
   const deliveryDraftSourceId = useRef<string | null>(null);
+  const deliverySourcesRef = useRef<ClientLeadSource[]>([]);
   const debouncedQuery = useDebouncedValue(query, 250);
   const debouncedWorkstationQuery = useDebouncedValue(workstationQuery, 250);
 
@@ -354,7 +355,9 @@ export function App() {
   const selectedDeliverySource = deliveryEditorMode === "edit"
     ? deliverySources.find((source) => source.id === selectedDeliverySourceId) ?? null
     : null;
+  const deliveryContactGroups = useMemo(() => buildDeliveryContactGroups(deliverySources), [deliverySources]);
   const deliveryLeadTotal = deliverySources.reduce((total, source) => total + deliverySourceCount(source, "total"), 0);
+  const deliverySourceIssueCount = deliveryContactGroups.reduce((total, group) => total + group.issues, 0);
   const selectedVisibleCount = selectedLeadIds.filter((leadId) => visibleLeadIds.includes(leadId)).length;
   const allVisibleSelected = visibleLeadIds.length > 0 && selectedVisibleCount === visibleLeadIds.length;
 
@@ -456,7 +459,7 @@ export function App() {
 
   const loadDeliverySources = useCallback(async () => {
     const payload = await apiFetch<ClientLeadSourceListResponse | ClientLeadSource[]>("/api/client-lead-sources");
-    const sources = unpackClientLeadSources(payload);
+    const sources = unpackClientLeadSources(payload).slice().sort(compareDeliverySources);
     setDeliverySources(sources);
     setSelectedDeliverySourceId((current) => {
       if (deliveryEditorMode === "create") {
@@ -470,12 +473,21 @@ export function App() {
     return sources;
   }, [deliveryEditorMode]);
 
-  const loadDeliveryLeads = useCallback(async (sourceId: string) => {
+  const fetchDeliveryLeads = useCallback(async (sourceId: string) => {
     const payload = await apiFetch<ClientLeadListResponse | ClientLead[]>(
       `/api/client-lead-sources/${encodeURIComponent(sourceId)}/leads`,
     );
-    setDeliveryLeads(unpackClientLeads(payload));
+    return unpackClientLeads(payload);
   }, []);
+
+  const loadDeliveryLeadsForSources = useCallback(async (sourceIds: string[]) => {
+    if (!sourceIds.length) {
+      setDeliveryLeads([]);
+      return;
+    }
+    const batches = await Promise.all(sourceIds.map((sourceId) => fetchDeliveryLeads(sourceId)));
+    setDeliveryLeads(batches.flat().sort(compareClientLeads));
+  }, [fetchDeliveryLeads]);
 
   const loadDeliveryRecipientChat = useCallback(async (sourceId: string) => {
     const payload = await apiFetch<ClientLeadRecipientChatResponse>(
@@ -536,6 +548,10 @@ export function App() {
   }, [activeSection]);
 
   useEffect(() => {
+    deliverySourcesRef.current = deliverySources;
+  }, [deliverySources]);
+
+  useEffect(() => {
     writeStoredValue(DASHBOARD_STAGE_STORAGE_KEY, stageFilter);
   }, [stageFilter]);
 
@@ -578,7 +594,8 @@ export function App() {
         if (activeSection === "delivery") {
           loaders.push(loadDeliverySources());
           if (selectedDeliverySourceId) {
-            loaders.push(loadDeliveryLeads(selectedDeliverySourceId));
+            const sourceIds = deliveryContactSourceIdsFor(deliverySourcesRef.current, selectedDeliverySourceId);
+            loaders.push(loadDeliveryLeadsForSources(sourceIds));
             loaders.push(loadDeliveryRecipientChat(selectedDeliverySourceId));
           }
         }
@@ -591,7 +608,7 @@ export function App() {
       }
     }, REFRESH_MS);
     return () => window.clearInterval(timer);
-  }, [activeSection, loadDashboard, loadDeliveryLeads, loadDeliveryRecipientChat, loadDeliverySources, loadRunnerStatus, selectedDeliverySourceId]);
+  }, [activeSection, loadDashboard, loadDeliveryLeadsForSources, loadDeliveryRecipientChat, loadDeliverySources, loadRunnerStatus, selectedDeliverySourceId]);
 
   useEffect(() => {
     if (!selectedLeadId || !isContadoresFunnel) {
@@ -666,8 +683,9 @@ export function App() {
     let cancelled = false;
     setDeliveryLeadsLoading(true);
     setDeliveryRecipientChatLoading(true);
+    const sourceIds = deliveryContactSourceIdsFor(deliverySources, source.id);
     Promise.all([
-      loadDeliveryLeads(source.id),
+      loadDeliveryLeadsForSources(sourceIds),
       loadDeliveryRecipientChat(source.id),
     ])
       .catch((reason) => {
@@ -684,7 +702,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [activeSection, deliveryEditorMode, deliverySources, loadDeliveryLeads, loadDeliveryRecipientChat, selectedDeliverySourceId]);
+  }, [activeSection, deliveryEditorMode, deliverySources, loadDeliveryLeadsForSources, loadDeliveryRecipientChat, selectedDeliverySourceId]);
 
   useEffect(() => {
     if (activeSection !== "runner") {
@@ -761,17 +779,27 @@ export function App() {
         return;
       }
 
+      const sourceIds = deliveryContactSourceIdsFor(deliverySourcesRef.current, selectedDeliverySourceId);
+      if (!sourceIds.length) {
+        return;
+      }
       inFlight = true;
       try {
-        await apiFetch(`/api/client-lead-sources/${encodeURIComponent(selectedDeliverySourceId)}/sync`, { method: "POST" });
+        const syncResults = await Promise.allSettled(
+          sourceIds.map((sourceId) => apiFetch(`/api/client-lead-sources/${encodeURIComponent(sourceId)}/sync`, { method: "POST" })),
+        );
         if (cancelled) {
           return;
         }
         await Promise.all([
           loadDeliverySources(),
-          loadDeliveryLeads(selectedDeliverySourceId),
+          loadDeliveryLeadsForSources(sourceIds),
           loadDeliveryRecipientChat(selectedDeliverySourceId),
         ]);
+        if (syncResults.every((result) => result.status === "rejected")) {
+          const reason = syncResults[0]?.reason;
+          setError(reason instanceof Error ? reason.message : "Could not auto-refresh Delivery.");
+        }
       } catch (reason) {
         if (!cancelled) {
           setError(reason instanceof Error ? reason.message : "Could not auto-refresh Delivery.");
@@ -791,7 +819,7 @@ export function App() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [activeSection, deliveryEditorMode, loadDeliveryLeads, loadDeliveryRecipientChat, loadDeliverySources, selectedDeliverySourceId]);
+  }, [activeSection, deliveryEditorMode, loadDeliveryLeadsForSources, loadDeliveryRecipientChat, loadDeliverySources, selectedDeliverySourceId]);
 
   useEffect(() => {
     if (!professionalPhotoJob || !["queued", "running"].includes(professionalPhotoJob.status)) {
@@ -844,9 +872,9 @@ export function App() {
         await loadWorkstationDetail(selectedWorkstationClientId);
       }
       if (activeSection === "delivery") {
-        await loadDeliverySources();
+        const updatedSources = await loadDeliverySources();
         if (selectedDeliverySourceId) {
-          await loadDeliveryLeads(selectedDeliverySourceId);
+          await loadDeliveryLeadsForSources(deliveryContactSourceIdsFor(updatedSources, selectedDeliverySourceId));
           await loadDeliveryRecipientChat(selectedDeliverySourceId);
         }
       }
@@ -909,8 +937,9 @@ export function App() {
       setSelectedDeliverySourceId(saved.id || payload.id);
       deliveryDraftSourceId.current = saved.id || payload.id;
       setDeliverySourceDraft(clientLeadSourceToDraft(saved));
-      await loadDeliverySources();
-      await loadDeliveryLeads(saved.id || payload.id);
+      const updatedSources = await loadDeliverySources();
+      const sourceIds = deliveryContactSourceIdsFor(updatedSources, saved.id || payload.id);
+      await loadDeliveryLeadsForSources(sourceIds);
       await loadDeliveryRecipientChat(saved.id || payload.id);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not save Delivery source.");
@@ -976,8 +1005,8 @@ export function App() {
     try {
       await apiFetch(`/api/client-leads/${encodeURIComponent(lead.id)}/retry`, { method: "POST" });
       const sourceId = lead.source_id || selectedDeliverySourceId || deliverySourceDraft.id;
-      await loadDeliverySources();
-      await loadDeliveryLeads(sourceId);
+      const updatedSources = await loadDeliverySources();
+      await loadDeliveryLeadsForSources(deliveryContactSourceIdsFor(updatedSources, sourceId));
       await loadDeliveryRecipientChat(sourceId);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not retry this notification.");
@@ -1688,16 +1717,14 @@ export function App() {
     : activeSection === "workstation"
     ? `${workstationClients.length} converted ${workstationClients.length === 1 ? "client" : "clients"}`
     : activeSection === "delivery"
-    ? selectedDeliverySource?.last_sync_status
-      ? `${selectedDeliverySource.last_sync_status} · ${selectedDeliverySource.last_sync_at ? relativeTime(selectedDeliverySource.last_sync_at) : "never"}`
-      : `${deliverySources.length} ${deliverySources.length === 1 ? "contact" : "contacts"} · ${compactNumber(deliveryLeadTotal)} leads`
+    ? `${deliveryContactGroups.length} ${deliveryContactGroups.length === 1 ? "contact" : "contacts"} · ${compactNumber(deliveryLeadTotal)} leads${deliverySourceIssueCount ? ` · ${deliverySourceIssueCount} issue${deliverySourceIssueCount === 1 ? "" : "s"}` : ""}`
     : config?.last_sheet_sync_status
     ? `${config.last_sheet_sync_status} · ${config.last_sheet_sync_at ? relativeTime(config.last_sheet_sync_at) : "never"}`
     : runtime
       ? (runtime.ready ? "Ready" : "Review config")
       : "Sync idle";
   const syncBadgeIsOk = activeSection === "delivery"
-    ? selectedDeliverySource?.last_sync_status === "ok"
+    ? deliverySourceIssueCount === 0
     : config?.last_sheet_sync_status === "ok";
 
   return (
@@ -1887,6 +1914,7 @@ export function App() {
         ) : activeSection === "delivery" ? (
         <ClientLeadDeliveryView
           sources={deliverySources}
+          contactGroups={deliveryContactGroups}
           leads={deliveryLeads}
           selectedSource={selectedDeliverySource}
           selectedSourceId={selectedDeliverySourceId}
@@ -2193,6 +2221,7 @@ export function App() {
 
 function ClientLeadDeliveryView({
   sources,
+  contactGroups,
   leads,
   selectedSource,
   selectedSourceId,
@@ -2215,6 +2244,7 @@ function ClientLeadDeliveryView({
   onOpenCrmLead,
 }: {
   sources: ClientLeadSource[];
+  contactGroups: DeliveryContactGroup[];
   leads: ClientLead[];
   selectedSource: ClientLeadSource | null;
   selectedSourceId: string | null;
@@ -2238,16 +2268,27 @@ function ClientLeadDeliveryView({
 }) {
   const [configOpen, setConfigOpen] = useState(editorMode === "create");
   const [sentChatOpen, setSentChatOpen] = useState(true);
+  const [activeSheetFilter, setActiveSheetFilter] = useState("all");
   const isExisting = editorMode === "edit" && Boolean(selectedSource);
+  const selectedGroup = isExisting
+    ? contactGroups.find((group) => group.sources.some((source) => source.id === selectedSourceId)) ?? null
+    : null;
+  const selectedSources = selectedGroup?.sources ?? (selectedSource ? [selectedSource] : []);
+  const selectedGroupKey = selectedGroup?.key ?? selectedSourceId ?? "";
+  const selectedGroupLabel = selectedGroup?.label || selectedSource?.label || "Select a contact";
+  const selectedGroupTone = selectedGroup ? deliveryContactTone(selectedGroup) : selectedSource ? deliverySourceTone(selectedSource) : "muted";
+  const selectedGroupStatus = selectedGroup ? deliveryContactStatusLabel(selectedGroup) : selectedSource?.enabled ? humanize(selectedSource.last_sync_status || "active") : "Paused";
+  const visibleLeads = activeSheetFilter === "all" ? leads : leads.filter((lead) => lead.source_id === activeSheetFilter);
+  const sourceById = new Map(sources.map((source) => [source.id, source]));
   const totalLeads = sources.reduce((total, source) => total + deliverySourceCount(source, "total"), 0);
-  const failedLeads = sources.reduce((total, source) => total + deliverySourceCount(source, "failed"), 0);
+  const failedLeads = contactGroups.reduce((total, group) => total + group.issues, 0);
   const deliveredLeads = sources.reduce((total, source) => total + deliverySourceCount(source, "sent") + deliverySourceCount(source, "delivered"), 0);
-  const selectedTotalLeads = selectedSource ? deliverySourceCount(selectedSource, "total") : 0;
-  const selectedDeliveredLeads = selectedSource ? deliverySourceCount(selectedSource, "sent") + deliverySourceCount(selectedSource, "delivered") : 0;
-  const selectedBlockedLeads = selectedSource ? deliverySourceCount(selectedSource, "blocked") : 0;
-  const selectedLabel = editorMode === "create" ? "New contact" : selectedSource?.label || "Select a contact";
-  const lastSyncText = selectedSource?.last_sync_at ? relativeTime(selectedSource.last_sync_at) : "waiting";
-  const sourceStatus = selectedSource?.enabled ? humanize(selectedSource.last_sync_status || "active") : "Paused";
+  const selectedTotalLeads = selectedSources.reduce((total, source) => total + deliverySourceCount(source, "total"), 0);
+  const selectedDeliveredLeads = selectedSources.reduce((total, source) => total + deliverySourceCount(source, "sent") + deliverySourceCount(source, "delivered"), 0);
+  const selectedBlockedLeads = selectedSources.reduce((total, source) => total + deliverySourceCount(source, "blocked"), 0);
+  const selectedFailedLeads = selectedSources.reduce((total, source) => total + deliverySourceCount(source, "failed"), 0);
+  const selectedLabel = editorMode === "create" ? "New contact" : selectedGroupLabel;
+  const selectedIssueSources = selectedSources.filter(deliverySourceHasIssue);
   const recipientMessages = recipientChat?.messages ?? [];
   const recipientDeliveredCount = recipientMessages.filter((message) => message.delivery_status === "delivered").length;
   const recipientCrmLead = recipientChat?.crm_leads?.[0] ?? null;
@@ -2259,11 +2300,12 @@ function ClientLeadDeliveryView({
   }, [editorMode]);
 
   useEffect(() => {
-    if (editorMode === "edit" && selectedSourceId) {
+    if (editorMode === "edit" && selectedGroupKey) {
       setConfigOpen(false);
       setSentChatOpen(true);
+      setActiveSheetFilter("all");
     }
-  }, [editorMode, selectedSourceId]);
+  }, [editorMode, selectedGroupKey]);
 
   function updateDraft<K extends keyof ClientLeadSourceDraft>(key: K, value: ClientLeadSourceDraft[K]) {
     onDraftChange({ ...draft, [key]: value });
@@ -2273,8 +2315,8 @@ function ClientLeadDeliveryView({
     <div className="ct-surface delivery-surface">
       <div className="ct-secondary delivery-summary">
         <p className="ct-secondary-note">
-          {sources.length
-            ? `${sources.length} ${sources.length === 1 ? "contact" : "contacts"} · ${compactNumber(totalLeads)} leads · ${compactNumber(deliveredLeads)} notified · ${compactNumber(failedLeads)} failed`
+          {contactGroups.length
+            ? `${contactGroups.length} ${contactGroups.length === 1 ? "contact" : "contacts"} · ${compactNumber(totalLeads)} leads · ${compactNumber(deliveredLeads)} delivered · ${compactNumber(failedLeads)} issues`
             : "No delivery contacts configured yet"}
         </p>
         {copyStatus ? <p className="delivery-copy-status" aria-live="polite">{copyStatus}</p> : null}
@@ -2290,31 +2332,38 @@ function ClientLeadDeliveryView({
             </button>
           </div>
           <div className="ct-leads-list delivery-source-list">
-            {loading && !sources.length ? (
+            {loading && !contactGroups.length ? (
               <p className="ct-empty">Loading delivery contacts...</p>
-            ) : sources.length ? sources.map((source) => {
-              const active = editorMode === "edit" && source.id === selectedSourceId;
+            ) : contactGroups.length ? contactGroups.map((group) => {
+              const active = editorMode === "edit" && group.sources.some((source) => source.id === selectedSourceId);
               return (
                 <button
                   type="button"
-                  className={`delivery-source-row ${active ? "active" : ""} ${source.enabled ? "" : "disabled"}`}
-                  key={source.id}
-                  onClick={() => onSelectSource(source.id)}
+                  className={`delivery-source-row ${active ? "active" : ""} ${group.sources.some((source) => source.enabled) ? "" : "disabled"}`}
+                  data-tone={deliveryContactTone(group)}
+                  key={group.key}
+                  onClick={() => onSelectSource(group.primarySource.id)}
                 >
                   <div className="delivery-source-row-top">
-                    <strong>{source.label || source.id}</strong>
-                    <span className="delivery-status-pill" data-tone={deliverySourceTone(source)}>
-                      {source.enabled ? humanize(source.last_sync_status || "enabled") : "Paused"}
+                    <strong>{group.label || group.key}</strong>
+                    <span className="delivery-status-pill" data-tone={deliveryContactTone(group)}>
+                      {deliveryContactStatusLabel(group)}
                     </span>
                   </div>
                   <div className="delivery-source-counts">
-                    <span>Total <strong>{compactNumber(deliverySourceCount(source, "total"))}</strong></span>
-                    <span>Notified <strong>{compactNumber(deliverySourceCount(source, "sent") + deliverySourceCount(source, "delivered"))}</strong></span>
-                    <span>Failed <strong>{compactNumber(deliverySourceCount(source, "failed"))}</strong></span>
-                    <span>Blocked <strong>{compactNumber(deliverySourceCount(source, "blocked"))}</strong></span>
+                    <span>Total <strong>{compactNumber(group.total)}</strong></span>
+                    <span>Delivered <strong>{compactNumber(group.delivered)}</strong></span>
+                    <span>Sheets <strong>{compactNumber(group.sources.length)}</strong></span>
+                    <span>Issues <strong>{compactNumber(group.issues)}</strong></span>
                   </div>
-                  <p>{source.recipient_name || "No recipient"}{source.recipient_phone ? ` · ${source.recipient_phone}` : ""}</p>
-                  <small>{sourceSyncSummary(source)}</small>
+                  <p>{group.recipientName || "No recipient"}{group.recipientPhone ? ` · ${group.recipientPhone}` : ""}</p>
+                  <div className="delivery-source-sheet-tags">
+                    {group.sources.map((source) => (
+                      <span key={source.id} data-tone={deliverySourceTone(source)}>
+                        {deliverySheetLabel(source)}
+                      </span>
+                    ))}
+                  </div>
                 </button>
               );
             }) : (
@@ -2332,14 +2381,14 @@ function ClientLeadDeliveryView({
                 <h3>{selectedLabel}</h3>
                 <p className="ct-detail-meta">
                   {isExisting
-                    ? [selectedSource?.recipient_name || "-", selectedSource?.recipient_phone || "-", `auto ${Math.round(DELIVERY_AUTO_SYNC_MS / 1000)}s`].join(" · ")
+                    ? [selectedGroup?.recipientName || selectedSource?.recipient_name || "-", selectedGroup?.recipientPhone || selectedSource?.recipient_phone || "-", `${selectedSources.length} ${selectedSources.length === 1 ? "sheet" : "sheets"}`].join(" · ")
                     : "Create a sheet contact, recipient, and WhatsApp template mapping."}
                 </p>
               </div>
             </div>
             <div className="ct-detail-head-actions">
-              <span className="delivery-live-pill" data-tone={selectedSource ? deliverySourceTone(selectedSource) : "muted"}>
-                {isExisting ? `${sourceStatus} · ${lastSyncText}` : "Draft"}
+              <span className="delivery-live-pill" data-tone={selectedGroupTone}>
+                {isExisting ? selectedGroupStatus : "Draft"}
               </span>
               <button type="button" className="ct-btn ct-btn-ghost" onClick={onNewSource}>New contact</button>
               <button
@@ -2363,6 +2412,43 @@ function ClientLeadDeliveryView({
           </header>
 
           <div className="delivery-detail-body">
+            {isExisting && selectedSources.length ? (
+              <div className="delivery-source-strip">
+                <button
+                  type="button"
+                  className={activeSheetFilter === "all" ? "active" : ""}
+                  onClick={() => setActiveSheetFilter("all")}
+                >
+                  <ListChecks size={14} weight="bold" />
+                  All sheets
+                  <strong>{compactNumber(selectedTotalLeads)}</strong>
+                </button>
+                {selectedSources.map((source) => (
+                  <button
+                    type="button"
+                    className={activeSheetFilter === source.id ? "active" : ""}
+                    data-tone={deliverySourceTone(source)}
+                    key={source.id}
+                    onClick={() => setActiveSheetFilter(source.id)}
+                  >
+                    {deliverySourceStatusIcon(source)}
+                    {deliverySheetLabel(source)}
+                    <strong>{compactNumber(deliverySourceCount(source, "total"))}</strong>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+
+            {selectedIssueSources.length ? (
+              <div className="delivery-source-alert" data-tone="danger">
+                <WarningCircle size={18} weight="fill" />
+                <div>
+                  <strong>{selectedIssueSources.length === 1 ? "Sheet needs access" : "Sheets need access"}</strong>
+                  <span>{selectedIssueSources.map((source) => `${deliverySheetLabel(source)}: ${deliverySourceIssueText(source)}`).join(" · ")}</span>
+                </div>
+              </div>
+            ) : null}
+
             {configOpen ? (
               <form className="delivery-source-form delivery-config-panel" onSubmit={onSaveSource}>
                 <div className="workstation-panel-head">
@@ -2509,7 +2595,7 @@ function ClientLeadDeliveryView({
                 ) : recipientMessages.length ? (
                   <div className="delivery-recipient-messages">
                     {recipientMessages.map((message) => (
-                      <article className="delivery-recipient-message" key={message.delivery_id}>
+                      <article className="delivery-recipient-message" data-tone={recipientChatMessageTone(message)} key={message.delivery_id}>
                         <div className="delivery-recipient-message-head">
                           <div>
                             <strong>{message.lead_name || message.lead_phone || `Row ${message.row_number}`}</strong>
@@ -2538,20 +2624,21 @@ function ClientLeadDeliveryView({
               <div className="workstation-panel-head">
                 <div>
                   <span>Leads from sheet</span>
-                  <strong>{isExisting ? `${leads.length} visible` : "Select or create a contact"}</strong>
+                  <strong>{isExisting ? `${visibleLeads.length} visible` : "Select or create a contact"}</strong>
                 </div>
                 <div className="delivery-sheet-metrics">
                   <span>{compactNumber(selectedTotalLeads)} total</span>
-                  <span>{compactNumber(selectedDeliveredLeads)} notified</span>
+                  <span>{compactNumber(selectedDeliveredLeads)} delivered</span>
                   <span>{compactNumber(selectedBlockedLeads)} blocked</span>
+                  <span>{compactNumber(selectedFailedLeads)} failed</span>
                 </div>
               </div>
 
               {!isExisting ? (
                 <p className="ct-empty">Pick a Delivery contact to inspect the sheet leads.</p>
-              ) : leadsLoading && !leads.length ? (
+              ) : leadsLoading && !visibleLeads.length ? (
                 <p className="ct-empty">Loading contact leads...</p>
-              ) : leads.length ? (
+              ) : visibleLeads.length ? (
                 <div className="delivery-table-wrap">
                   <table className="delivery-table">
                     <thead>
@@ -2565,9 +2652,10 @@ function ClientLeadDeliveryView({
                       </tr>
                     </thead>
                     <tbody>
-                      {leads.map((lead) => {
+                      {visibleLeads.map((lead) => {
                         const waLink = lead.wa_link || buildWaLink(lead.phone_number);
                         const retryable = isRetryableClientLead(lead);
+                        const leadSource = sourceById.get(lead.source_id);
                         const campaign = firstRawValue(lead, ["campaign_name", "adset_name", "ad_name", "form_name"]);
                         const city = firstRawValue(lead, ["city", "platform"]);
                         return (
@@ -2599,8 +2687,9 @@ function ClientLeadDeliveryView({
                             </td>
                             <td>
                               <div className="delivery-sheet-cell">
-                                <strong>{city || "-"}</strong>
-                                <span>{campaign || "-"}</span>
+                                <strong>{leadSource ? deliverySheetLabel(leadSource) : city || "-"}</strong>
+                                <span>{campaign || city || "-"}</span>
+                                {leadSource?.last_sync_status === "failed" ? <small>{deliverySourceIssueText(leadSource)}</small> : null}
                               </div>
                             </td>
                             <td>
@@ -5622,12 +5711,186 @@ function unpackClientLeads(payload: ClientLeadListResponse | ClientLead[]): Clie
   return Array.isArray(payload) ? payload : payload.leads ?? [];
 }
 
+type DeliveryTone = "success" | "warn" | "danger" | "muted" | "accent";
+
+type DeliveryContactGroup = {
+  key: string;
+  label: string;
+  recipientName: string;
+  recipientPhone: string;
+  sources: ClientLeadSource[];
+  primarySource: ClientLeadSource;
+  total: number;
+  delivered: number;
+  blocked: number;
+  failed: number;
+  issues: number;
+};
+
+function buildDeliveryContactGroups(sources: ClientLeadSource[]): DeliveryContactGroup[] {
+  const groups = new Map<string, ClientLeadSource[]>();
+  for (const source of sources.slice().sort(compareDeliverySources)) {
+    const key = deliveryContactKey(source);
+    groups.set(key, [...(groups.get(key) ?? []), source]);
+  }
+
+  return Array.from(groups.entries())
+    .map(([key, groupSources]) => {
+      const sortedSources = groupSources.slice().sort(compareDeliverySources);
+      const primarySource = pickPrimaryDeliverySource(sortedSources);
+      const total = sortedSources.reduce((count, source) => count + deliverySourceCount(source, "total"), 0);
+      const delivered = sortedSources.reduce((count, source) => count + deliverySourceCount(source, "sent") + deliverySourceCount(source, "delivered"), 0);
+      const blocked = sortedSources.reduce((count, source) => count + deliverySourceCount(source, "blocked"), 0);
+      const failed = sortedSources.reduce((count, source) => count + deliverySourceCount(source, "failed"), 0);
+      const sourceFailures = sortedSources.filter((source) => String(source.last_sync_status || "").toLowerCase() === "failed").length;
+      return {
+        key,
+        label: deliveryContactLabel(sortedSources),
+        recipientName: primarySource.recipient_name ?? "",
+        recipientPhone: primarySource.recipient_phone ?? "",
+        sources: sortedSources,
+        primarySource,
+        total,
+        delivered,
+        blocked,
+        failed,
+        issues: sourceFailures + blocked + failed,
+      };
+    })
+    .sort((left, right) => left.label.localeCompare(right.label) || left.key.localeCompare(right.key));
+}
+
+function deliveryContactSourceIdsFor(sources: ClientLeadSource[], selectedSourceId: string | null): string[] {
+  if (!selectedSourceId) {
+    return [];
+  }
+  const selected = sources.find((source) => source.id === selectedSourceId);
+  if (!selected) {
+    return [selectedSourceId];
+  }
+  const key = deliveryContactKey(selected);
+  return sources
+    .filter((source) => deliveryContactKey(source) === key)
+    .sort(compareDeliverySources)
+    .map((source) => source.id);
+}
+
+function deliveryContactKey(source: ClientLeadSource): string {
+  return source.normalized_recipient_phone || source.recipient_phone?.replace(/\D/g, "") || source.recipient_phone || source.id;
+}
+
+function deliveryContactLabel(sources: ClientLeadSource[]): string {
+  const labels = sources.map((source) => deliverySourceBaseLabel(source)).filter(Boolean);
+  return labels[0] || sources[0]?.recipient_name || sources[0]?.label || sources[0]?.id || "Delivery contact";
+}
+
+function deliverySourceBaseLabel(source: ClientLeadSource): string {
+  return (source.label || source.recipient_name || source.id).split(" · ")[0]?.trim() || source.label || source.id;
+}
+
+function deliverySheetLabel(source: ClientLeadSource): string {
+  const parts = (source.label || "").split(" · ").map((part) => part.trim()).filter(Boolean);
+  return parts.length > 1 ? parts.slice(1).join(" · ") : source.sheet_tab_name || source.sheet_gid || "Main sheet";
+}
+
+function compareDeliverySources(left: ClientLeadSource, right: ClientLeadSource): number {
+  return (
+    deliverySourceBaseLabel(left).localeCompare(deliverySourceBaseLabel(right))
+    || deliverySheetLabel(left).localeCompare(deliverySheetLabel(right))
+    || left.id.localeCompare(right.id)
+  );
+}
+
+function pickPrimaryDeliverySource(sources: ClientLeadSource[]): ClientLeadSource {
+  return sources.find((source) => deliverySourceTone(source) !== "danger")
+    ?? sources.find((source) => source.enabled)
+    ?? sources[0];
+}
+
+function deliveryContactTone(group: DeliveryContactGroup): DeliveryTone {
+  if (!group.sources.some((source) => source.enabled)) {
+    return "muted";
+  }
+  if (group.sources.some((source) => deliverySourceTone(source) === "danger") || group.failed > 0) {
+    return "danger";
+  }
+  if (group.blocked > 0 || group.sources.some((source) => deliverySourceTone(source) === "warn")) {
+    return "warn";
+  }
+  if (group.sources.every((source) => deliverySourceTone(source) === "success")) {
+    return "success";
+  }
+  return "accent";
+}
+
+function deliveryContactStatusLabel(group: DeliveryContactGroup): string {
+  const tone = deliveryContactTone(group);
+  if (tone === "danger") {
+    return "Needs access";
+  }
+  if (tone === "warn") {
+    return "Review";
+  }
+  if (tone === "success") {
+    return "OK";
+  }
+  if (tone === "muted") {
+    return "Paused";
+  }
+  return "Active";
+}
+
+function deliverySourceHasIssue(source: ClientLeadSource): boolean {
+  const status = String(source.last_sync_status || "").toLowerCase();
+  return status === "failed" || status === "error" || deliverySourceCount(source, "failed") > 0;
+}
+
+function deliverySourceIssueText(source: ClientLeadSource): string {
+  const status = String(source.last_sync_status || "").toLowerCase();
+  if (status === "failed" || status === "error") {
+    return source.last_sync_note || "Sync failed";
+  }
+  if (deliverySourceCount(source, "failed") > 0) {
+    return "Notification failed";
+  }
+  if (deliverySourceCount(source, "blocked") > 0) {
+    return "Some leads are blocked";
+  }
+  return "Needs review";
+}
+
+function deliverySourceStatusIcon(source: ClientLeadSource): ReactNode {
+  const tone = deliverySourceTone(source);
+  if (tone === "success") {
+    return <CheckCircle size={14} weight="fill" />;
+  }
+  if (tone === "danger") {
+    return <WarningCircle size={14} weight="fill" />;
+  }
+  if (tone === "warn") {
+    return <ClockCountdown size={14} weight="fill" />;
+  }
+  if (tone === "muted") {
+    return <PauseCircle size={14} weight="fill" />;
+  }
+  return <Pulse size={14} weight="fill" />;
+}
+
+function compareClientLeads(left: ClientLead, right: ClientLead): number {
+  const leftTime = left.created_time ? Date.parse(left.created_time) : 0;
+  const rightTime = right.created_time ? Date.parse(right.created_time) : 0;
+  if (leftTime !== rightTime) {
+    return rightTime - leftTime;
+  }
+  return (right.row_number ?? 0) - (left.row_number ?? 0);
+}
+
 function deliverySourceCount(source: ClientLeadSource, key: keyof ClientLeadSource["counts"]): number {
   const value = source.counts?.[key] ?? 0;
   return Number.isFinite(value) ? Number(value) : 0;
 }
 
-function deliverySourceTone(source: ClientLeadSource): "success" | "warn" | "danger" | "muted" | "accent" {
+function deliverySourceTone(source: ClientLeadSource): DeliveryTone {
   if (!source.enabled) {
     return "muted";
   }
@@ -5642,14 +5905,6 @@ function deliverySourceTone(source: ClientLeadSource): "success" | "warn" | "dan
     return "warn";
   }
   return "accent";
-}
-
-function sourceSyncSummary(source: ClientLeadSource): string {
-  if (!source.last_sync_at && !source.last_sync_note) {
-    return "Waiting for first automatic check";
-  }
-  const syncTime = source.last_sync_at ? relativeTime(source.last_sync_at) : "No sync time";
-  return `Last checked ${syncTime}`;
 }
 
 function buildClientLeadText(lead: ClientLead): string {
@@ -5742,10 +5997,6 @@ function recipientChatMessageTone(message: ClientLeadRecipientChatMessage): "suc
     return "muted";
   }
   return "accent";
-}
-
-function rawRowEntries(rawRow: Record<string, unknown> | null | undefined): Array<[string, unknown]> {
-  return Object.entries(rawRow ?? {}).filter(([, value]) => value !== null && value !== undefined && String(value).trim() !== "");
 }
 
 function formatRawValue(value: unknown): string {

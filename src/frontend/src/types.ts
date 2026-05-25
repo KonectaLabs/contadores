@@ -475,6 +475,7 @@ export interface ClientLeadSource {
   sheet_poll_seconds: number;
   recipient_name: string | null;
   recipient_phone: string | null;
+  normalized_recipient_phone: string | null;
   template_name: string | null;
   template_language: string | null;
   column_mapping: Record<string, string>;

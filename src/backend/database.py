@@ -2157,7 +2157,7 @@ class ClientLeadSource(SQLModel, table=True):
     def list_all(cls) -> list["ClientLeadSource"]:
         """List every client lead source."""
         with Session(engine) as session:
-            statement = select(cls).order_by(cls.updated_at.desc(), cls.created_at.desc(), cls.label)
+            statement = select(cls).order_by(cls.label, cls.id)
             items = list(session.exec(statement).all())
             for item in items:
                 session.expunge(item)

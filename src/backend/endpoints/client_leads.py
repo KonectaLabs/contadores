@@ -903,11 +903,18 @@ async def get_client_lead_recipient_chat(
     source = get_required_source(source_id)
     counts = ClientLeadDelivery.count_by_status_for_sources()
     crm_leads = ContadoresLead.list_by_normalized_phone(source.normalized_recipient_phone, include_archived=False)
-    deliveries = [
-        item
-        for item in ClientLeadDelivery.list_by_source(source.id, limit=5000)
-        if should_show_recipient_chat_message(item)
-    ]
+    sibling_source_ids = [
+        item.id
+        for item in ClientLeadSource.list_all()
+        if item.normalized_recipient_phone and item.normalized_recipient_phone == source.normalized_recipient_phone
+    ] or [source.id]
+    deliveries = []
+    for sibling_source_id in sibling_source_ids:
+        deliveries.extend(
+            item
+            for item in ClientLeadDelivery.list_by_source(sibling_source_id, limit=5000)
+            if should_show_recipient_chat_message(item)
+        )
     deliveries = sorted(deliveries, key=recipient_chat_sort_key)[-limit:]
     return ClientLeadRecipientChatResponse(
         source=build_source_response(source, counts),

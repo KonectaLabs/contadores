@@ -300,6 +300,10 @@ Client Lead Delivery:
 - La UI de Delivery no muestra un boton de sync manual: al seleccionar un
   contacto, refresca la fuente automaticamente cada 10 segundos y deja la
   configuracion escondida detras del boton `Config`.
+- Cuando varias fuentes comparten el mismo WhatsApp destinatario, la UI las
+  agrupa como un solo contacto y muestra filtros internos por sheet/campaña
+  (`All sheets`, `Deuda`, etc.). La lista de contactos mantiene orden estable y
+  no depende del ultimo `updated_at` de sync.
 - Los envios de notificacion quedan visibles en `Sent chat` con el texto exacto
   enviado/snapshotteado, `external_id` de Meta, estado, timestamps y errores.
 - Esos envios son auditoria de Delivery: no contaminan `contadores_messages` ni
