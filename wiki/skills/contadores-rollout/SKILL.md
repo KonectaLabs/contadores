@@ -141,7 +141,10 @@ then verify that funnel against its configured sheet and WhatsApp routing.
 
 Client Lead Delivery rollout is separate from the funnel readiness check. It
 uses dedicated tables (`client_lead_sources`, `client_lead_deliveries`) and the
-template `konecta_client_lead_alert_es_v1`.
+template `konecta_client_lead_alert_es_v1`. Reply URLs sent in that template
+should be short public `/w/{token}` links based on
+`CLIENT_LEAD_REPLY_LINK_BASE_URL`, which redirect to the long prefilled `wa.me`
+target.
 
 Before enabling a live Delivery source:
 

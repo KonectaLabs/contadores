@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -37,6 +38,13 @@ DEFAULT_CONTADORES_LEAD_CODEX_ENABLED = (
     os.getenv("CONTADORES_LEAD_CODEX_ENABLED_DEFAULT", "").strip().lower()
     in {"1", "true", "yes", "on"}
 )
+CLIENT_LEAD_REPLY_LINK_TOKEN_LENGTH = 16
+
+
+def build_client_lead_reply_link_token(source_id: str, source_row_key: str) -> str:
+    """Build a stable short token for one client lead reply redirect."""
+    raw = f"{source_id.strip()}\0{source_row_key.strip()}".encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()[:CLIENT_LEAD_REPLY_LINK_TOKEN_LENGTH]
 
 
 def _is_sqlite_url(database_url: str) -> bool:
@@ -2292,6 +2300,7 @@ class ClientLeadDelivery(SQLModel, table=True):
     normalized_phone: str = Field(default="", index=True)
     email: str | None = Field(default=None, index=True)
     wa_link: str = Field(default="")
+    reply_link_token: str = Field(default="", index=True)
     notification_text: str = Field(default="")
     sent_text: str = Field(default="")
     delivery_status: ClientLeadDeliveryStatus = Field(default=ClientLeadDeliveryStatus.PENDING, index=True)
@@ -2336,6 +2345,19 @@ class ClientLeadDelivery(SQLModel, table=True):
         """Get one imported client lead row by id."""
         with Session(engine) as session:
             item = session.get(cls, delivery_id)
+            if item:
+                session.expunge(item)
+            return item
+
+    @classmethod
+    def get_by_reply_link_token(cls, token: str) -> Optional["ClientLeadDelivery"]:
+        """Get one imported client lead row by its public reply redirect token."""
+        clean_token = " ".join(str(token or "").split()).strip()
+        if not clean_token:
+            return None
+        with Session(engine) as session:
+            statement = select(cls).where(cls.reply_link_token == clean_token).limit(1)
+            item = session.exec(statement).first()
             if item:
                 session.expunge(item)
             return item
@@ -2444,6 +2466,7 @@ class ClientLeadDelivery(SQLModel, table=True):
             item.normalized_phone = normalized_phone
             item.email = (normalize_email(email) or None) if email else None
             item.wa_link = (wa_link or "").strip()
+            item.reply_link_token = build_client_lead_reply_link_token(source.id, source_row_key)
             item.notification_text = (notification_text or "").strip()
             item.block_reason = (block_reason or "").strip() or None
             item.updated_at = now
@@ -5406,6 +5429,7 @@ def init_db() -> None:
     ensure_contadores_message_delivery_columns()
     ensure_contadores_message_template_columns()
     ensure_client_lead_delivery_sent_text_column()
+    ensure_client_lead_delivery_reply_link_token_column()
     ensure_contadores_runtime_alert_columns()
     ensure_agent_run_codex_thread_columns()
     ensure_contadores_config_strategy_weights_column()
@@ -5851,6 +5875,35 @@ def ensure_client_lead_delivery_sent_text_column() -> None:
             logger.info(
                 "Backfilled %s client_lead_deliveries.sent_text snapshots.",
                 result.rowcount,
+            )
+
+
+def ensure_client_lead_delivery_reply_link_token_column() -> None:
+    """Add and backfill stable public reply-link tokens for Delivery rows."""
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        if "client_lead_deliveries" not in inspector.get_table_names():
+            return
+        columns = {column["name"] for column in inspector.get_columns("client_lead_deliveries")}
+        if "reply_link_token" not in columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE client_lead_deliveries ADD COLUMN reply_link_token TEXT NOT NULL DEFAULT ''"
+            )
+            logger.info("Added missing client_lead_deliveries.reply_link_token column.")
+
+    with Session(engine) as session:
+        rows = session.exec(
+            select(ClientLeadDelivery).where(ClientLeadDelivery.reply_link_token == "")
+        ).all()
+        for row in rows:
+            row.reply_link_token = build_client_lead_reply_link_token(row.source_id, row.source_row_key)
+            row.updated_at = datetime.now(timezone.utc)
+            session.add(row)
+        if rows:
+            session.commit()
+            logger.info(
+                "Backfilled %s client_lead_deliveries.reply_link_token values.",
+                len(rows),
             )
 
 

@@ -15,9 +15,11 @@ from urllib.parse import parse_qs, quote, urlparse
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
 from backend.client_lead_config import ClientLeadConfigSyncResult, sync_client_lead_sources_from_config
+from backend.config import CLIENT_LEAD_REPLY_LINK_BASE_URL
 from backend.database import (
     CLIENT_LEAD_DEFAULT_COLUMN_MAPPING,
     CLIENT_LEAD_DEFAULT_PREFILLED_REPLY_TEXT,
@@ -28,10 +30,12 @@ from backend.database import (
     ClientLeadSource,
     ContadoresLead,
     ContadoresLeadStage,
+    build_client_lead_reply_link_token,
     normalize_client_lead_column_mapping,
     normalize_phone,
 )
 
+client_leads_public_router = APIRouter(tags=["client-leads"])
 client_leads_router = APIRouter(prefix="/api/client-lead-sources", tags=["client-leads"])
 client_lead_deliveries_router = APIRouter(prefix="/api/client-lead-deliveries", tags=["client-leads"])
 client_leads_actions_router = APIRouter(prefix="/api/client-leads", tags=["client-leads"])
@@ -454,13 +458,26 @@ def render_prefilled_reply(source: ClientLeadSource, *, name: str, phone: str, e
         )
 
 
-def build_wa_link(source: ClientLeadSource, *, name: str, phone: str, email: str | None) -> str:
-    """Build one wa.me link to the client lead with prefilled copy."""
+def build_direct_wa_link(source: ClientLeadSource, *, name: str, phone: str, email: str | None) -> str:
+    """Build the final wa.me target with prefilled copy."""
     normalized_phone = normalize_phone(phone)
     if not normalized_phone:
         return ""
     reply_text = render_prefilled_reply(source, name=name, phone=normalized_phone, email=email)
     return f"https://wa.me/{normalized_phone}?text={quote(reply_text)}"
+
+
+def build_reply_link_token(source: ClientLeadSource, source_row_key: str) -> str:
+    """Build the stable public redirect token for one Delivery row."""
+    return build_client_lead_reply_link_token(source.id, source_row_key)
+
+
+def build_reply_link(source: ClientLeadSource, source_row_key: str) -> str:
+    """Build the short public link sent to the client."""
+    base_url = CLIENT_LEAD_REPLY_LINK_BASE_URL.rstrip("/")
+    if not base_url:
+        return ""
+    return f"{base_url}/w/{build_reply_link_token(source, source_row_key)}"
 
 
 def build_notification_text(
@@ -719,12 +736,13 @@ def import_sheet_records(source: ClientLeadSource, records: list[dict[str, str]]
         email = get_mapped_value(row, mapping, "email")
         created_time = parse_datetime(get_mapped_value(row, mapping, "created_time"))
         normalized_phone = normalize_phone(phone)
+        source_row_key = source_row_key_for(row, row_number=index, source_id_value=source_id_value)
         block_reason = ""
         if not normalized_phone:
             block_reason = "lead_phone_invalid"
         elif not recipient_valid:
             block_reason = "recipient_phone_invalid"
-        wa_link = build_wa_link(source, name=name, phone=phone, email=email)
+        wa_link = build_reply_link(source, source_row_key) if normalized_phone else ""
         notification_text = build_notification_text(
             source,
             name=name,
@@ -734,7 +752,7 @@ def import_sheet_records(source: ClientLeadSource, records: list[dict[str, str]]
         )
         item, created = ClientLeadDelivery.upsert_from_sheet_row(
             source=source,
-            source_row_key=source_row_key_for(row, row_number=index, source_id_value=source_id_value),
+            source_row_key=source_row_key,
             row_number=index,
             raw_row=row,
             full_name=name,
@@ -807,6 +825,26 @@ def get_required_delivery(delivery_id: str) -> ClientLeadDelivery:
     if item is None:
         raise HTTPException(status_code=404, detail="Client lead not found.")
     return item
+
+
+@client_leads_public_router.get("/w/{reply_token}")
+async def redirect_client_lead_reply_link(reply_token: str) -> RedirectResponse:
+    """Redirect a short Delivery reply link to the final wa.me URL."""
+    item = ClientLeadDelivery.get_by_reply_link_token(reply_token)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Reply link not found.")
+    source = ClientLeadSource.get_by_id(item.source_id)
+    if source is None:
+        raise HTTPException(status_code=404, detail="Reply link source not found.")
+    target = build_direct_wa_link(
+        source,
+        name=item.full_name or "",
+        phone=item.normalized_phone or item.phone_number,
+        email=item.email,
+    )
+    if not target:
+        raise HTTPException(status_code=404, detail="Reply link target not available.")
+    return RedirectResponse(url=target, status_code=307)
 
 
 @client_leads_router.get("", response_model=ClientLeadSourceListResponse)

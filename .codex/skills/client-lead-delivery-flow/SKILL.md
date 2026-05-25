@@ -90,6 +90,10 @@ sends are Delivery audit data only; they must not pollute `contadores_messages`
 or CRM conversation history. The CRM chat button appears only when the Delivery
 recipient phone matches a CRM lead.
 
+Reply links in templates should be short public `/w/{token}` links using
+`CLIENT_LEAD_REPLY_LINK_BASE_URL`; the backend redirects those links to the long
+`wa.me` URL with the prefilled reply text.
+
 Use `enabled: false` when the template is not approved yet or when historical
 rows should not be notified until the user confirms.
 

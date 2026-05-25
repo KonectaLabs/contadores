@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 from fastapi.testclient import TestClient
 from sqlmodel import SQLModel, create_engine
 
@@ -98,7 +100,7 @@ def test_client_lead_source_sync_queues_existing_valid_rows(monkeypatch, tmp_pat
         leads = client.get(f"/api/client-lead-sources/{source_id}/leads").json()["leads"]
         by_email = {lead["email"]: lead for lead in leads}
         assert by_email["ana@example.com"]["delivery_status"] == "pending"
-        assert by_email["ana@example.com"]["wa_link"].startswith("https://wa.me/549")
+        assert by_email["ana@example.com"]["wa_link"].startswith("https://crm.fgoiriz.com/w/")
         assert by_email["bad@example.com"]["delivery_status"] == "blocked"
         assert by_email["bad@example.com"]["block_reason"] == "lead_phone_invalid"
 
@@ -107,7 +109,12 @@ def test_client_lead_source_sync_queues_existing_valid_rows(monkeypatch, tmp_pat
         assert pending[0]["template_name"] == "konecta_client_lead_alert_es_v1"
         assert pending[0]["template_body_params"][0] == "MMB Ads"
         assert pending[0]["template_body_params"][1] == "Ana Perez"
-        assert pending[0]["template_body_params"][4].startswith("https://wa.me/549")
+        assert pending[0]["template_body_params"][4].startswith("https://crm.fgoiriz.com/w/")
+
+        reply_path = urlparse(pending[0]["template_body_params"][4]).path
+        redirect = client.get(reply_path, follow_redirects=False)
+        assert redirect.status_code == 307
+        assert redirect.headers["location"].startswith("https://wa.me/5491111111111?text=Hola")
 
         sent = client.put(
             f"/api/client-lead-deliveries/{pending[0]['delivery_id']}/delivery",

@@ -24,6 +24,7 @@ from backend.endpoints import (
     auth_router,
     client_lead_deliveries_router,
     client_leads_actions_router,
+    client_leads_public_router,
     client_leads_router,
     contadores_router,
     funnels_router,
@@ -166,6 +167,7 @@ if STATIC_DIR.exists():
 
 app.include_router(auth_router)
 app.include_router(public_workstation_router)
+app.include_router(client_leads_public_router)
 app.include_router(contadores_router)
 app.include_router(client_leads_router)
 app.include_router(client_lead_deliveries_router)
@@ -189,7 +191,7 @@ async def enforce_primitive_auth(request: Request, call_next):
             return RedirectResponse(url="/", status_code=303)
         return await call_next(request)
 
-    if path in PUBLIC_PATHS_WITHOUT_SESSION or path == "/p" or path.startswith("/p/"):
+    if path in PUBLIC_PATHS_WITHOUT_SESSION or path == "/p" or path.startswith("/p/") or path.startswith("/w/"):
         return await call_next(request)
 
     if is_internal_bot_api_path(path) and internal_token_valid:

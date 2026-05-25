@@ -2595,7 +2595,7 @@ function ClientLeadDeliveryView({
                                 {waLink ? (
                                   <a href={waLink} target="_blank" rel="noreferrer">
                                     <ArrowSquareOut size={13} weight="bold" />
-                                    wa.me
+                                    Reply link
                                   </a>
                                 ) : null}
                               </div>

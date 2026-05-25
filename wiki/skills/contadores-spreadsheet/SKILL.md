@@ -167,7 +167,8 @@ Endpoints:
 The default WhatsApp template spec is versioned at
 `src/scripts/whatsapp_template_specs/konecta_client_lead_alert_es_v1.json`.
 It uses positional params: source label, lead name, lead phone, email, and the
-prefilled `wa.me` reply link.
+short public `/w/{token}` reply link. The backend redirects that short link to
+the final `wa.me` URL with the prefilled reply text.
 
 ## Quick Start
 
