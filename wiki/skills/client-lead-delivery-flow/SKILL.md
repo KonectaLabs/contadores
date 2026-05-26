@@ -35,6 +35,8 @@ Context template, used when `context_field_mapping` is configured:
 
 - name: `konecta_client_lead_alert_context_es_v1`
 - language: `es`
+- param 6: context in one line, with fields joined by `; ` because Meta rejects
+  newline/tab characters inside template params.
 
 ## Config File
 

@@ -298,8 +298,9 @@ Client Lead Delivery:
   sheet se agregan al WhatsApp como `Nombre del campo = valor`. Si una fuente
   tiene contexto, usar `konecta_client_lead_alert_context_es_v1`; si no, seguir
   con `konecta_client_lead_alert_es_v2`. El template con contexto siempre lleva
-  6 parametros; si las columnas vienen vacias, el backend manda `-` como sexto
-  parametro para no romper Meta.
+  6 parametros; el sexto parametro va en una sola linea para cumplir las reglas
+  de Meta. Si las columnas vienen vacias, el backend manda `-` como sexto
+  parametro.
 - Primer sync: importa todas las filas validas existentes y deja sus
   notificaciones `pending`. Los siguientes syncs son idempotentes por
   `(source_id, source_row_key)` y solo agregan filas nuevas.

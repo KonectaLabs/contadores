@@ -203,11 +203,11 @@ def test_client_lead_context_fields_are_added_to_pending_template(monkeypatch, t
             "https://wa.me/595972490441",
         ]
         assert pending[0]["template_body_params"][5] == (
-            "Tipo de deuda = Tarjeta de credito\n"
-            "Caso = Me estafaron con una compra online"
+            "Tipo de deuda = Tarjeta de credito; Caso = Me estafaron con una compra online"
         )
         assert "Contexto:" in pending[0]["delivered_text"]
         assert "Tipo de deuda = Tarjeta de credito" in pending[0]["delivered_text"]
+        assert "Caso = Me estafaron con una compra online" in pending[0]["delivered_text"]
 
         delivery_id = pending[0]["delivery_id"]
         copy_all = client.get(f"/api/client-leads/{delivery_id}/copy-all")

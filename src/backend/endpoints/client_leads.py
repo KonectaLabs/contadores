@@ -450,6 +450,17 @@ def build_context_text(source: ClientLeadSource, item: ClientLeadDelivery) -> st
     return build_context_text_from_row(source, item.raw_row)
 
 
+def build_template_context_param(source: ClientLeadSource, item: ClientLeadDelivery) -> str:
+    """Build the one-line context param accepted by Meta template sends."""
+    lines = build_context_lines(source, item)
+    if not lines:
+        return ""
+    text = "; ".join(lines)
+    if len(text) <= MAX_CONTEXT_BLOCK_CHARS:
+        return text
+    return f"{text[:MAX_CONTEXT_BLOCK_CHARS - 3].rstrip()}..."
+
+
 def parse_datetime(value: str | None) -> datetime | None:
     """Parse common Google/Meta timestamp strings."""
     clean_value = (value or "").strip()
@@ -528,9 +539,9 @@ def build_template_params(source: ClientLeadSource, item: ClientLeadDelivery) ->
         item.email or "-",
         item.wa_link or "-",
     ]
-    context_text = build_context_text(source, item)
-    if source.template_name == CLIENT_LEAD_CONTEXT_TEMPLATE_NAME or context_text:
-        params.append(context_text or "-")
+    context_param = build_template_context_param(source, item)
+    if source.template_name == CLIENT_LEAD_CONTEXT_TEMPLATE_NAME or context_param:
+        params.append(context_param or "-")
     return params
 
 

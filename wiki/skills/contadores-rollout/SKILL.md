@@ -148,8 +148,9 @@ default template is `konecta_client_lead_alert_es_v2`; sources with
 `context_field_mapping` use `konecta_client_lead_alert_context_es_v1`. Reply
 URLs sent in those templates should be direct plain `https://wa.me/{phone}` chat
 links without a `text=` parameter. The context template always needs 6 body
-params, so blank context renders as `-`; sources without context must stay on
-the default template.
+params; the sixth param must be one line because Meta rejects template params
+with newline/tab characters. Blank context renders as `-`; sources without
+context must stay on the default template.
 
 Before enabling a live Delivery source:
 
