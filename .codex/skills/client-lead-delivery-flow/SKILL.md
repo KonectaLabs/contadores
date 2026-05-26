@@ -100,6 +100,9 @@ in `sheets`. Each item supports `id`, `label`, `sheet_url`, `sheet_gid`, and
 with labels like `Client Ads · Deuda`, while using the same recipient/template.
 The frontend groups those expanded sources back into one contact by recipient
 phone, with internal sheet filters and a stable contact-list order.
+If one tab uses different lead column names, put a partial or full
+`column_mapping` on that sheet item, for example `{"email": "work_email"}`.
+Omitted mapping keys inherit from the parent source.
 
 The Delivery UI hides source settings behind `Config`. The selected contact
 auto-refreshes through the sync endpoint every 10 seconds, so do not add manual

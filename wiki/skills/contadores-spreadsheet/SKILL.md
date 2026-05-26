@@ -111,7 +111,10 @@ Each configured source supports:
 - `sheet_gid`
 - `sheet_tab_name` when the desired tab is not the first tab or a gid is not known
 - `sheets`, a list of `{id, label, sheet_url, sheet_gid, sheet_tab_name}` entries
-  for multiple campaign sheets feeding the same client recipient
+  for multiple campaign sheets feeding the same client recipient. A sheet item
+  can override part or all of `column_mapping` and `context_field_mapping` when
+  that tab uses different column names. Omitted column mappings inherit from the
+  parent source.
 - `sheet_poll_seconds`, minimum 5
 - `recipient_name`
 - `recipient_phone`

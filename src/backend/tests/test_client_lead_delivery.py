@@ -437,7 +437,12 @@ def test_client_lead_sources_load_from_config_file(monkeypatch, tmp_path) -> Non
                   "id": "simple",
                   "label": "Simple Form Setup",
                   "sheet_url": "https://docs.google.com/spreadsheets/d/simple-sheet/edit",
-                  "sheet_tab_name": "simple form setup 2026-05-25"
+                  "sheet_tab_name": "simple form setup 2026-05-25",
+                  "column_mapping": {
+                    "full_name": "contact_name",
+                    "phone_number": "work_phone",
+                    "email": "work_email"
+                  }
                 }
               ],
               "recipients": [
@@ -474,7 +479,12 @@ def test_client_lead_sources_load_from_config_file(monkeypatch, tmp_path) -> Non
     assert sources["mmb-ads-deuda-ana"]["label"] == "MMB Ads · Deuda · Ana"
     assert sources["mmb-ads-simple-luis"]["sheet_tab_name"] == "simple form setup 2026-05-25"
     assert sources["mmb-ads-simple-luis"]["sheet_poll_seconds"] == 45
+    assert sources["mmb-ads-deuda-ana"]["column_mapping"]["email"] == "email"
+    assert sources["mmb-ads-simple-luis"]["column_mapping"]["source_id"] == "id"
     assert sources["mmb-ads-simple-luis"]["column_mapping"]["created_time"] == "timestamp"
+    assert sources["mmb-ads-simple-luis"]["column_mapping"]["full_name"] == "contact_name"
+    assert sources["mmb-ads-simple-luis"]["column_mapping"]["phone_number"] == "work_phone"
+    assert sources["mmb-ads-simple-luis"]["column_mapping"]["email"] == "work_email"
     assert sources["mmb-ads-deuda-ana"]["context_field_mapping"] == {
         "Tipo de deuda": "¿qué_tipo_de_deuda_tiene_pendiente?",
         "Caso": "breve_descripción_de_su_caso",

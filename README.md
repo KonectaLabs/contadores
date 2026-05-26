@@ -290,7 +290,10 @@ Client Lead Delivery:
   destinatario usando el mismo sheet y labels como `Cliente · Ana`.
 - Tambien acepta `sheet_tab_name` cuando la pestaña no es la primera. Para dos
   campañas del mismo cliente, usar `sheets` y el loader crea una fuente por
-  sheet/campaña con el mismo destinatario.
+  sheet/campaña con el mismo destinatario. Cada item de `sheets` puede
+  sobreescribir parte o todo el `column_mapping` y el `context_field_mapping` si
+  esa pestaña usa nombres de columnas distintos; los campos omitidos heredan el
+  mapping de la fuente padre.
 - Las filas importadas se guardan en tablas dedicadas:
   `client_lead_sources` y `client_lead_deliveries`. No contaminan
   `contadores_leads`, alertas humanas ni Workstation.
@@ -367,7 +370,14 @@ Ejemplo con dos sheets para el mismo destinatario:
   ],
   "sheets": [
     {"id": "deuda", "label": "Deuda", "sheet_url": "https://docs.google.com/spreadsheets/d/...", "sheet_tab_name": "deuda"},
-    {"id": "simple", "label": "Simple Form Setup", "sheet_url": "https://docs.google.com/spreadsheets/d/...", "sheet_tab_name": "simple form setup 2026-05-25"}
+    {
+      "id": "simple",
+      "label": "Simple Form Setup",
+      "sheet_url": "https://docs.google.com/spreadsheets/d/...",
+      "sheet_tab_name": "simple form setup 2026-05-25",
+      "context_field_mapping": {"Empresa": "company_name"},
+      "column_mapping": {"email": "work_email"}
+    }
   ],
   "column_mapping": {
     "source_id": "id",

@@ -7,6 +7,7 @@ import logging
 import os
 import re
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -58,6 +59,25 @@ def get_client_lead_sources_config_path() -> Path:
     )
 
 
+def normalize_client_lead_column_mapping_override(value: Any) -> dict[str, str]:
+    """Normalize sheet-level column mapping overrides without filling defaults."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value or "{}")
+        except json.JSONDecodeError:
+            value = {}
+    if not isinstance(value, dict):
+        return {}
+
+    mapping: dict[str, str] = {}
+    for raw_key, raw_value in value.items():
+        key = " ".join(str(raw_key or "").split()).strip()
+        clean_value = " ".join(str(raw_value or "").split()).strip()
+        if key and clean_value:
+            mapping[key] = clean_value
+    return mapping
+
+
 class ClientLeadRecipientDefinition(BaseModel):
     """One WhatsApp recipient for a file-backed Delivery source."""
 
@@ -88,6 +108,7 @@ class ClientLeadSheetDefinition(BaseModel):
     sheet_url: str = ""
     sheet_gid: str | None = None
     sheet_tab_name: str | None = None
+    column_mapping: dict[str, str] | None = None
     context_fields: list[str] | None = None
     context_field_mapping: dict[str, str] | None = None
 
@@ -114,6 +135,14 @@ class ClientLeadSheetDefinition(BaseModel):
         if value is None:
             return None
         return [" ".join(str(item or "").split()).strip() for item in value if str(item or "").strip()]
+
+    @field_validator("column_mapping")
+    @classmethod
+    def normalize_column_mapping(cls, value: dict[str, str] | None) -> dict[str, str] | None:
+        """Normalize optional sheet-level column mapping overrides."""
+        if value is None:
+            return None
+        return normalize_client_lead_column_mapping_override(value)
 
     @field_validator("context_field_mapping")
     @classmethod
@@ -264,6 +293,9 @@ class ClientLeadSourceDefinition(BaseModel):
                 if has_multiple_recipients:
                     label_parts.append(recipient.name or recipient.phone or recipient_suffix)
 
+                sheet_column_mapping = normalize_client_lead_column_mapping(
+                    {**self.column_mapping, **(sheet.column_mapping or {})}
+                )
                 sheet_context_mapping = sheet.resolved_context_field_mapping()
                 entries.append(
                     ClientLeadSourceFileEntry(
@@ -278,7 +310,7 @@ class ClientLeadSourceDefinition(BaseModel):
                         recipient_phone=recipient.phone,
                         template_name=(self.template_name or CLIENT_LEAD_DEFAULT_TEMPLATE_NAME).strip(),
                         template_language=(self.template_language or CLIENT_LEAD_DEFAULT_TEMPLATE_LANGUAGE).strip() or "es",
-                        column_mapping=self.column_mapping,
+                        column_mapping=sheet_column_mapping,
                         context_field_mapping=(
                             sheet_context_mapping if sheet_context_mapping is not None else source_context_mapping
                         ),

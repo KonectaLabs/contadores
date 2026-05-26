@@ -28,6 +28,9 @@ file rather than in funnel config:
 - multiple campaign sheets for the same client can be declared through
   `sheets`, each with `id`, `label`, `sheet_url`, `sheet_gid`, and
   `sheet_tab_name`
+- a `sheets` item can override `column_mapping` and `context_field_mapping` when
+  that tab uses different column names. Omitted column mappings inherit from the
+  parent source.
 
 Multiple `recipients` are expanded into separate DB sources that share the same
 sheet. This lets Codex create one client Delivery flow from one sheet and
