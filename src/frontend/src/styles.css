@@ -6359,9 +6359,13 @@ body {
   #contadoresView .ct-section-switch {
     justify-content: stretch;
     min-width: 0;
-    max-width: 100%;
+    max-width: calc(100vw - 32px);
     overflow-x: auto;
     scrollbar-width: thin;
+  }
+
+  #contadoresView .ct-topbar-tools {
+    max-width: calc(100vw - 32px);
   }
 
   #contadoresView .ct-section-switch button {
