@@ -129,6 +129,12 @@ Each configured source supports:
   can show multiple context lines, but the sixth Meta template param must be a
   single line joined with `; `. Blank context values render as `-`.
 
+Delivery stores each imported row's full sheet payload in `raw_row`. The
+operator UI must render sheet leads by sheet/campaign and show those real
+headers as columns, preserving the Google Sheet header order on newly synced
+rows. Do not replace that view with a fixed summary table or hide campaign
+columns behind a "raw fields" panel.
+
 The first sync imports every non-empty row in the source sheet and immediately
 queues valid new rows as `pending` notifications. If historical rows should not
 notify the client, create the source disabled, use a clean tab, or remove old

@@ -99,6 +99,13 @@ def test_client_lead_source_sync_queues_existing_valid_rows(monkeypatch, tmp_pat
 
         leads = client.get(f"/api/client-lead-sources/{source_id}/leads").json()["leads"]
         by_email = {lead["email"]: lead for lead in leads}
+        assert list(by_email["ana@example.com"]["raw_row"].keys()) == [
+            "id",
+            "created_time",
+            "full_name",
+            "phone_number",
+            "email",
+        ]
         assert by_email["ana@example.com"]["delivery_status"] == "pending"
         assert by_email["ana@example.com"]["wa_link"] == "https://wa.me/5491111111111"
         assert by_email["bad@example.com"]["delivery_status"] == "blocked"

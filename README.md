@@ -314,6 +314,10 @@ Client Lead Delivery:
   agrupa como un solo contacto y muestra filtros internos por sheet/campaña
   (`All sheets`, `Deuda`, etc.). La lista de contactos mantiene orden estable y
   no depende del ultimo `updated_at` de sync.
+- La vista de leads se renderiza por sheet/campaña y muestra las columnas reales
+  importadas desde el Google Sheet en el mismo orden de headers. El scroll
+  horizontal queda dentro de la tabla para no romper el chat ni el layout al
+  hacer zoom.
 - Los envios de notificacion quedan visibles en `Sent chat` con el texto exacto
   enviado/snapshotteado, `external_id` de Meta, estado, timestamps y errores.
 - Esos envios son auditoria de Delivery: no contaminan `contadores_messages` ni
