@@ -31,7 +31,7 @@ def test_fetch_and_dispatch_client_lead_notifications(monkeypatch) -> None:
                             "source_label": "MMB Ads",
                             "recipient_phone": "+5491122223333",
                             "normalized_recipient_phone": "5491122223333",
-                            "template_name": "konecta_client_lead_alert_es_v2",
+                            "template_name": "konecta_client_lead_alert_context_es_v1",
                             "template_language": "es",
                             "template_body_params": [
                                 "MMB Ads",
@@ -39,6 +39,7 @@ def test_fetch_and_dispatch_client_lead_notifications(monkeypatch) -> None:
                                 "5491111111111",
                                 "ana@example.com",
                                 "https://wa.me/5491111111111",
+                                "Ciudad = Quito",
                             ],
                             "delivered_text": "Nueva consulta de MMB Ads",
                         }
@@ -70,7 +71,7 @@ def test_fetch_and_dispatch_client_lead_notifications(monkeypatch) -> None:
     assert sent_templates == [
         {
             "to": "+5491122223333",
-            "template_name": "konecta_client_lead_alert_es_v2",
+            "template_name": "konecta_client_lead_alert_context_es_v1",
             "template_language": "es",
             "body_params": [
                 "MMB Ads",
@@ -78,6 +79,7 @@ def test_fetch_and_dispatch_client_lead_notifications(monkeypatch) -> None:
                 "5491111111111",
                 "ana@example.com",
                 "https://wa.me/5491111111111",
+                "Ciudad = Quito",
             ],
             "delivered_text": "Nueva consulta de MMB Ads",
         }

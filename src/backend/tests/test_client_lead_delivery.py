@@ -149,6 +149,150 @@ def test_client_lead_source_sync_queues_existing_valid_rows(monkeypatch, tmp_pat
         assert recipient_payload["messages"][0]["text"] == "Snapshot enviado a Guido"
 
 
+def test_client_lead_context_fields_are_added_to_pending_template(monkeypatch, tmp_path) -> None:
+    """Configured sheet context fields should be rendered as one WhatsApp param."""
+    configure_delivery_db(monkeypatch, tmp_path)
+
+    async def fake_fetch_sheet_records(source):
+        del source
+        return [
+            {
+                "id": "lead-context-1",
+                "created_time": "2026-05-26T10:00:00Z",
+                "full_name": "Graciela Medina",
+                "phone_number": "+595972490441",
+                "email": "migramed.27@hotmail.com",
+                "¿qué_tipo_de_deuda_tiene_pendiente?": "Tarjeta de credito",
+                "breve_descripción_de_su_caso": "Me estafaron con una compra online",
+            }
+        ]
+
+    monkeypatch.setattr(client_leads_endpoints, "fetch_sheet_records", fake_fetch_sheet_records)
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/client-lead-sources",
+            json=source_payload(
+                id="rodrigo-deuda",
+                label="Rodrigo Monges Luces · Deuda",
+                context_field_mapping={
+                    "Tipo de deuda": "¿qué_tipo_de_deuda_tiene_pendiente?",
+                    "Caso": "breve_descripción_de_su_caso",
+                },
+            ),
+        )
+        assert created.status_code == 200
+        source = created.json()
+        assert source["template_name"] == "konecta_client_lead_alert_context_es_v1"
+        assert source["context_field_mapping"] == {
+            "Tipo de deuda": "¿qué_tipo_de_deuda_tiene_pendiente?",
+            "Caso": "breve_descripción_de_su_caso",
+        }
+
+        sync = client.post(f"/api/client-lead-sources/{source['id']}/sync")
+        assert sync.status_code == 200
+
+        pending = client.get("/api/client-lead-deliveries/pending").json()["notifications"]
+        assert len(pending) == 1
+        assert pending[0]["template_name"] == "konecta_client_lead_alert_context_es_v1"
+        assert pending[0]["template_body_params"][:5] == [
+            "Rodrigo Monges Luces · Deuda",
+            "Graciela Medina",
+            "595972490441",
+            "migramed.27@hotmail.com",
+            "https://wa.me/595972490441",
+        ]
+        assert pending[0]["template_body_params"][5] == (
+            "Tipo de deuda = Tarjeta de credito\n"
+            "Caso = Me estafaron con una compra online"
+        )
+        assert "Contexto:" in pending[0]["delivered_text"]
+        assert "Tipo de deuda = Tarjeta de credito" in pending[0]["delivered_text"]
+
+        delivery_id = pending[0]["delivery_id"]
+        copy_all = client.get(f"/api/client-leads/{delivery_id}/copy-all")
+        assert copy_all.status_code == 200
+        assert "Caso = Me estafaron con una compra online" in copy_all.json()["text"]
+
+
+def test_client_lead_context_template_keeps_six_params_when_values_are_blank(monkeypatch, tmp_path) -> None:
+    """The 6-param context template must always receive its sixth body param."""
+    configure_delivery_db(monkeypatch, tmp_path)
+
+    async def fake_fetch_sheet_records(source):
+        del source
+        return [
+            {
+                "id": "lead-context-blank",
+                "created_time": "2026-05-26T11:00:00Z",
+                "full_name": "Carlos Lopez",
+                "phone_number": "+595981111222",
+                "email": "",
+            }
+        ]
+
+    monkeypatch.setattr(client_leads_endpoints, "fetch_sheet_records", fake_fetch_sheet_records)
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/client-lead-sources",
+            json=source_payload(
+                id="rodrigo-deuda-blank",
+                label="Rodrigo Monges Luces · Deuda",
+                context_field_mapping={
+                    "Tipo de deuda": "¿qué_tipo_de_deuda_tiene_pendiente?",
+                    "Caso": "breve_descripción_de_su_caso",
+                },
+            ),
+        )
+        assert created.status_code == 200
+        source = created.json()
+        assert source["template_name"] == "konecta_client_lead_alert_context_es_v1"
+
+        sync = client.post(f"/api/client-lead-sources/{source['id']}/sync")
+        assert sync.status_code == 200
+
+        pending = client.get("/api/client-lead-deliveries/pending").json()["notifications"]
+        assert len(pending) == 1
+        assert pending[0]["template_name"] == "konecta_client_lead_alert_context_es_v1"
+        assert pending[0]["template_body_params"] == [
+            "Rodrigo Monges Luces · Deuda",
+            "Carlos Lopez",
+            "595981111222",
+            "-",
+            "https://wa.me/595981111222",
+            "-",
+        ]
+
+
+def test_client_lead_clearing_context_fields_resets_template(monkeypatch, tmp_path) -> None:
+    """Clearing context in the UI payload should not leave a 6-param template selected."""
+    configure_delivery_db(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/client-lead-sources",
+            json=source_payload(
+                context_field_mapping={"Ciudad": "city"},
+            ),
+        )
+        assert created.status_code == 200
+        source = created.json()
+        assert source["template_name"] == "konecta_client_lead_alert_context_es_v1"
+
+        updated = client.put(
+            f"/api/client-lead-sources/{source['id']}",
+            json=source_payload(
+                template_name=source["template_name"],
+                context_field_mapping={},
+            ),
+        )
+        assert updated.status_code == 200
+        updated_source = updated.json()
+        assert updated_source["template_name"] == "konecta_client_lead_alert_es_v2"
+        assert updated_source["context_field_mapping"] == {}
+
+
 def test_client_lead_failure_and_retry(monkeypatch, tmp_path) -> None:
     """Delivery failures are visible and can be requeued by the operator."""
     configure_delivery_db(monkeypatch, tmp_path)
@@ -277,12 +421,17 @@ def test_client_lead_sources_load_from_config_file(monkeypatch, tmp_path) -> Non
               "label": "MMB Ads",
               "enabled": true,
               "sheet_poll_seconds": 45,
+              "context_fields": ["campaign_name", "ad_name"],
               "sheets": [
                 {
                   "id": "deuda",
                   "label": "Deuda",
                   "sheet_url": "https://docs.google.com/spreadsheets/d/deuda-sheet/edit",
-                  "sheet_tab_name": "deuda"
+                  "sheet_tab_name": "deuda",
+                  "context_field_mapping": {
+                    "Tipo de deuda": "¿qué_tipo_de_deuda_tiene_pendiente?",
+                    "Caso": "breve_descripción_de_su_caso"
+                  }
                 },
                 {
                   "id": "simple",
@@ -326,3 +475,57 @@ def test_client_lead_sources_load_from_config_file(monkeypatch, tmp_path) -> Non
     assert sources["mmb-ads-simple-luis"]["sheet_tab_name"] == "simple form setup 2026-05-25"
     assert sources["mmb-ads-simple-luis"]["sheet_poll_seconds"] == 45
     assert sources["mmb-ads-simple-luis"]["column_mapping"]["created_time"] == "timestamp"
+    assert sources["mmb-ads-deuda-ana"]["context_field_mapping"] == {
+        "Tipo de deuda": "¿qué_tipo_de_deuda_tiene_pendiente?",
+        "Caso": "breve_descripción_de_su_caso",
+    }
+    assert sources["mmb-ads-simple-luis"]["context_field_mapping"] == {
+        "campaign_name": "campaign_name",
+        "ad_name": "ad_name",
+    }
+    assert sources["mmb-ads-simple-luis"]["template_name"] == "konecta_client_lead_alert_context_es_v1"
+
+
+def test_client_lead_config_reload_preserves_existing_context_when_omitted(monkeypatch, tmp_path) -> None:
+    """Server-local config reloads should not erase API-configured context by omission."""
+    configure_delivery_db(monkeypatch, tmp_path)
+    seed_path = tmp_path / "seed-client-lead-sources.json"
+    config_path = tmp_path / "client-lead-sources.json"
+    seed_path.write_text('{"version": 1, "sources": []}', encoding="utf-8")
+    config_path.write_text(
+        """
+        {
+          "version": 1,
+          "sources": [
+            {
+              "id": "mmb-ads",
+              "label": "MMB Ads",
+              "sheet_url": "https://docs.google.com/spreadsheets/d/sheet-id/edit#gid=123",
+              "sheet_gid": "123",
+              "sheet_tab_name": "Leads",
+              "recipient_phone": "+5491122223333"
+            }
+          ]
+        }
+        """,
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CLIENT_LEAD_SOURCES_SEED_CONFIG_PATH", str(seed_path))
+    monkeypatch.setenv("CLIENT_LEAD_SOURCES_CONFIG_PATH", str(config_path))
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/client-lead-sources",
+            json=source_payload(context_field_mapping={"Ciudad": "city"}),
+        )
+        assert created.status_code == 200
+        assert created.json()["context_field_mapping"] == {"Ciudad": "city"}
+
+        result = client_lead_config.sync_client_lead_sources_from_config()
+        assert result.errors == []
+
+        payload = client.get("/api/client-lead-sources").json()
+
+    sources = {source["id"]: source for source in payload["sources"]}
+    assert sources["mmb-ads"]["context_field_mapping"] == {"Ciudad": "city"}
+    assert sources["mmb-ads"]["template_name"] == "konecta_client_lead_alert_context_es_v1"

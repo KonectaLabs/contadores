@@ -20,6 +20,8 @@ Get or infer:
 - one or more WhatsApp recipients: `{id, name, phone}`;
 - whether first sync should notify existing rows;
 - optional column mapping.
+- optional context fields to include in the WhatsApp alert as
+  `Display label = sheet value`.
 
 Delivery sends a plain `https://wa.me/{phone}` chat link without a `text=`
 parameter.
@@ -27,6 +29,11 @@ parameter.
 Default template:
 
 - name: `konecta_client_lead_alert_es_v2`
+- language: `es`
+
+Context template, used when `context_field_mapping` is configured:
+
+- name: `konecta_client_lead_alert_context_es_v1`
 - language: `es`
 
 ## Config File
@@ -68,11 +75,19 @@ Schema:
         "full_name": "name",
         "phone_number": "phone",
         "email": "email"
+      },
+      "context_field_mapping": {
+        "Tipo de deuda": "¿qué_tipo_de_deuda_tiene_pendiente?",
+        "Caso": "breve_descripción_de_su_caso"
       }
     }
   ]
 }
 ```
+
+`context_field_mapping` maps the label shown in WhatsApp to the source sheet
+column. A short form is also accepted as `context_fields: ["city"]`, which
+renders `city = <value>`.
 
 If the user gives multiple WhatsApp numbers, put them in `recipients`. The
 backend expands them into one Delivery source per recipient.
@@ -97,6 +112,13 @@ recipient phone matches a CRM lead.
 Reply links in templates must be direct plain `https://wa.me/{phone}` chat links
 without a `text=` parameter.
 
+When context fields are configured, the source should use
+`konecta_client_lead_alert_context_es_v1`. The backend auto-selects that
+template when a source still has the default template and context is added. The
+context template always needs 6 body params; when mapped values are blank, the
+backend sends `-` as the sixth param. If context is removed, the backend resets
+the source to `konecta_client_lead_alert_es_v2`.
+
 Use `enabled: false` when the template is not approved yet or when historical
 rows should not be notified until the user confirms.
 
@@ -119,6 +141,14 @@ curl -fsS -X POST -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
 ```bash
 uv run python src/scripts/whatsapp_templates.py check \
   --spec-file src/scripts/whatsapp_template_specs/konecta_client_lead_alert_es_v2.json \
+  --fail-on-unapproved
+```
+
+For context-enabled sources, also verify:
+
+```bash
+uv run python src/scripts/whatsapp_templates.py check \
+  --spec-file src/scripts/whatsapp_template_specs/konecta_client_lead_alert_context_es_v1.json \
   --fail-on-unapproved
 ```
 

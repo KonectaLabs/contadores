@@ -121,6 +121,9 @@ Each configured source supports:
 - `template_language`, default `es`
 - `column_mapping` for `source_id`, `created_time`, `full_name`,
   `phone_number`, and `email`
+- `context_field_mapping`, optional mapping of WhatsApp display label to sheet
+  column, rendered as `label = value` lines in the Delivery alert. Context
+  sources use the 6-param context template; blank context values render as `-`.
 
 The first sync imports every non-empty row in the source sheet and immediately
 queues valid new rows as `pending` notifications. If historical rows should not
@@ -170,6 +173,9 @@ The default WhatsApp template spec is versioned at
 `src/scripts/whatsapp_template_specs/konecta_client_lead_alert_es_v2.json`.
 It uses positional params: source label, lead name, lead phone, email, and the
 plain `https://wa.me/{phone}` chat link without a `text=` parameter.
+Context-enabled sources use
+`src/scripts/whatsapp_template_specs/konecta_client_lead_alert_context_es_v1.json`
+with the same first five params plus one multiline context param.
 
 ## Quick Start
 

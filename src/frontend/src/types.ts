@@ -479,6 +479,7 @@ export interface ClientLeadSource {
   template_name: string | null;
   template_language: string | null;
   column_mapping: Record<string, string>;
+  context_field_mapping: Record<string, string>;
   last_sync_at: string | null;
   last_sync_status: string | null;
   last_sync_note: string | null;

@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 
 from backend.client_lead_config import ClientLeadConfigSyncResult, sync_client_lead_sources_from_config
 from backend.database import (
+    CLIENT_LEAD_CONTEXT_TEMPLATE_NAME,
     CLIENT_LEAD_DEFAULT_COLUMN_MAPPING,
     CLIENT_LEAD_DEFAULT_TEMPLATE_LANGUAGE,
     CLIENT_LEAD_DEFAULT_TEMPLATE_NAME,
@@ -27,6 +28,7 @@ from backend.database import (
     ClientLeadSource,
     ContadoresLead,
     ContadoresLeadStage,
+    normalize_client_lead_context_field_mapping,
     normalize_client_lead_column_mapping,
     normalize_phone,
 )
@@ -43,6 +45,8 @@ HEADER_ALIASES = {
     "email": ("email", "correo", "correo_electronico", "mail", "e_mail"),
 }
 DEFAULT_PENDING_LIMIT = 100
+MAX_CONTEXT_VALUE_CHARS = 240
+MAX_CONTEXT_BLOCK_CHARS = 1000
 
 
 class ClientLeadSourceCommand(BaseModel):
@@ -60,6 +64,7 @@ class ClientLeadSourceCommand(BaseModel):
     template_name: str | None = CLIENT_LEAD_DEFAULT_TEMPLATE_NAME
     template_language: str | None = CLIENT_LEAD_DEFAULT_TEMPLATE_LANGUAGE
     column_mapping: dict[str, str] = Field(default_factory=lambda: dict(CLIENT_LEAD_DEFAULT_COLUMN_MAPPING))
+    context_field_mapping: dict[str, str] = Field(default_factory=dict)
 
 
 class ClientLeadSourceResponse(BaseModel):
@@ -78,6 +83,7 @@ class ClientLeadSourceResponse(BaseModel):
     template_name: str
     template_language: str
     column_mapping: dict[str, str]
+    context_field_mapping: dict[str, str]
     last_sync_at: str | None
     last_sync_status: str | None
     last_sync_note: str | None
@@ -266,6 +272,7 @@ def build_source_response(source: ClientLeadSource, counts: dict[str, dict[str, 
         template_name=source.template_name,
         template_language=source.template_language,
         column_mapping=source.column_mapping,
+        context_field_mapping=source.context_field_mapping,
         last_sync_at=format_timestamp_seconds(source.last_sync_at),
         last_sync_status=source.last_sync_status,
         last_sync_note=source.last_sync_note,
@@ -394,6 +401,55 @@ def get_mapped_value(row: dict[str, str], mapping: dict[str, str], field: str) -
     return ""
 
 
+def get_configured_row_value(row: dict[str, str], column_name: str) -> str:
+    """Return a row value for one configured sheet column."""
+    lookup = header_lookup(row)
+    configured = normalize_header(column_name)
+    if configured and configured in lookup:
+        return str(row.get(lookup[configured]) or "").strip()
+    return ""
+
+
+def clean_context_value(value: str) -> str:
+    """Keep one context value compact enough for WhatsApp templates."""
+    clean_value = " ".join(str(value or "").split()).strip()
+    if len(clean_value) <= MAX_CONTEXT_VALUE_CHARS:
+        return clean_value
+    return f"{clean_value[:MAX_CONTEXT_VALUE_CHARS - 3].rstrip()}..."
+
+
+def build_context_lines_from_row(source: ClientLeadSource, row: dict[str, str]) -> list[str]:
+    """Build configured context lines from one raw sheet row."""
+    lines: list[str] = []
+    mapping = normalize_client_lead_context_field_mapping(source.context_field_mapping)
+    for label, column_name in mapping.items():
+        value = clean_context_value(get_configured_row_value(row, column_name))
+        if value:
+            lines.append(f"{label} = {value}")
+    return lines
+
+
+def build_context_lines(source: ClientLeadSource, item: ClientLeadDelivery) -> list[str]:
+    """Build configured context lines for one Delivery alert."""
+    return build_context_lines_from_row(source, item.raw_row)
+
+
+def build_context_text_from_row(source: ClientLeadSource, row: dict[str, str]) -> str:
+    """Build the multiline context block from one raw sheet row."""
+    lines = build_context_lines_from_row(source, row)
+    if not lines:
+        return ""
+    text = "\n".join(lines)
+    if len(text) <= MAX_CONTEXT_BLOCK_CHARS:
+        return text
+    return f"{text[:MAX_CONTEXT_BLOCK_CHARS - 3].rstrip()}..."
+
+
+def build_context_text(source: ClientLeadSource, item: ClientLeadDelivery) -> str:
+    """Build the multiline context block used by WhatsApp and audit text."""
+    return build_context_text_from_row(source, item.raw_row)
+
+
 def parse_datetime(value: str | None) -> datetime | None:
     """Parse common Google/Meta timestamp strings."""
     clean_value = (value or "").strip()
@@ -448,28 +504,46 @@ def build_notification_text(
     phone: str,
     email: str | None,
     wa_link: str,
+    context_text: str = "",
 ) -> str:
     """Build the operator-visible notification copy stored for audit/UI."""
-    return "\n".join(
-        [
-            f"Nueva consulta de {source.label}",
-            f"Nombre: {name or '-'}",
-            f"WhatsApp: {phone or '-'}",
-            f"Email: {email or '-'}",
-            f"Chat: {wa_link or '-'}",
-        ]
-    )
+    parts = [
+        f"Nueva consulta de {source.label}",
+        f"Nombre: {name or '-'}",
+        f"WhatsApp: {phone or '-'}",
+        f"Email: {email or '-'}",
+    ]
+    if context_text:
+        parts.extend(["", "Contexto:", context_text])
+    parts.extend(["", f"Chat: {wa_link or '-'}"])
+    return "\n".join(parts)
 
 
 def build_template_params(source: ClientLeadSource, item: ClientLeadDelivery) -> list[str]:
     """Build positional params for the approved client lead alert template."""
-    return [
+    params = [
         source.label,
         item.full_name or "Sin nombre",
         item.normalized_phone or item.phone_number or "-",
         item.email or "-",
         item.wa_link or "-",
     ]
+    context_text = build_context_text(source, item)
+    if source.template_name == CLIENT_LEAD_CONTEXT_TEMPLATE_NAME or context_text:
+        params.append(context_text or "-")
+    return params
+
+
+def build_delivery_notification_text(source: ClientLeadSource, item: ClientLeadDelivery) -> str:
+    """Build the current notification text for one persisted Delivery row."""
+    return build_notification_text(
+        source,
+        name=item.full_name or "",
+        phone=item.normalized_phone or item.phone_number,
+        email=item.email,
+        wa_link=item.wa_link,
+        context_text=build_context_text(source, item),
+    )
 
 
 def normalize_delivery_error(command: ClientLeadDeliveryFailureCommand | ClientLeadDeliveryByExternalIdCommand) -> str:
@@ -740,6 +814,7 @@ def import_sheet_records(source: ClientLeadSource, records: list[dict[str, str]]
             phone=normalized_phone or phone,
             email=email,
             wa_link=wa_link,
+            context_text=build_context_text_from_row(source, row),
         )
         item, created = ClientLeadDelivery.upsert_from_sheet_row(
             source=source,
@@ -782,24 +857,23 @@ def import_sheet_records(source: ClientLeadSource, records: list[dict[str, str]]
 def build_copy_text(source: ClientLeadSource, item: ClientLeadDelivery) -> str:
     """Build clipboard-ready text for one client lead."""
     raw_lines = [f"- {key}: {value}" for key, value in item.raw_row.items()]
+    context_text = build_context_text(source, item)
     delivery_status = (
         item.delivery_status.value
         if isinstance(item.delivery_status, ClientLeadDeliveryStatus)
         else str(item.delivery_status)
     )
-    return "\n".join(
-        [
-            f"Fuente: {source.label}",
-            f"Estado: {delivery_status}",
-            f"Nombre: {item.full_name or '-'}",
-            f"WhatsApp: {item.normalized_phone or item.phone_number or '-'}",
-            f"Email: {item.email or '-'}",
-            f"Link: {item.wa_link or '-'}",
-            "",
-            "Datos completos del sheet:",
-            *raw_lines,
-        ]
-    ).strip() + "\n"
+    parts = [
+        f"Fuente: {source.label}",
+        f"Estado: {delivery_status}",
+        f"Nombre: {item.full_name or '-'}",
+        f"WhatsApp: {item.normalized_phone or item.phone_number or '-'}",
+        f"Email: {item.email or '-'}",
+    ]
+    if context_text:
+        parts.extend(["", "Contexto:", context_text])
+    parts.extend(["", f"Link: {item.wa_link or '-'}", "", "Datos completos del sheet:", *raw_lines])
+    return "\n".join(parts).strip() + "\n"
 
 
 def get_required_source(source_id: str) -> ClientLeadSource:
@@ -978,7 +1052,7 @@ async def list_pending_client_lead_notifications(
                 template_name=source.template_name,
                 template_language=source.template_language,
                 template_body_params=build_template_params(source, item),
-                delivered_text=item.notification_text,
+                delivered_text=build_delivery_notification_text(source, item),
             )
         )
     return ClientLeadPendingNotificationResponse(notifications=notifications)

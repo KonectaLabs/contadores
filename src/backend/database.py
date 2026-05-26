@@ -2068,6 +2068,7 @@ class ContadoresMessage(SQLModel, table=True):
 
 
 CLIENT_LEAD_DEFAULT_TEMPLATE_NAME = "konecta_client_lead_alert_es_v2"
+CLIENT_LEAD_CONTEXT_TEMPLATE_NAME = "konecta_client_lead_alert_context_es_v1"
 CLIENT_LEAD_DEFAULT_TEMPLATE_LANGUAGE = "es"
 CLIENT_LEAD_DEFAULT_COLUMN_MAPPING = {
     "source_id": "id",
@@ -2109,6 +2110,32 @@ def client_lead_default_column_mapping_json() -> str:
     return json.dumps(CLIENT_LEAD_DEFAULT_COLUMN_MAPPING, ensure_ascii=True)
 
 
+def normalize_client_lead_context_field_mapping(value: Any) -> dict[str, str]:
+    """Normalize operator-provided context fields for Delivery alerts."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value or "{}")
+        except json.JSONDecodeError:
+            value = {}
+    if isinstance(value, list):
+        value = {str(item): str(item) for item in value}
+    if not isinstance(value, dict):
+        return {}
+
+    mapping: dict[str, str] = {}
+    for raw_label, raw_column in value.items():
+        label = " ".join(str(raw_label or "").split()).strip()
+        column = " ".join(str(raw_column or "").split()).strip()
+        if label and column:
+            mapping[label] = column
+    return mapping
+
+
+def client_lead_default_context_field_mapping_json() -> str:
+    """Return the JSON default for Delivery context field mapping."""
+    return "{}"
+
+
 class ClientLeadSource(SQLModel, table=True):
     """One client-owned lead source that polls a Google Sheet and notifies a recipient."""
 
@@ -2128,6 +2155,7 @@ class ClientLeadSource(SQLModel, table=True):
     template_language: str = Field(default=CLIENT_LEAD_DEFAULT_TEMPLATE_LANGUAGE)
     prefilled_reply_text: str = Field(default="")
     column_mapping_json: str = Field(default_factory=client_lead_default_column_mapping_json)
+    context_field_mapping_json: str = Field(default_factory=client_lead_default_context_field_mapping_json)
     last_sync_at: datetime | None = Field(default=None, index=True)
     last_sync_status: str | None = Field(default=None)
     last_sync_note: str | None = Field(default=None)
@@ -2138,6 +2166,11 @@ class ClientLeadSource(SQLModel, table=True):
     def column_mapping(self) -> dict[str, str]:
         """Return normalized column mapping."""
         return normalize_client_lead_column_mapping(self.column_mapping_json)
+
+    @property
+    def context_field_mapping(self) -> dict[str, str]:
+        """Return normalized alert context field mapping."""
+        return normalize_client_lead_context_field_mapping(self.context_field_mapping_json)
 
     @classmethod
     def normalize_enabled(cls, enabled: bool | None) -> bool:
@@ -2190,6 +2223,7 @@ class ClientLeadSource(SQLModel, table=True):
         template_language: str | None = None,
         prefilled_reply_text: str | None = None,
         column_mapping: dict[str, str] | None = None,
+        context_field_mapping: dict[str, str] | list[str] | None = None,
     ) -> "ClientLeadSource":
         """Create or update one client lead source."""
         clean_label = " ".join((label or "").split()).strip()
@@ -2214,13 +2248,22 @@ class ClientLeadSource(SQLModel, table=True):
             item.recipient_name = " ".join((recipient_name or "").split()).strip() or None
             item.recipient_phone = clean_recipient_phone
             item.normalized_recipient_phone = normalized_recipient_phone
-            item.template_name = (template_name or CLIENT_LEAD_DEFAULT_TEMPLATE_NAME).strip()
+            clean_context_mapping = normalize_client_lead_context_field_mapping(
+                context_field_mapping if context_field_mapping is not None else item.context_field_mapping
+            )
+            clean_template_name = (template_name or CLIENT_LEAD_DEFAULT_TEMPLATE_NAME).strip()
+            if clean_context_mapping and clean_template_name == CLIENT_LEAD_DEFAULT_TEMPLATE_NAME:
+                clean_template_name = CLIENT_LEAD_CONTEXT_TEMPLATE_NAME
+            if not clean_context_mapping and clean_template_name == CLIENT_LEAD_CONTEXT_TEMPLATE_NAME:
+                clean_template_name = CLIENT_LEAD_DEFAULT_TEMPLATE_NAME
+            item.template_name = clean_template_name
             item.template_language = (template_language or CLIENT_LEAD_DEFAULT_TEMPLATE_LANGUAGE).strip() or "es"
             item.prefilled_reply_text = " ".join((prefilled_reply_text or "").split()).strip()
             item.column_mapping_json = json.dumps(
                 normalize_client_lead_column_mapping(column_mapping or item.column_mapping),
                 ensure_ascii=True,
             )
+            item.context_field_mapping_json = json.dumps(clean_context_mapping, ensure_ascii=False)
             item.updated_at = now
             session.add(item)
             session.commit()
@@ -5402,6 +5445,7 @@ def init_db() -> None:
     ensure_contadores_message_delivery_columns()
     ensure_contadores_message_template_columns()
     ensure_client_lead_source_sheet_tab_name_column()
+    ensure_client_lead_source_context_field_mapping_column()
     ensure_client_lead_delivery_sent_text_column()
     ensure_contadores_runtime_alert_columns()
     ensure_agent_run_codex_thread_columns()
@@ -5864,6 +5908,21 @@ def ensure_client_lead_source_sheet_tab_name_column() -> None:
             "ALTER TABLE client_lead_sources ADD COLUMN sheet_tab_name TEXT"
         )
         logger.info("Added missing client_lead_sources.sheet_tab_name column.")
+
+
+def ensure_client_lead_source_context_field_mapping_column() -> None:
+    """Add configurable Delivery alert context fields to existing sources."""
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        if "client_lead_sources" not in inspector.get_table_names():
+            return
+        columns = {column["name"] for column in inspector.get_columns("client_lead_sources")}
+        if "context_field_mapping_json" in columns:
+            return
+        connection.exec_driver_sql(
+            "ALTER TABLE client_lead_sources ADD COLUMN context_field_mapping_json TEXT NOT NULL DEFAULT '{}'"
+        )
+        logger.info("Added missing client_lead_sources.context_field_mapping_json column.")
 
 
 def ensure_client_lead_source_prefilled_reply_text_column() -> None:

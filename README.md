@@ -278,7 +278,7 @@ Client Lead Delivery:
 - Delivery es una superficie separada del CRM, Workstation y Runner para leads que
   se generan para clientes de Konecta.
 - Cada fuente guarda URL/GID del Google Sheet, intervalo de polling, destinatario
-  WhatsApp, mapping de columnas y template Meta.
+  WhatsApp, mapping de columnas, campos de contexto y template Meta.
 - Las fuentes tambien se pueden declarar por archivo. El seed versionado es
   `config/default-client-lead-sources.json`; el override editable del server es
   `CLIENT_LEAD_SOURCES_CONFIG_PATH` o `data/client-lead-sources.json`.
@@ -294,6 +294,12 @@ Client Lead Delivery:
 - Las filas importadas se guardan en tablas dedicadas:
   `client_lead_sources` y `client_lead_deliveries`. No contaminan
   `contadores_leads`, alertas humanas ni Workstation.
+- `context_field_mapping` permite elegir una vez por fuente que columnas del
+  sheet se agregan al WhatsApp como `Nombre del campo = valor`. Si una fuente
+  tiene contexto, usar `konecta_client_lead_alert_context_es_v1`; si no, seguir
+  con `konecta_client_lead_alert_es_v2`. El template con contexto siempre lleva
+  6 parametros; si las columnas vienen vacias, el backend manda `-` como sexto
+  parametro para no romper Meta.
 - Primer sync: importa todas las filas validas existentes y deja sus
   notificaciones `pending`. Los siguientes syncs son idempotentes por
   `(source_id, source_row_key)` y solo agregan filas nuevas.
@@ -337,6 +343,10 @@ Client Lead Delivery:
         "full_name": "name",
         "phone_number": "phone",
         "email": "email"
+      },
+      "context_field_mapping": {
+        "Tipo de deuda": "¿qué_tipo_de_deuda_tiene_pendiente?",
+        "Caso": "breve_descripción_de_su_caso"
       }
     }
   ]
@@ -364,6 +374,10 @@ Ejemplo con dos sheets para el mismo destinatario:
     "full_name": "name",
     "phone_number": "phone",
     "email": "email"
+  },
+  "context_field_mapping": {
+    "Ciudad": "city",
+    "Campaña": "campaign_name"
   }
 }
 ```

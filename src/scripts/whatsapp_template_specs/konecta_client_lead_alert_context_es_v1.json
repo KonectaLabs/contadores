@@ -1,0 +1,19 @@
+{
+  "templates": [
+    {
+      "name": "konecta_client_lead_alert_context_es_v1",
+      "language": "es",
+      "category": "UTILITY",
+      "parameter_format": "POSITIONAL",
+      "body": "Hola, tienes una nueva consulta generada por Konecta para {{1}}. Revisala apenas puedas y responde al lead desde WhatsApp.\n\nDatos del lead:\nNombre: {{2}}\nWhatsApp: {{3}}\nEmail: {{4}}\n\nPara abrir el chat con el lead, usa este enlace:\n{{5}}\n\nContexto:\n{{6}}\n\nSi el enlace no abre automaticamente, copia el telefono y responde manualmente.",
+      "example_values": [
+        "Rodrigo Monges Luces · Deuda",
+        "Eva Suarez",
+        "595981234567",
+        "eva@example.com",
+        "https://wa.me/595981234567",
+        "Tipo de deuda = Tarjeta de credito\nCaso = Me estafaron y necesito asesoramiento"
+      ]
+    }
+  ]
+}

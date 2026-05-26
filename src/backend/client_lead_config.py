@@ -16,6 +16,7 @@ from backend.database import (
     CLIENT_LEAD_DEFAULT_TEMPLATE_NAME,
     DATA_DIR,
     ClientLeadSource,
+    normalize_client_lead_context_field_mapping,
     normalize_client_lead_column_mapping,
     normalize_phone,
 )
@@ -87,6 +88,8 @@ class ClientLeadSheetDefinition(BaseModel):
     sheet_url: str = ""
     sheet_gid: str | None = None
     sheet_tab_name: str | None = None
+    context_fields: list[str] | None = None
+    context_field_mapping: dict[str, str] | None = None
 
     @field_validator("id")
     @classmethod
@@ -104,6 +107,30 @@ class ClientLeadSheetDefinition(BaseModel):
             return None
         return str(value).strip()
 
+    @field_validator("context_fields")
+    @classmethod
+    def strip_context_fields(cls, value: list[str] | None) -> list[str] | None:
+        """Normalize simple context field lists."""
+        if value is None:
+            return None
+        return [" ".join(str(item or "").split()).strip() for item in value if str(item or "").strip()]
+
+    @field_validator("context_field_mapping")
+    @classmethod
+    def normalize_context_field_mapping(cls, value: dict[str, str] | None) -> dict[str, str] | None:
+        """Normalize spreadsheet context field mapping."""
+        if value is None:
+            return None
+        return normalize_client_lead_context_field_mapping(value)
+
+    def resolved_context_field_mapping(self) -> dict[str, str] | None:
+        """Return sheet-level context mapping from explicit mapping or field list."""
+        if self.context_field_mapping is not None:
+            return self.context_field_mapping
+        if self.context_fields is None:
+            return None
+        return normalize_client_lead_context_field_mapping(self.context_fields)
+
 
 class ClientLeadSourceFileEntry(BaseModel):
     """One DB-ready Delivery source loaded from config files."""
@@ -120,6 +147,7 @@ class ClientLeadSourceFileEntry(BaseModel):
     template_name: str = CLIENT_LEAD_DEFAULT_TEMPLATE_NAME
     template_language: str = CLIENT_LEAD_DEFAULT_TEMPLATE_LANGUAGE
     column_mapping: dict[str, str] = Field(default_factory=lambda: dict(CLIENT_LEAD_DEFAULT_COLUMN_MAPPING))
+    context_field_mapping: dict[str, str] | None = None
 
 
 class ClientLeadSourceDefinition(BaseModel):
@@ -139,6 +167,8 @@ class ClientLeadSourceDefinition(BaseModel):
     template_name: str | None = CLIENT_LEAD_DEFAULT_TEMPLATE_NAME
     template_language: str | None = CLIENT_LEAD_DEFAULT_TEMPLATE_LANGUAGE
     column_mapping: dict[str, str] = Field(default_factory=lambda: dict(CLIENT_LEAD_DEFAULT_COLUMN_MAPPING))
+    context_fields: list[str] | None = None
+    context_field_mapping: dict[str, str] | None = None
 
     @field_validator("id")
     @classmethod
@@ -169,6 +199,30 @@ class ClientLeadSourceDefinition(BaseModel):
         """Normalize spreadsheet column mapping."""
         return normalize_client_lead_column_mapping(value)
 
+    @field_validator("context_fields")
+    @classmethod
+    def strip_context_fields(cls, value: list[str] | None) -> list[str] | None:
+        """Normalize simple context field lists."""
+        if value is None:
+            return None
+        return [" ".join(str(item or "").split()).strip() for item in value if str(item or "").strip()]
+
+    @field_validator("context_field_mapping")
+    @classmethod
+    def normalize_context_field_mapping(cls, value: dict[str, str] | None) -> dict[str, str] | None:
+        """Normalize spreadsheet context field mapping."""
+        if value is None:
+            return None
+        return normalize_client_lead_context_field_mapping(value)
+
+    def resolved_context_field_mapping(self) -> dict[str, str] | None:
+        """Return source-level context mapping from explicit mapping or field list."""
+        if self.context_field_mapping is not None:
+            return self.context_field_mapping
+        if self.context_fields is None:
+            return None
+        return normalize_client_lead_context_field_mapping(self.context_fields)
+
     def expand_recipients(self) -> list[ClientLeadSourceFileEntry]:
         """Return DB-ready sources, expanding multiple sheets and recipients."""
         sheets = self.sheets or [
@@ -186,6 +240,7 @@ class ClientLeadSourceDefinition(BaseModel):
         entries: list[ClientLeadSourceFileEntry] = []
         has_multiple_sheets = len(sheets) > 1
         has_multiple_recipients = len(recipients) > 1
+        source_context_mapping = self.resolved_context_field_mapping()
 
         for sheet in sheets:
             sheet_suffix = sheet.id or slugify_client_lead_source_id(
@@ -209,6 +264,7 @@ class ClientLeadSourceDefinition(BaseModel):
                 if has_multiple_recipients:
                     label_parts.append(recipient.name or recipient.phone or recipient_suffix)
 
+                sheet_context_mapping = sheet.resolved_context_field_mapping()
                 entries.append(
                     ClientLeadSourceFileEntry(
                         id=source_id,
@@ -223,6 +279,9 @@ class ClientLeadSourceDefinition(BaseModel):
                         template_name=(self.template_name or CLIENT_LEAD_DEFAULT_TEMPLATE_NAME).strip(),
                         template_language=(self.template_language or CLIENT_LEAD_DEFAULT_TEMPLATE_LANGUAGE).strip() or "es",
                         column_mapping=self.column_mapping,
+                        context_field_mapping=(
+                            sheet_context_mapping if sheet_context_mapping is not None else source_context_mapping
+                        ),
                     )
                 )
         return entries
@@ -300,6 +359,7 @@ def sync_client_lead_sources_from_config() -> ClientLeadConfigSyncResult:
                 template_name=entry.template_name,
                 template_language=entry.template_language,
                 column_mapping=entry.column_mapping,
+                context_field_mapping=entry.context_field_mapping,
             )
         except Exception as exc:
             error = f"{entry.id}: {exc}"

@@ -95,6 +95,7 @@ type ClientLeadSourceDraft = {
   template_name: string;
   template_language: string;
   column_mapping_text: string;
+  context_field_mapping_text: string;
 };
 type ClientLeadSourceMutationPayload = {
   id: string;
@@ -109,6 +110,7 @@ type ClientLeadSourceMutationPayload = {
   template_name: string | null;
   template_language: string | null;
   column_mapping: Record<string, string>;
+  context_field_mapping: Record<string, string>;
 };
 
 const stageFilters: Array<{
@@ -2528,6 +2530,17 @@ function ClientLeadDeliveryView({
                     <input value={draft.template_language} onChange={(event) => updateDraft("template_language", event.target.value)} placeholder="es" />
                   </label>
                 </div>
+
+                <label className="ct-field">
+                  <span>Context fields</span>
+                  <textarea
+                    value={draft.context_field_mapping_text}
+                    onChange={(event) => updateDraft("context_field_mapping_text", event.target.value)}
+                    rows={4}
+                    spellCheck={false}
+                    placeholder={'{\n  "Tipo de deuda": "¿qué_tipo_de_deuda_tiene_pendiente?",\n  "Caso": "breve_descripción_de_su_caso"\n}'}
+                  />
+                </label>
 
                 <label className="ct-field">
                   <span>Column mapping</span>
@@ -5651,6 +5664,7 @@ function buildBlankClientLeadSourceDraft(): ClientLeadSourceDraft {
       phone_number: "phone_number",
       email: "email",
     }, null, 2),
+    context_field_mapping_text: "{}",
   };
 }
 
@@ -5668,6 +5682,7 @@ function clientLeadSourceToDraft(source: ClientLeadSource): ClientLeadSourceDraf
     template_name: source.template_name ?? "",
     template_language: source.template_language ?? "es",
     column_mapping_text: JSON.stringify(source.column_mapping ?? {}, null, 2),
+    context_field_mapping_text: JSON.stringify(source.context_field_mapping ?? {}, null, 2),
   };
 }
 
@@ -5687,6 +5702,7 @@ function clientLeadSourcePayloadFromDraft(draft: ClientLeadSourceDraft): ClientL
     template_name: draft.template_name.trim() || null,
     template_language: draft.template_language.trim() || null,
     column_mapping: parseClientLeadColumnMapping(draft.column_mapping_text),
+    context_field_mapping: parseClientLeadColumnMapping(draft.context_field_mapping_text),
   };
 }
 
