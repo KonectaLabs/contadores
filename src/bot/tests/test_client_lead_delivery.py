@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import httpx
 import utils
-from providers import DeliveryReceipt, WhatsAppMessageStatusEvent
+from providers import DeliveryReceipt, WhatsAppMessageStatusEvent, WhatsAppProvider
 
 
 def test_fetch_and_dispatch_client_lead_notifications(monkeypatch) -> None:
@@ -93,6 +93,11 @@ def test_fetch_and_dispatch_client_lead_notifications(monkeypatch) -> None:
             "sent_text": "Nueva consulta de MMB Ads",
         },
     )
+
+
+def test_whatsapp_template_body_params_are_meta_safe() -> None:
+    """Template params should not trip Meta's newline/tab/spacing validation."""
+    assert WhatsAppProvider._clean_template_body_param("Caso:\nDeuda\tcon     banco") == "Caso: Deuda con banco"
 
 
 def test_whatsapp_status_falls_back_to_client_lead_delivery(monkeypatch) -> None:

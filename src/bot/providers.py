@@ -1581,6 +1581,11 @@ class WhatsAppProvider:
             raise RuntimeError(f"Invalid WhatsApp recipient value: {raw!r}")
         return digits
 
+    @staticmethod
+    def _clean_template_body_param(value: Any) -> str:
+        """Return one Meta-safe template text param."""
+        return " ".join(str(value or "").split()).strip()
+
     async def send_message(self, to: str, text: str) -> DeliveryReceipt:
         """Send one WhatsApp text message with size-aware splitting."""
         if not self._wa:
@@ -1617,11 +1622,12 @@ class WhatsAppProvider:
             if normalized_language.startswith("en")
             else TemplateLanguage.SPANISH
         )
+        clean_body_params = [self._clean_template_body_param(value) for value in body_params]
         sent_msg = await self._wa.send_template(
             to=recipient,
             name=(template_name or "").strip(),
             language=resolved_language,
-            params=[BodyText.params(*body_params)] if body_params else None,
+            params=[BodyText.params(*clean_body_params)] if clean_body_params else None,
         )
         outbound_id = str(getattr(sent_msg, "id", sent_msg)).strip()
         if not outbound_id:
