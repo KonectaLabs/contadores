@@ -2475,7 +2475,7 @@ class ClientLeadDelivery(SQLModel, table=True):
                 )
 
             item.row_number = row_number
-            item.raw_row_json = json.dumps(raw_row, ensure_ascii=False, sort_keys=True)
+            item.raw_row_json = json.dumps(raw_row, ensure_ascii=False)
             item.created_time = created_time
             item.full_name = " ".join((full_name or "").split()).strip() or None
             item.phone_number = (phone_number or "").strip()

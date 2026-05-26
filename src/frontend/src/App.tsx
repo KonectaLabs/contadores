@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { ClipboardEvent, DragEvent, FormEvent, ReactNode } from "react";
+import type { CSSProperties, ClipboardEvent, DragEvent, FormEvent, ReactNode } from "react";
 import {
   ArrowsClockwise,
   ArrowSquareOut,
@@ -2281,7 +2281,7 @@ function ClientLeadDeliveryView({
   const selectedGroupTone = selectedGroup ? deliveryContactTone(selectedGroup) : selectedSource ? deliverySourceTone(selectedSource) : "muted";
   const selectedGroupStatus = selectedGroup ? deliveryContactStatusLabel(selectedGroup) : selectedSource?.enabled ? humanize(selectedSource.last_sync_status || "active") : "Paused";
   const visibleLeads = activeSheetFilter === "all" ? leads : leads.filter((lead) => lead.source_id === activeSheetFilter);
-  const sourceById = new Map(sources.map((source) => [source.id, source]));
+  const visibleSheetSections = buildDeliverySheetLeadSections(selectedSources, visibleLeads, activeSheetFilter);
   const totalLeads = sources.reduce((total, source) => total + deliverySourceCount(source, "total"), 0);
   const failedLeads = contactGroups.reduce((total, group) => total + group.issues, 0);
   const deliveredLeads = sources.reduce((total, source) => total + deliverySourceCount(source, "sent") + deliverySourceCount(source, "delivered"), 0);
@@ -2652,100 +2652,111 @@ function ClientLeadDeliveryView({
               ) : leadsLoading && !visibleLeads.length ? (
                 <p className="ct-empty">Loading contact leads...</p>
               ) : visibleLeads.length ? (
-                <div className="delivery-table-wrap">
-                  <table className="delivery-table">
-                    <thead>
-                      <tr>
-                        <th>Ingresó</th>
-                        <th>Lead</th>
-                        <th>Contacto</th>
-                        <th>Sheet</th>
-                        <th>Notificación</th>
-                        <th />
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {visibleLeads.map((lead) => {
-                        const waLink = lead.wa_link || buildWaLink(lead.phone_number);
-                        const retryable = isRetryableClientLead(lead);
-                        const leadSource = sourceById.get(lead.source_id);
-                        const campaign = firstRawValue(lead, ["campaign_name", "adset_name", "ad_name", "form_name"]);
-                        const city = firstRawValue(lead, ["city", "platform"]);
-                        return (
-                          <tr key={lead.id}>
-                            <td>
-                              <div className="delivery-age-cell">
-                                <strong>{clientLeadAgeText(lead)}</strong>
-                                <span>Row {lead.row_number}</span>
-                                {lead.created_time ? <small>{shortDate(lead.created_time)}</small> : null}
-                              </div>
-                            </td>
-                            <td>
-                              <div className="delivery-lead-identity">
-                                <strong>{lead.full_name || lead.phone_number || `Row ${lead.row_number}`}</strong>
-                                <span>{firstRawValue(lead, ["lead_status"]) || "new lead"}</span>
-                              </div>
-                            </td>
-                            <td>
-                              <div className="delivery-contact-cell">
-                                <strong>{displayLeadPhone(lead.phone_number)}</strong>
-                                <span>{lead.email || "No email"}</span>
-                                {waLink ? (
-                                  <a href={waLink} target="_blank" rel="noreferrer">
-                                    <ArrowSquareOut size={13} weight="bold" />
-                                    Chat
-                                  </a>
-                                ) : null}
-                              </div>
-                            </td>
-                            <td>
-                              <div className="delivery-sheet-cell">
-                                <strong>{leadSource ? deliverySheetLabel(leadSource) : city || "-"}</strong>
-                                <span>{campaign || city || "-"}</span>
-                                {leadSource?.last_sync_status === "failed" ? <small>{deliverySourceIssueText(leadSource)}</small> : null}
-                              </div>
-                            </td>
-                            <td>
-                              <div className="delivery-status-cell">
-                                <span className="delivery-status-pill" data-tone={clientLeadDeliveryTone(lead)}>
-                                  {humanize(lead.delivery_status || (lead.block_reason ? "blocked" : "pending"))}
-                                </span>
-                                <small>{deliveryStatusDetail(lead)}</small>
-                                {lead.last_delivery_error || lead.block_reason ? (
-                                  <p>{lead.last_delivery_error || lead.block_reason}</p>
-                                ) : null}
-                              </div>
-                            </td>
-                            <td>
-                              <div className="delivery-row-actions">
-                                <button type="button" className="ct-btn ct-btn-ghost" onClick={() => onCopyLead(lead)}>
-                                  <Copy size={14} weight="bold" />
-                                  Copy
-                                </button>
-                                <button
-                                  type="button"
-                                  className="ct-btn ct-btn-ghost"
-                                  disabled={actionBusy === `delivery-copy-${lead.id}`}
-                                  onClick={() => onCopyLeadAll(lead)}
-                                >
-                                  {actionBusy === `delivery-copy-${lead.id}` ? "Copying..." : "Copy all"}
-                                </button>
-                                <button
-                                  type="button"
-                                  className="ct-btn ct-btn-ghost"
-                                  disabled={!retryable || actionBusy === `delivery-retry-${lead.id}`}
-                                  onClick={() => onRetryLead(lead)}
-                                >
-                                  <ArrowsClockwise size={14} weight="bold" />
-                                  {actionBusy === `delivery-retry-${lead.id}` ? "Retrying..." : "Retry"}
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                <div className="delivery-sheet-sections">
+                  {visibleSheetSections.map((section) => (
+                    <section className="delivery-sheet-section" key={section.source.id}>
+                      <header className="delivery-sheet-section-head">
+                        <div>
+                          <span>{section.source.sheet_tab_name || section.source.sheet_gid || "Sheet"}</span>
+                          <strong>{deliverySheetLabel(section.source)}</strong>
+                        </div>
+                        <div className="delivery-sheet-section-meta">
+                          <span>{compactNumber(section.leads.length)} rows</span>
+                          <span>{compactNumber(section.columns.length)} columns</span>
+                          <span className="delivery-status-pill" data-tone={deliverySourceTone(section.source)}>
+                            {deliverySourceStatusIcon(section.source)}
+                            {humanize(section.source.last_sync_status || "active")}
+                          </span>
+                        </div>
+                      </header>
+                      <div className="delivery-table-wrap">
+                        <table
+                          className="delivery-table delivery-sheet-table"
+                          style={{ "--delivery-table-min-width": `${deliverySheetTableWidth(section.columns.length)}px` } as CSSProperties}
+                        >
+                          <thead>
+                            <tr>
+                              <th className="delivery-row-number-column">Row</th>
+                              {section.columns.map((column) => (
+                                <th key={column}>{column}</th>
+                              ))}
+                              <th className="delivery-notification-column">Delivery</th>
+                              <th className="delivery-actions-column" />
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {section.leads.map((lead) => {
+                              const waLink = lead.wa_link || buildWaLink(lead.phone_number);
+                              const retryable = isRetryableClientLead(lead);
+                              return (
+                                <tr key={lead.id}>
+                                  <td className="delivery-row-number-cell" data-label="Row">
+                                    <div className="delivery-age-cell">
+                                      <strong>{lead.row_number}</strong>
+                                      <span>{clientLeadAgeText(lead)}</span>
+                                      {lead.created_time ? <small>{shortDate(lead.created_time)}</small> : null}
+                                    </div>
+                                  </td>
+                                  {section.columns.map((column) => {
+                                    const value = formatRawValue(lead.raw_row?.[column]).trim();
+                                    return (
+                                      <td key={`${lead.id}:${column}`} className="delivery-sheet-value-cell" data-label={column}>
+                                        <span className={value ? "delivery-sheet-value" : "delivery-sheet-value empty"}>
+                                          {value || "-"}
+                                        </span>
+                                      </td>
+                                    );
+                                  })}
+                                  <td data-label="Delivery">
+                                    <div className="delivery-status-cell">
+                                      <span className="delivery-status-pill" data-tone={clientLeadDeliveryTone(lead)}>
+                                        {humanize(lead.delivery_status || (lead.block_reason ? "blocked" : "pending"))}
+                                      </span>
+                                      <small>{deliveryStatusDetail(lead)}</small>
+                                      {lead.last_delivery_error || lead.block_reason ? (
+                                        <p>{lead.last_delivery_error || lead.block_reason}</p>
+                                      ) : null}
+                                    </div>
+                                  </td>
+                                  <td data-label="Actions">
+                                    <div className="delivery-row-actions">
+                                      {waLink ? (
+                                        <a className="ct-btn ct-btn-ghost delivery-action-link" href={waLink} target="_blank" rel="noreferrer">
+                                          <ArrowSquareOut size={14} weight="bold" />
+                                          Chat
+                                        </a>
+                                      ) : null}
+                                      <button type="button" className="ct-btn ct-btn-ghost" onClick={() => onCopyLead(lead)}>
+                                        <Copy size={14} weight="bold" />
+                                        Copy
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="ct-btn ct-btn-ghost"
+                                        disabled={actionBusy === `delivery-copy-${lead.id}`}
+                                        onClick={() => onCopyLeadAll(lead)}
+                                      >
+                                        {actionBusy === `delivery-copy-${lead.id}` ? "Copying..." : "Copy all"}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="ct-btn ct-btn-ghost"
+                                        disabled={!retryable || actionBusy === `delivery-retry-${lead.id}`}
+                                        onClick={() => onRetryLead(lead)}
+                                      >
+                                        <ArrowsClockwise size={14} weight="bold" />
+                                        {actionBusy === `delivery-retry-${lead.id}` ? "Retrying..." : "Retry"}
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </section>
+                  ))}
                 </div>
               ) : (
                 <p className="ct-empty">No leads loaded for this contact yet.</p>
@@ -5743,6 +5754,12 @@ type DeliveryContactGroup = {
   issues: number;
 };
 
+type DeliverySheetLeadSection = {
+  source: ClientLeadSource;
+  leads: ClientLead[];
+  columns: string[];
+};
+
 function buildDeliveryContactGroups(sources: ClientLeadSource[]): DeliveryContactGroup[] {
   const groups = new Map<string, ClientLeadSource[]>();
   for (const source of sources.slice().sort(compareDeliverySources)) {
@@ -5774,6 +5791,49 @@ function buildDeliveryContactGroups(sources: ClientLeadSource[]): DeliveryContac
       };
     })
     .sort((left, right) => left.label.localeCompare(right.label) || left.key.localeCompare(right.key));
+}
+
+function buildDeliverySheetLeadSections(
+  sources: ClientLeadSource[],
+  visibleLeads: ClientLead[],
+  activeSheetFilter: string,
+): DeliverySheetLeadSection[] {
+  const leadsBySource = new Map<string, ClientLead[]>();
+  for (const lead of visibleLeads) {
+    leadsBySource.set(lead.source_id, [...(leadsBySource.get(lead.source_id) ?? []), lead]);
+  }
+
+  return sources
+    .filter((source) => activeSheetFilter === "all" || source.id === activeSheetFilter)
+    .map((source) => {
+      const sourceLeads = (leadsBySource.get(source.id) ?? []).slice().sort(compareClientLeads);
+      return {
+        source,
+        leads: sourceLeads,
+        columns: deliverySheetColumns(sourceLeads),
+      };
+    })
+    .filter((section) => section.leads.length > 0);
+}
+
+function deliverySheetColumns(leads: ClientLead[]): string[] {
+  const columns: string[] = [];
+  const seen = new Set<string>();
+  for (const lead of leads) {
+    for (const rawKey of Object.keys(lead.raw_row ?? {})) {
+      const key = String(rawKey || "").trim();
+      if (!key || seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      columns.push(key);
+    }
+  }
+  return columns;
+}
+
+function deliverySheetTableWidth(columnCount: number): number {
+  return Math.max(920, 320 + columnCount * 178);
 }
 
 function deliveryContactSourceIdsFor(sources: ClientLeadSource[], selectedSourceId: string | null): string[] {

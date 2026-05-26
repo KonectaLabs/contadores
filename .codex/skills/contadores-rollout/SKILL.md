@@ -211,6 +211,12 @@ curl -fsS -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
   http://127.0.0.1:8000/api/client-lead-deliveries/pending
 ```
 
+When verifying the frontend, open Delivery and confirm the selected contact
+shows one lead section per sheet/campaign with the real Google Sheet headers as
+columns. The table should scroll horizontally inside the sheet area, and CRM
+chat/Delivery tables must remain reachable when browser zoom reduces the
+available viewport.
+
 After the bot sends a Delivery notification, verify that the provider callback
 updates either `PUT /api/client-lead-deliveries/{delivery_id}/delivery` or
 `PUT /api/client-lead-deliveries/delivery/by-external-id`. Failed sends should
