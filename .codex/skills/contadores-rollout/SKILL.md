@@ -134,6 +134,9 @@ uv run python src/scripts/requeue_failed_contadores_messages.py
    the audio transcription path, runtime fallback alerts, plus the scheduling
    handoff path that queues `scheduling_handoff_confirmation`.
 
+Use `./deploy_to_server.sh` and `./server_logs.sh`; both scripts connect to
+`149.50.136.121` on SSH port `5389`.
+
 For a new niche funnel, create/edit the funnel definition first, deploy code,
 then verify that funnel against its configured sheet and WhatsApp routing.
 

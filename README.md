@@ -939,6 +939,8 @@ Deploy remoto:
 ./deploy_to_server.sh
 ```
 
+El script usa SSH en `149.50.136.121:5389`.
+
 Logs remotos:
 
 ```bash

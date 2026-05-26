@@ -1,3 +1,3 @@
 #!/bin/bash
 cd "$(dirname "$0")"
-ssh root@149.50.136.121 'bash /root/logs_contadores.sh'
+ssh -p 5389 root@149.50.136.121 'bash /root/logs_contadores.sh'
