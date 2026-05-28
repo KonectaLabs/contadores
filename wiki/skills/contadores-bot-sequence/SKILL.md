@@ -9,8 +9,8 @@ Use this skill when editing or reviewing the WhatsApp automation flow.
 
 Contadores is now the first configured funnel in the multi-funnel platform.
 Default copy, template names, video strategy definitions, and strategy weights
-come from the funnel definition layer. If `data/funnels.json` exists, it can
-override the built-in Contadores definition.
+come from the funnel definition layer. `config/default-funnels.json` seeds the
+first-run config, and `data/funnels.json` can override it per server.
 
 ## Current sequence
 
@@ -209,7 +209,7 @@ marks the lead as `booked` and pauses automation.
 
 Operators have these backoffice actions:
 
-- `send-calendly`: send the configured Calendly intro text and then `https://calendly.com/facundogoiriz/crecimiento`.
+- `send-calendly`: send the configured Calendly intro text and then the active funnel's `calendly_base_url`.
 - `send-calendly-link`: send only the Calendly URL.
 - `send-accountant-page-example-video`: send the reusable client-page example
   MP4 `data/contadores/videos/cliente-pagina.mp4` with the accountant copy.
@@ -219,7 +219,7 @@ Operators have these backoffice actions:
 Both actions record `calendly_sent_at` and keep the lead in Manual.
 Automation must not send Calendly automatically in the conversational bot flow;
 it asks for email, day, and time, then hands the scheduling details to Facu.
-The Calendly URL is fixed across Contadores, Abogados, and every other funnel.
+The Calendly URL comes from the active funnel's `calendly_base_url`.
 
 ## Promo solo pagina automation
 
@@ -312,8 +312,9 @@ the price toward `99` and `49` USD.
 
 - This flow runs from sheet-imported leads and Click-to-WhatsApp inbounds.
 - Strategy rollout weights are stored in Contadores config as `strategy_weights` and can be seeded with `CONTADORES_STRATEGY_WEIGHTS_JSON`.
-- Funnel definitions are stored in `FUNNELS_CONFIG_PATH` or `data/funnels.json`.
-  The UI and Codex edit the same file.
+- Funnel definitions are seeded from `config/default-funnels.json` and can be
+  overridden in `FUNNELS_CONFIG_PATH` or `data/funnels.json`. The UI and Codex
+  edit the same override file.
 - Click-to-WhatsApp ad IDs are stored in each funnel as `whatsapp_referral_source_ids`.
   Contadores should stay empty when it has no real campaign; currently the real ad source belongs to Abogados.
 - Inbound WhatsApp messages with no matching reply/referral are saved in the built-in `general` inbox, except the approved Abogados prefilled proposal text route.

@@ -1,8 +1,8 @@
-"""Shared Calendly configuration."""
+"""Small helpers for funnel-owned Calendly URLs."""
 
-KONECTA_CALENDLY_URL = "https://calendly.com/facundogoiriz/crecimiento"
+from __future__ import annotations
 
 
-def normalize_calendly_url(_url: str | None = None) -> str:
-    """Return the only Calendly URL used by every funnel."""
-    return KONECTA_CALENDLY_URL
+def normalize_calendly_url(url: str | None = None) -> str:
+    """Normalize a configured booking URL without choosing one in code."""
+    return (url or "").strip().rstrip("/")

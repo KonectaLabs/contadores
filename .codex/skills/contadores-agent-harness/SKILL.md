@@ -145,5 +145,6 @@ already delivered, do not send it again in later revisions; send only the
 current page/video/link deliverables.
 
 For domains, propose simple ideas, use `check_domain_availability`, and treat
-prices as estimates. Until Stripe and Cloudflare production tools exist, hand
-off before promising payment, domain purchase, or final custom-domain deployment.
+prices as estimates. Authenticated Cloudflare purchase/setup is operator-only
+through `uv run python -m backend.cloudflare_registrar`; hand off before any
+billable registration, payment promise, or final custom-domain deployment.

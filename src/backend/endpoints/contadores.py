@@ -67,7 +67,7 @@ from backend.database import (
     normalize_workstation_slug,
 )
 from backend.funnel_config import GENERAL_INBOX_FUNNEL_ID, get_contadores_funnel
-from backend.funnel_config import get_file_backed_funnel, get_funnel, upsert_funnel
+from backend.funnel_config import get_file_backed_funnel, get_funnel, get_funnel_override, upsert_funnel
 from backend.funnel_config import list_funnels, list_funnels_by_whatsapp_referral_source_id
 from backend.lead_template_utils import (
     opener_template_body_params,
@@ -888,8 +888,16 @@ def create_unanswered_question_alert(
 
 
 def build_calendly_url(*, base_url: str) -> str:
-    """Return the shared Calendly URL without per-lead tracking."""
+    """Return the funnel-configured Calendly URL without per-lead tracking."""
     return normalize_calendly_url(base_url)
+
+
+def require_calendly_url(config: ContadoresConfig) -> str:
+    """Return the configured Calendly URL or reject the manual send."""
+    calendly_url = build_calendly_url(base_url=config.calendly_base_url)
+    if calendly_url:
+        return calendly_url
+    raise HTTPException(status_code=400, detail="Calendly URL is not configured for this funnel.")
 
 
 def build_funnel_strategy_weights(funnel) -> dict[str, dict[str, int]]:
@@ -916,24 +924,34 @@ def choose_contadores_strategy(
     )
 
 
-def apply_funnel_to_config(config: ContadoresConfig, funnel) -> ContadoresConfig:
-    """Overlay file-backed funnel fields onto the legacy runtime config row."""
-    config.enabled = funnel.enabled
-    config.sheet_url = funnel.sheet_url
-    config.sheet_gid = funnel.sheet_gid
-    config.sheet_poll_seconds = funnel.sheet_poll_seconds
-    config.loom_url = funnel.loom_url
-    config.calendly_base_url = funnel.calendly_base_url
-    config.alert_emails_json = json.dumps(funnel.alert_emails)
-    config.initial_reply_quiet_seconds = funnel.initial_reply_quiet_seconds
-    config.post_loom_min_seconds = funnel.post_loom_min_seconds
-    config.post_loom_quiet_seconds = funnel.post_loom_quiet_seconds
-    config.strategy_weights_json = json.dumps(build_funnel_strategy_weights(funnel), ensure_ascii=True)
+def apply_funnel_to_config(config: ContadoresConfig, funnel, *, override_enabled: bool = True) -> ContadoresConfig:
+    """Fill the legacy runtime config row from a file-backed funnel."""
+    config.enabled = funnel.enabled if override_enabled else bool(config.enabled or funnel.enabled)
+    if not config.sheet_url:
+        config.sheet_url = funnel.sheet_url
+    if not config.sheet_gid:
+        config.sheet_gid = funnel.sheet_gid
+    if config.sheet_poll_seconds == 30:
+        config.sheet_poll_seconds = funnel.sheet_poll_seconds
+    if not config.loom_url:
+        config.loom_url = funnel.loom_url
+    if not config.calendly_base_url:
+        config.calendly_base_url = funnel.calendly_base_url
+    if not config.alert_emails:
+        config.alert_emails_json = json.dumps(funnel.alert_emails)
+    if config.initial_reply_quiet_seconds == 30:
+        config.initial_reply_quiet_seconds = funnel.initial_reply_quiet_seconds
+    if config.post_loom_min_seconds == 300:
+        config.post_loom_min_seconds = funnel.post_loom_min_seconds
+    if config.post_loom_quiet_seconds == 30:
+        config.post_loom_quiet_seconds = funnel.post_loom_quiet_seconds
+    if not config.strategy_weights:
+        config.strategy_weights_json = json.dumps(build_funnel_strategy_weights(funnel), ensure_ascii=True)
     return config
 
 
 def get_effective_contadores_config() -> ContadoresConfig:
-    """Return runtime config, preferring `data/funnels.json` when Contadores is file-backed."""
+    """Return runtime config for the Contadores funnel."""
     return get_effective_funnel_config("contadores")
 
 
@@ -941,12 +959,13 @@ def get_effective_funnel_config(funnel_id: str | None = None) -> ContadoresConfi
     """Return runtime config for one funnel, overlaying file-backed fields when present."""
     config = ContadoresConfig.get()
     clean_funnel_id = (funnel_id or "contadores").strip() or "contadores"
-    funnel = get_file_backed_funnel(clean_funnel_id)
-    if funnel is None and clean_funnel_id != "contadores":
-        funnel = get_funnel(clean_funnel_id)
-    if funnel is None:
+    override_funnel = get_funnel_override(clean_funnel_id)
+    if override_funnel is not None:
+        return apply_funnel_to_config(config, override_funnel, override_enabled=True)
+    seed_funnel = get_funnel(clean_funnel_id)
+    if seed_funnel is None:
         return config
-    return apply_funnel_to_config(config, funnel)
+    return apply_funnel_to_config(config, seed_funnel, override_enabled=False)
 
 
 def apply_config_update_to_file_backed_funnel(command: "UpdateContadoresConfigCommand") -> None:
@@ -2470,6 +2489,7 @@ def send_page_example_video(
 
 def send_calendly_sequence(*, lead: ContadoresLead, config: ContadoresConfig) -> list[ContadoresMessage]:
     """Queue the Calendly explanation text + configured URL."""
+    calendly_url_text = require_calendly_url(config)
     intro = enqueue_lead_outbound(
         lead=lead,
         text=build_calendly_intro_text(lead.funnel_id),
@@ -2477,7 +2497,7 @@ def send_calendly_sequence(*, lead: ContadoresLead, config: ContadoresConfig) ->
     )
     calendly_url = enqueue_lead_outbound(
         lead=lead,
-        text=build_calendly_url(base_url=config.calendly_base_url),
+        text=calendly_url_text,
         sequence_step="calendly_url",
         dispatch_after=intro.dispatch_after,
     )
@@ -3028,7 +3048,7 @@ def send_calendly_link_only(*, lead: ContadoresLead, config: ContadoresConfig) -
     """Queue only the configured Calendly URL and mark the milestone."""
     calendly_url = enqueue_lead_outbound(
         lead=lead,
-        text=build_calendly_url(base_url=config.calendly_base_url),
+        text=require_calendly_url(config),
         sequence_step="calendly_url",
     )
     ContadoresLead.update_flow_state(

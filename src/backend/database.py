@@ -814,7 +814,7 @@ def _default_contadores_strategy_weights_json() -> str:
 
 
 def _normalize_contadores_calendly_base_url(base_url: str | None) -> str:
-    """Return the only Calendly URL used by Contadores."""
+    """Normalize the configured Contadores booking URL."""
     return normalize_calendly_url(base_url)
 
 
@@ -831,13 +831,7 @@ class ContadoresConfig(SQLModel, table=True):
         default_factory=lambda: max(30, int(os.getenv("CONTADORES_SHEET_POLL_SECONDS", "30")))
     )
     loom_url: str = Field(
-        default_factory=lambda: (
-            os.getenv(
-                "CONTADORES_LOOM_URL",
-                "https://www.loom.com/share/36b054dea1c94bbaa7470014c2337fca",
-            ).strip()
-            or "https://www.loom.com/share/36b054dea1c94bbaa7470014c2337fca"
-        )
+        default_factory=lambda: (os.getenv("CONTADORES_LOOM_URL", "") or "").strip()
     )
     calendly_base_url: str = Field(
         default_factory=lambda: _normalize_contadores_calendly_base_url(
@@ -949,7 +943,7 @@ class ContadoresConfig(SQLModel, table=True):
             if sheet_poll_seconds is not None:
                 item.sheet_poll_seconds = max(30, int(sheet_poll_seconds))
             if loom_url is not None:
-                item.loom_url = (loom_url or "").strip() or item.loom_url
+                item.loom_url = (loom_url or "").strip()
             if calendly_base_url is not None:
                 item.calendly_base_url = _normalize_contadores_calendly_base_url(calendly_base_url)
             if alert_emails is not None:

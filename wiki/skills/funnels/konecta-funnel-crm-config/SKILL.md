@@ -8,6 +8,7 @@ description: Configure the Contadores/Konecta CRM as a multi-funnel platform. Us
 ## Goal
 
 The app should treat Contadores as one configured funnel, not the only product. New funnels should be addable from the UI and from a config file that Codex can edit.
+The seed plus override files are the source of truth for portable installs: a new user can start from `config/default-funnels.json`, then add a campaign visually or by writing `FUNNELS_CONFIG_PATH` / `data/funnels.json`.
 
 ## Funnel Config Fields
 
@@ -28,8 +29,8 @@ Each funnel needs:
 - `loom_intro_text`;
 - `video_check_text`;
 - `calendly_intro_text`;
-- `calendly_base_url`: always `https://calendly.com/facundogoiriz/crecimiento`;
-- `alert_emails`;
+- `calendly_base_url`: booking URL owned by this funnel config;
+- `alert_emails`: real operator/admin recipients for this server; keep the portable seed empty until a client/team owns the install;
 - `whatsapp_referral_source_ids`: Meta Click-to-WhatsApp `referral.source_id` values that should create/reuse leads in this funnel;
 - wait windows:
   - `initial_reply_quiet_seconds`;
@@ -50,7 +51,13 @@ Keep backwards compatibility with Contadores env names:
 - `CONTADORES_SHEET_URL`
 - `CONTADORES_SHEET_GID`
 
-For new funnels, prefer explicit funnel config. Env can seed defaults, but the app should read configured funnel definitions at runtime.
+For all new funnels, use explicit funnel config. `config/default-funnels.json` is a neutral first-run seed with no personal admin emails, private calendars, client sheets, or real ad IDs. `data/funnels.json` overrides it per server. `/api/runtime` is ready when at least one enabled campaign has both `sheet_url` and `sheet_gid`; incomplete funnels should not break the app.
+
+Use the generator when a file-first setup is faster than the UI:
+
+```bash
+uv run python src/scripts/funnel_config_template.py dentistas --label "Dentistas" --output data/funnels.json
+```
 
 Click-to-WhatsApp ads should route by webhook referral metadata. Put each ad/post `referral.source_id` into the target funnel's `whatsapp_referral_source_ids`. Keep Contadores empty when it has no real campaign. There is one approved text fallback: the normalized message `Hola! Quiero mas informacion de su propuesta para abogados!` routes to `abogados` when no reply/referral route is usable. Other unmatched WhatsApp messages go to the built-in `general` inbox. If Meta sends `contacts.profile.name`, store that WhatsApp profile name on WhatsApp-created leads and use it to fill matched phone-only leads.
 

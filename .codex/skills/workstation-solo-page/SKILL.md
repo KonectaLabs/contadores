@@ -120,8 +120,9 @@ publish the stable public trial URL after your files exist.
   `mark_preview_approved`.
 - For domain discussion, propose simple domains, use
   `check_domain_availability` when available, treat prices as estimates, and
-  hand off for payment/domain purchase until Stripe and Cloudflare production
-  tools exist.
+  hand off before payment, domain purchase, or final custom-domain deployment.
+  Authenticated Cloudflare setup is operator-only through
+  `uv run python -m backend.cloudflare_registrar`.
 - Pick the action that helps the client move forward with the least friction.
 
 ## Professional Photo Gate

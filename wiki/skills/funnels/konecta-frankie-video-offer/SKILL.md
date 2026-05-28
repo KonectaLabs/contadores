@@ -5,6 +5,10 @@ description: Use when turning Konecta niche research into a specific outcome-led
 
 # Konecta Frankie Video Offer
 
+For Meta ad image generation, read `konecta-meta-ads` before drafting prompts.
+It is the required source for problem-first visuals and compact trust/action
+cues.
+
 ## Core Rule
 
 Make the offer do the selling.
@@ -78,6 +82,15 @@ Use this arc for Loom videos and 60-second decks:
 
 Generate ads from the buyer's desired case, not from the agency service.
 
+For direct-response ad images, do not lead with the professional's name, logo,
+initials, or personal brand. The buyer should first see their own problem and
+the outcome they want. Use the provider identity only if the user explicitly
+asks for a brand-awareness creative or a required disclosure.
+After the problem and outcome are visually clear, a compact trust/action cue is
+allowed: `Abogada`, a small legal/balance icon, or a WhatsApp-style contact
+signal. It should help the buyer understand who can help and how to act without
+turning the creative into a brand ad.
+
 For each ad, specify:
 
 - the case type;
@@ -97,6 +110,10 @@ Avoid:
 - "Marketing para abogados"
 - "IA para estudios juridicos"
 - "Mas leads"
+- "Soy [nombre]"
+- "[Nombre] Abogada"
+- footer/logo-first layouts
+- removing all legal/contact context when a small trust cue would improve response
 - "Clientes garantizados"
 - "Ganamos tu juicio"
 - "Plata facil"

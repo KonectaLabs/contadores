@@ -32,7 +32,7 @@ Ask only for missing items:
 - offer or service Konecta will sell;
 - price and payment terms;
 - target client outcome;
-- Calendly copy; the URL is fixed as `https://calendly.com/facundogoiriz/crecimiento`;
+- Calendly intro copy and the per-funnel `calendly_base_url`;
 - spreadsheet URL/GID or whether the Meta form is not ready yet;
 - video delivery preference: WhatsApp MP4 or external link.
 

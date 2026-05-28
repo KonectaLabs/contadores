@@ -9,7 +9,8 @@ from backend.funnel_config import (
     FunnelListResponse,
     get_funnel,
     get_funnels_config_path,
-    list_funnels,
+    get_funnels_seed_config_path,
+    list_funnels_with_config_errors,
     slugify_funnel_id,
     upsert_funnel,
 )
@@ -19,9 +20,12 @@ funnels_router = APIRouter(prefix="/api/funnels", tags=["funnels"])
 
 def build_funnel_list_response() -> FunnelListResponse:
     """Serialize every configured funnel."""
+    funnels, config_errors = list_funnels_with_config_errors()
     return FunnelListResponse(
+        seed_config_path=str(get_funnels_seed_config_path()),
         config_path=str(get_funnels_config_path()),
-        funnels=list_funnels(),
+        config_errors=config_errors,
+        funnels=funnels,
     )
 
 
@@ -47,4 +51,3 @@ async def update_funnel(funnel_id: str, command: FunnelDefinition) -> FunnelDefi
     if existing is None:
         raise HTTPException(status_code=404, detail="Funnel not found.")
     return upsert_funnel(command)
-

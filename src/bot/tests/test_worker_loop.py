@@ -33,6 +33,8 @@ def test_worker_iteration_dispatches_pending_messages_without_campaign_funnels(m
     """Queued WhatsApp messages should not wait on an active campaign funnel."""
     dispatched_limits: list[int] = []
     dispatched_batches: list[list[str]] = []
+    client_lead_limits: list[int] = []
+    client_lead_batches: list[list[str]] = []
     workstation_ticks = 0
 
     async def fail_if_funnels_are_refetched(client):
@@ -50,6 +52,17 @@ def test_worker_iteration_dispatches_pending_messages_without_campaign_funnels(m
         dispatched_batches.append(list(pending))
         return []
 
+    async def fake_fetch_client_lead_pending(client, *, limit: int):
+        del client
+        client_lead_limits.append(limit)
+        return ["pending-client-lead"]
+
+    async def fake_dispatch_client_lead_pending(client, *, pending, whatsapp_provider):
+        del client
+        del whatsapp_provider
+        client_lead_batches.append(list(pending))
+        return []
+
     async def fake_workstation_tick(client):
         nonlocal workstation_ticks
         del client
@@ -64,6 +77,8 @@ def test_worker_iteration_dispatches_pending_messages_without_campaign_funnels(m
     monkeypatch.setattr(bot_main, "fetch_funnels", fail_if_funnels_are_refetched)
     monkeypatch.setattr(bot_main, "fetch_pending_contadores_outbound", fake_fetch_pending)
     monkeypatch.setattr(bot_main, "dispatch_pending_contadores_messages", fake_dispatch_pending)
+    monkeypatch.setattr(bot_main, "fetch_pending_client_lead_notifications", fake_fetch_client_lead_pending)
+    monkeypatch.setattr(bot_main, "dispatch_pending_client_lead_notifications", fake_dispatch_client_lead_pending)
     monkeypatch.setattr(bot_main, "run_workstation_automation_iteration", fake_workstation_tick)
     monkeypatch.setattr(bot_main, "replay_pending_whatsapp_inbound_events", fake_replay_pending)
 
@@ -79,4 +94,6 @@ def test_worker_iteration_dispatches_pending_messages_without_campaign_funnels(m
 
     assert dispatched_limits == [200]
     assert dispatched_batches == [["pending-message"]]
+    assert client_lead_limits == [200]
+    assert client_lead_batches == [["pending-client-lead"]]
     assert workstation_ticks == 1

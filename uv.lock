@@ -450,6 +450,7 @@ dependencies = [
     { name = "reportlab" },
     { name = "sqlalchemy" },
     { name = "sqlmodel" },
+    { name = "typer" },
 ]
 
 [package.optional-dependencies]
@@ -492,6 +493,7 @@ requires-dist = [
     { name = "reportlab", specifier = ">=4.4.10" },
     { name = "sqlalchemy", specifier = ">=2.0.46" },
     { name = "sqlmodel", specifier = ">=0.0.27" },
+    { name = "typer", specifier = ">=0.21.1" },
 ]
 
 [package.metadata.requires-dev]

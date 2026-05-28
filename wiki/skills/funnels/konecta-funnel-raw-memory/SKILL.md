@@ -53,7 +53,7 @@ Facundo also wants the codebase to stop being only "Contadores". The platform sh
 - opener template and text;
 - pitch/video intro message;
 - whether the video is a link or an uploaded MP4;
-- Calendly message; URL is fixed as `https://calendly.com/facundogoiriz/crecimiento`;
+- Calendly message and per-funnel booking URL;
 - follow-up messages and template-backed follow-ups;
 - strategy/sequence settings.
 

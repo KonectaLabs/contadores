@@ -1,0 +1,4 @@
+interface:
+  display_name: "Konecta Frankie Ad Campaign"
+  short_description: "Build outcome-first client ad campaigns from sales calls."
+  default_prompt: "Create a Frankie-style ad campaign for this client from the meeting transcript and generate three image creatives."

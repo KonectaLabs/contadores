@@ -646,13 +646,45 @@ def build_abogados_test_funnel(
     }
 
 
+def build_contadores_test_funnel(**overrides: object) -> dict[str, object]:
+    """Build a compact Contadores funnel fixture."""
+    funnel = build_abogados_test_funnel(initial_reply_quiet_seconds=30)
+    funnel.update(
+        {
+            "id": "contadores",
+            "label": "Contadores",
+            "sheet_url": "https://docs.google.com/spreadsheets/d/example",
+            "sheet_gid": "0",
+            "opener_text": (
+                "Hola {nombre}, llenaste el formulario para contadores de {pais} sobre como conseguir "
+                "clientes a tu whatsapp. es correcto?"
+            ),
+            "opener_template_name": "contadores_intro_nombre_pais_es_v1",
+            "opener_followup_text": "Queria compartirte informacion sobre como podes obtener clientes.",
+            "opener_followup_template_name": "contadores_followup_es_v1",
+            "manual_ping_template_name": "contadores_manual_ping_es_v1",
+            "loom_intro_text": "Perfecto. Te cuento rapido como funciona:",
+            "calendly_base_url": "https://calendly.com/test/contadores",
+            "whatsapp_referral_source_ids": [],
+        }
+    )
+    funnel["strategies"][0]["media_path"] = "data/contadores/videos/loom_60_seconds_captions.mp4"
+    funnel.update(overrides)
+    return funnel
+
+
+def write_funnels_config(tmp_path, *funnels: dict[str, object]) -> None:
+    """Write the test funnel override config."""
+    (tmp_path / "funnels.json").write_text(
+        json.dumps({"version": 1, "funnels": list(funnels)}),
+        encoding="utf-8",
+    )
+
+
 def test_runtime_endpoint_reports_sheet_readiness(monkeypatch, tmp_path) -> None:
     """Runtime status should expose non-secret sheet readiness."""
     configure_contadores_db(monkeypatch, tmp_path)
-    monkeypatch.setenv("CONTADORES_SHEET_URL", "https://docs.google.com/spreadsheets/d/example")
-    monkeypatch.setenv("CONTADORES_SHEET_GID", "0")
-    monkeypatch.setenv("CONTADORES_LOOM_URL", "https://www.loom.com/share/example")
-    monkeypatch.setenv("CONTADORES_CALENDLY_BASE_URL", "https://calendly.com/facundogoiriz/crecimiento")
+    write_funnels_config(tmp_path, build_contadores_test_funnel())
 
     with TestClient(app) as client:
         response = client.get("/api/runtime")
@@ -662,14 +694,23 @@ def test_runtime_endpoint_reports_sheet_readiness(monkeypatch, tmp_path) -> None
     assert payload["sheet_configured"] is True
     assert payload["sheet_gid"] == "0"
     assert payload["ready"] is True
+    assert payload["ready_campaign_funnels"] == ["contadores"]
+    assert payload["funnel_config_path"] == str(tmp_path / "funnels.json")
 
 
 def test_runtime_endpoint_requires_sheet_gid(monkeypatch, tmp_path) -> None:
     """Runtime readiness should fail when the sheet gid is missing."""
     configure_contadores_db(monkeypatch, tmp_path)
-    monkeypatch.setenv("CONTADORES_SHEET_URL", "https://docs.google.com/spreadsheets/d/example")
-    monkeypatch.delenv("CONTADORES_SHEET_GID", raising=False)
-    monkeypatch.delenv("GOOGLE_SHEET_GID", raising=False)
+    monkeypatch.setenv("FUNNELS_SEED_CONFIG_PATH", str(tmp_path / "missing-seed.json"))
+    funnel = build_abogados_test_funnel()
+    funnel["id"] = "contadores"
+    funnel["label"] = "Contadores"
+    funnel["sheet_url"] = "https://docs.google.com/spreadsheets/d/example"
+    funnel["sheet_gid"] = None
+    (tmp_path / "funnels.json").write_text(
+        json.dumps({"version": 1, "funnels": [funnel]}),
+        encoding="utf-8",
+    )
 
     with TestClient(app) as client:
         runtime_response = client.get("/api/runtime")
@@ -679,9 +720,40 @@ def test_runtime_endpoint_requires_sheet_gid(monkeypatch, tmp_path) -> None:
     payload = runtime_response.json()
     assert payload["sheet_configured"] is False
     assert payload["ready"] is False
-    assert payload["readiness_issues"] == ["CONTADORES_SHEET_GID is empty."]
+    assert payload["readiness_issues"] == [
+        "No enabled campaign funnel has both sheet_url and sheet_gid.",
+        "contadores: sheet_gid is empty.",
+    ]
     assert health_response.status_code == 200
     assert health_response.json()["ready"] is False
+
+
+def test_runtime_endpoint_accepts_file_backed_campaign_readiness(monkeypatch, tmp_path) -> None:
+    """A fresh install can become ready from any enabled configured campaign funnel."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("FUNNELS_SEED_CONFIG_PATH", str(tmp_path / "missing-seed.json"))
+    monkeypatch.delenv("CONTADORES_SHEET_URL", raising=False)
+    monkeypatch.delenv("CONTADORES_SHEET_GID", raising=False)
+    funnel = build_abogados_test_funnel()
+    funnel["sheet_url"] = "https://docs.google.com/spreadsheets/d/new-client"
+    funnel["sheet_gid"] = "987654321"
+    (tmp_path / "funnels.json").write_text(
+        json.dumps({"version": 1, "funnels": [funnel]}),
+        encoding="utf-8",
+    )
+
+    with TestClient(app) as client:
+        runtime_response = client.get("/api/runtime")
+        health_response = client.get("/health")
+
+    assert runtime_response.status_code == 200
+    payload = runtime_response.json()
+    assert payload["ready"] is True
+    assert payload["sheet_configured"] is True
+    assert payload["ready_campaign_funnels"] == ["abogados"]
+    assert payload["enabled_campaign_funnels"] == ["abogados"]
+    assert health_response.status_code == 200
+    assert health_response.json()["ready"] is True
 
 
 def test_contadores_import_skips_invalid_phone_rows(monkeypatch, tmp_path) -> None:
@@ -753,6 +825,7 @@ def test_contadores_lead_search_matches_message_text(monkeypatch, tmp_path) -> N
 def test_contadores_pending_delivery_keeps_full_mp4_sequence(monkeypatch, tmp_path) -> None:
     """Loom intro and WhatsApp MP4 must both remain visible to the bot outbox."""
     configure_contadores_db(monkeypatch, tmp_path)
+    write_funnels_config(tmp_path, build_contadores_test_funnel())
     config = ContadoresConfig.update(enabled=True)
     lead = ContadoresLead.upsert(
         external_lead_id="sheet-row-1",
@@ -775,6 +848,7 @@ def test_contadores_pending_delivery_keeps_full_mp4_sequence(monkeypatch, tmp_pa
 def test_contadores_pending_delivery_exposes_loom_mp4_media(monkeypatch, tmp_path) -> None:
     """The MP4 strategy must expose explicit media metadata for bot dispatch."""
     configure_contadores_db(monkeypatch, tmp_path)
+    write_funnels_config(tmp_path, build_contadores_test_funnel())
     config = ContadoresConfig.update(enabled=True)
     lead = ContadoresLead.upsert(
         external_lead_id="sheet-row-mp4",
@@ -2331,14 +2405,14 @@ def test_bulk_custom_message_pauses_selected_leads(monkeypatch, tmp_path) -> Non
     ]
 
 
-def test_contadores_config_normalizes_generic_calendly_base_url(monkeypatch, tmp_path) -> None:
-    """Any Calendly value should collapse to the shared meeting URL."""
+def test_contadores_config_normalizes_configured_calendly_base_url(monkeypatch, tmp_path) -> None:
+    """Calendly values should stay config-owned while trimming unstable trailing slash noise."""
     configure_contadores_db(monkeypatch, tmp_path)
 
-    ContadoresConfig.update(calendly_base_url="https://calendly.com")
+    ContadoresConfig.update(calendly_base_url=" https://calendly.com/custom/funnel/ ")
     config = ContadoresConfig.get()
 
-    assert config.calendly_base_url == "https://calendly.com/facundogoiriz/crecimiento"
+    assert config.calendly_base_url == "https://calendly.com/custom/funnel"
 
 
 def test_contadores_config_does_not_expose_calendly_webhook_tracking(monkeypatch, tmp_path) -> None:
@@ -3901,7 +3975,7 @@ def test_contadores_detail_keeps_manual_stage_with_calendly_milestone(monkeypatc
 def test_contadores_send_calendly_keeps_manual_handoff(monkeypatch, tmp_path) -> None:
     """Manual Calendly send should keep the lead in Manual while marking the milestone."""
     configure_contadores_db(monkeypatch, tmp_path)
-    ContadoresConfig.update(enabled=True)
+    ContadoresConfig.update(enabled=True, calendly_base_url="https://calendly.com/test/contadores")
     lead = ContadoresLead.upsert(
         external_lead_id="sheet-row-5b",
         phone="+5491444444400",
@@ -3932,17 +4006,37 @@ def test_contadores_send_calendly_keeps_manual_handoff(monkeypatch, tmp_path) ->
 
     assert detail.status_code == 200
     assert detail.json()["lead"]["stage"] == "needs_human"
-    assert detail.json()["lead"]["calendly_url"] == "https://calendly.com/facundogoiriz/crecimiento"
+    assert detail.json()["lead"]["calendly_url"] == "https://calendly.com/test/contadores"
     assert "calendly_tracking_token" not in detail.json()["lead"]
     assert detail.json()["lead"]["automation_paused"] is True
     assert [item["sequence_step"] for item in pending.json()["messages"]] == ["calendly_intro", "calendly_url"]
-    assert pending.json()["messages"][1]["text"] == "https://calendly.com/facundogoiriz/crecimiento"
+    assert pending.json()["messages"][1]["text"] == "https://calendly.com/test/contadores"
+
+
+def test_contadores_send_calendly_requires_configured_url(monkeypatch, tmp_path) -> None:
+    """A portable empty seed should not enqueue a blank Calendly message."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    ContadoresConfig.update(enabled=True)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-5b-missing-calendly",
+        phone="+5491444444403",
+        full_name="Missing Calendly",
+    )
+    add_recent_inbound(lead.id)
+
+    with TestClient(app) as client:
+        response = client.post(f"/api/contadores/leads/{lead.id}/actions/send-calendly")
+        pending = client.get("/api/contadores/messages/pending-delivery")
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Calendly URL is not configured for this funnel."
+    assert pending.json()["messages"] == []
 
 
 def test_contadores_send_calendly_link_only_marks_calendly_sent(monkeypatch, tmp_path) -> None:
     """Operators can send only the Calendly URL without the intro text."""
     configure_contadores_db(monkeypatch, tmp_path)
-    ContadoresConfig.update(enabled=True)
+    ContadoresConfig.update(enabled=True, calendly_base_url="https://calendly.com/test/contadores")
     lead = ContadoresLead.upsert(
         external_lead_id="sheet-row-5b-link",
         phone="+5491444444402",
@@ -3972,9 +4066,9 @@ def test_contadores_send_calendly_link_only_marks_calendly_sent(monkeypatch, tmp
 
     assert detail.status_code == 200
     assert detail.json()["lead"]["stage"] == "needs_human"
-    assert detail.json()["lead"]["calendly_url"] == "https://calendly.com/facundogoiriz/crecimiento"
+    assert detail.json()["lead"]["calendly_url"] == "https://calendly.com/test/contadores"
     assert [item["sequence_step"] for item in pending.json()["messages"]] == ["calendly_url"]
-    assert pending.json()["messages"][0]["text"] == "https://calendly.com/facundogoiriz/crecimiento"
+    assert pending.json()["messages"][0]["text"] == "https://calendly.com/test/contadores"
 
 
 def test_contadores_post_calendly_inbound_does_not_immediately_handoff(monkeypatch, tmp_path) -> None:
@@ -4320,7 +4414,7 @@ def test_manual_attention_counts_endpoint_groups_by_funnel(monkeypatch, tmp_path
         response = client.get("/api/contadores/manual-attention-counts")
 
     assert response.status_code == 200
-    assert response.json()["counts"] == {"contadores": 1, "general": 1}
+    assert response.json()["counts"] == {"contadores": 1, "abogados": 0, "general": 1}
 
 
 def test_contadores_resume_after_post_calendly_handoff_restores_calendly_sent(monkeypatch, tmp_path) -> None:

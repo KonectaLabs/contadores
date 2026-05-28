@@ -1,0 +1,6 @@
+interface:
+  display_name: "Konecta Meta Ads"
+  short_description: "Problem-first Meta ad image workflow"
+  default_prompt: "Use $konecta-meta-ads to create three problem-first Meta ad images for this client."
+policy:
+  allow_implicit_invocation: true

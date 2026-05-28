@@ -13,43 +13,196 @@ un archivo JSON persistente.
 - `abogados/`: materiales, presentaciones y skills entrenadas del funnel de abogados.
 - `data/`: estado local persistente. No se commitea.
 
-## Funnels por nicho
+## CRM portable por funnels
 
-El backend siempre expone `contadores` y un buzon `general` para WhatsApp sin
-referral reconocido. Los nichos de campaña, como `abogados`, se editan desde la
-UI o desde el mismo JSON persistente.
+El CRM debe poder levantarse en un server nuevo aunque todavia no exista un
+nicho real. Un primer arranque limpio no necesita `data/funnels.json`: el
+backend carga `config/default-funnels.json`, muestra los funnels versionados y
+la UI permite crear o editar funnels desde `+ Funnel`. El sistema queda vivo;
+`/api/runtime` marca `ready=true` cuando algun funnel de campaña habilitado
+tiene `sheet_url` y `sheet_gid`.
 
-Los funnels agregados desde la UI se guardan en:
+La fuente de verdad para nuevos usuarios tiene dos capas:
 
-- `FUNNELS_CONFIG_PATH`, si esta definido.
-- `data/funnels.json`, si no esta definido.
+- `FUNNELS_SEED_CONFIG_PATH` o `config/default-funnels.json`, como seed
+  versionado.
+- `FUNNELS_CONFIG_PATH` o `data/funnels.json`, como override editable por server.
 
-Ese archivo es compartido por la UI y por Codex: un operador puede crear o
-editar un funnel visualmente y Codex puede editar el mismo JSON cuando se le
-pide agregar un nicho como `abogados`.
+Esas capas las usan la UI, el bot y Codex. No hay un estado visual oculto: si
+se crea un funnel desde la UI se persiste en el override, y si Codex o un
+operador editan el JSON, la UI lee el mismo contenido.
 
-Ver funnels configurados:
+Ver el menu de funnels y errores no fatales del archivo:
 
 ```bash
 curl http://127.0.0.1:8000/api/funnels
 ```
 
-Cada funnel contiene:
+Ver readiness portable:
 
-- nombre e id del nicho;
-- sheet URL/GID y filtro opcional;
-- opener/template inicial;
-- follow-up template;
-- ping template manual para reabrir la ventana de WhatsApp;
-- IDs de anuncios Click-to-WhatsApp (`whatsapp_referral_source_ids`);
-- texto del video;
-- estrategia WhatsApp MP4 (`loom_mp4`);
-- bot conversacional Codex post-video/post-Calendly para responder dudas y pedir datos de llamada;
-- `kind=campaign|inbox`, donde `inbox` no corre fases ni automatizacion;
-- Calendly solo como accion manual;
-- acciones manuales de Calendly: con mensaje previo o solo link;
-- emails de alerta;
-- ventanas de espera.
+```bash
+curl http://127.0.0.1:8000/api/runtime
+```
+
+`/api/runtime` no expone URLs de sheets ni secretos. Expone `ready`, los
+funnels de campaña habilitados, los funnels con sheet lista y los problemas de
+setup. Un funnel incompleto no rompe el server; simplemente aparece como
+pendiente de configurar.
+
+### Crear un funnel visualmente
+
+En la UI:
+
+1. Entrar al CRM.
+2. Usar `+ Funnel`.
+3. Cargar id, nombre, sheet, mensajes, templates, video MP4, Calendly, alertas
+   y IDs de anuncios.
+4. Guardar.
+5. Dejar `enabled=false` mientras falten templates, sheet o video.
+6. Activar `enabled=true` cuando el funnel pueda correr en produccion.
+
+La UI muestra un checklist si el funnel no tiene los campos minimos para operar.
+Eso es intencional: el objetivo es que un usuario nuevo vea que falta antes de
+que el bot intente correr una campaña incompleta.
+
+### Crear un funnel por archivo
+
+Tambien se puede generar un archivo inicial de manera programatica:
+
+```bash
+uv run python src/scripts/funnel_config_template.py dentistas \
+  --label "Dentistas" \
+  --sheet-url "https://docs.google.com/spreadsheets/d/..." \
+  --sheet-gid "0" \
+  --mp4-path "data/dentistas/videos/loom_60_seconds_captions.mp4" \
+  --calendly-base-url "https://calendly.com/tu-equipo/dentistas" \
+  --alert-email "operador@example.com" \
+  --whatsapp-referral-source-id "120000000000000000" \
+  --output data/funnels.json
+```
+
+El helper genera un funnel deshabilitado salvo que se agregue `--enabled`. Esa
+es la forma segura de portar el CRM: primero se carga el archivo, se valida en
+la UI y recien despues se habilita el funnel.
+
+### Seed y overrides
+
+El CRM carga funnels en dos capas:
+
+- `config/default-funnels.json`: seed versionado y neutral. Sirve para que un
+  server nuevo arranque con el menu de funnels visible, pero no trae sheets,
+  calendarios, emails personales ni IDs de anuncios de otro cliente.
+- `data/funnels.json`: override local editable por UI/Codex. Vive en el volumen
+  persistente y pisa los funnels del seed por `id`.
+
+Si queres portar esto a otra persona, cambia primero el seed si queres una base
+de producto versionada, o copia un `data/funnels.json` ya preparado si queres
+mantener esa configuracion solo en ese server.
+
+### Contrato de funnels JSON
+
+Formato base:
+
+```json
+{
+  "version": 1,
+  "funnels": [
+    {
+      "id": "dentistas",
+      "label": "Dentistas",
+      "kind": "campaign",
+      "enabled": false,
+      "sheet_url": "https://docs.google.com/spreadsheets/d/...",
+      "sheet_gid": "0",
+      "sheet_source_filter": null,
+      "sheet_poll_seconds": 30,
+      "template_language": "es",
+      "opener_text": "Hola {nombre}, completaste el formulario sobre como podemos ayudarte. Es correcto?",
+      "opener_template_name": "dentistas_intro_nombre_pais_es_v1",
+      "opener_followup_text": "Queria compartirte informacion sobre la propuesta que viste en el anuncio.",
+      "opener_followup_template_name": "dentistas_opener_followup_24h_es_v1",
+      "manual_ping_text": "Hola, queria saber en que situacion quedamos y si queres que retomemos la conversacion",
+      "manual_ping_template_name": "dentistas_manual_ping_es_v1",
+      "loom_intro_text": "Perfecto. Te cuento rapido como funciona y que obtenes si trabajamos juntos:",
+      "loom_url": "",
+      "video_check_text": "conseguiste ver el video?",
+      "calendly_intro_text": "Para avanzar, el siguiente paso es elegir un horario en el calendario:",
+      "calendly_base_url": "https://calendly.com/tu-equipo/dentistas",
+      "alert_emails": ["operador@example.com"],
+      "whatsapp_referral_source_ids": ["120000000000000000"],
+      "initial_reply_quiet_seconds": 30,
+      "post_loom_min_seconds": 600,
+      "post_loom_quiet_seconds": 30,
+      "strategies": [
+        {
+          "step": "loom",
+          "id": "loom_mp4",
+          "label": "WhatsApp MP4",
+          "weight": 100,
+          "delivery": "video",
+          "sequence_step": "loom_video",
+          "message_text": "Video de explicacion enviado por WhatsApp.",
+          "media_type": "video",
+          "media_path": "data/dentistas/videos/loom_60_seconds_captions.mp4",
+          "media_caption": null
+        }
+      ]
+    }
+  ]
+}
+```
+
+Campos que hay que pensar antes de activar un funnel:
+
+- `id`: slug estable. No cambiarlo despues de crear leads, porque los leads se
+  filtran por ese id.
+- `label`: nombre que ve el operador en el menu.
+- `kind`: `campaign` corre automatizacion; `inbox` solo junta conversaciones sin
+  campaña.
+- `enabled`: mantener en `false` hasta tener sheet, templates y video listos.
+- `sheet_url` y `sheet_gid`: fuente de leads. Son lo minimo para que el runtime
+  marque listo algun funnel de campaña.
+- `sheet_source_filter`: filtro opcional si una misma sheet trae varios origenes.
+- `sheet_poll_seconds`: minimo 30. Usar mas alto si la sheet es lenta o muy
+  grande.
+- `template_language`: idioma de templates de WhatsApp, normalmente `es`.
+- `opener_text` y `opener_template_name`: primer contacto. Si se inicia fuera de
+  la ventana de 24h, el template debe existir y estar aprobado en Meta.
+- `opener_followup_text` y `opener_followup_template_name`: follow-up si no
+  responde.
+- `manual_ping_text` y `manual_ping_template_name`: reapertura manual desde el
+  CRM cuando el operador quiere retomar.
+- `loom_intro_text`: mensaje que acompaña el video.
+- `loom_url`: referencia opcional si tambien existe version Loom.
+- `video_check_text`: pregunta corta para confirmar si vio el video.
+- `calendly_intro_text`: texto manual previo al link de Calendly.
+- `calendly_base_url`: link de agenda del funnel. No se fuerza desde Python;
+  si cambia por nicho o por cliente, se cambia en el archivo.
+- `alert_emails`: emails del administrador u operadores de este server para
+  avisos humanos y fallas runtime. El seed portable lo deja en `[]`; antes de
+  produccion hay que cargar correos del cliente/equipo real.
+- `whatsapp_referral_source_ids`: IDs `referral.source_id` de anuncios
+  Click-to-WhatsApp que deben caer en este funnel.
+- `initial_reply_quiet_seconds`: espera antes de reaccionar a una primera
+  respuesta.
+- `post_loom_min_seconds`: espera minima despues de mandar el video.
+- `post_loom_quiet_seconds`: silencio necesario antes de clasificar post-video.
+- `strategies`: estrategias por paso. El default operativo es una estrategia
+  `loom_mp4` con `delivery=video`, `sequence_step=loom_video` y `media_path`
+  apuntando a un MP4 dentro de `data/`.
+
+Consejos de portabilidad:
+
+- No hardcodear nichos nuevos en Python si entran en este contrato.
+- Guardar en git solo configuraciones que sean seguras para reutilizar como
+  seed. `data/funnels.json` sigue siendo el estado editable de cada server.
+- No versionar defaults personales como emails de admin, calendarios privados,
+  sheets de otro cliente ni IDs reales de anuncios en el seed portable.
+- Si el override tiene JSON invalido o un funnel mal formado, `/api/funnels`
+  sigue respondiendo con el seed valido y devuelve `config_errors`.
+- Para portar a otra persona, preparar su `.env`, `auth.toml`, `data/funnels.json`,
+  los videos bajo `data/<funnel>/videos/`, credenciales de Google/WhatsApp y
+  cualquier material de Workstation que esa persona vaya a usar.
 
 ## Switch central de Codex por lead
 
@@ -76,16 +229,32 @@ Template opener inicial:
 ## Fuente de leads
 
 Contadores ya no tiene switch de runtime. No existe un modo alternativo ni lead
-sintético. El bot importa siempre desde la sheet configurada para el funnel.
+sintético. El bot importa siempre desde la sheet configurada para cada funnel.
 
-Variables mínimas:
-
-- `CONTADORES_SHEET_URL=...`
-- `CONTADORES_SHEET_GID=...`
+Para compatibilidad, algunos scripts legacy siguen aceptando
+`CONTADORES_SHEET_URL` y `CONTADORES_SHEET_GID`. Para usuarios nuevos, preferir
+siempre `config/default-funnels.json` o `FUNNELS_CONFIG_PATH` / `data/funnels.json`
+y poner ahi `sheet_url` y `sheet_gid` por cada nicho.
 
 `docker-compose.yml` lee `.env` y `/api/runtime` muestra readiness sin exponer
-secretos. El runtime queda `ready=false` hasta que la URL y el GID de la sheet
-esten configurados.
+secretos. El runtime queda `ready=false` hasta que exista al menos un funnel
+`kind=campaign`, `enabled=true`, con `sheet_url` y `sheet_gid`.
+
+## Client Lead Delivery
+
+Delivery es la capa para avisarle a un cliente cuando su propia campana recibe
+una consulta nueva. Guarda fuentes en `client_lead_sources` y filas importadas
+en `client_lead_deliveries`; no contamina `contadores_leads`,
+`contadores_messages`, Workstation ni alertas humanas.
+
+La configuracion puede hacerse por UI/API o por archivo versionado:
+`config/default-client-lead-sources.json` como seed y
+`CLIENT_LEAD_SOURCES_CONFIG_PATH` / `data/client-lead-sources.json` como
+override del server. El flujo actual usa `konecta_client_lead_alert_es_v2` y,
+cuando hay `context_field_mapping`, `konecta_client_lead_alert_context_es_v1`.
+
+La referencia operativa completa esta en la seccion `Client Lead Delivery` mas
+abajo y en las skills `contadores-rollout` y `contadores-spreadsheet`.
 
 ## Desarrollo local
 
@@ -133,6 +302,58 @@ Verificar API de Contadores:
 
 ```bash
 curl http://127.0.0.1:8000/api/contadores/config
+```
+
+## Cloudflare Registrar y DNS
+
+La compra programatica de dominios se hace con la API REST de Cloudflare
+Registrar, no con Wrangler. El camino preferido es un API token scoped con
+permiso de Registrar write, `CLOUDFLARE_ACCOUNT_ID`, billing profile con metodo
+de pago default y contacto registrante default aceptado en Cloudflare.
+
+Variables locales:
+
+```bash
+CLOUDFLARE_ACCOUNT_ID=...
+CLOUDFLARE_API_TOKEN=...
+```
+
+Fallback legacy si todavia no existe el token scoped:
+
+```bash
+CLOUDFLARE_API_EMAIL=...
+CLOUDFLARE_API_KEY=...
+```
+
+Verificar que la autenticacion funciona:
+
+```bash
+uv run python -m backend.cloudflare_registrar verify-token
+```
+
+Buscar y chequear dominios:
+
+```bash
+uv run python -m backend.cloudflare_registrar search "estudio contable" --extensions com,net,dev
+uv run python -m backend.cloudflare_registrar check ejemplo-contable.com ejemplo-contable.net
+```
+
+Registrar es billable y no reembolsable. El comando primero corre
+`domain-check`; sin `--yes` queda en dry-run. Para comprar exige aprobacion
+explicita y limite de precio. Por defecto compra con `auto_renew=false`; usar
+`--auto-renew` solo cuando se quiera activar renovacion automatica:
+
+```bash
+uv run python -m backend.cloudflare_registrar register ejemplo-contable.com --max-first-year-usd 15
+uv run python -m backend.cloudflare_registrar register ejemplo-contable.com --max-first-year-usd 15 --yes
+uv run python -m backend.cloudflare_registrar poll-registration ejemplo-contable.com
+```
+
+Crear zona DNS y agregar registros:
+
+```bash
+uv run python -m backend.cloudflare_registrar create-zone ejemplo-contable.com
+uv run python -m backend.cloudflare_registrar upsert-record --zone ejemplo-contable.com --type CNAME --name www --content contadores.fgoiriz.com --proxied
 ```
 
 Ejecutar un tick interno de Workstation desde el worker o localmente:
@@ -258,7 +479,8 @@ Template manual de ping:
 
 Entrada Click-to-WhatsApp:
 
-- Cada funnel puede declarar `whatsapp_referral_source_ids` en `data/funnels.json`.
+- Cada funnel puede declarar `whatsapp_referral_source_ids` en el seed o en
+  `data/funnels.json`.
 - Contadores no debe tener IDs cargados si no tiene campaña real. Hoy el source_id real queda en `abogados`.
 - Cuando Meta envia un webhook con `referral.source_id` configurado, el backend crea o reutiliza un lead `whatsapp_ctwa`.
 - Si el webhook trae el nombre de perfil de WhatsApp, se guarda como `full_name` para leads nuevos de WhatsApp y para leads existentes que todavia no tenian nombre.
@@ -536,7 +758,7 @@ Acciones manuales de Calendly:
 
 - `Calendly with intro` encola el texto previo y despues el link de Calendly.
 - `Calendly link only` encola solo el link de Calendly.
-- El link de Calendly es siempre `https://calendly.com/facundogoiriz/crecimiento`, para Contadores, Abogados y cualquier otro funnel.
+- El link de Calendly sale de `calendly_base_url` del funnel activo.
 - Ambas acciones registran `calendly_sent_at` y mantienen el lead en Manual.
 - La automatizacion nueva no manda Calendly automaticamente. Para avanzar, el
   bot pide email, dia y horario para que Facu coordine la llamada manualmente.
@@ -947,6 +1169,8 @@ Este repo se trabaja server-first: `localhost` sirve para desarrollar, verificar
 2. Pushear `main`.
 3. Deployar el servidor desde `main`.
 4. Verificar `/api/runtime`, `/api/funnels`, la ingesta de sheet y el flujo de WhatsApp en el server.
+5. Si el cambio toca Client Lead Delivery, verificar fuentes, sync, pendientes,
+   delivery callbacks y aprobacion del template en el server real.
 
 Deploy remoto:
 

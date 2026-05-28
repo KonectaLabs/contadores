@@ -8,7 +8,7 @@ from backend.main import app
 
 
 def test_funnels_endpoint_exposes_default_contadores(monkeypatch, tmp_path) -> None:
-    """The funnel API should always expose the built-in Contadores funnel."""
+    """The funnel API should expose the versioned seed before local overrides exist."""
     monkeypatch.setenv("FUNNELS_CONFIG_PATH", str(tmp_path / "funnels.json"))
 
     with TestClient(app) as client:
@@ -16,7 +16,9 @@ def test_funnels_endpoint_exposes_default_contadores(monkeypatch, tmp_path) -> N
 
     assert response.status_code == 200
     payload = response.json()
+    assert payload["seed_config_path"].endswith("config/default-funnels.json")
     assert payload["config_path"] == str(tmp_path / "funnels.json")
+    assert payload["config_errors"] == []
     assert payload["funnels"][0]["id"] == "contadores"
     assert payload["funnels"][0]["kind"] == "campaign"
     assert payload["funnels"][0]["sheet_poll_seconds"] == 30
@@ -87,15 +89,16 @@ def test_funnels_endpoint_persists_new_niche(monkeypatch, tmp_path) -> None:
     assert create_response.json()["id"] == "abogados"
     assert config_path.exists()
     assert list_response.status_code == 200
+    assert list_response.json()["config_errors"] == []
     ids = [item["id"] for item in list_response.json()["funnels"]]
     assert ids == ["contadores", "abogados", "general"]
     abogados = list_response.json()["funnels"][1]
-    assert abogados["calendly_base_url"] == "https://calendly.com/facundogoiriz/crecimiento"
+    assert abogados["calendly_base_url"] == "https://calendly.com/konecta/abogados"
     assert abogados["whatsapp_referral_source_ids"] == ["120244283740930010"]
 
 
-def test_funnels_endpoint_sanitizes_retired_link_strategy(monkeypatch, tmp_path) -> None:
-    """Old persisted configs should load as Contadores/Abogados MP4-only."""
+def test_funnels_endpoint_keeps_config_owned_campaign_wiring(monkeypatch, tmp_path) -> None:
+    """Local funnel files should own Calendly, referrals, and strategy choices."""
     config_path = tmp_path / "funnels.json"
     monkeypatch.setenv("FUNNELS_CONFIG_PATH", str(config_path))
     config_path.write_text(
@@ -184,9 +187,26 @@ def test_funnels_endpoint_sanitizes_retired_link_strategy(monkeypatch, tmp_path)
 
     assert response.status_code == 200
     funnels = {item["id"]: item for item in response.json()["funnels"]}
-    assert funnels["contadores"]["calendly_base_url"] == "https://calendly.com/facundogoiriz/crecimiento"
-    assert funnels["abogados"]["calendly_base_url"] == "https://calendly.com/facundogoiriz/crecimiento"
-    assert funnels["contadores"]["whatsapp_referral_source_ids"] == []
-    assert [item["id"] for item in funnels["contadores"]["strategies"]] == ["loom_mp4"]
+    assert funnels["contadores"]["calendly_base_url"] == "https://calendly.com/contadores"
+    assert funnels["abogados"]["calendly_base_url"] == "https://calendly.com/abogados"
+    assert funnels["contadores"]["whatsapp_referral_source_ids"] == ["old-contadores-ad"]
+    assert [item["id"] for item in funnels["contadores"]["strategies"]] == ["loom_link", "loom_mp4"]
     assert funnels["abogados"]["whatsapp_referral_source_ids"] == ["real-abogados-ad"]
-    assert [item["id"] for item in funnels["abogados"]["strategies"]] == ["loom_mp4"]
+    assert [item["id"] for item in funnels["abogados"]["strategies"]] == ["loom_link", "loom_mp4"]
+
+
+def test_funnels_endpoint_reports_invalid_config_without_breaking(monkeypatch, tmp_path) -> None:
+    """Invalid file-backed config should not break the first-run funnel menu."""
+    config_path = tmp_path / "funnels.json"
+    monkeypatch.setenv("FUNNELS_CONFIG_PATH", str(config_path))
+    config_path.write_text("{not-json", encoding="utf-8")
+
+    with TestClient(app) as client:
+        response = client.get("/api/funnels")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["funnels"][0]["id"] == "contadores"
+    assert payload["funnels"][-1]["id"] == "general"
+    assert payload["config_errors"]
+    assert "invalid JSON" in payload["config_errors"][0]

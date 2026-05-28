@@ -13,7 +13,7 @@ description: >-
 
 ## Variables obligatorias
 
-- Calendly fijo: `https://calendly.com/facundogoiriz/crecimiento`
+- Calendly sale de `calendly_base_url` del funnel activo.
 - Funnel `loom_mp4.media_path`
 
 ## Reglas del flujo
@@ -50,7 +50,7 @@ description: >-
 - El mensaje 3 debe ser el MP4 configurado, no un link de Loom.
 - El mensaje 4 no lleva link.
 - Las respuestas del bot no llevan Calendly.
-- El mensaje de link Calendly debe ser solo `https://calendly.com/facundogoiriz/crecimiento` y solo se usa en acciones manuales.
+- El mensaje de link Calendly debe ser solo el `calendly_base_url` del funnel activo y solo se usa en acciones manuales.
 - No mezclar el texto del mensaje 2 con el MP4.
 - No mezclar el texto previo de Calendly con el link del Calendly.
 - El trigger inicial hacia Loom es mecanico: cualquier respuesta al opener
@@ -164,12 +164,12 @@ email de alerta.
 ### Calendly manual
 
 ```text
-https://calendly.com/facundogoiriz/crecimiento
+{calendly_base_url del funnel activo}
 ```
 
 ## Notas de implementación
 
-- Usar el Calendly fijo compartido por todos los funnels solo para acciones manuales.
+- Usar el `calendly_base_url` del funnel activo solo para acciones manuales.
 - Guardar las respuestas del bot como `sequence_step=ai_reply`; el handoff de
   agenda usa `sequence_step=scheduling_handoff_confirmation`.
 - Para Click-to-WhatsApp, rutear por `referral.source_id` contra `whatsapp_referral_source_ids`. No agregar ruteo amplio por texto editable.
