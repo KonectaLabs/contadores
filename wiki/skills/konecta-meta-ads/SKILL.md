@@ -18,6 +18,21 @@ Before generating any ad, answer:
 
 If the ad first says who the professional is, it is wrong.
 
+## Platform Source Of Truth
+
+When the Contadores platform has a post-conversion transcript, use the
+agent-native flow first:
+
+1. Attach the transcript to the meeting.
+2. Run `extract_client_profile_from_meeting_transcript`.
+3. Use the saved `ClientProfile` summaries, `knowledge.ad_angles`,
+   `knowledge.meta_planning`, source snippets, and unresolved questions before
+   drafting creatives or a Meta publish plan.
+4. If required Meta fields are missing, stage the plan with
+   `stage_meta_publish_plan` and ask Facundo through `ask_human_question`; do
+   not invent ad account IDs, Page IDs, WhatsApp phone number IDs, budgets, or
+   special ad category decisions.
+
 ## The 10/10 Pattern
 
 Use the Eliana v3 pattern:
@@ -134,14 +149,18 @@ Constraints: no guarantees, no official seals, no watermark, no provider name.
 
 Before choosing angles:
 
-1. Read the client meeting transcript when available.
-2. If transcript is missing, use Workstation notes, landing page copy, CRM/WhatsApp evidence, prior campaign notes, and current page assets.
-3. Extract the valuable case types, buyer language, geography, and cases to avoid.
-4. Pick three distinct problem-first tests.
-5. Save under `media/ads/<client-slug>/ads/<batch>/`.
-6. Preserve prior batches. Never overwrite v1/v2/v3 unless asked.
-7. Write `campaign-notes.md` explaining what changed and why.
-8. If sending to Alan, send a short label by client and then images.
+1. Use the saved `ClientProfile` when the platform has one, especially
+   `knowledge.ad_angles`, `knowledge.meta_planning`, source snippets, and
+   unresolved questions.
+2. If the profile is missing but a meeting transcript exists, run
+   `extract_client_profile_from_meeting_transcript` before drafting ads.
+3. If transcript is missing, use Workstation notes, landing page copy, CRM/WhatsApp evidence, prior campaign notes, and current page assets.
+4. Extract the valuable case types, buyer language, geography, and cases to avoid.
+5. Pick three distinct problem-first tests.
+6. Save under `media/ads/<client-slug>/ads/<batch>/`.
+7. Preserve prior batches. Never overwrite v1/v2/v3 unless asked.
+8. Write `campaign-notes.md` explaining what changed and why.
+9. If sending to Alan, send a short label by client and then images.
 
 ## Platform Publish Flow
 
@@ -150,14 +169,16 @@ generation tools.
 
 Use this order:
 
-1. `stage_ad_campaign` for objective, segments, angles, and budget guardrails.
-2. `stage_creative_asset` for every generated or approved asset.
-3. `stage_meta_publish_plan` for the typed Meta plan:
+1. `extract_client_profile_from_meeting_transcript` when the transcript exists
+   and no current `ClientProfile` has been saved.
+2. `stage_ad_campaign` for objective, segments, angles, and budget guardrails.
+3. `stage_creative_asset` for every generated or approved asset.
+4. `stage_meta_publish_plan` for the typed Meta plan:
    `Campaign -> Ad Set -> Ad/Creative`, destination, budget, targeting,
    initial `PAUSED` status, and missing fields before live publish.
-4. `ask_human_question` when account/page/destination/category/budget details
+5. `ask_human_question` when account/page/destination/category/budget details
    are missing. Do not invent Meta IDs.
-5. `stage_meta_publish_attempt` only for raw payloads, provider responses, or a
+6. `stage_meta_publish_attempt` only for raw payloads, provider responses, or a
    future approved publisher execution record.
 
 Before any future live publish, the plan must have:

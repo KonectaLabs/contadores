@@ -26,19 +26,19 @@ The repo already has the right single-server base:
   state, CRM stages, media handling, audio transcription through OpenAI API,
   Codex agent runs/tool calls, scheduled agent tasks, Workstation clients, and
   Client Lead Delivery.
-- Agent-native lifecycle records now exist for meetings, reviewed client
-  profiles, ad campaigns, creative assets, staged Meta publish attempts, client
-  updates, and human questions. They are exposed through `/api/platform/*` and
-  audited Codex tools, so the UI is optional for configuration and workflow
-  state.
+- Agent-native lifecycle records now exist for meetings, DSPy-extracted draft
+  client profiles, reviewed client profiles, ad campaigns, creative assets,
+  staged Meta publish attempts, client updates, and human questions. They are
+  exposed through `/api/platform/*` and audited Codex tools, so the UI is
+  optional for configuration and workflow state.
 - `/api/platform/overview` now provides the cockpit read model used by the
   frontend `Ops` tab: blockers, human questions, campaigns, Meta publish
   attempts, meetings, client updates, assets, and recent events.
 
 The major missing pieces are the live external integrations and cockpit depth:
-Google Calendar event creation, transcript ingestion from real calls,
-review/approval UX, Meta Marketing API writes, WhatsApp delivery for Facundo
-doubts, and richer event/metric views across the lifecycle.
+Google Calendar event creation, transcript ingestion from real calls into the
+meeting record, review/approval UX, Meta Marketing API writes, WhatsApp delivery
+for Facundo doubts, and richer event/metric views across the lifecycle.
 
 ## Research Decisions
 
@@ -163,8 +163,9 @@ Meta Ads is a first-class lifecycle, not a generic notes field. The platform
 should mirror Meta's own hierarchy and keep every live write behind a staged,
 audited, approved plan:
 
-1. `ClientProfile` holds reviewed client facts, offer, exclusions, market,
-   objections, geography, and proof.
+1. `extract_client_profile_from_meeting_transcript` turns the post-conversion
+   transcript into a draft `ClientProfile` with client facts, offer, exclusions,
+   market, objections, geography, proof, ad angles, and Meta planning gaps.
 2. `PlatformAdCampaign` holds the campaign objective, budget guardrails,
    segments, angles, approval state, and eventually the Meta campaign ID.
 3. `PlatformCreativeAsset` holds each generated image/video, prompt, source
@@ -238,8 +239,11 @@ Meta object ID back to platform records, and emits events for each response.
 
 6. Transcript and client onboarding
    - Ingest transcript/audio/text after conversion.
-   - Use DSPy extraction into reviewed `ClientProfile`.
-   - Attach source snippets and unresolved questions.
+   - Use DSPy extraction into draft `ClientProfile`.
+   - Attach source snippets, ad angles, Meta planning hints, and unresolved
+     questions.
+   - First pass shipped as `/api/platform/meetings/{meeting_id}/extract-client-profile`
+     plus the `extract_client_profile_from_meeting_transcript` Codex tool.
 
 7. Ads creation workspace
    - Add ad angles, copy variants, image prompts, generated assets, and approval

@@ -18,6 +18,7 @@ from backend.database import (
     PlatformMeeting,
     PlatformMetaPublishAttempt,
 )
+from backend.platform_profile_extraction import PlatformProfileExtractionError, extract_client_profile_from_meeting
 
 platform_router = APIRouter(prefix="/api/platform", tags=["platform"])
 
@@ -74,6 +75,16 @@ class PlatformMeetingTranscriptCommand(BaseModel):
     transcript_path: str = ""
     extracted_profile: dict[str, Any] = Field(default_factory=dict)
     status: str = "transcript_received"
+
+
+class PlatformMeetingProfileExtractionCommand(BaseModel):
+    """Extract a draft client profile from one meeting transcript."""
+
+    client_id: str = ""
+    lead_id: str = ""
+    funnel_id: str = ""
+    status: str = "draft"
+    existing_context: dict[str, Any] = Field(default_factory=dict)
 
 
 class PlatformMeetingResponse(BaseModel):
@@ -144,6 +155,14 @@ class PlatformClientProfileListResponse(BaseModel):
     """Client profile list response."""
 
     profiles: list[PlatformClientProfileResponse]
+
+
+class PlatformMeetingProfileExtractionResponse(BaseModel):
+    """Saved profile extraction response."""
+
+    meeting: PlatformMeetingResponse
+    profile: PlatformClientProfileResponse
+    extraction: dict[str, Any]
 
 
 class PlatformAdCampaignCommand(BaseModel):
@@ -719,6 +738,39 @@ async def attach_meeting_transcript(
         payload={"client_id": row.client_id, "lead_id": row.lead_id, "profile_keys": list(row.extracted_profile())},
     )
     return serialize_meeting(row)
+
+
+@platform_router.post(
+    "/meetings/{meeting_id}/extract-client-profile",
+    response_model=PlatformMeetingProfileExtractionResponse,
+)
+async def extract_meeting_client_profile(
+    meeting_id: str,
+    command: PlatformMeetingProfileExtractionCommand,
+) -> PlatformMeetingProfileExtractionResponse:
+    """Use the meeting transcript to create a draft client profile for ads and Meta planning."""
+    try:
+        result = extract_client_profile_from_meeting(
+            meeting_id=meeting_id,
+            client_id=command.client_id,
+            lead_id=command.lead_id,
+            funnel_id=command.funnel_id,
+            status=command.status,
+            existing_context=command.existing_context,
+            source="platform_api",
+            actor="operator",
+        )
+    except PlatformProfileExtractionError as error:
+        message = str(error)
+        status_code = 404 if message.startswith("Meeting not found") else 400
+        raise HTTPException(status_code=status_code, detail=message) from error
+    except Exception as error:
+        raise HTTPException(status_code=502, detail=f"Client profile extraction failed: {error}") from error
+    return PlatformMeetingProfileExtractionResponse(
+        meeting=serialize_meeting(result.meeting),
+        profile=serialize_client_profile(result.profile),
+        extraction=result.extraction.model_dump(mode="json"),
+    )
 
 
 @platform_router.get("/client-profiles", response_model=PlatformClientProfileListResponse)

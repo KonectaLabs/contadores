@@ -64,7 +64,8 @@ are known.
 
 The same agent-native rule applies after conversion: use
 `create_platform_meeting`, `attach_meeting_transcript`,
-`upsert_client_profile`, `stage_ad_campaign`, `stage_creative_asset`,
+`extract_client_profile_from_meeting_transcript`, `upsert_client_profile`,
+`stage_ad_campaign`, `stage_creative_asset`,
 `stage_meta_publish_plan`, `stage_meta_publish_attempt`,
 `create_client_update`, `ask_human_question`, and `answer_human_question`
 instead of creating hidden state in the UI.

@@ -60,6 +60,9 @@ Platform lifecycle tools:
   creating a calendar event.
 - `attach_meeting_transcript`: attach transcript text/path and extracted client
   fields after conversion.
+- `extract_client_profile_from_meeting_transcript`: run the DSPy extraction
+  step and save draft client knowledge, ad angles, Meta planning hints, source
+  snippets, and unresolved questions.
 - `upsert_client_profile`: save reviewed client knowledge for ads, delivery,
   updates, and support.
 - `stage_ad_campaign`: stage the ad campaign plan and budget before approval.
@@ -139,6 +142,11 @@ step from that persisted state.
 
 - Use `/api/platform/overview` when you need the same lifecycle cockpit read
   model the `Ops` tab uses.
+- After a conversion transcript is attached, prefer
+  `extract_client_profile_from_meeting_transcript` before staging ads or Meta
+  plans. Use the saved `ClientProfile.knowledge.meta_planning` and
+  `knowledge.ad_angles` as the brief, then ask Facundo only for missing live
+  publish data.
 - Do not publish to Meta from these tools; stage the request and wait for the
   approval/publish mechanism.
 - Prefer `stage_meta_publish_plan` for normal Meta work. Use

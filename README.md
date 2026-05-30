@@ -103,6 +103,9 @@ formularios:
 
 - `create_platform_meeting` y `attach_meeting_transcript`: scheduling,
   transcript y handoff post-conversion.
+- `extract_client_profile_from_meeting_transcript`: usa DSPy para convertir el
+  transcript en un perfil draft con segmentos, angulos y datos necesarios para
+  planificar Meta.
 - `upsert_client_profile`: conocimiento revisado del cliente.
 - `stage_ad_campaign`, `stage_creative_asset`, `stage_meta_publish_plan` y
   `stage_meta_publish_attempt`: ads y publicacion Meta en modo
@@ -113,14 +116,17 @@ formularios:
 
 Flujo Meta agent-native:
 
-1. `stage_ad_campaign` guarda el objetivo comercial, presupuesto y angulos.
-2. `stage_creative_asset` guarda prompts, archivos y referencias de imagen/video.
-3. `stage_meta_publish_plan` arma el plan tipado `Campaign -> Ad Set ->
+1. Despues del pago, `attach_meeting_transcript` guarda el transcript y
+   `extract_client_profile_from_meeting_transcript` crea el brief base para ads.
+2. `stage_ad_campaign` guarda el objetivo comercial, presupuesto y angulos,
+   preferentemente usando el `ClientProfile.knowledge.meta_planning` generado.
+3. `stage_creative_asset` guarda prompts, archivos y referencias de imagen/video.
+4. `stage_meta_publish_plan` arma el plan tipado `Campaign -> Ad Set ->
    Ad/Creative`, siempre en modo `PAUSED` y sin writes externos.
-4. Si faltan `ad_account_id`, `page_id`, destino WhatsApp/form, presupuesto,
+5. Si faltan `ad_account_id`, `page_id`, destino WhatsApp/form, presupuesto,
    targeting o creatividades, el resultado incluye `required_before_live_publish`
    y el agente debe usar `ask_human_question` en vez de inventar datos.
-5. `stage_meta_publish_attempt` queda para payloads crudos, respuestas de Meta o
+6. `stage_meta_publish_attempt` queda para payloads crudos, respuestas de Meta o
    ejecuciones futuras hechas por el publicador aprobado.
 
 Ejemplo de plan Meta staged:

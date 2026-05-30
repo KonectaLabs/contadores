@@ -60,13 +60,16 @@ If the user asks to create or update this skill, also use `skill-creator`.
 
 Use the real source of truth before inventing angles.
 
-1. Search Read AI first when the user mentions a client call or meeting.
+1. If the client exists in the Contadores platform and a conversion transcript
+   is already attached, use `extract_client_profile_from_meeting_transcript`
+   first and treat the saved `ClientProfile` as the campaign brief.
+2. Search Read AI first when the user mentions a client call or meeting.
    - Use the Read AI meeting list/search tools.
    - Find the meeting by title, participant, client name, or date.
    - Fetch `summary`, `topics`, `action_items`, `key_questions`, and especially `transcript`.
-2. If Read AI has no transcript, use available summaries and ask only for the missing business facts that block ad creation.
-3. If the client is in Workstation, inspect the client notes, transcript, uploaded media, page copy, and current public URL.
-4. If legal, tax, platform, medical, financial, or ad-policy claims matter, verify current official sources before locking copy.
+3. If Read AI has no transcript, use available summaries and ask only for the missing business facts that block ad creation.
+4. If the client is in Workstation, inspect the client notes, transcript, uploaded media, page copy, and current public URL.
+5. If legal, tax, platform, medical, financial, or ad-policy claims matter, verify current official sources before locking copy.
 
 Extract:
 

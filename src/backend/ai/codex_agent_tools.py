@@ -58,6 +58,10 @@ from backend.funnel_config import (
     slugify_funnel_id,
     upsert_funnel,
 )
+from backend.platform_profile_extraction import (
+    PlatformProfileExtractionError,
+    extract_client_profile_from_meeting as save_client_profile_from_meeting,
+)
 
 
 DEFAULT_AGENT_SEQUENCE_STEP = "codex_agent"
@@ -246,6 +250,17 @@ class AttachMeetingTranscriptArgs(BaseModel):
     transcript_path: str = ""
     extracted_profile: dict[str, Any] = Field(default_factory=dict)
     status: str = "transcript_received"
+
+
+class ExtractClientProfileFromMeetingArgs(BaseModel):
+    """Arguments for extracting ad-ready client knowledge from a transcript."""
+
+    meeting_id: str = Field(min_length=1)
+    client_id: str = ""
+    lead_id: str = ""
+    funnel_id: str = ""
+    status: str = "draft"
+    existing_context: dict[str, Any] = Field(default_factory=dict)
 
 
 class UpsertClientProfileArgs(BaseModel):
@@ -542,6 +557,11 @@ def tool_specs() -> list[CodexAgentToolSpec]:
             AttachMeetingTranscriptArgs,
         ),
         (
+            "extract_client_profile_from_meeting_transcript",
+            "Run DSPy transcript extraction and save a draft client profile for ads and Meta planning.",
+            ExtractClientProfileFromMeetingArgs,
+        ),
+        (
             "upsert_client_profile",
             "Create or update reviewed post-conversion client knowledge for ads, delivery, and support.",
             UpsertClientProfileArgs,
@@ -829,6 +849,7 @@ def read_platform_config(arguments: dict[str, Any]) -> dict[str, Any]:
             "upsert_client_lead_delivery_source",
             "create_platform_meeting",
             "attach_meeting_transcript",
+            "extract_client_profile_from_meeting_transcript",
             "upsert_client_profile",
             "stage_ad_campaign",
             "stage_creative_asset",
@@ -845,6 +866,7 @@ def read_platform_config(arguments: dict[str, Any]) -> dict[str, Any]:
             "configure_text_offer_funnel": ConfigureTextOfferFunnelArgs.model_json_schema(),
             "client_lead_delivery_source": UpsertClientLeadDeliverySourceArgs.model_json_schema(),
             "create_platform_meeting": CreatePlatformMeetingArgs.model_json_schema(),
+            "extract_client_profile_from_meeting_transcript": ExtractClientProfileFromMeetingArgs.model_json_schema(),
             "upsert_client_profile": UpsertClientProfileArgs.model_json_schema(),
             "stage_ad_campaign": StageAdCampaignArgs.model_json_schema(),
             "stage_creative_asset": StageCreativeAssetArgs.model_json_schema(),
@@ -1273,6 +1295,29 @@ def attach_meeting_transcript(arguments: dict[str, Any]) -> dict[str, Any]:
         payload={"client_id": row.client_id, "lead_id": row.lead_id, "profile_keys": list(row.extracted_profile())},
     )
     return {"saved": True, "meeting": _meeting_payload(row)}
+
+
+def extract_client_profile_from_meeting_transcript(arguments: dict[str, Any]) -> dict[str, Any]:
+    args = ExtractClientProfileFromMeetingArgs.model_validate(arguments)
+    try:
+        result = save_client_profile_from_meeting(
+            meeting_id=args.meeting_id,
+            client_id=args.client_id,
+            lead_id=args.lead_id,
+            funnel_id=args.funnel_id,
+            status=args.status,
+            existing_context=args.existing_context,
+            source="codex_agent_tool",
+            actor="agent",
+        )
+    except PlatformProfileExtractionError as error:
+        raise AgentToolError(str(error)) from error
+    return {
+        "saved": True,
+        "meeting": _meeting_payload(result.meeting),
+        "profile": _client_profile_payload(result.profile),
+        "extraction": result.extraction.model_dump(mode="json"),
+    }
 
 
 def upsert_client_profile(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -2218,6 +2263,7 @@ TOOL_HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {
     "upsert_client_lead_delivery_source": upsert_client_lead_delivery_source,
     "create_platform_meeting": create_platform_meeting,
     "attach_meeting_transcript": attach_meeting_transcript,
+    "extract_client_profile_from_meeting_transcript": extract_client_profile_from_meeting_transcript,
     "upsert_client_profile": upsert_client_profile,
     "stage_ad_campaign": stage_ad_campaign,
     "stage_creative_asset": stage_creative_asset,
@@ -2273,6 +2319,8 @@ def _audit_target_for_tool(tool_name: str, arguments: dict[str, Any]) -> tuple[s
         return "meeting", str(arguments.get("idempotency_key") or arguments.get("lead_id") or arguments.get("client_id") or "")
     if tool_name == "attach_meeting_transcript":
         return "meeting", str(arguments.get("meeting_id") or "")
+    if tool_name == "extract_client_profile_from_meeting_transcript":
+        return "client_profile", str(arguments.get("client_id") or arguments.get("meeting_id") or "")
     if tool_name == "upsert_client_profile":
         return "client_profile", str(arguments.get("client_id") or "")
     if tool_name == "stage_ad_campaign":

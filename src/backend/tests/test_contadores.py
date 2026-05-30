@@ -18,8 +18,15 @@ import backend.ai.contadores_conversation_bot as contadores_conversation_bot_mod
 import backend.database as database_module
 import backend.endpoints.contadores as contadores_endpoints
 import backend.endpoints.workstation as workstation_endpoints
+import backend.platform_profile_extraction as profile_extraction_module
 from backend.audio_transcription import AudioTranscriptionError
 from backend.codex_utils import CodexSkill, CodexTurnResult
+from backend.ai.client_profile_extractor import (
+    ClientProfileAdAngle,
+    ClientProfileExtractionResult,
+    ClientProfileSegment,
+    ClientProfileSourceSnippet,
+)
 from backend.ai.contadores_conversation_bot import ContadoresConversationBotResult, REJECTION_SURVEY_REPLY
 from backend.ai import codex_agent_runtime
 from backend.contadores_strategies import get_contadores_strategy
@@ -79,6 +86,48 @@ def configure_contadores_db(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(database_module, "DATABASE_URL", f"sqlite:///{db_path}")
     monkeypatch.setattr(contadores_endpoints, "engine", engine)
     SQLModel.metadata.create_all(engine)
+
+
+def fake_profile_extraction(**kwargs) -> ClientProfileExtractionResult:
+    """Return deterministic transcript extraction for lifecycle tests."""
+    return ClientProfileExtractionResult(
+        business_summary="Clinica dental enfocada en implantes premium.",
+        offer_summary="Evaluacion inicial para pacientes que necesitan implantes.",
+        market_summary="Pacientes adultos que quieren recuperar sonrisa sin vueltas.",
+        segments=[
+            ClientProfileSegment(
+                name="pacientes implantes premium",
+                description="Adultos con perdida dental y capacidad de pago.",
+                geo="Montevideo",
+                meta_targeting_notes="Usar geo local y copies sobre recuperar sonrisa.",
+            )
+        ],
+        ad_angles=[
+            ClientProfileAdAngle(
+                hook="Recupera tu sonrisa sin esperar meses",
+                problem="Perdida dental",
+                desired_outcome="Volver a sonreir con confianza",
+                without_objection="sin tratamientos eternos",
+                evidence="quiere pacientes premium",
+            )
+        ],
+        meta_planning={
+            "objective": "OUTCOME_LEADS",
+            "lead_destination": "whatsapp",
+            "suggested_daily_budget_usd": 20,
+            "required_before_meta_publish": ["page_id", "whatsapp_phone_number_id"],
+        },
+        delivery_notes={"lead_sheet": "Crear Google Sheet de delivery para el cliente."},
+        unresolved_questions=["Confirmar radio geografico exacto antes de publicar en Meta."],
+        source_snippets=[
+            ClientProfileSourceSnippet(
+                topic="oferta",
+                quote="El cliente vende implantes y quiere pacientes premium.",
+                use_for="Meta copy y segmentacion",
+            )
+        ],
+        confidence="high",
+    )
 
 
 def test_drop_legacy_contadores_events_table(monkeypatch, tmp_path) -> None:
@@ -329,6 +378,8 @@ def test_codex_agent_tool_configures_text_offer_funnel_without_ui(monkeypatch, t
     assert "funnel" in snapshot["result"]["schemas"]
     assert "stage_meta_publish_plan" in snapshot["result"]["agent_native_tools"]
     assert "stage_meta_publish_plan" in snapshot["result"]["schemas"]
+    assert "extract_client_profile_from_meeting_transcript" in snapshot["result"]["agent_native_tools"]
+    assert "extract_client_profile_from_meeting_transcript" in snapshot["result"]["schemas"]
     assert any(item["id"] == "dentistas" for item in snapshot["result"]["funnels"])
 
 
@@ -368,6 +419,7 @@ def test_codex_agent_tool_configures_client_lead_delivery_without_ui(monkeypatch
 def test_platform_lifecycle_endpoints_support_agent_native_workflow(monkeypatch, tmp_path) -> None:
     """Lifecycle endpoints should expose the full platform without requiring UI configuration."""
     configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setattr(profile_extraction_module, "run_client_profile_extraction", fake_profile_extraction)
     client = TestClient(app)
 
     meeting_response = client.post(
@@ -395,6 +447,18 @@ def test_platform_lifecycle_endpoints_support_agent_native_workflow(monkeypatch,
     )
     assert transcript_response.status_code == 200
     assert transcript_response.json()["extracted_profile"]["offer"] == "implantes dentales"
+
+    extraction_response = client.post(
+        f"/api/platform/meetings/{meeting['id']}/extract-client-profile",
+        json={"status": "draft"},
+    )
+    assert extraction_response.status_code == 200
+    extracted = extraction_response.json()
+    assert extracted["profile"]["business_summary"].startswith("Clinica dental")
+    assert extracted["profile"]["knowledge"]["meta_planning"]["objective"] == "OUTCOME_LEADS"
+    assert extracted["meeting"]["status"] == "profile_extracted"
+    assert extracted["meeting"]["extracted_profile"]["profile_id"] == extracted["profile"]["id"]
+    assert extracted["extraction"]["source_snippets"][0]["topic"] == "oferta"
 
     profile_response = client.post(
         "/api/platform/client-profiles",
@@ -508,6 +572,7 @@ def test_codex_agent_lifecycle_tools_work_without_ui(monkeypatch, tmp_path) -> N
     """Agent tools should cover post-conversion, ads, delivery updates, and doubts."""
     configure_contadores_db(monkeypatch, tmp_path)
     monkeypatch.setattr(database_module, "DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr(profile_extraction_module, "run_client_profile_extraction", fake_profile_extraction)
 
     meeting_result = call_tool(
         run_id="agent-run-lifecycle",
@@ -537,6 +602,20 @@ def test_codex_agent_lifecycle_tools_work_without_ui(monkeypatch, tmp_path) -> N
     )
     assert transcript_result["ok"] is True
     assert PlatformMeeting.get_by_id(meeting_id).extracted_profile()["service"] == "laboral"
+
+    extraction_result = call_tool(
+        run_id="agent-run-lifecycle",
+        tool_name="extract_client_profile_from_meeting_transcript",
+        arguments={
+            "meeting_id": meeting_id,
+            "client_id": "client-agent-1",
+            "lead_id": "lead-agent-1",
+            "funnel_id": "abogados",
+        },
+    )
+    assert extraction_result["ok"] is True
+    assert extraction_result["result"]["profile"]["knowledge"]["meta_planning"]["lead_destination"] == "whatsapp"
+    assert PlatformMeeting.get_by_id(meeting_id).extracted_profile()["profile_id"] == extraction_result["result"]["profile"]["id"]
 
     profile_result = call_tool(
         run_id="agent-run-lifecycle",
@@ -705,6 +784,7 @@ def test_codex_agent_lifecycle_tools_work_without_ui(monkeypatch, tmp_path) -> N
     assert [call.status for call in calls] == ["succeeded"] * len(calls)
     assert {call.tool_name for call in calls} >= {
         "create_platform_meeting",
+        "extract_client_profile_from_meeting_transcript",
         "stage_ad_campaign",
         "stage_meta_publish_attempt",
         "stage_meta_publish_plan",
