@@ -44,7 +44,7 @@ Te invito a que veas este video donde te explicamos la propuesta a detalle:`
 
 Send immediately after message 2:
 
-WhatsApp MP4 from the configured `loom_mp4.media_path`.
+text offer from the configured `text_offer_599.media_path`.
 
 ## Message 4
 
@@ -54,7 +54,7 @@ If there is no reply 10 minutes after the Loom send:
 
 ## Conversational bot after video
 
-After the lead replies post-Loom and the quiet window passes, DSPy runs the
+After the lead replies post-offer and the quiet window passes, DSPy runs the
 conversational bot. The quiet window is a backoff: bot processing is locked per
 lead, the backend re-reads the inbound batch before running, and it revalidates
 that no newer inbound arrived before queueing. If the lead sends another message
@@ -78,7 +78,7 @@ The bot must return one of:
 - `close_lead`
 - `no_action`
 
-Known post-Loom questions are queued as `sequence_step=ai_reply` and then moved
+Known post-offer questions are queued as `sequence_step=ai_reply` and then moved
 to Manual (`needs_human`) with `automation_paused_reason=ai_reply_conversation`.
 Because the AI already answered, the manual reply status should be `answered`.
 This covers price, inclusions, country/coverage, guarantee, process, domain,
@@ -97,7 +97,7 @@ call duration is 15 minutes. When email, day, and time are all present, queue
 store the scheduling details in `last_classification_reason` for the alert
 email.
 
-The automation must not include the Calendly URL in AI replies. Audio, image,
+The automation must not include the Meeting URL in AI replies. Audio, image,
 video, document, or sticker-only inbound messages without transcript go to
 `needs_human`; the bot must not guess their content.
 
@@ -146,7 +146,7 @@ latest inbound message, and the direct CRM link.
 
 Manual operators can also choose `send-calendly-link` from the CRM to send only
 the active funnel's `calendly_base_url`. That manual shortcut still marks the
-lead as having reached Calendly, keeps the lead in Manual, and is not used by
+lead as having reached Meeting, keeps the lead in Manual, and is not used by
 automation.
 
 ## Human handoff

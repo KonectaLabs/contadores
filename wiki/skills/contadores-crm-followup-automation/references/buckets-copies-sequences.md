@@ -26,8 +26,8 @@ conversion moment, not a generic manual reply.
 Action:
 
 - If the day/time and email are both clear, first try to book the call in
-  Facu's Calendly through a real available Calendly/API/browser capability.
-- Current code only supports sending Calendly links and reconciling Calendly
+  Facu's Meeting through a real available Meeting/API/browser capability.
+- Current code only supports sending Meeting links and reconciling Meeting
   webhooks; it does not create bookings from a free-text day/time. If no real
   booking path is available, do not pretend the meeting is booked. Escalate
   immediately through the CRM:
@@ -77,11 +77,11 @@ Preferred copy:
 
 If price/budget was asked:
 
-`La inversion es de 300 USD. Incluye pagina web y campana publicitaria para que le lleguen consultas a su WhatsApp. Si le sirve, hagamos una llamada corta de 15 minutos y le explico bien como seria en su caso. Que dia y horario le queda bien?`
+`La inversion es de 599 USD. Incluye pagina web y campana publicitaria para que le lleguen consultas a su WhatsApp. Si le sirve, hagamos una llamada corta de 15 minutos y le explico bien como seria en su caso. Que dia y horario le queda bien?`
 
 ### `retomar_video`
 
-Use when the lead received the Loom/video context and went quiet.
+Use when the lead received the offer context and went quiet.
 
 Preferred copy:
 
@@ -157,7 +157,7 @@ Good candidates:
 
 - asked "como funciona?", "no entiendo", "mandame info", "me interesa", or
   similar;
-- has not already received the same Loom/video-demo recently;
+- has not already received the same offer-demo recently;
 - would benefit from seeing how the page + WhatsApp flow looks in practice;
 - has a clean latest outbound delivery status.
 
@@ -279,7 +279,7 @@ If the lead says yes, asks for information, or otherwise accepts the opener:
 
 - Usually do nothing manually. The bot should send Loom intro and video after
   the configured silence window.
-- Verify that the bot sent `loom_intro` and `loom_video`.
+- Verify that the bot sent `loom_intro` and `text_offer`.
 - If the bot did not send them and the lead is eligible, report or repair the
   automation path rather than writing a new manual sequence by hand.
 

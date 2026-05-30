@@ -221,11 +221,11 @@ Que valor tiene esto ?
 Operator replies used:
 
 ```text
-son 300 USD, a cambio te traemos clientes potenciales buscando abogado a tu WhatsApp
+son 599 USD, a cambio te traemos clientes potenciales buscando abogado a tu WhatsApp
 ```
 
 ```text
-Los 300 dolares incluyen el sitio web profesional y personalizado + posicionamiento, y 3 campanas publicitarias.
+Los 599 dolares incluyen el sitio web profesional y personalizado + posicionamiento, y 3 campanas publicitarias.
 ```
 
 Lead:
@@ -237,31 +237,31 @@ Esos 300 dlls que incluye
 Operator reply used:
 
 ```text
-Los 300 dolares incluyen el sitio profesional y personalizado + posicionamiento, y las el armado y optimizacion de las 3 publicidades.
+Los 599 dolares incluyen el sitio profesional y personalizado + posicionamiento, y las el armado y optimizacion de las 3 publicidades.
 ```
 
 Lead:
 
 ```text
-300 usd, durante que periodo,
+599 usd, durante que periodo,
 ```
 
 Operator reply used:
 
 ```text
-Es un pago unico de 300 usd, con eso tenes incluida una pagina web y 3 campanas de marketing.
+Es un pago mensual de 599 usd, con eso tenes incluida una pagina web y 3 campanas de marketing.
 ```
 
 Lead:
 
 ```text
-300 dolares?
+599 dolares?
 ```
 
 Thread-approved Frankie-style reply:
 
 ```text
-Si, la inversion es de 300 USD, pago unico.
+Si, la inversion es de 599 USD mensuales.
 
 A cambio usted recibe mas oportunidades de clientes potenciales directo a su WhatsApp.
 
@@ -279,7 +279,7 @@ Cuanto cuesta?
 Thread-approved reply:
 
 ```text
-La inversion es de 300 USD, pago unico.
+La inversion es de 599 USD mensuales.
 
 A cambio usted recibe mas oportunidades de clientes potenciales directo a su WhatsApp.
 
@@ -297,7 +297,7 @@ Precio y como se trata el dominio
 Thread-approved reply:
 
 ```text
-La inversion es de 300 USD, pago unico.
+La inversion es de 599 USD mensuales.
 
 A cambio usted recibe mas oportunidades de clientes potenciales directo a su WhatsApp.
 
@@ -376,7 +376,7 @@ Exacto, en menos de 1 semana te hacemos una pagina web moderna y profesional y t
 Follow-up process reply:
 
 ```text
-Agendamos una reunion, nos conocemos, despejamos las ultimas dudas, definimos un metodo de pago para los 300 USD, y una vez se realice el pago, nosotros comenzamos a trabajar en tu caso. En menos de 1 semana tenemos la pagina web y las campanas publicitarias corriendo. Y tienes 30 dias de garantia, si no te traemos potenciales clientes en 30 dias, te devolvemos el dinero.
+Agendamos una reunion, nos conocemos, despejamos las ultimas dudas, definimos el primer pago de los 599 USD mensuales, y una vez se realice el pago, nosotros comenzamos a trabajar en tu caso. En menos de 1 semana tenemos la pagina web y las campanas publicitarias corriendo. Y tienes 30 dias de garantia, si no te traemos potenciales clientes en 30 dias, te devolvemos el dinero.
 ```
 
 ## Audio / Media
@@ -393,7 +393,7 @@ Example after successful audio transcript:
 
 ```text
 Lead audio transcript: Me interesa, cuanto cuesta?
-Reply: La inversion es de 300 USD, pago unico.
+Reply: La inversion es de 599 USD mensuales.
 
 A cambio recibe mas oportunidades de clientes potenciales directo a su WhatsApp.
 
@@ -549,7 +549,7 @@ Mas adelante. Gracias
 Use exactly this short diagnostic reply:
 
 ```text
-1) Muy caros los 300 dolares
+1) Muy caros los 599 dolares
 2) No me sirve la pagina web + publicidades
 3) No es mi momento para invertir
 4) Otro motivo

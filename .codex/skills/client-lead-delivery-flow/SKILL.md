@@ -6,9 +6,19 @@ description: Use when Facu asks to create, edit, deploy, or verify a Client Lead
 # Client Lead Delivery Flow
 
 Use this skill in `/Users/fgoiriz/private/repos/contadores` when the request is
-to add a client Delivery source from config files. This is not CRM funnel setup:
-Delivery notifies a Konecta client that their own campaign sheet received a new
-lead.
+to add a client Delivery source from agent tools or config files. This is not
+CRM funnel setup: Delivery notifies a Konecta client that their own campaign
+sheet received a new lead.
+
+Prefer the audited agent-native tool when a single source can be configured
+directly:
+
+```bash
+uv run python -m backend.ai.codex_agent_runtime call --run-id RUN_ID --tool upsert_client_lead_delivery_source --arguments-json 'JSON_OBJECT'
+```
+
+Use the file-backed config when you need multiple sheets/recipients expanded in
+one durable server file.
 
 ## Required Inputs
 

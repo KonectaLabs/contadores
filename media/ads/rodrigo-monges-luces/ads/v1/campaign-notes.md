@@ -2,7 +2,7 @@
 
 Fuentes usadas:
 - Grupo de WhatsApp `Konecta <-> Rodrigo`: Alan habia propuesto ads genericos sobre demanda, deuda y empresa. Rodrigo pidio corregir datos de contacto y sumar enfoques de ninez y penal.
-- Landing local `tmp/pagina_abogado_static/index.html`: Monges Luces, Estudio Juridico, Asuncion, Paraguay; foco en defensa penal, litigios complejos, civil y comercial.
+- Landing local `media/templates/workstation/lawyer-page/index.html`: Monges Luces, Estudio Juridico, Asuncion, Paraguay; foco en defensa penal, litigios complejos, civil y comercial.
 - ReadAI: no encontre una reunion de Rodrigo en los rangos revisados, por eso estas piezas se basan en WhatsApp y landing.
 
 Enfoque:

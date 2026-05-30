@@ -8,6 +8,7 @@ from backend.endpoints.client_leads import (
 )
 from backend.endpoints.contadores import contadores_router
 from backend.endpoints.funnels import funnels_router
+from backend.endpoints.platform import platform_router
 from backend.endpoints.workstation import public_workstation_router, workstation_router
 
 __all__ = [
@@ -17,6 +18,7 @@ __all__ = [
     "client_leads_router",
     "contadores_router",
     "funnels_router",
+    "platform_router",
     "public_workstation_router",
     "workstation_router",
 ]

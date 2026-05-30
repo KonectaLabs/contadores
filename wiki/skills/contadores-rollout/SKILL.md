@@ -129,8 +129,8 @@ uv run python src/scripts/requeue_failed_contadores_messages.py
 4. Verify `/api/runtime` readiness on the server.
 5. Verify `/api/funnels` on the server.
 6. Verify sheet ingestion and WhatsApp flow on the real server when the change touches those surfaces.
-   When the change touches the post-video sequence, include the conversational
-   bot path that queues `ai_reply` and moves post-Loom conversations to Manual,
+   When the change touches the post-offer sequence, include the conversational
+   bot path that queues `ai_reply` and moves post-offer conversations to Manual,
    the audio transcription path, runtime fallback alerts, plus the scheduling
    handoff path that queues `scheduling_handoff_confirmation`.
 

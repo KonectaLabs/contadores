@@ -2477,9 +2477,9 @@ def build_solo_page_codex_prompt(
     previous_version = latest_landing_page_version_dir(client)
     reply_text = "\n".join(f"- {message.text}" for message in replies if message.text.strip()).strip()
     base_template = (
-        REPO_ROOT / "tmp" / "pagina_abogado_static"
+        REPO_ROOT / "media" / "templates" / "workstation" / "lawyer-page"
         if client.funnel_id == "abogados"
-        else REPO_ROOT / "tmp" / "pagina_contador_static"
+        else REPO_ROOT / "media" / "templates" / "workstation" / "accountant-page"
     )
     professional_photos = list_professional_photo_versions(client)
     photo_paths = "\n".join(item.image_path for item in professional_photos) or "(none)"

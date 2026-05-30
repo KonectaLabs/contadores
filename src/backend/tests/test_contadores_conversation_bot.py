@@ -62,7 +62,7 @@ def test_dspy_conversation_bot_returns_structured_action(monkeypatch) -> None:
             assert "Cuanto cuesta" in kwargs["latest_inbound"]
             return SimpleNamespace(
                 action="send_reply",
-                message_text="La inversion es de 300 USD, pago unico.",
+                message_text="La inversion es de 599 USD mensuales.",
                 classification_label="answered_price",
                 reason="Respondio precio segun playbook.",
                 missing_fields=[],
@@ -78,7 +78,7 @@ def test_dspy_conversation_bot_returns_structured_action(monkeypatch) -> None:
 
     assert result == ContadoresConversationBotResult(
         action="send_reply",
-        message_text="La inversion es de 300 USD, pago unico.",
+        message_text="La inversion es de 599 USD mensuales.",
         classification_label="answered_price",
         reason="Respondio precio segun playbook.",
         runtime_provider="dspy",
@@ -134,7 +134,7 @@ def test_active_offer_prompt_overrides_default_offer() -> None:
     )
 
     assert "active offer" in prompt.lower()
-    assert "overrides the default 300 USD offer" in prompt
+    assert "overrides the default 599 USD offer" in prompt
     assert "Ask for email, day and time" in prompt
 
 
@@ -157,7 +157,7 @@ def test_prompt_offers_solo_page_promo_for_warm_deferral() -> None:
 
 
 def test_active_offer_rejection_does_not_send_default_300_survey() -> None:
-    """Rejecting a promo should not receive the default 300 USD rejection survey."""
+    """Rejecting a promo should not receive the default 599 USD rejection survey."""
     program = ContadoresConversationBotProgram(
         codex_program=SimpleNamespace(
             aforward=lambda **kwargs: ContadoresConversationBotResult(
@@ -313,7 +313,7 @@ def test_codex_conversation_bot_parses_strict_json(monkeypatch) -> None:
         calls.append({"prompt": prompt, **kwargs})
         return SimpleNamespace(
             final_response=(
-                '```json\n{"action":"send_reply","message_text":"Son 300 USD, pago unico.",'
+                '```json\n{"action":"send_reply","message_text":"Son 599 USD mensuales.",'
                 '"classification_label":"answered_price","reason":"Respondio precio.",'
                 '"missing_fields":[],"scheduling_email":"","scheduling_day":"",'
                 '"scheduling_time":"","timezone":""}\n```'
@@ -325,7 +325,7 @@ def test_codex_conversation_bot_parses_strict_json(monkeypatch) -> None:
     result = asyncio.run(CodexConversationBotProgram().aforward(**bot_kwargs()))
 
     assert result.action == "send_reply"
-    assert result.message_text == "Son 300 USD, pago unico."
+    assert result.message_text == "Son 599 USD mensuales."
     assert result.runtime_provider == "codex_api_key"
     assert calls[0]["model"] == CONVERSATION_BOT_CODEX_MODEL
     assert calls[0]["effort"] == CONVERSATION_BOT_CODEX_EFFORT
@@ -454,7 +454,7 @@ def test_orchestrator_uses_codex_api_key_fallback_when_chatgpt_codex_fails(monke
             assert kwargs["latest_inbound"] == "Cuanto cuesta?"
             return ContadoresConversationBotResult(
                 action="send_reply",
-                message_text="La inversion es de 300 USD, pago unico.",
+                message_text="La inversion es de 599 USD mensuales.",
                 classification_label="answered_price",
                 reason="API key Codex respondio precio.",
                 runtime_provider="codex_api_key",
@@ -492,7 +492,7 @@ def test_orchestrator_uses_dspy_fallback_when_both_codex_auth_paths_fail(monkeyp
             assert kwargs["latest_inbound"] == "Cuanto cuesta?"
             return ContadoresConversationBotResult(
                 action="send_reply",
-                message_text="La inversion es de 300 USD, pago unico.",
+                message_text="La inversion es de 599 USD mensuales.",
                 classification_label="answered_price",
                 reason="Fallback respondio precio.",
                 runtime_provider="dspy",

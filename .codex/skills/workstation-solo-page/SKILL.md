@@ -23,8 +23,8 @@ Read the client folder first:
 
 Use the provided base template folder for the profession:
 
-- accountants: `tmp/pagina_contador_static`
-- lawyers: `tmp/pagina_abogado_static`
+- accountants: `media/templates/workstation/accountant-page`
+- lawyers: `media/templates/workstation/lawyer-page`
 
 ## Output Contract
 

@@ -14,7 +14,8 @@ from backend.database import DATA_DIR, normalize_email
 from backend.lead_template_utils import opener_template_name_for_funnel, opener_text_template_for_funnel
 
 FunnelKind = Literal["campaign", "inbox"]
-StrategyDelivery = Literal["link", "video"]
+OfferPaymentModel = Literal["monthly", "one_time", "custom"]
+StrategyDelivery = Literal["link", "video", "text"]
 
 CONTADORES_FUNNEL_ID = "contadores"
 GENERAL_INBOX_FUNNEL_ID = "general"
@@ -88,6 +89,16 @@ class FunnelDefinition(BaseModel):
     label: str
     kind: FunnelKind = "campaign"
     enabled: bool = True
+    offer_version: str = "mission-2026-05-30"
+    offer_price_usd: int = Field(default=599, ge=0)
+    offer_payment_model: OfferPaymentModel = "monthly"
+    offer_summary: str = (
+        "Marketing y anuncios para recibir interesados directo al WhatsApp; "
+        "sitio incluido si hace falta."
+    )
+    offer_includes_website: bool = True
+    default_campaign_count: int = Field(default=3, ge=0)
+    default_daily_ad_budget_usd: int | None = Field(default=None, ge=0)
     sheet_url: str | None = None
     sheet_gid: str | None = None
     sheet_source_filter: str | None = None
@@ -119,6 +130,8 @@ class FunnelDefinition(BaseModel):
 
     @field_validator(
         "label",
+        "offer_version",
+        "offer_summary",
         "template_language",
         "opener_text",
         "opener_followup_text",

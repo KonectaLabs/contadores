@@ -1,6 +1,6 @@
 ---
 name: konecta-funnel-crm-config
-description: Configure the Contadores/Konecta CRM as a multi-funnel platform. Use when adding a niche to the app, editing funnel config files, wiring spreadsheet sources, WhatsApp messages, video strategies, Calendly, or rollout.
+description: Configure the Contadores/Konecta CRM as a multi-funnel platform. Use when adding a niche to the app, editing funnel config files, wiring spreadsheet sources, WhatsApp messages, text offer strategies, Meeting, or rollout.
 ---
 
 # Konecta Funnel CRM Config
@@ -37,12 +37,36 @@ Each funnel needs:
   - `post_loom_min_seconds`;
   - `post_loom_quiet_seconds`;
 - strategies:
-  - WhatsApp MP4 strategy;
+  - text offer strategy;
   - rollout weights.
 
 ## UI Rule
 
 The visual editor and Codex must write to the same config source. Do not create one hidden UI state and another code-only state.
+
+## Agent-Native Rule
+
+Do not require the UI when an agent can configure the platform directly. Use the
+audited tool runner first:
+
+```bash
+uv run python -m backend.ai.codex_agent_runtime call --run-id RUN_ID --tool read_platform_config --arguments-json '{"include_schema":true}'
+uv run python -m backend.ai.codex_agent_runtime call --run-id RUN_ID --tool configure_text_offer_funnel --arguments-json 'JSON_OBJECT'
+uv run python -m backend.ai.codex_agent_runtime call --run-id RUN_ID --tool upsert_client_lead_delivery_source --arguments-json 'JSON_OBJECT'
+uv run python -m backend.ai.codex_agent_runtime call --run-id RUN_ID --tool validate_platform_config --arguments-json '{"include_disabled":true}'
+```
+
+Use `configure_text_offer_funnel` for normal mission-offer funnels and
+`upsert_funnel_config` only when exact full-schema control is needed. Use
+`upsert_client_lead_delivery_source` for client-owned lead delivery. Leave
+`enabled=false` until templates, sheets/routing, alert emails, and offer copy
+are known.
+
+The same agent-native rule applies after conversion: use
+`create_platform_meeting`, `attach_meeting_transcript`,
+`upsert_client_profile`, `stage_ad_campaign`, `stage_creative_asset`,
+`stage_meta_publish_attempt`, `create_client_update`, `ask_human_question`, and
+`answer_human_question` instead of creating hidden state in the UI.
 
 ## Runtime Rule
 

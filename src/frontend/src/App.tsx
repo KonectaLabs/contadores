@@ -121,8 +121,8 @@ const stageFilters: Array<{
 }> = [
   { value: "all", label: "All", metric: "total", tone: "all" },
   { value: "awaiting_initial_reply", label: "Opener sent", metric: "awaiting_initial_reply", tone: "neutral" },
-  { value: "awaiting_video_reply", label: "Loom sent", metric: "awaiting_video_reply", tone: "neutral" },
-  { value: "calendly_sent", label: "Calendly sent", metric: "calendly_sent", tone: "accent" },
+  { value: "awaiting_video_reply", label: "Offer sent", metric: "awaiting_video_reply", tone: "neutral" },
+  { value: "calendly_sent", label: "Meeting sent", metric: "calendly_sent", tone: "accent" },
   { value: "booked", label: "Booked", metric: "booked", tone: "success" },
   { value: "needs_human", label: "Manual", metric: "needs_human", tone: "warn" },
   { value: "manual_attention", label: "Needs answer", tone: "warn" },
@@ -164,8 +164,8 @@ function readStoredActiveSection(): ActiveSection {
 const moveStageOptions: Array<{ value: LeadStage; label: string }> = [
   { value: "needs_human", label: "Manual" },
   { value: "awaiting_initial_reply", label: "Opener sent" },
-  { value: "awaiting_video_reply", label: "Loom sent" },
-  { value: "calendly_sent", label: "Calendly sent" },
+  { value: "awaiting_video_reply", label: "Offer sent" },
+  { value: "calendly_sent", label: "Meeting sent" },
   { value: "booked", label: "Booked" },
   { value: "closed", label: "Closed" },
 ];
@@ -175,12 +175,12 @@ const sendOptions = [
   { value: "send-manual-ping", title: "Manual ping", help: "Send the approved ping template to reopen WhatsApp." },
   { value: "offer-solo-page-promo", title: "Promo solo pagina", help: "Offer the page-only promo and let automation handle the reply." },
   { value: "send-opener", title: "Opener", help: "Queue the default opener template." },
-  { value: "send-loom", title: "Loom sequence", help: "Queue the Loom video introduction messages." },
+  { value: "send-loom", title: "Send offer", help: "Queue the configured offer message." },
   { value: "send-accountant-page-example-video", title: "Pagina contador", help: "Send the accountant page example video." },
   { value: "send-lawyer-page-example-video", title: "Pagina abogado", help: "Send the lawyer page example video." },
-  { value: "send-video-check", title: "Video check", help: "Ask if they watched the Loom." },
-  { value: "send-calendly", title: "Calendly with intro", help: "Send the booking instructions and then the Calendly link." },
-  { value: "send-calendly-link", title: "Calendly link only", help: "Send only the Calendly link and mark Calendly sent." },
+  { value: "send-video-check", title: "Offer check", help: "Ask if they want to review the offer on a short call." },
+  { value: "send-calendly", title: "Meeting with intro", help: "Send the booking instructions and then the legacy scheduling link." },
+  { value: "send-calendly-link", title: "Meeting link only", help: "Send only the legacy scheduling link and mark meeting sent." },
 ] as const;
 
 type DetailTab = "messages" | "strategies";
@@ -4230,6 +4230,7 @@ function FunnelSetupView({
     );
   }
 
+  const textStrategy = funnel.strategies.find((strategy) => strategy.delivery === "text");
   const mp4Strategy = funnel.strategies.find((strategy) => strategy.delivery === "video");
   const readyItems = buildFunnelReadyItems(funnel);
 
@@ -4265,12 +4266,12 @@ function FunnelSetupView({
           <p>Every {funnel.sheet_poll_seconds} seconds</p>
         </article>
         <article className="ct-funnel-card">
-          <span>Video</span>
-          <strong>{mp4Strategy?.media_path ? "WhatsApp MP4" : "Not configured"}</strong>
-          <p>{mp4Strategy?.media_path || "-"}</p>
+          <span>Offer</span>
+          <strong>{textStrategy ? "Text offer" : mp4Strategy ? "Media offer" : "Not configured"}</strong>
+          <p>{textStrategy?.message_text || mp4Strategy?.media_path || "-"}</p>
         </article>
         <article className="ct-funnel-card">
-          <span>Calendly</span>
+          <span>Meeting</span>
           <strong>{funnel.calendly_base_url ? "Ready" : "Missing"}</strong>
           <p>{funnel.calendly_base_url || "-"}</p>
         </article>
@@ -4289,11 +4290,11 @@ function FunnelSetupView({
           <blockquote>{funnel.manual_ping_text}</blockquote>
         </div>
         <div className="ct-copy-row">
-          <span>Video intro</span>
-          <blockquote>{funnel.loom_intro_text}</blockquote>
+          <span>Offer message</span>
+          <blockquote>{textStrategy?.message_text || funnel.loom_intro_text || "-"}</blockquote>
         </div>
         <div className="ct-copy-row">
-          <span>Calendly handoff</span>
+          <span>Meeting handoff</span>
           <blockquote>{funnel.calendly_intro_text}</blockquote>
         </div>
       </section>
@@ -4336,7 +4337,9 @@ function FunnelEditorDrawer({
   onSave: (funnel: FunnelDefinition) => Promise<void>;
 }) {
   const [draft, setDraft] = useState<FunnelDefinition>(() => funnel ?? buildBlankFunnel());
-  const videoStrategy = draft.strategies.find((strategy) => strategy.delivery === "video") ?? draft.strategies[1];
+  const textStrategy = draft.strategies.find((strategy) => strategy.delivery === "text");
+  const videoStrategy = draft.strategies.find((strategy) => strategy.delivery === "video");
+  const primaryStrategy = textStrategy ?? videoStrategy ?? draft.strategies[0];
   const templateChoices = buildTemplateChoices(draft);
 
   function update<K extends keyof FunnelDefinition>(key: K, value: FunnelDefinition[K]) {
@@ -4348,6 +4351,18 @@ function FunnelEditorDrawer({
       ...current,
       strategies: current.strategies.map((strategy) => (
         strategy.delivery === "video" ? { ...strategy, media_path: value.trim() || null } : strategy
+      )),
+    }));
+  }
+
+  function updateStrategyMessageText(strategyId: string | undefined, value: string) {
+    if (!strategyId) {
+      return;
+    }
+    setDraft((current) => ({
+      ...current,
+      strategies: current.strategies.map((strategy) => (
+        strategy.id === strategyId ? { ...strategy, message_text: value } : strategy
       )),
     }));
   }
@@ -4392,6 +4407,9 @@ function FunnelEditorDrawer({
       sheet_url: draft.sheet_url?.trim() || null,
       sheet_gid: draft.sheet_gid?.trim() || null,
       sheet_source_filter: draft.sheet_source_filter?.trim() || null,
+      offer_version: draft.offer_version.trim() || "mission-2026-05-30",
+      offer_summary: draft.offer_summary.trim(),
+      default_daily_ad_budget_usd: draft.default_daily_ad_budget_usd ?? null,
       opener_template_name: draft.opener_template_name?.trim() || null,
       opener_followup_template_name: draft.opener_followup_template_name?.trim() || null,
       manual_ping_template_name: draft.manual_ping_template_name?.trim() || null,
@@ -4439,6 +4457,56 @@ function FunnelEditorDrawer({
               <p className="ct-field-hint">Disabled funnels stay visible but should not run automation.</p>
             </div>
           </label>
+
+          <div className="ct-field-grid">
+            <label className="ct-field">
+              <span>Offer Price USD</span>
+              <input type="number" min="0" value={draft.offer_price_usd} onChange={(event) => update("offer_price_usd", Number(event.target.value) || 0)} />
+            </label>
+            <label className="ct-field">
+              <span>Payment Model</span>
+              <select value={draft.offer_payment_model} onChange={(event) => update("offer_payment_model", event.target.value as FunnelDefinition["offer_payment_model"])}>
+                <option value="monthly">Monthly</option>
+                <option value="one_time">One time</option>
+                <option value="custom">Custom</option>
+              </select>
+            </label>
+          </div>
+
+          <label className="ct-field">
+            <span>Offer Summary</span>
+            <textarea value={draft.offer_summary} onChange={(event) => update("offer_summary", event.target.value)} rows={3} />
+          </label>
+
+          <div className="ct-field-grid">
+            <label className="ct-field">
+              <span>Offer Version</span>
+              <input value={draft.offer_version} onChange={(event) => update("offer_version", event.target.value)} />
+            </label>
+            <label className="ct-field">
+              <span>Campaign Count</span>
+              <input type="number" min="0" value={draft.default_campaign_count} onChange={(event) => update("default_campaign_count", Number(event.target.value) || 0)} />
+            </label>
+          </div>
+
+          <div className="ct-field-grid">
+            <label className="ct-field">
+              <span>Daily Ad Budget USD</span>
+              <input
+                type="number"
+                min="0"
+                value={draft.default_daily_ad_budget_usd ?? ""}
+                onChange={(event) => update("default_daily_ad_budget_usd", event.target.value ? Number(event.target.value) : null)}
+              />
+            </label>
+            <label className="ct-field ct-field-toggle">
+              <span>Website Included</span>
+              <div className="ct-toggle-row">
+                <input type="checkbox" checked={draft.offer_includes_website} onChange={(event) => update("offer_includes_website", event.target.checked)} />
+                <p className="ct-field-hint">Used by the bot and future campaign briefs.</p>
+              </div>
+            </label>
+          </div>
 
           <label className="ct-field">
             <span>Sheet Poll Seconds</span>
@@ -4498,14 +4566,21 @@ function FunnelEditorDrawer({
           </label>
 
           <label className="ct-field">
-            <span>Video Intro Text</span>
+            <span>Pre-offer Text</span>
             <textarea value={draft.loom_intro_text} onChange={(event) => update("loom_intro_text", event.target.value)} rows={4} />
           </label>
 
           <label className="ct-field">
-            <span>MP4 Path</span>
-            <input value={videoStrategy?.media_path ?? ""} onChange={(event) => updateStrategyMediaPath(event.target.value)} />
+            <span>Primary Offer Text</span>
+            <textarea value={primaryStrategy?.message_text ?? ""} onChange={(event) => updateStrategyMessageText(primaryStrategy?.id, event.target.value)} rows={4} />
           </label>
+
+          {videoStrategy ? (
+            <label className="ct-field">
+              <span>MP4 Path</span>
+              <input value={videoStrategy.media_path ?? ""} onChange={(event) => updateStrategyMediaPath(event.target.value)} />
+            </label>
+          ) : null}
 
           <div className="ct-strategy-edit-list">
             {draft.strategies.map((strategy) => (
@@ -4531,16 +4606,16 @@ function FunnelEditorDrawer({
           </div>
 
           <label className="ct-field">
-            <span>Video Check Text</span>
+            <span>Offer Check Text</span>
             <input value={draft.video_check_text} onChange={(event) => update("video_check_text", event.target.value)} />
           </label>
 
           <label className="ct-field">
-            <span>Calendly Text</span>
+            <span>Meeting Text</span>
             <textarea value={draft.calendly_intro_text} onChange={(event) => update("calendly_intro_text", event.target.value)} rows={4} />
           </label>
           <label className="ct-field">
-            <span>Calendly URL</span>
+            <span>Legacy Scheduling URL</span>
             <input value={draft.calendly_base_url} onChange={(event) => update("calendly_base_url", event.target.value)} />
           </label>
           <label className="ct-field">
@@ -5362,7 +5437,7 @@ function ConfigDrawer({
             </div>
           </label>
           <label className="ct-field">
-            <span>Calendly Base URL</span>
+            <span>Legacy Scheduling URL</span>
             <input value={draft.calendly_base_url} onChange={(event) => setDraft((current) => ({ ...current, calendly_base_url: event.target.value }))} />
           </label>
           <label className="ct-field">
@@ -5428,7 +5503,7 @@ function StrategyStatsPanel({
             </label>
             <div className="ct-strategy-metrics">
               <span>{item.assigned} assigned</span>
-              <span>{formatRate(item.calendly_rate)} Calendly</span>
+              <span>{formatRate(item.calendly_rate)} meeting</span>
               <span>{formatRate(item.booked_rate)} booked</span>
             </div>
           </article>
@@ -5476,7 +5551,7 @@ function SendModal({
         </header>
         <div className="ct-modal-body">
           <p className="ct-modal-warning">
-            <strong>Heads up:</strong> {pausesAutomation ? "sending this pauses the bot for this lead. You can resume automation after." : "sending Calendly marks the lead as Calendly sent and keeps it in Manual."}
+            <strong>Heads up:</strong> {pausesAutomation ? "sending this pauses the bot for this lead. You can resume automation after." : "sending a meeting link marks the lead as meeting sent and keeps it in Manual."}
           </p>
 
           <fieldset className="ct-send-options">
@@ -5513,7 +5588,7 @@ function SendModal({
         <footer className="ct-modal-foot">
           <button type="button" className="ct-btn ct-btn-ghost" onClick={onClose}>Cancel</button>
           <button type="submit" className="ct-btn ct-btn-primary" disabled={busy || (kind === "custom" && (customBlocked || !text.trim()))}>
-            {busy ? "Sending..." : pausesAutomation ? "Send and pause automation" : "Send and mark Calendly sent"}
+            {busy ? "Sending..." : pausesAutomation ? "Send and pause automation" : "Send and mark meeting sent"}
           </button>
         </footer>
       </form>
@@ -5588,7 +5663,7 @@ function BulkSendModal({
               ? " Tags will be replaced for those leads."
               : pausesAutomation
                 ? " Sending this pauses automation for those leads."
-                : " Calendly will mark them as Calendly sent and keep them in Manual."}
+                : " Sending a meeting link marks them as meeting sent and keeps them in Manual."}
           </p>
 
           <fieldset className="ct-send-options">
@@ -6123,6 +6198,13 @@ function buildBlankFunnel(): FunnelDefinition {
     label: "Nuevo Funnel",
     kind: "campaign",
     enabled: false,
+    offer_version: "mission-2026-05-30",
+    offer_price_usd: 599,
+    offer_payment_model: "monthly",
+    offer_summary: "Marketing y anuncios para recibir interesados directo al WhatsApp; sitio incluido si hace falta.",
+    offer_includes_website: true,
+    default_campaign_count: 3,
+    default_daily_ad_budget_usd: null,
     sheet_url: null,
     sheet_gid: null,
     sheet_source_filter: null,
@@ -6134,9 +6216,9 @@ function buildBlankFunnel(): FunnelDefinition {
     opener_followup_template_name: null,
     manual_ping_text: "Hola, queria saber en que situacion quedamos y si queres que retomemos la conversacion",
     manual_ping_template_name: null,
-    loom_intro_text: "Perfecto. Te cuento rapido como funciona y que obtenes si trabajamos juntos:",
+    loom_intro_text: "",
     loom_url: "",
-    video_check_text: "conseguiste ver el video?",
+    video_check_text: "te interesa que lo veamos en una llamada corta?",
     calendly_intro_text: "Para avanzar, el siguiente paso es elegir un horario en el calendario:",
     calendly_base_url: "",
     alert_emails: [],
@@ -6147,14 +6229,14 @@ function buildBlankFunnel(): FunnelDefinition {
     strategies: [
       {
         step: "loom",
-        id: "loom_mp4",
-        label: "WhatsApp MP4",
+        id: "text_offer_599",
+        label: "Text offer 599",
         weight: 100,
-        delivery: "video",
-        sequence_step: "loom_video",
-        message_text: "Video de explicacion enviado por WhatsApp.",
-        media_type: "video",
-        media_path: "",
+        delivery: "text",
+        sequence_step: "text_offer",
+        message_text: "Son 599 USD mensuales. A cambio recibis oportunidades de clientes potenciales directo a tu WhatsApp. Eso lo logramos con una pagina profesional y campanas enfocadas. Si te interesa, lo vemos en una llamada corta y revisamos si tiene sentido para tu caso.",
+        media_type: null,
+        media_path: null,
         media_caption: null,
       },
     ],
@@ -6169,17 +6251,21 @@ function buildFunnelSetupIssues(funnel: FunnelDefinition | null): string[] {
     return [];
   }
 
-  const videoStrategy = funnel.strategies.find((strategy) => strategy.delivery === "video");
-  const checks = buildFunnelReadyItems(funnel, videoStrategy);
+  const checks = buildFunnelReadyItems(funnel);
   return checks.filter((item) => !item.ready).map((item) => `${item.label}.`);
 }
 
 function buildFunnelReadyItems(
   funnel: FunnelDefinition,
-  videoStrategy = funnel.strategies.find((strategy) => strategy.delivery === "video"),
 ): Array<{ label: string; ready: boolean }> {
+  const textStrategy = funnel.strategies.find((strategy) => strategy.delivery === "text");
+  const videoStrategy = funnel.strategies.find((strategy) => strategy.delivery === "video");
+  const hasTextOffer = Boolean(textStrategy?.message_text.trim());
+  const hasMediaOffer = Boolean(funnel.loom_intro_text.trim() && videoStrategy?.media_path?.trim());
   return [
     { label: "Funnel enabled", ready: funnel.enabled },
+    { label: "Offer price", ready: funnel.offer_price_usd > 0 || funnel.offer_payment_model === "custom" },
+    { label: "Offer summary", ready: Boolean(funnel.offer_summary.trim()) },
     { label: "Sheet URL", ready: Boolean(funnel.sheet_url?.trim()) },
     { label: "Sheet GID", ready: Boolean(funnel.sheet_gid?.trim()) },
     { label: "Opener template", ready: Boolean(funnel.opener_template_name?.trim()) },
@@ -6188,11 +6274,10 @@ function buildFunnelReadyItems(
     { label: "Follow-up text", ready: Boolean(funnel.opener_followup_text.trim()) },
     { label: "Manual ping template", ready: Boolean(funnel.manual_ping_template_name?.trim()) },
     { label: "Manual ping text", ready: Boolean(funnel.manual_ping_text.trim()) },
-    { label: "Video intro text", ready: Boolean(funnel.loom_intro_text.trim()) },
-    { label: "WhatsApp MP4 path", ready: Boolean(videoStrategy?.media_path?.trim()) },
-    { label: "Video check text", ready: Boolean(funnel.video_check_text.trim()) },
-    { label: "Calendly text", ready: Boolean(funnel.calendly_intro_text.trim()) },
-    { label: "Calendly URL", ready: Boolean(funnel.calendly_base_url.trim()) },
+    { label: "Text or media offer", ready: hasTextOffer || hasMediaOffer },
+    { label: "Offer check text", ready: Boolean(funnel.video_check_text.trim()) },
+    { label: "Meeting text", ready: Boolean(funnel.calendly_intro_text.trim()) },
+    { label: "Legacy scheduling URL", ready: Boolean(funnel.calendly_base_url.trim()) },
     { label: "Alert emails", ready: funnel.alert_emails.length > 0 },
   ];
 }
@@ -6239,11 +6324,15 @@ function sendOptionPreview(kind: SendKind, funnel: FunnelDefinition | null): str
   if (!funnel) {
     return "";
   }
+  const primaryOfferText = (
+    funnel.strategies.find((strategy) => strategy.delivery === "text")?.message_text
+    || funnel.loom_intro_text
+  );
   const previews: Partial<Record<SendKind, string>> = {
     "send-manual-ping": funnel.manual_ping_text,
     "offer-solo-page-promo": "Solo pagina web profesional. Precio ponderado hacia 99/49 USD.",
     "send-opener": funnel.opener_text,
-    "send-loom": funnel.loom_intro_text,
+    "send-loom": primaryOfferText,
     "send-accountant-page-example-video": "Esta es una pagina de un cliente contador nuestro, asi podria verse tu pagina",
     "send-lawyer-page-example-video": "Esta es una pagina de un cliente abogado nuestro, asi podria verse tu pagina",
     "send-video-check": funnel.video_check_text,
@@ -6262,8 +6351,8 @@ function slugifyClient(value: string): string {
 function formatStageLabel(stage: LeadStage | string | null | undefined): string {
   const labels: Record<string, string> = {
     awaiting_initial_reply: "Opener sent",
-    awaiting_video_reply: "Loom sent",
-    calendly_sent: "Calendly sent",
+    awaiting_video_reply: "Offer sent",
+    calendly_sent: "Meeting sent",
     needs_human: "Manual",
     booked: "Booked",
     closed: "Closed",
@@ -6340,7 +6429,7 @@ function leadPreview(lead: LeadSummary): string {
     return truncate(lead.last_classification_reason, 120);
   }
   if (lead.booked_at) {
-    return "Booked through Calendly or manually marked.";
+    return "Booked through meeting link or manually marked.";
   }
   return truncate(`${lead.platform || "-"} · ${lead.email || lead.phone || "-"}`, 120);
 }
@@ -6374,7 +6463,7 @@ function buildLeadContextText({
     `Platform: ${lead.platform || "-"}`,
     `External lead ID: ${lead.external_lead_id || "-"}`,
     `Tags: ${lead.tags.length ? lead.tags.join(", ") : "-"}`,
-    `Calendly: ${lead.calendly_url || "-"}`,
+    `Scheduling URL: ${lead.calendly_url || "-"}`,
     `Last activity: ${relativeTime(lastActivity)} (${shortDate(lastActivity)})`,
     `Automation: ${lead.automation_paused ? `Paused (${humanize(lead.automation_paused_reason || "")})` : "Active"}`,
     `Workstation: ${lead.workstation_client_id || "-"}`,

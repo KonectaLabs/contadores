@@ -1,6 +1,6 @@
 ---
 name: contadores-bot-sequence
-description: Use when working on the WhatsApp sequence, message copy, timing windows, template opener, Loom step, conversational bot replies, scheduling handoff, manual Calendly actions, or human handoff behavior for Contadores.
+description: Use when working on the WhatsApp sequence, message copy, timing windows, template opener, offer step, conversational bot replies, scheduling handoff, manual meeting actions, or human handoff behavior for Contadores.
 ---
 
 # Contadores Bot Sequence
@@ -26,12 +26,14 @@ first-run config, and `data/funnels.json` can override it per server.
    - Abogados leads whose first inbound text normalizes to `Hola! Quiero mas informacion de su propuesta para abogados!` also skip this step.
 2. Wait for any reply.
 3. Wait 30 seconds of silence.
-4. Send the Loom intro text.
-5. Send the configured Loom strategy:
-   - `loom_mp4`: WhatsApp MP4 from `data/contadores/videos/loom_60_seconds_captions.mp4`.
+4. Send the configured offer strategy. The mission offer currently has no Loom
+   video, so the seed funnels use a text-only strategy:
+   - `text_offer_599`: one WhatsApp text offer with `sequence_step=text_offer`.
+   - Media strategies can still exist in overrides, but the default path should
+     not require an MP4.
 6. Wait 10 minutes.
-7. If there is still no reply, send `¿conseguiste ver el video?`
-8. Once there are 30 seconds of silence after the post-Loom replies, run the
+7. If there is still no reply, send the configured offer-check text.
+8. Once there are 30 seconds of silence after the post-offer replies, run the
    conversational bot with the full conversation history, funnel, `funnel_info`,
    stage, latest messages, inferred country/timezone when clear, and commercial
    rules.
@@ -73,7 +75,7 @@ first-run config, and `data/funnels.json` can override it per server.
    - `handoff_scheduling`
    - `close_lead`
    - `no_action`
-10. If the bot answers a known post-Loom question, queue `sequence_step=ai_reply`
+10. If the bot answers a known post-offer question, queue `sequence_step=ai_reply`
     and move the lead to Manual (`needs_human`) with
     `automation_paused_reason=ai_reply_conversation`. Because the AI just
     answered, `manual_reply_status` should be `answered`, not `needs_reply`.
@@ -84,7 +86,7 @@ first-run config, and `data/funnels.json` can override it per server.
       send a duplicate answer.
 11. If the lead clearly rejects the service, says they do not want to continue,
     or says the investment/service is not for them, queue exactly:
-    `1) Muy caros los 300 dolares`
+    `1) Muy caros los 599 dolares`
     `2) No me sirve la pagina web + publicidades`
     `3) No es mi momento para invertir`
     `4) Otro motivo`
@@ -114,7 +116,7 @@ first-run config, and `data/funnels.json` can override it per server.
     the ticket; it must not send another WhatsApp message.
 16. If Codex fails but DSPy/Grok answers safely, send the fallback reply,
     create a runtime email alert with the Codex error, fallback action, latest
-    inbound, and CRM link, and still apply the normal post-Loom AI reply rule:
+    inbound, and CRM link, and still apply the normal post-offer AI reply rule:
     the lead moves to Manual as an answered conversation.
 
 ## Company source of truth
@@ -162,7 +164,7 @@ Use this source of truth before any dynamic context:
   prepare the page/landing and campaigns; send interested people to the
   professional's WhatsApp. Konecta does not close the client's sales/cases for
   them.
-- Runtime price: 300 USD, pago unico. Do not invent monthly fees, installments,
+- Runtime price: 599 USD mensuales. Do not invent installments,
   taxes, invoices, or payment rails unless already provided in the conversation.
 - Guarantee: if there are no new consultations/prospects to review in 30 days,
   money back. Never promise closed clients, legal cases, revenue, guaranteed
@@ -173,7 +175,7 @@ Use this source of truth before any dynamic context:
   definition persuasively and do not ask for email/day/time in that same answer.
 - Never start a reply with `Para estar claros:`, `Para ser claros:`,
   `En resumen:`, or by repeating the lead's question as a heading.
-- Scheduling v1: no automatic Calendly. Collect email, day, time, and timezone
+- Scheduling v1: no automatic calendar link. Collect email, day, time, and timezone
   for a 15-minute call, then hand off to a human.
 - If a factual question falls outside this source of truth and `funnel_info`,
   use `handoff_human` instead of inventing.
@@ -205,28 +207,28 @@ Marking a lead as `booked` must not send any WhatsApp message. The legacy
 `send-manual-booked` action name is kept as a compatibility alias, but it only
 marks the lead as `booked` and pauses automation.
 
-## Manual Calendly actions
+## Manual meeting actions
 
 Operators have these backoffice actions:
 
-- `send-calendly`: send the configured Calendly intro text and then the active funnel's `calendly_base_url`.
-- `send-calendly-link`: send only the Calendly URL.
+- `send-calendly`: send the configured Meeting intro text and then the active funnel's `calendly_base_url`.
+- `send-calendly-link`: send only the legacy scheduling URL.
 - `send-accountant-page-example-video`: send the reusable client-page example
   MP4 `data/contadores/videos/cliente-pagina.mp4` with the accountant copy.
 - `send-lawyer-page-example-video`: send the same reusable client-page example
   MP4 with the lawyer copy.
 
 Both actions record `calendly_sent_at` and keep the lead in Manual.
-Automation must not send Calendly automatically in the conversational bot flow;
+Automation must not send calendar links automatically in the conversational bot flow;
 it asks for email, day, and time, then hands the scheduling details to Facu.
-The Calendly URL comes from the active funnel's `calendly_base_url`.
+The legacy scheduling URL comes from the active funnel's `calendly_base_url`.
 
 ## Promo solo pagina automation
 
 The low-ticket page promo uses the active-offer outbound steps with a
 deterministic fast path before normal scheduling:
 
-- If a post-video lead is not fully ready to proceed with the default page +
+- If a post-offer lead is not fully ready to proceed with the default page +
   campaigns offer but shows light interest (`lo analizo`, `te aviso`,
   `les estare comunicando`, `lo consulto`, polite thanks without rejection),
   the conversation bot may choose `offer_solo_page_promo`.
@@ -302,9 +304,9 @@ template-backed `contadores_messages` rows with stored template params. Replies
 after generic `promo_` or `offer_` outbound steps are handled by the same
 conversation bot as an active-offer conversation. The bot should infer the
 active offer from the transcript, keep selling that offer instead of the default
-300 USD offer, ask interested leads for email/day/time for a 15-minute meeting,
+599 USD offer, ask interested leads for email/day/time for a 15-minute meeting,
 and use the normal scheduling handoff path once those details are complete.
-When the bot itself offers the page-only promo to a warm but undecided post-video
+When the bot itself offers the page-only promo to a warm but undecided post-offer
 lead, it uses `offer_solo_page_promo` rather than the batch template and weights
 the price toward `99` and `49` USD.
 

@@ -25,12 +25,21 @@ from backend.ai import codex_agent_runtime
 from backend.contadores_strategies import get_contadores_strategy
 from backend.database import (
     AgentToolCall,
+    ClientLeadSource,
     ContadoresConfig,
     ContadoresLead,
     ContadoresLeadStage,
     ContadoresMessage,
     ContadoresRuntimeAlert,
     MessageDeliveryStatus,
+    PlatformAdCampaign,
+    PlatformClientProfile,
+    PlatformClientUpdate,
+    PlatformCreativeAsset,
+    PlatformEvent,
+    PlatformHumanQuestion,
+    PlatformMeeting,
+    PlatformMetaPublishAttempt,
     ScheduledAgentTask,
     WorkstationAutomationStatus,
     WorkstationClient,
@@ -39,6 +48,7 @@ from backend.database import (
     WorkstationMediaAsset,
     WorkstationPublicPage,
 )
+from backend.funnel_config import get_funnel
 from backend.ai.codex_agent_tools import call_tool
 from backend.main import app
 
@@ -260,6 +270,378 @@ def test_codex_agent_tool_memory_roundtrip(monkeypatch, tmp_path) -> None:
     assert read["ok"] is True
     assert "foto casual" in read["result"]["memory"]
     assert Path(read["result"]["path"]).exists()
+
+
+def test_codex_agent_tool_configures_text_offer_funnel_without_ui(monkeypatch, tmp_path) -> None:
+    """Agents should be able to configure a runnable text-offer funnel without the UI."""
+    configure_contadores_db(monkeypatch, tmp_path)
+
+    result = call_tool(
+        run_id="agent-run-platform-config",
+        tool_name="configure_text_offer_funnel",
+        arguments={
+            "funnel_id": "dentistas",
+            "label": "Dentistas",
+            "enabled": True,
+            "sheet_url": "https://docs.google.com/spreadsheets/d/test/export?format=csv&gid=123",
+            "sheet_gid": "123",
+            "opener_template_name": "dentistas_opener_v1",
+            "opener_text": "Hola {nombre}, vi que dejaste tus datos para recibir mas pacientes.",
+            "offer_text": "Son 599 USD mensuales. A cambio recibis consultas directo a tu WhatsApp.",
+            "alert_emails": ["ops@example.com"],
+            "reason": "Nuevo funnel configurado por agente.",
+        },
+    )
+
+    assert result["ok"] is True
+    funnel = get_funnel("dentistas")
+    assert funnel is not None
+    assert funnel.enabled is True
+    assert funnel.offer_price_usd == 599
+    assert funnel.strategies[0].id == "text_offer_599"
+    assert funnel.strategies[0].delivery == "text"
+    assert funnel.strategies[0].sequence_step == "text_offer"
+    assert (tmp_path / "funnels.json").exists()
+    calls = AgentToolCall.list_by_run("agent-run-platform-config")
+    assert calls[0].target_type == "funnel"
+    assert calls[0].target_id == "dentistas"
+    events = PlatformEvent.list_recent(target_type="funnel", target_id="dentistas")
+    assert events[0].event_type == "platform.funnel_text_offer_configured"
+
+    validation = call_tool(
+        run_id="agent-run-platform-config",
+        tool_name="validate_platform_config",
+        arguments={"include_disabled": True},
+    )
+    assert validation["ok"] is True
+    assert not [
+        issue
+        for issue in validation["result"]["issues"]
+        if issue["target_type"] == "funnel" and issue["target_id"] == "dentistas"
+    ]
+
+    snapshot = call_tool(
+        run_id="agent-run-platform-config",
+        tool_name="read_platform_config",
+        arguments={"include_schema": True},
+    )
+    assert snapshot["ok"] is True
+    assert "funnel" in snapshot["result"]["schemas"]
+    assert any(item["id"] == "dentistas" for item in snapshot["result"]["funnels"])
+
+
+def test_codex_agent_tool_configures_client_lead_delivery_without_ui(monkeypatch, tmp_path) -> None:
+    """Agents should be able to configure client lead delivery sources directly."""
+    configure_contadores_db(monkeypatch, tmp_path)
+
+    result = call_tool(
+        run_id="agent-run-delivery-config",
+        tool_name="upsert_client_lead_delivery_source",
+        arguments={
+            "source_id": "mmb-contable-leads",
+            "label": "MMB Contable leads",
+            "enabled": True,
+            "sheet_url": "https://docs.google.com/spreadsheets/d/client/export?format=csv&gid=0",
+            "sheet_gid": "0",
+            "recipient_name": "Mariana",
+            "recipient_phone": "+5491111111111",
+            "context_field_mapping": {"Servicio": "servicio", "Ciudad": "ciudad"},
+            "reason": "Delivery configurado por agente.",
+        },
+    )
+
+    assert result["ok"] is True
+    source = ClientLeadSource.get_by_id("mmb-contable-leads")
+    assert source is not None
+    assert source.enabled is True
+    assert source.sheet_gid == "0"
+    assert source.context_field_mapping == {"Servicio": "servicio", "Ciudad": "ciudad"}
+    calls = AgentToolCall.list_by_run("agent-run-delivery-config")
+    assert calls[0].target_type == "client_lead_source"
+    assert calls[0].target_id == "mmb-contable-leads"
+    events = PlatformEvent.list_recent(target_type="client_lead_source", target_id="mmb-contable-leads")
+    assert events[0].event_type == "platform.client_lead_source_upserted"
+
+
+def test_platform_lifecycle_endpoints_support_agent_native_workflow(monkeypatch, tmp_path) -> None:
+    """Lifecycle endpoints should expose the full platform without requiring UI configuration."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    client = TestClient(app)
+
+    meeting_response = client.post(
+        "/api/platform/meetings",
+        json={
+            "lead_id": "lead-123",
+            "client_id": "client-123",
+            "funnel_id": "dentistas",
+            "lead_email": "Lead@Example.com",
+            "requested_day": "martes",
+            "requested_time": "15:00",
+            "context_summary": "Lead quiere saber si el plan incluye pagina.",
+        },
+    )
+    assert meeting_response.status_code == 200
+    meeting = meeting_response.json()
+    assert meeting["lead_email"] == "lead@example.com"
+
+    transcript_response = client.post(
+        f"/api/platform/meetings/{meeting['id']}/transcript",
+        json={
+            "transcript_text": "El cliente vende implantes y quiere pacientes premium.",
+            "extracted_profile": {"offer": "implantes dentales"},
+        },
+    )
+    assert transcript_response.status_code == 200
+    assert transcript_response.json()["extracted_profile"]["offer"] == "implantes dentales"
+
+    profile_response = client.post(
+        "/api/platform/client-profiles",
+        json={
+            "client_id": "client-123",
+            "lead_id": "lead-123",
+            "funnel_id": "dentistas",
+            "source_meeting_id": meeting["id"],
+            "business_summary": "Clinica dental de implantes.",
+            "offer_summary": "Evaluacion inicial para pacientes premium.",
+            "segments": [{"name": "pacientes premium"}],
+            "knowledge": {"city": "Montevideo"},
+        },
+    )
+    assert profile_response.status_code == 200
+    assert profile_response.json()["knowledge"]["city"] == "Montevideo"
+
+    campaign_response = client.post(
+        "/api/platform/ad-campaigns",
+        json={
+            "client_id": "client-123",
+            "funnel_id": "dentistas",
+            "objective": "Generar consultas calificadas por WhatsApp.",
+            "budget_daily_usd": 20,
+            "target_segments": [{"name": "implantes"}],
+            "angles": [{"hook": "Recupera tu sonrisa"}],
+        },
+    )
+    assert campaign_response.status_code == 200
+    campaign = campaign_response.json()
+
+    asset_response = client.post(
+        "/api/platform/creative-assets",
+        json={
+            "campaign_id": campaign["id"],
+            "client_id": "client-123",
+            "asset_type": "image",
+            "prompt": "Foto profesional de consultorio dental moderno.",
+            "file_path": "media/ads/client-123/creative.png",
+        },
+    )
+    assert asset_response.status_code == 200
+    assert asset_response.json()["campaign_id"] == campaign["id"]
+
+    publish_response = client.post(
+        "/api/platform/meta-publish-attempts",
+        json={
+            "campaign_id": campaign["id"],
+            "request_payload": {"campaign_name": "Dentistas text offer"},
+            "approval_status": "pending",
+        },
+    )
+    assert publish_response.status_code == 200
+    assert publish_response.json()["request_payload"]["campaign_name"] == "Dentistas text offer"
+
+    update_response = client.post(
+        "/api/platform/client-updates",
+        json={
+            "client_id": "client-123",
+            "campaign_id": campaign["id"],
+            "summary_text": "Entraron 3 interesados en las primeras 24 horas.",
+            "leads_count": 3,
+            "next_action": "Optimizar anuncio con mejor tasa de respuesta.",
+        },
+    )
+    assert update_response.status_code == 200
+    assert update_response.json()["leads_count"] == 3
+
+    question_response = client.post(
+        "/api/platform/human-questions",
+        json={
+            "workflow": "meta_publish",
+            "target_type": "ad_campaign",
+            "target_id": campaign["id"],
+            "funnel_id": "dentistas",
+            "context_summary": "Meta pide confirmar categoria especial.",
+            "trying_to_do": "Publicar campana para el cliente.",
+            "question": "Uso categoria especial o publico normal?",
+            "options": ["especial", "normal"],
+            "default_action": "Si no hay respuesta en 4 minutos, dejar staged.",
+        },
+    )
+    assert question_response.status_code == 200
+    question = question_response.json()
+    assert question["trying_to_do"] == "Publicar campana para el cliente."
+
+    answer_response = client.post(
+        f"/api/platform/human-questions/{question['id']}/answer",
+        json={"answer_text": "Dejalo staged hasta revisar la categoria."},
+    )
+    assert answer_response.status_code == 200
+    assert answer_response.json()["status"] == "answered"
+
+    assert client.get("/api/platform/meetings").json()["meetings"][0]["id"] == meeting["id"]
+    assert client.get("/api/platform/ad-campaigns").json()["campaigns"][0]["id"] == campaign["id"]
+    events = client.get("/api/platform/events", params={"target_type": "human_question", "target_id": question["id"]})
+    assert events.status_code == 200
+    assert events.json()["events"][0]["event_type"] == "human_question.answered"
+
+
+def test_codex_agent_lifecycle_tools_work_without_ui(monkeypatch, tmp_path) -> None:
+    """Agent tools should cover post-conversion, ads, delivery updates, and doubts."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setattr(database_module, "DATA_DIR", tmp_path / "data")
+
+    meeting_result = call_tool(
+        run_id="agent-run-lifecycle",
+        tool_name="create_platform_meeting",
+        arguments={
+            "lead_id": "lead-agent-1",
+            "client_id": "client-agent-1",
+            "funnel_id": "abogados",
+            "lead_email": "lead-agent@example.com",
+            "requested_day": "jueves",
+            "requested_time": "10:30",
+            "context_summary": "Lead quiere avanzar con el plan mensual.",
+            "idempotency_key": "meeting-agent-1",
+        },
+    )
+    assert meeting_result["ok"] is True
+    meeting_id = meeting_result["result"]["meeting"]["id"]
+
+    transcript_result = call_tool(
+        run_id="agent-run-lifecycle",
+        tool_name="attach_meeting_transcript",
+        arguments={
+            "meeting_id": meeting_id,
+            "transcript_text": "El abogado quiere casos laborales.",
+            "extracted_profile": {"service": "laboral"},
+        },
+    )
+    assert transcript_result["ok"] is True
+    assert PlatformMeeting.get_by_id(meeting_id).extracted_profile()["service"] == "laboral"
+
+    profile_result = call_tool(
+        run_id="agent-run-lifecycle",
+        tool_name="upsert_client_profile",
+        arguments={
+            "client_id": "client-agent-1",
+            "lead_id": "lead-agent-1",
+            "funnel_id": "abogados",
+            "source_meeting_id": meeting_id,
+            "business_summary": "Estudio juridico laboral.",
+            "offer_summary": "Consulta inicial sin cargo.",
+            "segments": [{"name": "empleados despedidos"}],
+        },
+    )
+    assert profile_result["ok"] is True
+    assert PlatformClientProfile.list_recent(client_id="client-agent-1")[0].segments()[0]["name"] == "empleados despedidos"
+
+    campaign_result = call_tool(
+        run_id="agent-run-lifecycle",
+        tool_name="stage_ad_campaign",
+        arguments={
+            "client_id": "client-agent-1",
+            "funnel_id": "abogados",
+            "objective": "Conseguir consultas laborales por WhatsApp.",
+            "budget_daily_usd": 15,
+            "angles": [{"hook": "Te despidieron?"}],
+            "idempotency_key": "campaign-agent-1",
+        },
+    )
+    assert campaign_result["ok"] is True
+    campaign_id = campaign_result["result"]["campaign"]["id"]
+    assert PlatformAdCampaign.list_recent(client_id="client-agent-1")[0].id == campaign_id
+
+    asset_result = call_tool(
+        run_id="agent-run-lifecycle",
+        tool_name="stage_creative_asset",
+        arguments={
+            "campaign_id": campaign_id,
+            "client_id": "client-agent-1",
+            "asset_type": "image",
+            "prompt": "Persona revisando recibo de sueldo con abogado.",
+            "file_path": "media/ads/client-agent-1/laboral.png",
+        },
+    )
+    assert asset_result["ok"] is True
+    assert PlatformCreativeAsset.list_recent(campaign_id=campaign_id)[0].asset_type == "image"
+
+    publish_result = call_tool(
+        run_id="agent-run-lifecycle",
+        tool_name="stage_meta_publish_attempt",
+        arguments={
+            "campaign_id": campaign_id,
+            "request_payload": {"objective": "LEADS"},
+            "approval_status": "pending",
+            "idempotency_key": "publish-agent-1",
+        },
+    )
+    assert publish_result["ok"] is True
+    assert PlatformMetaPublishAttempt.list_recent(campaign_id=campaign_id)[0].request_payload()["objective"] == "LEADS"
+
+    update_result = call_tool(
+        run_id="agent-run-lifecycle",
+        tool_name="create_client_update",
+        arguments={
+            "client_id": "client-agent-1",
+            "campaign_id": campaign_id,
+            "summary_text": "Primeras 24 horas: 2 leads.",
+            "leads_count": 2,
+            "blockers": ["Esperando aprobacion Meta"],
+        },
+    )
+    assert update_result["ok"] is True
+    assert PlatformClientUpdate.list_recent(client_id="client-agent-1")[0].blockers() == ["Esperando aprobacion Meta"]
+
+    question_result = call_tool(
+        run_id="agent-run-lifecycle",
+        tool_name="ask_human_question",
+        arguments={
+            "workflow": "client_update",
+            "target_type": "client_profile",
+            "target_id": "client-agent-1",
+            "funnel_id": "abogados",
+            "context_summary": "El cliente pregunto si pausar por pocos leads.",
+            "trying_to_do": "Responder la actualizacion de 24 horas.",
+            "question": "Le digo que seguimos optimizando o pausamos?",
+            "options": ["seguir optimizando", "pausar"],
+            "default_action": "Seguir optimizando si no hay respuesta.",
+        },
+    )
+    assert question_result["ok"] is True
+    question_id = question_result["result"]["question"]["id"]
+
+    answer_result = call_tool(
+        run_id="agent-run-lifecycle",
+        tool_name="answer_human_question",
+        arguments={
+            "question_id": question_id,
+            "answer_text": "Segui optimizando y explica que 24 horas es poco tiempo.",
+            "memory_target_type": "client_profile",
+            "memory_target_id": "client-agent-1",
+        },
+    )
+    assert answer_result["ok"] is True
+    assert Path(answer_result["result"]["memory_path"]).exists()
+    assert PlatformHumanQuestion.list_recent(status="answered")[0].answer_text.startswith("Segui optimizando")
+
+    calls = AgentToolCall.list_by_run("agent-run-lifecycle")
+    assert [call.status for call in calls] == ["succeeded"] * len(calls)
+    assert {call.tool_name for call in calls} >= {
+        "create_platform_meeting",
+        "stage_ad_campaign",
+        "stage_meta_publish_attempt",
+        "ask_human_question",
+        "answer_human_question",
+    }
+    assert PlatformEvent.list_recent(target_type="meta_publish_attempt")[0].event_type == "meta_publish_attempt.staged"
 
 
 def test_codex_agent_tool_checks_domain_with_public_prices(monkeypatch, tmp_path) -> None:
@@ -870,6 +1252,60 @@ def test_contadores_pending_delivery_exposes_loom_mp4_media(monkeypatch, tmp_pat
     assert [item["strategy_id"] for item in payload["messages"]] == ["loom_mp4", "loom_mp4"]
 
 
+def test_contadores_text_offer_strategy_queues_one_message(monkeypatch, tmp_path) -> None:
+    """Mission offer funnels should not need a Loom video when configured as text."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    text_offer = "Son 599 USD mensuales. A cambio recibis oportunidades directo a tu WhatsApp."
+    write_funnels_config(
+        tmp_path,
+        build_contadores_test_funnel(
+            loom_intro_text="",
+            strategies=[
+                {
+                    "step": "loom",
+                    "id": "text_offer_599",
+                    "label": "Text offer 599",
+                    "weight": 100,
+                    "delivery": "text",
+                    "sequence_step": "text_offer",
+                    "message_text": text_offer,
+                    "media_type": None,
+                    "media_path": None,
+                    "media_caption": None,
+                }
+            ],
+        ),
+    )
+    config = ContadoresConfig.update(enabled=True)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-text-offer",
+        phone="+5491111111199",
+        full_name="Texto Oferta",
+    )
+    add_recent_inbound(lead.id)
+
+    contadores_endpoints.send_loom_sequence(lead=lead, config=config, strategy_id="text_offer_599")
+
+    with TestClient(app) as client:
+        response = client.get("/api/contadores/messages/pending-delivery")
+        events_response = client.get(f"/api/platform/events?target_type=lead&target_id={lead.id}")
+
+    assert response.status_code == 200
+    messages = response.json()["messages"]
+    assert [item["sequence_step"] for item in messages] == ["text_offer"]
+    assert messages[0]["text"] == text_offer
+    assert messages[0]["media_type"] is None
+    assert messages[0]["strategy_id"] == "text_offer_599"
+    assert events_response.status_code == 200
+    events = events_response.json()["events"]
+    assert events[0]["event_type"] == "whatsapp.outbound_queued"
+    assert events[0]["lifecycle_stage"] == "text_offer"
+    assert events[0]["target_type"] == "lead"
+    assert events[0]["target_id"] == lead.id
+    assert events[0]["funnel_id"] == "contadores"
+    assert events[0]["payload"]["message_id"] == messages[0]["message_id"]
+
+
 def test_contadores_delivery_failure_retries_then_surfaces_error(monkeypatch, tmp_path) -> None:
     """Delivery failures should retry twice and then become visible on the lead/message."""
     configure_contadores_db(monkeypatch, tmp_path)
@@ -1144,17 +1580,17 @@ def test_contadores_followup_internal_apis_send_and_update_leads(monkeypatch, tm
     with TestClient(app) as client:
         unauthorized = client.post(
             f"/api/contadores/followup/leads/{lead.id}/messages",
-            json={"text": "La inversion es de 300 USD."},
+            json={"text": "La inversion es de 599 USD."},
         )
         sent = client.post(
             f"/api/contadores/followup/leads/{lead.id}/messages",
             headers={"X-Internal-Token": "test-internal-token"},
-            json={"text": "La inversion es de 300 USD."},
+            json={"text": "La inversion es de 599 USD."},
         )
         duplicate = client.post(
             f"/api/contadores/followup/leads/{lead.id}/messages",
             headers={"X-Internal-Token": "test-internal-token"},
-            json={"text": "La inversion es de 300 USD."},
+            json={"text": "La inversion es de 599 USD."},
         )
         updated = client.patch(
             f"/api/contadores/followup/leads/{lead.id}",
@@ -1383,14 +1819,16 @@ def test_contadores_closed_lead_blocks_manual_outbound_until_reopened(monkeypatc
     ]
 
 
-def test_contadores_zero_weight_strategy_is_not_auto_assigned() -> None:
+def test_contadores_zero_weight_strategy_is_not_auto_assigned(monkeypatch, tmp_path) -> None:
     """A configured zero-weight strategy should stay available without receiving automatic traffic."""
+    monkeypatch.setenv("FUNNELS_CONFIG_PATH", str(tmp_path / "funnels.json"))
+
     chosen_ids = {
         contadores_endpoints.choose_contadores_strategy(step="loom", lead_id=f"lead-{index}").id
         for index in range(50)
     }
 
-    assert chosen_ids == {"loom_mp4"}
+    assert chosen_ids == {"text_offer_599"}
 
 
 def test_contadores_strategy_weights_are_configurable(monkeypatch, tmp_path) -> None:
@@ -1398,7 +1836,7 @@ def test_contadores_strategy_weights_are_configurable(monkeypatch, tmp_path) -> 
     configure_contadores_db(monkeypatch, tmp_path)
     config = ContadoresConfig.update(
         enabled=True,
-        strategy_weights={"loom": {"loom_mp4": 100}},
+        strategy_weights={"loom": {"text_offer_599": 100}},
     )
     lead = ContadoresLead.upsert(
         external_lead_id="sheet-row-config-weight",
@@ -1416,17 +1854,16 @@ def test_contadores_strategy_weights_are_configurable(monkeypatch, tmp_path) -> 
 
     assert config_response.status_code == 200
     assert config_response.json()["strategy_weights"] == {
-        "loom": {"loom_mp4": 100}
+        "loom": {"text_offer_599": 100}
     }
 
     assert stats_response.status_code == 200
     items = {item["strategy_id"]: item for item in stats_response.json()["items"]}
-    assert items["loom_mp4"]["weight"] == 100
+    assert items["text_offer_599"]["weight"] == 100
 
     assert pending_response.status_code == 200
     assert [item["strategy_id"] for item in pending_response.json()["messages"]] == [
-        "loom_mp4",
-        "loom_mp4",
+        "text_offer_599",
     ]
 
 
@@ -1441,7 +1878,7 @@ def test_contadores_strategy_stats_count_calendly_and_booked(monkeypatch, tmp_pa
     )
     add_recent_inbound(lead.id)
 
-    contadores_endpoints.send_loom_sequence(lead=lead, config=config, strategy_id="loom_mp4")
+    contadores_endpoints.send_loom_sequence(lead=lead, config=config, strategy_id="text_offer_599")
     for message in ContadoresMessage.list_by_lead(lead.id):
         ContadoresMessage.update_delivery_status(
             message_id=message.id or 0,
@@ -1459,12 +1896,12 @@ def test_contadores_strategy_stats_count_calendly_and_booked(monkeypatch, tmp_pa
 
     assert response.status_code == 200
     items = {item["strategy_id"]: item for item in response.json()["items"]}
-    assert items["loom_mp4"]["assigned"] == 1
-    assert items["loom_mp4"]["sent"] == 1
-    assert items["loom_mp4"]["delivered"] == 1
-    assert items["loom_mp4"]["reached_calendly"] == 1
-    assert items["loom_mp4"]["booked"] == 1
-    assert items["loom_mp4"]["calendly_rate"] == 1
+    assert items["text_offer_599"]["assigned"] == 1
+    assert items["text_offer_599"]["sent"] == 1
+    assert items["text_offer_599"]["delivered"] == 1
+    assert items["text_offer_599"]["reached_calendly"] == 1
+    assert items["text_offer_599"]["booked"] == 1
+    assert items["text_offer_599"]["calendly_rate"] == 1
 
 
 def test_contadores_pending_delivery_exposes_name_country_opener_params(monkeypatch, tmp_path) -> None:
@@ -2926,7 +3363,7 @@ def test_conversation_bot_codex_failure_records_runtime_alert_without_handoff(mo
             assert "funnel_info" in kwargs
             return ContadoresConversationBotResult(
                 action="send_reply",
-                message_text="La inversion es de 300 USD, pago unico.",
+                message_text="La inversion es de 599 USD mensuales.",
                 classification_label="answered_price",
                 reason="Fallback respondio precio.",
                 runtime_provider="dspy_fallback",
@@ -3234,7 +3671,7 @@ def test_post_calendly_inbound_question_is_answered_by_conversation_bot(monkeypa
             assert kwargs["current_stage"] == "calendly_sent"
             return ContadoresConversationBotResult(
                 action="send_reply",
-                message_text="Si, le explico. La inversion es de 300 USD, pago unico.",
+                message_text="Si, le explico. La inversion es de 599 USD mensuales.",
                 classification_label="answered_post_calendly_question",
                 reason="Pregunta conocida posterior al cierre.",
             )
@@ -3355,7 +3792,7 @@ def test_conversation_bot_answers_transcribed_audio(monkeypatch, tmp_path) -> No
             assert kwargs["latest_inbound"] == "Me interesa, cuanto cuesta?"
             return ContadoresConversationBotResult(
                 action="send_reply",
-                message_text="La inversion es de 300 USD, pago unico.",
+                message_text="La inversion es de 599 USD mensuales.",
                 classification_label="answered_audio_price",
                 reason="Audio transcripto con pregunta de precio.",
             )
@@ -3396,7 +3833,7 @@ def test_conversation_bot_answers_transcribed_audio(monkeypatch, tmp_path) -> No
     assert detail.json()["lead"]["stage"] == "needs_human"
     assert detail.json()["lead"]["automation_paused_reason"] == "ai_reply_conversation"
     assert detail.json()["lead"]["manual_reply_status"] == "answered"
-    assert pending.json()["messages"][0]["text"] == "La inversion es de 300 USD, pago unico."
+    assert pending.json()["messages"][0]["text"] == "La inversion es de 599 USD mensuales."
 
 
 def test_whatsapp_inbound_image_mirrors_to_existing_workstation_client(monkeypatch, tmp_path) -> None:
@@ -3475,10 +3912,9 @@ def test_workstation_creation_mirrors_existing_whatsapp_images(monkeypatch, tmp_
     assert mirrored_path.read_bytes() == b"previous-photo-bytes"
 
 
-def test_contadores_reply_after_24h_followup_still_advances_to_loom(monkeypatch, tmp_path) -> None:
-    """A reply after the 24-hour reminder should use the usual next stage and Loom copy."""
+def test_contadores_reply_after_24h_followup_still_advances_to_offer(monkeypatch, tmp_path) -> None:
+    """A reply after the 24-hour reminder should use the usual next stage and offer copy."""
     configure_contadores_db(monkeypatch, tmp_path)
-    force_loom_strategy(monkeypatch, "loom_mp4")
     config = ContadoresConfig.update(
         enabled=True,
         initial_reply_quiet_seconds=1,
@@ -3520,9 +3956,9 @@ def test_contadores_reply_after_24h_followup_still_advances_to_loom(monkeypatch,
     assert detail.json()["lead"]["stage"] == "awaiting_video_reply"
     assert detail.json()["lead"]["raw_stage"] == "awaiting_video_reply"
     assert pending.status_code == 200
-    assert [item["sequence_step"] for item in pending.json()["messages"]] == ["loom_intro", "loom_video"]
-    assert pending.json()["messages"][0]["text"] == contadores_endpoints.build_loom_intro_text()
-    assert pending.json()["messages"][1]["media_type"] == "video"
+    assert [item["sequence_step"] for item in pending.json()["messages"]] == ["text_offer"]
+    assert pending.json()["messages"][0]["media_type"] is None
+    assert pending.json()["messages"][0]["strategy_id"] == "text_offer_599"
 
 
 def test_contadores_inbound_routing_marks_ambiguous_phone_as_needs_human(monkeypatch, tmp_path) -> None:
@@ -4717,8 +5153,8 @@ def test_contadores_leads_sort_by_latest_interaction(monkeypatch, tmp_path) -> N
     ]
 
 
-def test_contadores_leads_filter_by_prior_loom_strategy_inside_calendly(monkeypatch, tmp_path) -> None:
-    """Operators should filter Calendly leads by the Loom strategy assigned earlier."""
+def test_contadores_leads_filter_by_prior_offer_strategy_inside_calendly(monkeypatch, tmp_path) -> None:
+    """Operators should filter meeting leads by the offer strategy assigned earlier."""
     configure_contadores_db(monkeypatch, tmp_path)
     config = ContadoresConfig.update(enabled=True)
     unassigned_lead = ContadoresLead.upsert(
@@ -4726,35 +5162,35 @@ def test_contadores_leads_filter_by_prior_loom_strategy_inside_calendly(monkeypa
         phone="+5491555555563",
         full_name="Unassigned Lead",
     )
-    mp4_lead = ContadoresLead.upsert(
-        external_lead_id="sheet-row-loom-mp4-filter",
+    offer_lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-text-offer-filter",
         phone="+5491555555564",
-        full_name="MP4 Lead",
+        full_name="Offer Lead",
     )
-    add_recent_inbound(mp4_lead.id)
-    contadores_endpoints.send_loom_sequence(lead=mp4_lead, config=config, strategy_id="loom_mp4")
+    add_recent_inbound(offer_lead.id)
+    contadores_endpoints.send_loom_sequence(lead=offer_lead, config=config, strategy_id="text_offer_599")
     ContadoresLead.update_flow_state(
         unassigned_lead.id,
         stage=ContadoresLeadStage.CALENDLY_SENT,
         calendly_sent_at=now_utc(),
     )
     ContadoresLead.update_flow_state(
-        mp4_lead.id,
+        offer_lead.id,
         stage=ContadoresLeadStage.CALENDLY_SENT,
         calendly_sent_at=now_utc(),
     )
 
     with TestClient(app) as client:
         response = client.get(
-            "/api/contadores/leads?stage=calendly_sent&strategy_step=loom&strategy_id=loom_mp4"
+            "/api/contadores/leads?stage=calendly_sent&strategy_step=loom&strategy_id=text_offer_599"
         )
 
     assert response.status_code == 200
     payload = response.json()
-    assert [item["id"] for item in payload["leads"]] == [mp4_lead.id]
+    assert [item["id"] for item in payload["leads"]] == [offer_lead.id]
     assert payload["metrics"]["total"] == 1
     assert payload["metrics"]["calendly_sent"] == 1
-    assert payload["leads"][0]["strategy_assignments"][0]["strategy_id"] == "loom_mp4"
+    assert payload["leads"][0]["strategy_assignments"][0]["strategy_id"] == "text_offer_599"
 
 
 def test_contadores_delete_lead_removes_messages(monkeypatch, tmp_path) -> None:

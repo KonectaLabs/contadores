@@ -4,7 +4,7 @@ description: >-
   Defines the canonical WhatsApp follow-up sequence for contadores leads from
   Konecta Labs. Use when implementing, reviewing, or updating the bot flow that
   sends message 1, waits for any inbound reply, waits 30 seconds, sends message
-  2 and message 3 (WhatsApp MP4), waits, then sends the video check and
+  2 and message 3 (text offer), waits, then sends the video check and
   runs the conversational bot to answer known questions, collect scheduling
   details, or hand off only when human action is truly needed.
 ---
@@ -14,7 +14,7 @@ description: >-
 ## Variables obligatorias
 
 - Calendly sale de `calendly_base_url` del funnel activo.
-- Funnel `loom_mp4.media_path`
+- Funnel `text_offer_599.message_text`
 
 ## Reglas del flujo
 
@@ -23,7 +23,7 @@ description: >-
 3. Si el primer inbound viene de un anuncio Click-to-WhatsApp con `referral.source_id` configurado, crear/reusar el lead y saltear el mensaje 1. La frase aprobada de Abogados `Hola! Quiero mas informacion de su propuesta para abogados!` hace lo mismo cuando no hay reply/referral usable.
 4. Esperar `30` segundos.
 5. Enviar el mensaje 2.
-6. Enviar enseguida el mensaje 3 como WhatsApp MP4.
+6. Enviar enseguida el mensaje 3 como text offer.
 7. Esperar la ventana configurada.
 8. Enviar el video check si no hubo respuesta.
 9. Ejecutar el bot conversacional con DSPy usando historial completo, funnel,
@@ -93,18 +93,18 @@ Te invito a que veas este video donde te explicamos la propuesta a detalle:
 Enviar inmediatamente después del mensaje 2.
 
 ```text
-WhatsApp MP4 desde loom_mp4.media_path
+text offer desde text_offer_599.message_text
 ```
 
 ### Mensaje 4
 
-Enviar después de la espera post-Loom solo si no hubo respuesta.
+Enviar después de la espera post-offer solo si no hubo respuesta.
 
 ```text
 conseguiste ver el video?
 ```
 
-### Bot conversacional post-video
+### Bot conversacional post-offer
 
 Despues de la quiet window, el backend debe llamar al bot conversacional con
 DSPy, no con regex ni match por texto. Inputs obligatorios:
@@ -114,7 +114,7 @@ DSPy, no con regex ni match por texto. Inputs obligatorios:
 - telefono del lead;
 - stage actual;
 - historial completo;
-- batch de respuestas post-Loom;
+- batch de respuestas post-offer;
 - timezone inferida cuando el telefono lo permita.
 
 Acciones permitidas: `send_reply`, `ask_scheduling_details`, `handoff_human`,

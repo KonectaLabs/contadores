@@ -4,8 +4,8 @@
   "notes": "Standalone local MMB Contable page. Not created through Workstation automation. No outbound message was queued or sent.",
   "source_version": "data/workstation/clients/mmb-previsional-jubilaciones/landing-page/v002",
   "generated_photo_original": "/Users/fgoiriz/.codex/generated_images/019e09c1-4aff-7982-9629-af84eee5922c/ig_0eb5ccf1dd2cd9530169fe69b989d88199863aa9afd4a3918d.png",
-  "generated_photo_copy": "tmp/mmb-contable-local/assets/mariana-professional.png",
-  "page_path": "tmp/mmb-contable-local/index.html",
+  "generated_photo_copy": "media/examples/workstation/mmb-contable-local/assets/mariana-professional.png",
+  "page_path": "media/examples/workstation/mmb-contable-local/index.html",
   "content_focus": [
     "MMB Contable brand",
     "ARCA/AFIP",

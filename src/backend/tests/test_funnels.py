@@ -25,7 +25,10 @@ def test_funnels_endpoint_exposes_default_contadores(monkeypatch, tmp_path) -> N
     assert payload["funnels"][0]["opener_template_name"] == "contadores_intro_nombre_pais_es_v1"
     assert payload["funnels"][0]["manual_ping_template_name"] == "contadores_manual_ping_es_v1"
     assert payload["funnels"][0]["whatsapp_referral_source_ids"] == []
-    assert [item["id"] for item in payload["funnels"][0]["strategies"]] == ["loom_mp4"]
+    assert payload["funnels"][0]["offer_price_usd"] == 599
+    assert payload["funnels"][0]["offer_payment_model"] == "monthly"
+    assert [item["id"] for item in payload["funnels"][0]["strategies"]] == ["text_offer_599"]
+    assert payload["funnels"][0]["strategies"][0]["delivery"] == "text"
     assert payload["funnels"][-1]["id"] == "general"
     assert payload["funnels"][-1]["kind"] == "inbox"
     assert payload["funnels"][0]["manual_ping_text"] == (

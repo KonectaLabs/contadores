@@ -16,11 +16,11 @@ inside the scheduled job prompt.
 Also read these skills when relevant:
 
 - `contadores-bot-sequence`: current WhatsApp sequence, manual ping, Loom,
-  Calendly, and human handoff rules.
+  Meeting, and human handoff rules.
 - `konecta-frankie-video-offer`: Frankie-style offer framing for stronger
   follow-ups that show a concrete outcome instead of just "checking in".
 - `konecta-niche-loom-video` and `konecta-funnel-raw-memory` when the follow-up
-  depends on the Loom/video sales arc or raw funnel memory.
+  depends on the offer sales arc or raw funnel memory.
 - `abogados/skills/abogados-funnel-offer/SKILL.md` and
   `abogados/skills/abogados-loom-video/SKILL.md` when writing Abogados-specific
   proactive follow-up or video-demo copy.
@@ -79,8 +79,8 @@ Also read these skills when relevant:
 - If a lead answers with a concrete day/time for a call, treat it as urgent
   booking intent before every other bucket. Do not send another generic
   follow-up. If the lead's email and requested slot are clear, try to book the
-  call in Facu's Calendly only through a real available Calendly/API/browser
-  capability. If the system does not currently support actual Calendly booking,
+  call in Facu's Meeting only through a real available Meeting/API/browser
+  capability. If the system does not currently support actual Meeting booking,
   immediately mark the lead `needs_human` with
   `classification_label="booking_time_provided"`, pause automation with
   `automation_paused_reason="booking_time_provided"`, and make sure the
@@ -88,13 +88,13 @@ Also read these skills when relevant:
   email in WhatsApp when the send path is allowed, and still surface the
   scheduling handoff in the final summary. This is not optional.
 - For close/warm leads, prefer asking for a day and time for a 15-minute call.
-  Do not rely only on Calendly.
+  Do not rely only on Meeting.
 - Use approved templates when the 24-hour WhatsApp customer-service window is
   closed. Custom manual copy is only valid inside the open window.
 - Send at most one intentional follow-up per lead per automation run, unless the
   built-in bot sequence itself sends its paired Loom intro/video messages.
-- The built-in bot can answer known post-video questions with
-  `sequence_step=ai_reply`. After a post-video AI reply, the lead moves to
+- The built-in bot can answer known post-offer questions with
+  `sequence_step=ai_reply`. After a post-offer AI reply, the lead moves to
   Manual (`needs_human`) with `automation_paused_reason=ai_reply_conversation`
   and `manual_reply_status=answered`, because there is already a conversation.
   Do not duplicate an AI reply manually in the same run; wait for the next lead
@@ -203,7 +203,7 @@ For each hourly run:
 7. Check delivery status before interpreting silence. If our last outbound
    failed, classify as delivery repair/provider failure, not no-reply.
 8. Detect `booking_time_provided` before ordinary manual/close buckets. If a
-   lead gave a slot, either book it with a real supported Calendly path or
+   lead gave a slot, either book it with a real supported Meeting path or
    escalate it as an urgent scheduling handoff through the CRM alert path.
 9. Segment eligible leads into the buckets from the reference file, including
    proactive/value-follow-up buckets for already-touched leads.
@@ -231,7 +231,7 @@ Final summary must include:
   reason for each skip.
 - Leads closest to converting and the exact next human action.
 - Urgent booking handoffs: lead, requested day/time, email status, whether
-  Calendly was booked, and whether Facu was alerted.
+  Meeting was booked, and whether Facu was alerted.
 - New replies that arrived and what happened next.
 - Delivery failures grouped by Meta code.
 - System errors found/fixed.

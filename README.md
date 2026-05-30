@@ -2,8 +2,11 @@
 
 Repo de trabajo para el flujo de captación y seguimiento de `Contadores`.
 El producto esta migrando a una plataforma de funnels por nicho: `contadores`
-es el primer funnel operativo, y otros nichos se configuran desde la UI o desde
-un archivo JSON persistente.
+es el primer funnel operativo, y otros nichos se configuran desde tools de
+agente, desde la UI o desde un archivo JSON persistente.
+
+La arquitectura objetivo de plataforma completa vive en
+`wiki/platform-architecture.md`.
 
 ## Estructura
 
@@ -18,9 +21,9 @@ un archivo JSON persistente.
 El CRM debe poder levantarse en un server nuevo aunque todavia no exista un
 nicho real. Un primer arranque limpio no necesita `data/funnels.json`: el
 backend carga `config/default-funnels.json`, muestra los funnels versionados y
-la UI permite crear o editar funnels desde `+ Funnel`. El sistema queda vivo;
-`/api/runtime` marca `ready=true` cuando algun funnel de campaña habilitado
-tiene `sheet_url` y `sheet_gid`.
+los agentes o la UI pueden crear/editar funnels sobre el mismo override. El
+sistema queda vivo; `/api/runtime` marca `ready=true` cuando algun funnel de
+campaña habilitado tiene `sheet_url` y `sheet_gid`.
 
 La fuente de verdad para nuevos usuarios tiene dos capas:
 
@@ -29,8 +32,8 @@ La fuente de verdad para nuevos usuarios tiene dos capas:
 - `FUNNELS_CONFIG_PATH` o `data/funnels.json`, como override editable por server.
 
 Esas capas las usan la UI, el bot y Codex. No hay un estado visual oculto: si
-se crea un funnel desde la UI se persiste en el override, y si Codex o un
-operador editan el JSON, la UI lee el mismo contenido.
+se crea un funnel desde una tool de agente se persiste en el override, y si un
+operador edita desde la UI, los agentes leen el mismo contenido.
 
 Ver el menu de funnels y errores no fatales del archivo:
 
@@ -44,10 +47,84 @@ Ver readiness portable:
 curl http://127.0.0.1:8000/api/runtime
 ```
 
+Ver eventos recientes de plataforma:
+
+```bash
+curl http://127.0.0.1:8000/api/platform/events
+```
+
+`platform_events` es append-only y arranca registrando los WhatsApp outbound
+encolados. Es la base para observar sheet import, mensajes, AI, scheduling,
+conversion, ads, delivery y client updates sin depender de logs sueltos.
+
 `/api/runtime` no expone URLs de sheets ni secretos. Expone `ready`, los
 funnels de campaña habilitados, los funnels con sheet lista y los problemas de
 setup. Un funnel incompleto no rompe el server; simplemente aparece como
 pendiente de configurar.
+
+### Configurar sin UI, agent-native
+
+Los agentes autonomos no tienen que pedirle al operador que abra la UI para
+configurar el platform. Deben usar el tool runner auditado:
+
+```bash
+uv run python -m backend.ai.codex_agent_runtime call \
+  --run-id platform-config-001 \
+  --tool read_platform_config \
+  --arguments-json '{"include_schema":true}'
+```
+
+Crear o actualizar un funnel text-first:
+
+```bash
+uv run python -m backend.ai.codex_agent_runtime call \
+  --run-id platform-config-001 \
+  --tool configure_text_offer_funnel \
+  --arguments-json '{"funnel_id":"dentistas","label":"Dentistas","enabled":false,"sheet_url":"https://docs.google.com/spreadsheets/d/.../export?format=csv&gid=0","sheet_gid":"0","opener_template_name":"dentistas_opener_v1","opener_text":"Hola {nombre}, vi que dejaste tus datos para recibir mas pacientes.","offer_text":"Son 599 USD mensuales. A cambio recibis consultas directo a tu WhatsApp.","alert_emails":["operador@example.com"],"reason":"Nuevo funnel creado por agente."}'
+```
+
+Configurar delivery de leads de un cliente:
+
+```bash
+uv run python -m backend.ai.codex_agent_runtime call \
+  --run-id platform-config-001 \
+  --tool upsert_client_lead_delivery_source \
+  --arguments-json '{"source_id":"cliente-leads","label":"Cliente leads","enabled":true,"sheet_url":"https://docs.google.com/spreadsheets/d/.../export?format=csv&gid=0","sheet_gid":"0","recipient_name":"Cliente","recipient_phone":"+5491111111111","context_field_mapping":{"Servicio":"servicio"},"reason":"Delivery configurado por agente."}'
+```
+
+El ciclo operativo tambien se puede mover por tools auditadas, sin depender de
+formularios:
+
+- `create_platform_meeting` y `attach_meeting_transcript`: scheduling,
+  transcript y handoff post-conversion.
+- `upsert_client_profile`: conocimiento revisado del cliente.
+- `stage_ad_campaign`, `stage_creative_asset` y `stage_meta_publish_attempt`:
+  ads y publicacion Meta en modo staged/aprobable.
+- `create_client_update`: actualizaciones de 24 horas para clientes.
+- `ask_human_question` y `answer_human_question`: dudas a Facundo/operador con
+  contexto, accion por defecto y memoria reutilizable.
+
+Ejemplo de duda agent-native:
+
+```bash
+uv run python -m backend.ai.codex_agent_runtime call \
+  --run-id platform-config-001 \
+  --tool ask_human_question \
+  --arguments-json '{"workflow":"meta_publish","target_type":"ad_campaign","target_id":"campaign-123","context_summary":"Meta pide confirmar categoria especial.","trying_to_do":"Publicar la campana del cliente.","question":"Uso categoria especial o dejo la campana staged?","options":["categoria especial","dejar staged"],"default_action":"Dejar staged si no hay respuesta en 4 minutos."}'
+```
+
+Validar antes de activar:
+
+```bash
+uv run python -m backend.ai.codex_agent_runtime call \
+  --run-id platform-config-001 \
+  --tool validate_platform_config \
+  --arguments-json '{"include_disabled":true}'
+```
+
+Todas esas llamadas quedan auditadas en `agent_tool_calls`,
+`data/agent-runs/<run-id>/tool_calls.jsonl` y `platform_events`. La UI queda
+como cockpit opcional para revisar, no como prerequisito de configuracion.
 
 ### Crear un funnel visualmente
 
@@ -55,10 +132,10 @@ En la UI:
 
 1. Entrar al CRM.
 2. Usar `+ Funnel`.
-3. Cargar id, nombre, sheet, mensajes, templates, video MP4, Calendly, alertas
-   y IDs de anuncios.
+3. Cargar id, nombre, sheet, oferta, mensajes, templates, texto de offer,
+   reunion, alertas y IDs de anuncios.
 4. Guardar.
-5. Dejar `enabled=false` mientras falten templates, sheet o video.
+5. Dejar `enabled=false` mientras falten templates, sheet u offer.
 6. Activar `enabled=true` cuando el funnel pueda correr en produccion.
 
 La UI muestra un checklist si el funnel no tiene los campos minimos para operar.
@@ -74,7 +151,7 @@ uv run python src/scripts/funnel_config_template.py dentistas \
   --label "Dentistas" \
   --sheet-url "https://docs.google.com/spreadsheets/d/..." \
   --sheet-gid "0" \
-  --mp4-path "data/dentistas/videos/loom_60_seconds_captions.mp4" \
+  --offer-text "Son 599 USD mensuales. A cambio recibis consultas directo a tu WhatsApp." \
   --calendly-base-url "https://calendly.com/tu-equipo/dentistas" \
   --alert-email "operador@example.com" \
   --whatsapp-referral-source-id "120000000000000000" \
@@ -112,6 +189,13 @@ Formato base:
       "label": "Dentistas",
       "kind": "campaign",
       "enabled": false,
+      "offer_version": "mission-2026-05-30",
+      "offer_price_usd": 599,
+      "offer_payment_model": "monthly",
+      "offer_summary": "Marketing y anuncios para recibir interesados directo al WhatsApp; sitio incluido si hace falta.",
+      "offer_includes_website": true,
+      "default_campaign_count": 3,
+      "default_daily_ad_budget_usd": null,
       "sheet_url": "https://docs.google.com/spreadsheets/d/...",
       "sheet_gid": "0",
       "sheet_source_filter": null,
@@ -123,10 +207,10 @@ Formato base:
       "opener_followup_template_name": "dentistas_opener_followup_24h_es_v1",
       "manual_ping_text": "Hola, queria saber en que situacion quedamos y si queres que retomemos la conversacion",
       "manual_ping_template_name": "dentistas_manual_ping_es_v1",
-      "loom_intro_text": "Perfecto. Te cuento rapido como funciona y que obtenes si trabajamos juntos:",
+      "loom_intro_text": "",
       "loom_url": "",
-      "video_check_text": "conseguiste ver el video?",
-      "calendly_intro_text": "Para avanzar, el siguiente paso es elegir un horario en el calendario:",
+      "video_check_text": "te interesa que lo veamos en una llamada corta?",
+      "calendly_intro_text": "Para avanzar, decime dia, horario y email y coordinamos la llamada:",
       "calendly_base_url": "https://calendly.com/tu-equipo/dentistas",
       "alert_emails": ["operador@example.com"],
       "whatsapp_referral_source_ids": ["120000000000000000"],
@@ -136,14 +220,14 @@ Formato base:
       "strategies": [
         {
           "step": "loom",
-          "id": "loom_mp4",
-          "label": "WhatsApp MP4",
+          "id": "text_offer_599",
+          "label": "Text offer 599",
           "weight": 100,
-          "delivery": "video",
-          "sequence_step": "loom_video",
-          "message_text": "Video de explicacion enviado por WhatsApp.",
-          "media_type": "video",
-          "media_path": "data/dentistas/videos/loom_60_seconds_captions.mp4",
+          "delivery": "text",
+          "sequence_step": "text_offer",
+          "message_text": "Son 599 USD mensuales. A cambio recibis oportunidades de clientes potenciales directo a tu WhatsApp. Eso lo logramos con una pagina profesional y campanas enfocadas. Si te interesa, lo vemos en una llamada corta y revisamos si tiene sentido para tu caso.",
+          "media_type": null,
+          "media_path": null,
           "media_caption": null
         }
       ]
@@ -159,7 +243,10 @@ Campos que hay que pensar antes de activar un funnel:
 - `label`: nombre que ve el operador en el menu.
 - `kind`: `campaign` corre automatizacion; `inbox` solo junta conversaciones sin
   campaña.
-- `enabled`: mantener en `false` hasta tener sheet, templates y video listos.
+- `enabled`: mantener en `false` hasta tener sheet, templates y offer listos.
+- `offer_*`: fuente comercial del funnel. El offer activo del mission es `599`
+  USD mensuales, sitio incluido si hace falta y campanas enfocadas para llevar
+  interesados al WhatsApp del cliente.
 - `sheet_url` y `sheet_gid`: fuente de leads. Son lo minimo para que el runtime
   marque listo algun funnel de campaña.
 - `sheet_source_filter`: filtro opcional si una misma sheet trae varios origenes.
@@ -172,11 +259,12 @@ Campos que hay que pensar antes de activar un funnel:
   responde.
 - `manual_ping_text` y `manual_ping_template_name`: reapertura manual desde el
   CRM cuando el operador quiere retomar.
-- `loom_intro_text`: mensaje que acompaña el video.
+- `loom_intro_text`: texto opcional previo al offer. El offer nuevo no tiene
+  Loom, por eso el seed lo deja vacio.
 - `loom_url`: referencia opcional si tambien existe version Loom.
-- `video_check_text`: pregunta corta para confirmar si vio el video.
-- `calendly_intro_text`: texto manual previo al link de Calendly.
-- `calendly_base_url`: link de agenda del funnel. No se fuerza desde Python;
+- `video_check_text`: pregunta corta de seguimiento cuando no responde al offer.
+- `calendly_intro_text`: texto manual para pedir o confirmar datos de reunion.
+- `calendly_base_url`: link legacy de agenda del funnel. No se fuerza desde Python;
   si cambia por nicho o por cliente, se cambia en el archivo.
 - `alert_emails`: emails del administrador u operadores de este server para
   avisos humanos y fallas runtime. El seed portable lo deja en `[]`; antes de
@@ -185,11 +273,12 @@ Campos que hay que pensar antes de activar un funnel:
   Click-to-WhatsApp que deben caer en este funnel.
 - `initial_reply_quiet_seconds`: espera antes de reaccionar a una primera
   respuesta.
-- `post_loom_min_seconds`: espera minima despues de mandar el video.
-- `post_loom_quiet_seconds`: silencio necesario antes de clasificar post-video.
-- `strategies`: estrategias por paso. El default operativo es una estrategia
-  `loom_mp4` con `delivery=video`, `sequence_step=loom_video` y `media_path`
-  apuntando a un MP4 dentro de `data/`.
+- `post_loom_min_seconds`: espera minima despues de mandar el offer.
+- `post_loom_quiet_seconds`: silencio necesario antes de clasificar post-offer.
+- `strategies`: estrategias por paso. El default operativo del mission es
+  `text_offer_599` con `delivery=text` y `sequence_step=text_offer`. Si un
+  funnel futuro tiene video, puede configurar una estrategia `delivery=video`
+  con `media_path` dentro de `data/`.
 
 Consejos de portabilidad:
 
@@ -201,8 +290,8 @@ Consejos de portabilidad:
 - Si el override tiene JSON invalido o un funnel mal formado, `/api/funnels`
   sigue respondiendo con el seed valido y devuelve `config_errors`.
 - Para portar a otra persona, preparar su `.env`, `auth.toml`, `data/funnels.json`,
-  los videos bajo `data/<funnel>/videos/`, credenciales de Google/WhatsApp y
-  cualquier material de Workstation que esa persona vaya a usar.
+  credenciales de Google/WhatsApp y cualquier material de Workstation que esa
+  persona vaya a usar.
 
 ## Switch central de Codex por lead
 
@@ -463,7 +552,7 @@ curl http://127.0.0.1:8000/api/funnels
 
 Configurar pesos de estrategias:
 
-- `CONTADORES_STRATEGY_WEIGHTS_JSON='{"loom":{"loom_mp4":100}}'`
+- `CONTADORES_STRATEGY_WEIGHTS_JSON='{"loom":{"text_offer_599":100}}'`
 - También se puede cambiar desde `Settings` en el backoffice.
 - Los pesos son porcentajes de rollout por paso. Cambiarlos afecta nuevas asignaciones; las asignaciones ya guardadas no se reescriben.
 
@@ -484,7 +573,7 @@ Entrada Click-to-WhatsApp:
 - Contadores no debe tener IDs cargados si no tiene campaña real. Hoy el source_id real queda en `abogados`.
 - Cuando Meta envia un webhook con `referral.source_id` configurado, el backend crea o reutiliza un lead `whatsapp_ctwa`.
 - Si el webhook trae el nombre de perfil de WhatsApp, se guarda como `full_name` para leads nuevos de WhatsApp y para leads existentes que todavia no tenian nombre.
-- Ese lead queda como si ya hubiese respondido al opener: no se encola el template inicial y el tick automatico pasa al Loom despues de `initial_reply_quiet_seconds`.
+- Ese lead queda como si ya hubiese respondido al opener: no se encola el template inicial y el tick automatico pasa al offer despues de `initial_reply_quiet_seconds`.
 - Por defecto no se usa el texto prellenado del anuncio para rutear porque el usuario puede editarlo antes de enviarlo.
 - Excepcion aprobada: el texto normalizado `Hola! Quiero mas informacion de su propuesta para abogados!` rutea directo a `abogados` cuando no hay reply/referral usable.
 - Si no hay `referral.source_id`, ni frase aprobada, ni match de funnel, el mensaje se guarda como lead en el buzon `general`.
@@ -649,9 +738,9 @@ Tags:
 - La UI muestra tags en el detalle como solo lectura; para cambiarlos hay que seleccionar leads y usar la accion batch `Set tags`.
 - El filtro por tag se combina con las fases, busqueda y estrategia.
 
-Bot conversacional post-video y post-Calendly:
+Bot conversacional post-offer y post-meeting:
 
-- Luego del Loom/video y de la ventana de silencio, el backend llama a
+- Luego del offer y de la ventana de silencio, el backend llama a
   `ContadoresConversationBotProgram` con historial completo, funnel, stage,
   ultimos mensajes y timezone inferida por telefono cuando sea claro.
 - La ventana de silencio funciona como backoff real: el backend bloquea el
@@ -687,11 +776,11 @@ Bot conversacional post-video y post-Calendly:
   `start_workstation_solo_page`, `ask_scheduling_details`, `handoff_human`,
   `handoff_scheduling`, `close_lead` o `no_action`.
 - Preguntas conocidas de precio, pais/cobertura, garantia, proceso, dominio,
-  pagina existente, "no vi el video" o confirmaciones simples se responden con
-  `sequence_step=ai_reply` y, si vienen del post-Loom, mueven el lead a
+  pagina existente, dudas sobre el offer o confirmaciones simples se responden con
+  `sequence_step=ai_reply` y, si vienen del post-offer, mueven el lead a
   `needs_human`/Manual con `automation_paused_reason=ai_reply_conversation`.
   Como la AI ya contesto, el `manual_reply_status` queda `answered`.
-- Si el lead vio el video, no esta decidido a avanzar con la oferta principal,
+- Si el lead recibio el offer, no esta decidido a avanzar con la oferta principal,
   pero muestra interes tibio ("lo analizo", "te aviso", "les estare
   comunicando", "lo consulto"), el bot puede usar `offer_solo_page_promo`. Esa
   accion encola `sequence_step=offer_solo_page_promo`, mantiene la automatizacion
@@ -715,7 +804,7 @@ Bot conversacional post-video y post-Calendly:
   no se encola otro WhatsApp duplicado. Los emails de alerta incluyen la
   conversacion reciente en orden cronologico, no solamente el ultimo inbound.
 - Si el lead rechaza el servicio o dice que no quiere avanzar, el bot envia
-  exactamente `1) Muy caros los 300 dolares`, `2) No me sirve la pagina web +
+  exactamente `1) Muy caros los 599 dolares`, `2) No me sirve la pagina web +
   publicidades`, `3) No es mi momento para invertir`, `4) Otro motivo`, con
   `sequence_step=ai_rejection_survey`, y cierra el lead para no responder mas.
 - El origen/identidad de Konecta no se infiere del pais del lead. El prompt y
@@ -754,21 +843,21 @@ Bot conversacional post-video y post-Calendly:
 - Cerrados, booked, archivados, excluidos, Venezuela y Workstation siguen
   bloqueados por los guards existentes.
 
-Acciones manuales de Calendly:
+Acciones manuales de Meeting:
 
-- `Calendly with intro` encola el texto previo y despues el link de Calendly.
-- `Calendly link only` encola solo el link de Calendly.
-- El link de Calendly sale de `calendly_base_url` del funnel activo.
+- `Meeting with intro` encola el texto previo y despues el link legacy de agenda.
+- `Meeting link only` encola solo el link legacy de agenda.
+- El link legacy sale de `calendly_base_url` del funnel activo.
 - Ambas acciones registran `calendly_sent_at` y mantienen el lead en Manual.
-- La automatizacion nueva no manda Calendly automaticamente. Para avanzar, el
+- La automatizacion nueva no manda links automaticamente. Para avanzar, el
   bot pide email, dia y horario para que Facu coordine la llamada manualmente.
-- Hoy el codigo no crea eventos de Google Calendar ni Calendly desde texto
+- Hoy el codigo no crea eventos de Google Calendar ni links de agenda desde texto
   libre; cuando junta los datos, marca `booking_details_collected`, pausa en
   `needs_human` y dispara la alerta por email.
 
 Promo solo pagina:
 
-- Si un lead post-video no esta 100% decidido por la oferta completa de pagina +
+- Si un lead post-offer no esta 100% decidido por la oferta completa de pagina +
   campanas pero muestra interes tibio, el bot puede ofrecer automaticamente la
   promo de solo pagina con `sequence_step=offer_solo_page_promo`.
 - Esa promo ofrecida por el bot usa precios ponderados hacia valores altos:
@@ -881,7 +970,7 @@ visible en el chat, pero deja de contar para la alerta roja del lead.
 
 Los mensajes no-template solo se pueden encolar si el ultimo inbound del lead
 esta dentro de la ventana de 24 horas de WhatsApp. Si la ventana esta cerrada,
-el backend rechaza custom/media/Calendly/Loom no-template antes de llegar a
+el backend rechaza custom/media/Meeting/Loom no-template antes de llegar a
 Meta, y la UI bloquea el composer custom indicando que hay que usar un template
 aprobado como `Manual ping`.
 
@@ -1144,7 +1233,7 @@ y reiniciás el servicio.
 Servicios:
 
 - `backend`: FastAPI con login, API de Contadores y frontend.
-- `bot`: webhooks de WhatsApp/Calendly y worker de automatización.
+- `bot`: webhooks de WhatsApp/Meeting y worker de automatización.
 - `traefik`: entrada HTTP para mantener el despliegue detrás de Traefik.
 
 El backend corre con un solo worker de Uvicorn mientras use SQLite. La base

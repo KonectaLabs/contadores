@@ -33,13 +33,23 @@ def build_funnel(args: argparse.Namespace) -> FunnelDefinition:
     """Build one complete disabled-by-default funnel from CLI options."""
     funnel_id = slugify_funnel_id(args.funnel_id)
     label = args.label.strip() if args.label else funnel_id.replace("-", " ").title()
-    mp4_path = args.mp4_path.strip() if args.mp4_path else f"data/{funnel_id}/videos/loom_60_seconds_captions.mp4"
+    offer_text = args.offer_text.strip() or (
+        "Son 599 USD mensuales. A cambio recibis oportunidades de clientes potenciales directo "
+        "a tu WhatsApp. Eso lo logramos con una pagina profesional y campanas enfocadas. "
+        "Si te interesa, lo vemos en una llamada corta y revisamos si tiene sentido para tu caso."
+    )
 
     return FunnelDefinition(
         id=funnel_id,
         label=label,
         kind="campaign",
         enabled=args.enabled,
+        offer_price_usd=args.offer_price_usd,
+        offer_payment_model=args.offer_payment_model,
+        offer_summary=args.offer_summary,
+        offer_includes_website=args.offer_includes_website,
+        default_campaign_count=args.default_campaign_count,
+        default_daily_ad_budget_usd=args.default_daily_ad_budget_usd,
         sheet_url=args.sheet_url.strip() or None,
         sheet_gid=args.sheet_gid.strip() or None,
         sheet_source_filter=args.sheet_source_filter.strip() or None,
@@ -65,14 +75,14 @@ def build_funnel(args: argparse.Namespace) -> FunnelDefinition:
         strategies=[
             FunnelStrategyDefinition(
                 step="loom",
-                id="loom_mp4",
-                label="WhatsApp MP4",
+                id="text_offer_599",
+                label="Text offer 599",
                 weight=100,
-                delivery="video",
-                sequence_step="loom_video",
-                message_text="Video de explicacion enviado por WhatsApp.",
-                media_type="video",
-                media_path=mp4_path,
+                delivery="text",
+                sequence_step="text_offer",
+                message_text=offer_text,
+                media_type=None,
+                media_path=None,
                 media_caption=None,
             )
         ],
@@ -102,11 +112,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--manual-ping-text",
         default="Hola, queria saber en que situacion quedamos y si queres que retomemos la conversacion",
     )
-    parser.add_argument("--loom-intro-text", default="Perfecto. Te cuento rapido como funciona y que obtenes si trabajamos juntos:")
+    parser.add_argument("--offer-price-usd", type=int, default=599)
+    parser.add_argument("--offer-payment-model", default="monthly", choices=["monthly", "one_time", "custom"])
+    parser.add_argument(
+        "--offer-summary",
+        default="Marketing y anuncios para recibir interesados directo al WhatsApp; sitio incluido si hace falta.",
+    )
+    parser.add_argument("--offer-includes-website", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--default-campaign-count", type=int, default=3)
+    parser.add_argument("--default-daily-ad-budget-usd", type=int, default=None)
+    parser.add_argument("--offer-text", default="", help="Text-only offer message sent after the lead replies.")
+    parser.add_argument("--loom-intro-text", default="")
     parser.add_argument("--loom-url", default="", help="Optional Loom URL for reference.")
-    parser.add_argument("--mp4-path", default="", help="Path to the WhatsApp MP4 inside the mounted data volume.")
-    parser.add_argument("--video-check-text", default="conseguiste ver el video?")
-    parser.add_argument("--calendly-intro-text", default="Para avanzar, el siguiente paso es elegir un horario en el calendario:")
+    parser.add_argument("--video-check-text", default="te interesa que lo veamos en una llamada corta?")
+    parser.add_argument("--calendly-intro-text", default="Para avanzar, decime dia, horario y email y coordinamos la llamada:")
     parser.add_argument("--calendly-base-url", default="", help="Booking URL for this funnel.")
     parser.add_argument("--alert-email", action="append", default=[], help="Alert email. Can be repeated or comma-separated.")
     parser.add_argument(

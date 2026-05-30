@@ -17,8 +17,8 @@ Read these when the task touches their area:
 
 - `contadores-crm-followup-automation`: live CRM API, exclusions, send rules,
   `needs_reply`, production snapshot, and verification.
-- `contadores-bot-sequence`: opener, Loom/video, conversational bot replies,
-  scheduling handoff, manual Calendly actions, manual ping, 24-hour window, and
+- `contadores-bot-sequence`: opener, text offer/media offer, conversational bot replies,
+  scheduling handoff, manual meeting actions, manual ping, 24-hour window, and
   human handoff behavior.
 - `konecta-frankie-video-offer`: outcome-first offer framing. Use especially
   for price, value, and stronger follow-up copy.
@@ -51,12 +51,12 @@ For operator-taught answers to previously unknown runtime questions, read
   is available and persist that transcript as the next inbound message; otherwise
   ask for a transcript or inspect available media first.
 - If the lead gives a concrete day/time for a call, treat it as booking intent.
-  Do not send a generic follow-up or Calendly automatically. Ask only for the
+  Do not send a generic follow-up or calendar links automatically. Ask only for the
   missing scheduling detail, usually email or timezone, and escalate once email,
   day, and time are available.
 - If the lead clearly says no to the service or does not want to continue, send
   only this exact text and close the lead:
-  `1) Muy caros los 300 dolares`
+  `1) Muy caros los 599 dolares`
   `2) No me sirve la pagina web + publicidades`
   `3) No es mi momento para invertir`
   `4) Otro motivo`
@@ -116,12 +116,12 @@ Yo escribo desde Argentina y trabajamos remoto para toda Latinoamerica.
 - Delivery: define target client, service area, geography, and message; prepare
   the page/landing and campaigns; send interested people to the professional's
   WhatsApp. Konecta does not close the client's sales/cases for them.
-- Runtime price: 300 USD, pago unico. Do not invent monthly fees, installments,
+- Runtime price: 599 USD mensuales. Do not invent installments,
   taxes, invoices, or payment rails unless already provided in the conversation.
 - Guarantee: if there are no new consultations/prospects to review in 30 days,
   money back. Never promise closed clients, legal cases, revenue, guaranteed
   appointments, ad approval, exact lead volume, rankings, or exact ROI.
-- Scheduling v1: no automatic Calendly. Collect email, day, time, and timezone
+- Scheduling v1: no automatic calendar link. Collect email, day, time, and timezone
   for a 15-minute call, then hand off to a human.
 - If a factual question falls outside this source of truth and current
   `funnel_info`, escalate instead of inventing.
@@ -138,7 +138,7 @@ Before drafting or sending, inspect:
    - whether the video was sent;
    - whether the bot already sent `ai_reply` or
      `scheduling_handoff_confirmation`;
-   - whether Calendly was already sent;
+   - whether Meeting was already sent;
    - whether price, guarantee, page, domain, or objections were discussed;
    - whether an operator already sent a similar follow-up.
 6. Delivery status of the latest outbound.
@@ -217,7 +217,7 @@ LIMIT 40;
   closer: benefit, mechanism, or meeting.
 - Prefer simple Spanish without overexplaining.
 - Use the local house words unless the existing conversation differs:
-  `pagina`, `campanas`, `reunion`, `WhatsApp`, `300 USD`.
+  `pagina`, `campanas`, `reunion`, `WhatsApp`, `599 USD`.
 - Avoid hype. Do not sound like a generic sales bot.
 
 ## Offer Framing
@@ -225,7 +225,7 @@ LIMIT 40;
 Use Frankie-style value order:
 
 ```text
-La inversion es de 300 USD, pago unico.
+La inversion es de 599 USD mensuales.
 
 A cambio usted recibe [beneficio concreto].
 
@@ -237,8 +237,8 @@ Eso lo logramos mediante [mecanismo/servicio].
 Do not lead with the service list:
 
 ```text
-Malo: Por 300 USD hacemos pagina web y campanas.
-Bueno: La inversion es de 300 USD. A cambio recibe mas oportunidades de clientes potenciales directo a su WhatsApp. Eso lo logramos mediante una pagina profesional y 3 campanas.
+Malo: Por 599 USD hacemos pagina web y campanas.
+Bueno: La inversion es de 599 USD. A cambio recibe mas oportunidades de clientes potenciales directo a su WhatsApp. Eso lo logramos mediante una pagina profesional y 3 campanas.
 ```
 
 For Abogados, the benefit is not generic "marketing":
@@ -307,13 +307,13 @@ sends that text to the lead and appends it to
 `references/operator-learned-answers.md` so similar questions can be answered
 next time.
 
-The bot does not book Google Calendar or Calendly in v1. It collects email, day,
+The bot does not book Google Calendar or Meeting in v1. It collects email, day,
 time, and timezone when needed. Once those details are complete, it confirms by
 WhatsApp that Facu will coordinate and the CRM alert must carry the details.
 
 ### Lead says "lo analizo", "consulto", "retornamos", "te aviso"
 
-The user prefers not to answer only "ok". For post-video leads who are not
+The user prefers not to answer only "ok". For post-offer leads who are not
 fully ready for the full page + campaigns offer but still show light interest,
 the bot should usually choose `offer_solo_page_promo` instead of moving the
 lead to Manual or only asking for a call.
@@ -431,7 +431,7 @@ Use benefit-first framing.
 Abogados:
 
 ```text
-Si, la inversion es de 300 USD, pago unico.
+Si, la inversion es de 599 USD mensuales.
 
 A cambio usted recibe mas oportunidades de clientes potenciales directo a su WhatsApp.
 
@@ -444,7 +444,7 @@ If the exact lead message is "Cuanto cuesta?" after the video, answer directly
 with the same benefit-first price frame:
 
 ```text
-La inversion es de 300 USD, pago unico.
+La inversion es de 599 USD mensuales.
 
 A cambio usted recibe mas oportunidades de clientes potenciales directo a su WhatsApp.
 
@@ -456,7 +456,7 @@ Para avanzar solo falta una reunion corta, nos conocemos, vemos su caso y defini
 Contadores:
 
 ```text
-Si, la inversion es de 300 USD, pago unico.
+Si, la inversion es de 599 USD mensuales.
 
 A cambio usted recibe mas oportunidades de clientes potenciales directo a su WhatsApp.
 
@@ -470,7 +470,7 @@ Para avanzar solo falta una reunion corta, nos conocemos, vemos su caso y defini
 Answer price as value received, then specify inclusions.
 
 ```text
-La inversion es de 300 USD, pago unico.
+La inversion es de 599 USD mensuales.
 
 A cambio usted recibe mas oportunidades de clientes potenciales directo a su WhatsApp.
 
@@ -490,7 +490,7 @@ El dominio lo vemos con usted: si ya tiene uno, trabajamos sobre ese; y si no ti
 Combine with price when they ask both:
 
 ```text
-La inversion es de 300 USD, pago unico.
+La inversion es de 599 USD mensuales.
 
 A cambio usted recibe mas oportunidades de clientes potenciales directo a su WhatsApp.
 
@@ -563,13 +563,13 @@ Cuanto estaria dispuesto a invertir? Seria diferente si se le permitiese el pago
 ### Lead rejects vaguely after price or proposal
 
 When the lead says something vague like `Mas adelante`, `por ahora no`,
-`lo dejamos para despues`, or a soft no after hearing the 300 USD offer, do not
+`lo dejamos para despues`, or a soft no after hearing the 599 USD offer, do not
 ask a long open question. The user wants the exact short diagnostic options
 below, and only those options. This is used to understand the reason without
 making the lead think too much.
 
 ```text
-1) Muy caros los 300 dolares
+1) Muy caros los 599 dolares
 2) No me sirve la pagina web + publicidades
 3) No es mi momento para invertir
 4) Otro motivo

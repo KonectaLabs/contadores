@@ -66,7 +66,7 @@ It already captures:
 There is no runtime mode switch for Contadores.
 
 Enabled campaign funnels poll their configured sheet directly.
-After the Loom/video step, the app can send a recap inside `loom_intro` when
+After the offer step, the app can send a recap inside `offer text` when
 DSPy classifies the lead reply as a simple watched-video confirmation. That
 state lives in the app database, not as a spreadsheet runtime switch.
 

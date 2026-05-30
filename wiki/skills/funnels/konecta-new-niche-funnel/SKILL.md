@@ -32,9 +32,9 @@ Ask only for missing items:
 - offer or service Konecta will sell;
 - price and payment terms;
 - target client outcome;
-- Calendly intro copy and the per-funnel `calendly_base_url`;
+- Meeting intro copy and the per-funnel `calendly_base_url`;
 - spreadsheet URL/GID or whether the Meta form is not ready yet;
-- video delivery preference: WhatsApp MP4 or external link.
+- video delivery preference: text offer or external link.
 
 If the user gives only the niche, start with market research and leave the rest for later.
 
@@ -76,7 +76,7 @@ If the user gives only the niche, start with market research and leave the rest 
 
 7. **CRM funnel config**
    - Add or update the funnel in the CRM config.
-   - Configure sheet source, messages, video strategy, Calendly copy, and alert emails.
+   - Configure sheet source, messages, text offer strategy, Meeting copy, and alert emails.
    - Keep Contadores as one funnel, not special business logic.
 
 8. **Server rollout**

@@ -54,6 +54,7 @@ from backend.database import (
     ContadoresStrategyAssignment,
     DATA_DIR,
     MessageDeliveryStatus,
+    PlatformEvent,
     ScheduledAgentTask,
     WorkstationAutomationStatus,
     WorkstationClient,
@@ -638,6 +639,12 @@ def build_funnel_info_for_bot(funnel: Any) -> str:
     """Build the funnel-specific context passed into the global conversation bot."""
     funnel_id = str(getattr(funnel, "id", "") or "").strip() or "contadores"
     label = str(getattr(funnel, "label", "") or "").strip() or funnel_id
+    offer_summary = str(getattr(funnel, "offer_summary", "") or "").strip()
+    offer_price_usd = int(getattr(funnel, "offer_price_usd", 599) or 0)
+    offer_payment_model = str(getattr(funnel, "offer_payment_model", "monthly") or "monthly").strip()
+    offer_includes_website = bool(getattr(funnel, "offer_includes_website", True))
+    default_campaign_count = int(getattr(funnel, "default_campaign_count", 3) or 0)
+    default_daily_ad_budget_usd = getattr(funnel, "default_daily_ad_budget_usd", None)
     opener_text = str(getattr(funnel, "opener_text", "") or "").strip()
     loom_intro_text = str(getattr(funnel, "loom_intro_text", "") or "").strip()
     video_check_text = str(getattr(funnel, "video_check_text", "") or "").strip()
@@ -655,12 +662,41 @@ def build_funnel_info_for_bot(funnel: Any) -> str:
         objective = "atraer consultas calificadas directo a WhatsApp con pagina profesional y campanas"
         services = "las areas o servicios que el profesional quiera priorizar"
 
+    payment_label = {
+        "monthly": "mensual",
+        "one_time": "pago unico",
+        "custom": "segun acuerdo",
+    }.get(offer_payment_model, offer_payment_model or "segun acuerdo")
+    price_line = (
+        f"Precio: {offer_price_usd} USD, {payment_label}."
+        if offer_price_usd > 0
+        else f"Precio: {payment_label}."
+    )
+    campaign_line = (
+        f"Campanas base: {default_campaign_count}."
+        if default_campaign_count > 0
+        else "Campanas base: segun estrategia del funnel."
+    )
+    budget_line = (
+        f"Presupuesto diario de ads sugerido: {default_daily_ad_budget_usd} USD."
+        if default_daily_ad_budget_usd
+        else "Presupuesto diario de ads: definir con el operador o el cliente."
+    )
+    website_line = (
+        "Si el cliente no tiene sitio, Konecta puede crear uno incluido en la oferta."
+        if offer_includes_website
+        else "El sitio web no esta incluido por defecto en este funnel."
+    )
+
     parts = [
         f"Funnel: {label} ({funnel_id}).",
         f"Publico: {audience}.",
         f"Objetivo: {objective}.",
-        "Oferta: pagina profesional personalizada + 3 campanas publicitarias enfocadas.",
-        "Precio: 300 USD, pago unico.",
+        f"Oferta: {offer_summary or 'marketing y anuncios para recibir interesados directo al WhatsApp'}.",
+        price_line,
+        campaign_line,
+        budget_line,
+        website_line,
         "Cierre v1: no enviar Calendly; pedir email, dia y horario para una llamada corta de 15 minutos.",
         f"Areas o servicios prioritarios: {services}.",
     ]
@@ -2347,6 +2383,29 @@ def enqueue_lead_outbound(
         whatsapp_template_language=whatsapp_template_language,
         whatsapp_template_body_params=whatsapp_template_body_params,
     )
+    try:
+        PlatformEvent.add(
+            event_type="whatsapp.outbound_queued",
+            lifecycle_stage=sequence_step,
+            target_type="lead",
+            target_id=lead.id,
+            funnel_id=lead.funnel_id,
+            source="contadores",
+            actor="automation",
+            summary=f"Queued WhatsApp outbound message for {sequence_step}.",
+            payload={
+                "message_id": row.id,
+                "sequence_step": sequence_step,
+                "media_type": media_type,
+                "media_path": media_path,
+                "whatsapp_template_name": whatsapp_template_name,
+                "dispatch_after": row.dispatch_after,
+            },
+            idempotency_key=f"contadores_message:{row.id}:queued" if row.id is not None else None,
+            correlation_id=str(row.id) if row.id is not None else None,
+        )
+    except Exception as error:
+        logger.warning("Could not write outbound platform event for lead %s: %s", lead.id, error)
     return row
 
 

@@ -27,6 +27,7 @@ from backend.endpoints import (
     client_leads_router,
     contadores_router,
     funnels_router,
+    platform_router,
     public_workstation_router,
     workstation_router,
 )
@@ -150,6 +151,10 @@ app = FastAPI(
             "description": "Delivery sources for client-owned campaign leads and WhatsApp notifications.",
         },
         {
+            "name": "platform",
+            "description": "Lifecycle events and cross-domain platform observability.",
+        },
+        {
             "name": "system",
             "description": "System endpoints and frontend serving.",
         },
@@ -171,6 +176,7 @@ app.include_router(client_leads_router)
 app.include_router(client_lead_deliveries_router)
 app.include_router(client_leads_actions_router)
 app.include_router(funnels_router)
+app.include_router(platform_router)
 app.include_router(workstation_router)
 
 

@@ -53,6 +53,13 @@ class ConfiguredContadoresStrategy(ContadoresSequenceStrategy):
     def build_messages(self, *, lead: Any, config: Any) -> list[ContadoresOutboundDraft]:
         del lead
         text = self.definition.message_text.strip()
+        if self.definition.delivery == "text":
+            return [
+                ContadoresOutboundDraft(
+                    text=text or self.funnel.offer_summary or self.label,
+                    sequence_step=self.definition.sequence_step,
+                ),
+            ]
         if self.definition.delivery == "link" and not text:
             text = str(getattr(config, "loom_url", "") or self.funnel.loom_url).strip()
         if not text:
@@ -89,7 +96,7 @@ def list_funnel_strategies(funnel: FunnelDefinition) -> list[ContadoresSequenceS
 
 
 def build_loom_intro_text() -> str:
-    """Return the shared pre-video explanation text."""
+    """Return the shared pre-offer explanation text."""
     return get_contadores_funnel().loom_intro_text
 
 

@@ -42,6 +42,36 @@ Use it directly. Tool calls are audited in the database and in
 
 ## Product Tools
 
+Platform/config tools:
+
+- `read_platform_config`: inspect funnels, delivery sources, config paths,
+  validation issues, and optional schemas.
+- `validate_platform_config`: check setup readiness before enabling a funnel or
+  delivery source.
+- `configure_text_offer_funnel`: create or update a text-first funnel without
+  opening the UI.
+- `upsert_funnel_config`: replace one full validated funnel definition.
+- `upsert_client_lead_delivery_source`: configure Google Sheets to WhatsApp
+  client lead delivery without opening the UI.
+
+Platform lifecycle tools:
+
+- `create_platform_meeting`: record meeting scheduling/handoff state without
+  creating a calendar event.
+- `attach_meeting_transcript`: attach transcript text/path and extracted client
+  fields after conversion.
+- `upsert_client_profile`: save reviewed client knowledge for ads, delivery,
+  updates, and support.
+- `stage_ad_campaign`: stage the ad campaign plan and budget before approval.
+- `stage_creative_asset`: record generated or staged creative assets.
+- `stage_meta_publish_attempt`: stage the Meta publish request/response without
+  live external writes.
+- `create_client_update`: draft or record 24-hour client updates.
+- `ask_human_question`: create a bounded Facundo/operator doubt with context,
+  options, default action, and timeout.
+- `answer_human_question`: store the operator answer and promote it to durable
+  agent memory when useful.
+
 Typical lead tools:
 
 - `get_lead_context`: inspect lead state and recent WhatsApp messages.
@@ -83,6 +113,35 @@ Continuity tools:
   message.
 - Do not spam. If waiting is better, schedule a heartbeat/follow-up.
 - If WhatsApp or product rules block a safe reply, use `handoff_human`.
+
+## Configuration Judgment
+
+The UI is optional. If the task is to add or change platform configuration, use
+the platform/config tools directly instead of telling the operator to click
+through the backoffice.
+
+- Read first with `read_platform_config`.
+- Prefer `configure_text_offer_funnel` for normal mission-offer funnels.
+- Use `upsert_funnel_config` only when you need exact full-schema control.
+- Use `upsert_client_lead_delivery_source` for client-owned lead delivery.
+- Validate with `validate_platform_config` before enabling automation.
+- Leave `enabled=false` when templates, sheets, routing, or alert ownership are
+  still uncertain.
+
+## Lifecycle Judgment
+
+Use lifecycle tools when the task is post-conversion, ads, Meta staging, client
+updates, or operator questions. The UI is a cockpit, not the source of truth.
+Record the state with a tool first, then schedule or continue the next agent
+step from that persisted state.
+
+- Do not publish to Meta from these tools; stage the request and wait for the
+  approval/publish mechanism.
+- Use `ask_human_question` only for real uncertainty. Include context, what you
+  are trying to do, options when known, and the safe default action.
+- Do not wait forever for answers. Use the timeout/default action when safe.
+- If an answer resolves reusable uncertainty, keep `promote_to_memory=true` or
+  call `write_agent_memory`.
 
 ## Memory Judgment
 

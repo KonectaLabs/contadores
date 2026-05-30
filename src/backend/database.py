@@ -2769,6 +2769,900 @@ class AgentToolCall(SQLModel, table=True):
             return rows
 
 
+class PlatformEvent(SQLModel, table=True):
+    """Append-only lifecycle event for platform observability."""
+
+    __tablename__ = "platform_events"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    event_type: str = Field(index=True)
+    lifecycle_stage: str = Field(default="", index=True)
+    target_type: str = Field(default="", index=True)
+    target_id: str = Field(default="", index=True)
+    funnel_id: str = Field(default="", index=True)
+    severity: str = Field(default="info", index=True)
+    source: str = Field(default="", index=True)
+    actor: str = Field(default="")
+    summary: str = Field(default="")
+    payload_json: str = Field(default="{}")
+    idempotency_key: str | None = Field(default=None, index=True)
+    correlation_id: str | None = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
+
+    @classmethod
+    def add(
+        cls,
+        *,
+        event_type: str,
+        lifecycle_stage: str = "",
+        target_type: str = "",
+        target_id: str = "",
+        funnel_id: str = "",
+        severity: str = "info",
+        source: str = "",
+        actor: str = "",
+        summary: str = "",
+        payload: dict[str, Any] | None = None,
+        idempotency_key: str | None = None,
+        correlation_id: str | None = None,
+        created_at: datetime | None = None,
+    ) -> "PlatformEvent":
+        """Persist one event, preserving idempotency when a key is supplied."""
+        clean_key = (idempotency_key or "").strip() or None
+        if clean_key:
+            existing = cls.get_by_idempotency_key(clean_key)
+            if existing is not None:
+                return existing
+        with Session(engine) as session:
+            row = cls(
+                event_type=(event_type or "").strip(),
+                lifecycle_stage=(lifecycle_stage or "").strip(),
+                target_type=(target_type or "").strip(),
+                target_id=(target_id or "").strip(),
+                funnel_id=(funnel_id or "").strip(),
+                severity=(severity or "info").strip() or "info",
+                source=(source or "").strip(),
+                actor=(actor or "").strip(),
+                summary=str(summary or "")[:1000],
+                payload_json=json.dumps(payload or {}, ensure_ascii=True, default=str),
+                idempotency_key=clean_key,
+                correlation_id=(correlation_id or "").strip() or None,
+                created_at=created_at or datetime.now(timezone.utc),
+            )
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            session.expunge(row)
+            return row
+
+    @classmethod
+    def get_by_idempotency_key(cls, idempotency_key: str) -> Optional["PlatformEvent"]:
+        """Return the event for one idempotency key."""
+        clean_key = (idempotency_key or "").strip()
+        if not clean_key:
+            return None
+        with Session(engine) as session:
+            row = session.exec(select(cls).where(cls.idempotency_key == clean_key)).first()
+            if row is not None:
+                session.expunge(row)
+            return row
+
+    @classmethod
+    def list_recent(
+        cls,
+        *,
+        target_type: str | None = None,
+        target_id: str | None = None,
+        funnel_id: str | None = None,
+        limit: int = 100,
+    ) -> list["PlatformEvent"]:
+        """List recent events, optionally scoped to one target or funnel."""
+        clean_limit = max(1, min(limit, 500))
+        with Session(engine) as session:
+            statement = select(cls)
+            if target_type:
+                statement = statement.where(cls.target_type == target_type.strip())
+            if target_id:
+                statement = statement.where(cls.target_id == target_id.strip())
+            if funnel_id:
+                statement = statement.where(cls.funnel_id == funnel_id.strip())
+            statement = statement.order_by(cls.created_at.desc(), cls.id.desc()).limit(clean_limit)
+            rows = list(session.exec(statement).all())
+            for row in rows:
+                session.expunge(row)
+            return rows
+
+    def payload_dict(self) -> dict[str, Any]:
+        """Return the parsed event payload."""
+        try:
+            payload = json.loads(self.payload_json or "{}")
+        except json.JSONDecodeError:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+
+def _json_object(raw_value: str) -> dict[str, Any]:
+    """Parse a stored JSON object."""
+    try:
+        payload = json.loads(raw_value or "{}")
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _json_array(raw_value: str) -> list[Any]:
+    """Parse a stored JSON array."""
+    try:
+        payload = json.loads(raw_value or "[]")
+    except json.JSONDecodeError:
+        return []
+    return payload if isinstance(payload, list) else []
+
+
+def _json_dumps(value: Any) -> str:
+    """Store JSON consistently for platform lifecycle records."""
+    return json.dumps(value if value is not None else {}, ensure_ascii=True, default=str)
+
+
+class PlatformMeeting(SQLModel, table=True):
+    """Meeting scheduling and transcript handoff state."""
+
+    __tablename__ = "platform_meetings"
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    lead_id: str = Field(default="", index=True)
+    client_id: str = Field(default="", index=True)
+    funnel_id: str = Field(default="", index=True)
+    status: str = Field(default="collecting_details", index=True)
+    lead_email: str = Field(default="", index=True)
+    timezone: str = Field(default="")
+    requested_day: str = Field(default="")
+    requested_time: str = Field(default="")
+    calendar_event_id: str = Field(default="", index=True)
+    context_summary: str = Field(default="")
+    transcript_text: str = Field(default="")
+    transcript_path: str = Field(default="")
+    extracted_profile_json: str = Field(default="{}")
+    idempotency_key: str | None = Field(default=None, index=True)
+    scheduled_at: datetime | None = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
+
+    @classmethod
+    def add(
+        cls,
+        *,
+        lead_id: str = "",
+        client_id: str = "",
+        funnel_id: str = "",
+        status: str = "collecting_details",
+        lead_email: str = "",
+        timezone_name: str = "",
+        requested_day: str = "",
+        requested_time: str = "",
+        calendar_event_id: str = "",
+        context_summary: str = "",
+        transcript_text: str = "",
+        transcript_path: str = "",
+        extracted_profile: dict[str, Any] | None = None,
+        idempotency_key: str | None = None,
+        scheduled_at: datetime | None = None,
+    ) -> "PlatformMeeting":
+        """Create or return one meeting record."""
+        clean_key = (idempotency_key or "").strip() or None
+        if clean_key:
+            existing = cls.get_by_idempotency_key(clean_key)
+            if existing is not None:
+                return existing
+        now = datetime.now(timezone.utc)
+        with Session(engine) as session:
+            row = cls(
+                lead_id=(lead_id or "").strip(),
+                client_id=(client_id or "").strip(),
+                funnel_id=(funnel_id or "").strip(),
+                status=(status or "collecting_details").strip() or "collecting_details",
+                lead_email=normalize_email(lead_email),
+                timezone=(timezone_name or "").strip(),
+                requested_day=(requested_day or "").strip(),
+                requested_time=(requested_time or "").strip(),
+                calendar_event_id=(calendar_event_id or "").strip(),
+                context_summary=str(context_summary or "")[:4000],
+                transcript_text=str(transcript_text or "")[:50000],
+                transcript_path=(transcript_path or "").strip(),
+                extracted_profile_json=_json_dumps(extracted_profile or {}),
+                idempotency_key=clean_key,
+                scheduled_at=scheduled_at,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            session.expunge(row)
+            return row
+
+    @classmethod
+    def get_by_id(cls, row_id: str) -> Optional["PlatformMeeting"]:
+        """Return one meeting."""
+        with Session(engine) as session:
+            row = session.get(cls, row_id)
+            if row is not None:
+                session.expunge(row)
+            return row
+
+    @classmethod
+    def get_by_idempotency_key(cls, idempotency_key: str) -> Optional["PlatformMeeting"]:
+        """Return one meeting by idempotency key."""
+        clean_key = (idempotency_key or "").strip()
+        if not clean_key:
+            return None
+        with Session(engine) as session:
+            row = session.exec(select(cls).where(cls.idempotency_key == clean_key)).first()
+            if row is not None:
+                session.expunge(row)
+            return row
+
+    @classmethod
+    def list_recent(
+        cls,
+        *,
+        status: str | None = None,
+        lead_id: str | None = None,
+        client_id: str | None = None,
+        funnel_id: str | None = None,
+        limit: int = 100,
+    ) -> list["PlatformMeeting"]:
+        """List recent meetings."""
+        clean_limit = max(1, min(limit, 500))
+        with Session(engine) as session:
+            statement = select(cls)
+            if status:
+                statement = statement.where(cls.status == status.strip())
+            if lead_id:
+                statement = statement.where(cls.lead_id == lead_id.strip())
+            if client_id:
+                statement = statement.where(cls.client_id == client_id.strip())
+            if funnel_id:
+                statement = statement.where(cls.funnel_id == funnel_id.strip())
+            statement = statement.order_by(cls.updated_at.desc(), cls.created_at.desc()).limit(clean_limit)
+            rows = list(session.exec(statement).all())
+            for row in rows:
+                session.expunge(row)
+            return rows
+
+    @classmethod
+    def attach_transcript(
+        cls,
+        meeting_id: str,
+        *,
+        transcript_text: str = "",
+        transcript_path: str = "",
+        extracted_profile: dict[str, Any] | None = None,
+        status: str = "transcript_received",
+    ) -> Optional["PlatformMeeting"]:
+        """Attach conversion transcript data to one meeting."""
+        with Session(engine) as session:
+            row = session.get(cls, meeting_id)
+            if row is None:
+                return None
+            row.transcript_text = str(transcript_text or row.transcript_text or "")[:50000]
+            row.transcript_path = (transcript_path or row.transcript_path or "").strip()
+            if extracted_profile is not None:
+                row.extracted_profile_json = _json_dumps(extracted_profile)
+            row.status = (status or row.status).strip() or row.status
+            row.updated_at = datetime.now(timezone.utc)
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            session.expunge(row)
+            return row
+
+    def extracted_profile(self) -> dict[str, Any]:
+        """Return parsed extracted profile fields."""
+        return _json_object(self.extracted_profile_json)
+
+
+class PlatformClientProfile(SQLModel, table=True):
+    """Reviewed client knowledge extracted after conversion."""
+
+    __tablename__ = "platform_client_profiles"
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    client_id: str = Field(index=True)
+    lead_id: str = Field(default="", index=True)
+    funnel_id: str = Field(default="", index=True)
+    status: str = Field(default="draft", index=True)
+    source_meeting_id: str = Field(default="", index=True)
+    business_summary: str = Field(default="")
+    offer_summary: str = Field(default="")
+    market_summary: str = Field(default="")
+    objections_json: str = Field(default="[]")
+    segments_json: str = Field(default="[]")
+    knowledge_json: str = Field(default="{}")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
+
+    @classmethod
+    def upsert(
+        cls,
+        *,
+        client_id: str,
+        lead_id: str = "",
+        funnel_id: str = "",
+        status: str = "draft",
+        source_meeting_id: str = "",
+        business_summary: str = "",
+        offer_summary: str = "",
+        market_summary: str = "",
+        objections: list[Any] | None = None,
+        segments: list[Any] | None = None,
+        knowledge: dict[str, Any] | None = None,
+    ) -> "PlatformClientProfile":
+        """Create or update one profile for a converted client."""
+        clean_client_id = (client_id or "").strip()
+        if not clean_client_id:
+            raise ValueError("client_id is required")
+        now = datetime.now(timezone.utc)
+        with Session(engine) as session:
+            row = session.exec(select(cls).where(cls.client_id == clean_client_id)).first()
+            if row is None:
+                row = cls(client_id=clean_client_id, created_at=now)
+            row.lead_id = (lead_id or row.lead_id or "").strip()
+            row.funnel_id = (funnel_id or row.funnel_id or "").strip()
+            row.status = (status or row.status or "draft").strip() or "draft"
+            row.source_meeting_id = (source_meeting_id or row.source_meeting_id or "").strip()
+            row.business_summary = str(business_summary or row.business_summary or "")[:8000]
+            row.offer_summary = str(offer_summary or row.offer_summary or "")[:8000]
+            row.market_summary = str(market_summary or row.market_summary or "")[:8000]
+            if objections is not None:
+                row.objections_json = _json_dumps(objections)
+            if segments is not None:
+                row.segments_json = _json_dumps(segments)
+            if knowledge is not None:
+                row.knowledge_json = _json_dumps(knowledge)
+            row.updated_at = now
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            session.expunge(row)
+            return row
+
+    @classmethod
+    def list_recent(cls, *, client_id: str | None = None, limit: int = 100) -> list["PlatformClientProfile"]:
+        """List recent profiles."""
+        clean_limit = max(1, min(limit, 500))
+        with Session(engine) as session:
+            statement = select(cls)
+            if client_id:
+                statement = statement.where(cls.client_id == client_id.strip())
+            statement = statement.order_by(cls.updated_at.desc(), cls.created_at.desc()).limit(clean_limit)
+            rows = list(session.exec(statement).all())
+            for row in rows:
+                session.expunge(row)
+            return rows
+
+    def objections(self) -> list[Any]:
+        """Return parsed objections."""
+        return _json_array(self.objections_json)
+
+    def segments(self) -> list[Any]:
+        """Return parsed target segments."""
+        return _json_array(self.segments_json)
+
+    def knowledge(self) -> dict[str, Any]:
+        """Return parsed reviewed knowledge."""
+        return _json_object(self.knowledge_json)
+
+
+class PlatformAdCampaign(SQLModel, table=True):
+    """Staged or published ad campaign state."""
+
+    __tablename__ = "platform_ad_campaigns"
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    client_id: str = Field(default="", index=True)
+    funnel_id: str = Field(default="", index=True)
+    status: str = Field(default="draft", index=True)
+    objective: str = Field(default="")
+    budget_daily_usd: int | None = Field(default=None, index=True)
+    budget_total_usd: int | None = Field(default=None)
+    budget_currency: str = Field(default="USD")
+    target_segments_json: str = Field(default="[]")
+    angles_json: str = Field(default="[]")
+    meta_campaign_id: str = Field(default="", index=True)
+    approval_status: str = Field(default="not_requested", index=True)
+    idempotency_key: str | None = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
+
+    @classmethod
+    def add(
+        cls,
+        *,
+        client_id: str = "",
+        funnel_id: str = "",
+        status: str = "draft",
+        objective: str = "",
+        budget_daily_usd: int | None = None,
+        budget_total_usd: int | None = None,
+        budget_currency: str = "USD",
+        target_segments: list[Any] | None = None,
+        angles: list[Any] | None = None,
+        approval_status: str = "not_requested",
+        idempotency_key: str | None = None,
+    ) -> "PlatformAdCampaign":
+        """Create or return one campaign."""
+        clean_key = (idempotency_key or "").strip() or None
+        if clean_key:
+            existing = cls.get_by_idempotency_key(clean_key)
+            if existing is not None:
+                return existing
+        now = datetime.now(timezone.utc)
+        with Session(engine) as session:
+            row = cls(
+                client_id=(client_id or "").strip(),
+                funnel_id=(funnel_id or "").strip(),
+                status=(status or "draft").strip() or "draft",
+                objective=str(objective or "")[:2000],
+                budget_daily_usd=budget_daily_usd,
+                budget_total_usd=budget_total_usd,
+                budget_currency=(budget_currency or "USD").strip() or "USD",
+                target_segments_json=_json_dumps(target_segments or []),
+                angles_json=_json_dumps(angles or []),
+                approval_status=(approval_status or "not_requested").strip() or "not_requested",
+                idempotency_key=clean_key,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            session.expunge(row)
+            return row
+
+    @classmethod
+    def get_by_id(cls, campaign_id: str) -> Optional["PlatformAdCampaign"]:
+        """Return one ad campaign."""
+        with Session(engine) as session:
+            row = session.get(cls, campaign_id)
+            if row is not None:
+                session.expunge(row)
+            return row
+
+    @classmethod
+    def get_by_idempotency_key(cls, idempotency_key: str) -> Optional["PlatformAdCampaign"]:
+        """Return one campaign by idempotency key."""
+        clean_key = (idempotency_key or "").strip()
+        if not clean_key:
+            return None
+        with Session(engine) as session:
+            row = session.exec(select(cls).where(cls.idempotency_key == clean_key)).first()
+            if row is not None:
+                session.expunge(row)
+            return row
+
+    @classmethod
+    def list_recent(
+        cls,
+        *,
+        client_id: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> list["PlatformAdCampaign"]:
+        """List recent campaigns."""
+        clean_limit = max(1, min(limit, 500))
+        with Session(engine) as session:
+            statement = select(cls)
+            if client_id:
+                statement = statement.where(cls.client_id == client_id.strip())
+            if status:
+                statement = statement.where(cls.status == status.strip())
+            statement = statement.order_by(cls.updated_at.desc(), cls.created_at.desc()).limit(clean_limit)
+            rows = list(session.exec(statement).all())
+            for row in rows:
+                session.expunge(row)
+            return rows
+
+    def target_segments(self) -> list[Any]:
+        """Return parsed targeting segments."""
+        return _json_array(self.target_segments_json)
+
+    def angles(self) -> list[Any]:
+        """Return parsed ad angles."""
+        return _json_array(self.angles_json)
+
+
+class PlatformCreativeAsset(SQLModel, table=True):
+    """Generated or staged creative asset for an ad campaign."""
+
+    __tablename__ = "platform_creative_assets"
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    campaign_id: str = Field(default="", index=True)
+    client_id: str = Field(default="", index=True)
+    status: str = Field(default="draft", index=True)
+    asset_type: str = Field(default="image", index=True)
+    prompt: str = Field(default="")
+    file_path: str = Field(default="")
+    dimensions: str = Field(default="")
+    source_refs_json: str = Field(default="[]")
+    meta_creative_id: str = Field(default="", index=True)
+    failure_reason: str = Field(default="")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
+
+    @classmethod
+    def add(
+        cls,
+        *,
+        campaign_id: str = "",
+        client_id: str = "",
+        status: str = "draft",
+        asset_type: str = "image",
+        prompt: str = "",
+        file_path: str = "",
+        dimensions: str = "",
+        source_refs: list[Any] | None = None,
+        meta_creative_id: str = "",
+        failure_reason: str = "",
+    ) -> "PlatformCreativeAsset":
+        """Create one creative asset record."""
+        now = datetime.now(timezone.utc)
+        with Session(engine) as session:
+            row = cls(
+                campaign_id=(campaign_id or "").strip(),
+                client_id=(client_id or "").strip(),
+                status=(status or "draft").strip() or "draft",
+                asset_type=(asset_type or "image").strip() or "image",
+                prompt=str(prompt or "")[:12000],
+                file_path=(file_path or "").strip(),
+                dimensions=(dimensions or "").strip(),
+                source_refs_json=_json_dumps(source_refs or []),
+                meta_creative_id=(meta_creative_id or "").strip(),
+                failure_reason=str(failure_reason or "")[:4000],
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            session.expunge(row)
+            return row
+
+    @classmethod
+    def list_recent(
+        cls,
+        *,
+        campaign_id: str | None = None,
+        client_id: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> list["PlatformCreativeAsset"]:
+        """List recent creative assets."""
+        clean_limit = max(1, min(limit, 500))
+        with Session(engine) as session:
+            statement = select(cls)
+            if campaign_id:
+                statement = statement.where(cls.campaign_id == campaign_id.strip())
+            if client_id:
+                statement = statement.where(cls.client_id == client_id.strip())
+            if status:
+                statement = statement.where(cls.status == status.strip())
+            statement = statement.order_by(cls.updated_at.desc(), cls.created_at.desc()).limit(clean_limit)
+            rows = list(session.exec(statement).all())
+            for row in rows:
+                session.expunge(row)
+            return rows
+
+    def source_refs(self) -> list[Any]:
+        """Return parsed source references."""
+        return _json_array(self.source_refs_json)
+
+
+class PlatformMetaPublishAttempt(SQLModel, table=True):
+    """One staged or executed Meta Marketing API publish attempt."""
+
+    __tablename__ = "platform_meta_publish_attempts"
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    campaign_id: str = Field(default="", index=True)
+    status: str = Field(default="staged", index=True)
+    approval_status: str = Field(default="pending", index=True)
+    request_json: str = Field(default="{}")
+    response_json: str = Field(default="{}")
+    error: str = Field(default="")
+    idempotency_key: str | None = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
+
+    @classmethod
+    def add(
+        cls,
+        *,
+        campaign_id: str = "",
+        status: str = "staged",
+        approval_status: str = "pending",
+        request_payload: dict[str, Any] | None = None,
+        response_payload: dict[str, Any] | None = None,
+        error: str = "",
+        idempotency_key: str | None = None,
+    ) -> "PlatformMetaPublishAttempt":
+        """Create or return one publish attempt."""
+        clean_key = (idempotency_key or "").strip() or None
+        if clean_key:
+            existing = cls.get_by_idempotency_key(clean_key)
+            if existing is not None:
+                return existing
+        now = datetime.now(timezone.utc)
+        with Session(engine) as session:
+            row = cls(
+                campaign_id=(campaign_id or "").strip(),
+                status=(status or "staged").strip() or "staged",
+                approval_status=(approval_status or "pending").strip() or "pending",
+                request_json=_json_dumps(request_payload or {}),
+                response_json=_json_dumps(response_payload or {}),
+                error=str(error or "")[:12000],
+                idempotency_key=clean_key,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            session.expunge(row)
+            return row
+
+    @classmethod
+    def get_by_idempotency_key(cls, idempotency_key: str) -> Optional["PlatformMetaPublishAttempt"]:
+        """Return one publish attempt by idempotency key."""
+        clean_key = (idempotency_key or "").strip()
+        if not clean_key:
+            return None
+        with Session(engine) as session:
+            row = session.exec(select(cls).where(cls.idempotency_key == clean_key)).first()
+            if row is not None:
+                session.expunge(row)
+            return row
+
+    @classmethod
+    def list_recent(
+        cls,
+        *,
+        campaign_id: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> list["PlatformMetaPublishAttempt"]:
+        """List recent publish attempts."""
+        clean_limit = max(1, min(limit, 500))
+        with Session(engine) as session:
+            statement = select(cls)
+            if campaign_id:
+                statement = statement.where(cls.campaign_id == campaign_id.strip())
+            if status:
+                statement = statement.where(cls.status == status.strip())
+            statement = statement.order_by(cls.updated_at.desc(), cls.created_at.desc()).limit(clean_limit)
+            rows = list(session.exec(statement).all())
+            for row in rows:
+                session.expunge(row)
+            return rows
+
+    def request_payload(self) -> dict[str, Any]:
+        """Return parsed publish request."""
+        return _json_object(self.request_json)
+
+    def response_payload(self) -> dict[str, Any]:
+        """Return parsed publish response."""
+        return _json_object(self.response_json)
+
+
+class PlatformClientUpdate(SQLModel, table=True):
+    """24-hour client update draft/send state."""
+
+    __tablename__ = "platform_client_updates"
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    client_id: str = Field(default="", index=True)
+    campaign_id: str = Field(default="", index=True)
+    status: str = Field(default="draft", index=True)
+    summary_text: str = Field(default="")
+    leads_count: int = Field(default=0)
+    blockers_json: str = Field(default="[]")
+    next_action: str = Field(default="")
+    whatsapp_message_id: int | None = Field(default=None, index=True)
+    window_started_at: datetime | None = Field(default=None, index=True)
+    window_ended_at: datetime | None = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
+
+    @classmethod
+    def add(
+        cls,
+        *,
+        client_id: str = "",
+        campaign_id: str = "",
+        status: str = "draft",
+        summary_text: str = "",
+        leads_count: int = 0,
+        blockers: list[Any] | None = None,
+        next_action: str = "",
+        whatsapp_message_id: int | None = None,
+        window_started_at: datetime | None = None,
+        window_ended_at: datetime | None = None,
+    ) -> "PlatformClientUpdate":
+        """Create one client update record."""
+        now = datetime.now(timezone.utc)
+        with Session(engine) as session:
+            row = cls(
+                client_id=(client_id or "").strip(),
+                campaign_id=(campaign_id or "").strip(),
+                status=(status or "draft").strip() or "draft",
+                summary_text=str(summary_text or "")[:4000],
+                leads_count=max(0, int(leads_count or 0)),
+                blockers_json=_json_dumps(blockers or []),
+                next_action=str(next_action or "")[:2000],
+                whatsapp_message_id=whatsapp_message_id,
+                window_started_at=window_started_at,
+                window_ended_at=window_ended_at,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            session.expunge(row)
+            return row
+
+    @classmethod
+    def list_recent(
+        cls,
+        *,
+        client_id: str | None = None,
+        campaign_id: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> list["PlatformClientUpdate"]:
+        """List recent client updates."""
+        clean_limit = max(1, min(limit, 500))
+        with Session(engine) as session:
+            statement = select(cls)
+            if client_id:
+                statement = statement.where(cls.client_id == client_id.strip())
+            if campaign_id:
+                statement = statement.where(cls.campaign_id == campaign_id.strip())
+            if status:
+                statement = statement.where(cls.status == status.strip())
+            statement = statement.order_by(cls.updated_at.desc(), cls.created_at.desc()).limit(clean_limit)
+            rows = list(session.exec(statement).all())
+            for row in rows:
+                session.expunge(row)
+            return rows
+
+    def blockers(self) -> list[Any]:
+        """Return parsed blockers."""
+        return _json_array(self.blockers_json)
+
+
+class PlatformHumanQuestion(SQLModel, table=True):
+    """Human doubt escalation addressed to Facundo/operator."""
+
+    __tablename__ = "platform_human_questions"
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    workflow: str = Field(default="", index=True)
+    target_type: str = Field(default="", index=True)
+    target_id: str = Field(default="", index=True)
+    funnel_id: str = Field(default="", index=True)
+    status: str = Field(default="pending", index=True)
+    context_summary: str = Field(default="")
+    trying_to_do: str = Field(default="")
+    question: str = Field(default="")
+    options_json: str = Field(default="[]")
+    default_action: str = Field(default="")
+    timeout_at: datetime | None = Field(default=None, index=True)
+    whatsapp_message_id: str = Field(default="", index=True)
+    answer_text: str = Field(default="")
+    answered_at: datetime | None = Field(default=None, index=True)
+    promoted_to_memory_at: datetime | None = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
+
+    @classmethod
+    def add(
+        cls,
+        *,
+        workflow: str = "",
+        target_type: str = "",
+        target_id: str = "",
+        funnel_id: str = "",
+        context_summary: str = "",
+        trying_to_do: str = "",
+        question: str,
+        options: list[Any] | None = None,
+        default_action: str = "",
+        timeout_at: datetime | None = None,
+        whatsapp_message_id: str = "",
+    ) -> "PlatformHumanQuestion":
+        """Create one pending human question."""
+        now = datetime.now(timezone.utc)
+        with Session(engine) as session:
+            row = cls(
+                workflow=(workflow or "").strip(),
+                target_type=(target_type or "").strip(),
+                target_id=(target_id or "").strip(),
+                funnel_id=(funnel_id or "").strip(),
+                status="pending",
+                context_summary=str(context_summary or "")[:4000],
+                trying_to_do=str(trying_to_do or "")[:2000],
+                question=str(question or "")[:4000],
+                options_json=_json_dumps(options or []),
+                default_action=str(default_action or "")[:2000],
+                timeout_at=timeout_at,
+                whatsapp_message_id=(whatsapp_message_id or "").strip(),
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            session.expunge(row)
+            return row
+
+    @classmethod
+    def answer(
+        cls,
+        question_id: str,
+        *,
+        answer_text: str,
+        status: str = "answered",
+        promoted_to_memory_at: datetime | None = None,
+    ) -> Optional["PlatformHumanQuestion"]:
+        """Store an answer to one human question."""
+        with Session(engine) as session:
+            row = session.get(cls, question_id)
+            if row is None:
+                return None
+            now = datetime.now(timezone.utc)
+            row.answer_text = str(answer_text or "")[:4000]
+            row.status = (status or "answered").strip() or "answered"
+            row.answered_at = now
+            row.promoted_to_memory_at = promoted_to_memory_at
+            row.updated_at = now
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            session.expunge(row)
+            return row
+
+    @classmethod
+    def list_recent(
+        cls,
+        *,
+        status: str | None = None,
+        target_type: str | None = None,
+        target_id: str | None = None,
+        limit: int = 100,
+    ) -> list["PlatformHumanQuestion"]:
+        """List recent human questions."""
+        clean_limit = max(1, min(limit, 500))
+        with Session(engine) as session:
+            statement = select(cls)
+            if status:
+                statement = statement.where(cls.status == status.strip())
+            if target_type:
+                statement = statement.where(cls.target_type == target_type.strip())
+            if target_id:
+                statement = statement.where(cls.target_id == target_id.strip())
+            statement = statement.order_by(cls.updated_at.desc(), cls.created_at.desc()).limit(clean_limit)
+            rows = list(session.exec(statement).all())
+            for row in rows:
+                session.expunge(row)
+            return rows
+
+    def options(self) -> list[Any]:
+        """Return parsed answer options."""
+        return _json_array(self.options_json)
+
+
 class ScheduledAgentTask(SQLModel, table=True):
     """A DB-backed wake-up task for a future autonomous Codex run."""
 
@@ -5446,6 +6340,7 @@ def init_db() -> None:
     ensure_contadores_config_strategy_weights_column()
     ensure_workstation_client_automation_columns()
     ensure_workstation_codex_thread_columns()
+    ensure_platform_human_question_context_columns()
     logger.info(f"Database initialized at {DATABASE_URL}")
 
 
@@ -5755,6 +6650,25 @@ def ensure_workstation_codex_thread_columns() -> None:
             "CREATE INDEX IF NOT EXISTS ix_workstation_clients_codex_workstation_thread_id "
             "ON workstation_clients (codex_workstation_thread_id)"
         )
+
+
+def ensure_platform_human_question_context_columns() -> None:
+    """Add MISSION doubt-context fields when the lifecycle table already exists."""
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        if "platform_human_questions" not in inspector.get_table_names():
+            return
+        columns = {column["name"] for column in inspector.get_columns("platform_human_questions")}
+        additions = {
+            "context_summary": "TEXT NOT NULL DEFAULT ''",
+            "trying_to_do": "TEXT NOT NULL DEFAULT ''",
+        }
+        for column_name, column_type in additions.items():
+            if column_name not in columns:
+                connection.exec_driver_sql(
+                    f"ALTER TABLE platform_human_questions ADD COLUMN {column_name} {column_type}"
+                )
+                logger.info("Added missing platform_human_questions.%s column.", column_name)
 
 
 def ensure_contadores_strategy_columns() -> None:

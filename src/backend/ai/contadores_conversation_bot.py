@@ -109,7 +109,7 @@ CONSULTATION_DEFINITION_REPLY_BY_FUNNEL = {
 }
 
 REJECTION_SURVEY_REPLY = (
-    "1) Muy caros los 300 dolares\n"
+    "1) Muy caros los 599 dolares\n"
     "2) No me sirve la pagina web + publicidades\n"
     "3) No es mi momento para invertir\n"
     "4) Otro motivo"

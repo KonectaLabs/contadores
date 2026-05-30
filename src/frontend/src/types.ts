@@ -8,7 +8,8 @@ export type LeadStage =
   | "archived";
 
 export type FunnelKind = "campaign" | "inbox";
-export type FunnelStrategyDelivery = "link" | "video";
+export type OfferPaymentModel = "monthly" | "one_time" | "custom";
+export type FunnelStrategyDelivery = "link" | "video" | "text";
 
 export interface RuntimeFunnelSettings {
   id: string;
@@ -55,6 +56,13 @@ export interface FunnelDefinition {
   label: string;
   kind: FunnelKind;
   enabled: boolean;
+  offer_version: string;
+  offer_price_usd: number;
+  offer_payment_model: OfferPaymentModel;
+  offer_summary: string;
+  offer_includes_website: boolean;
+  default_campaign_count: number;
+  default_daily_ad_budget_usd: number | null;
   sheet_url: string | null;
   sheet_gid: string | null;
   sheet_source_filter: string | null;
