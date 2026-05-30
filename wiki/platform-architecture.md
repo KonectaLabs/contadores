@@ -178,13 +178,16 @@ audited, approved plan:
    initial `PAUSED` status, missing fields, and rollback/disable order.
 6. `preflight_meta_publish_plan` turns the staged payload into an ordered,
    persisted execution graph without live writes by default.
-7. `PlatformMetaPublishAttempt` records the staged plan, future submit payload,
+7. `approve_meta_publish_plan` applies the audited approval gate: budget caps,
+   ready inventory, idempotency, and every new object starting `PAUSED` before
+   a plan can become a live-write candidate.
+8. `PlatformMetaPublishAttempt` records the staged plan, future submit payload,
    Meta response, error, idempotency key, and operator approval status.
-8. Lead delivery connects the published ad or lead form back into funnel routing:
+9. Lead delivery connects the published ad or lead form back into funnel routing:
    Click-to-WhatsApp `referral.source_id` for WhatsApp conversations, Meta lead
    form exports/webhooks for Sheets intake, then Client Lead Delivery to the
    client's WhatsApp.
-9. Client updates summarize spend/leads/blockers from events, delivery records,
+10. Client updates summarize spend/leads/blockers from events, delivery records,
    and Meta publish status.
 
 Live Meta writes stay disabled until the platform has:
@@ -203,6 +206,9 @@ publisher slices are `sync_meta_inventory` and `preflight_meta_publish_plan`:
 they read and persist readiness/inventory state, build ordered Meta operations,
 and emit events. Live submit remains blocked until credentials, approval policy,
 budget controls, and real provider calls are wired.
+The approval policy slice is `approve_meta_publish_plan`: it records operator
+approval only when budget caps, inventory IDs, idempotency, and `PAUSED` start
+state pass. It still performs no external writes.
 
 ## Milestones
 
@@ -266,7 +272,9 @@ budget controls, and real provider calls are wired.
    - First publisher slice shipped as `preflight_meta_publish_plan`, which
      builds and persists the ordered Meta operation graph without live writes by
      default.
-   - Require operator approval for live publish and budget changes.
+   - Approval gate shipped as `approve_meta_publish_plan`; it requires ready
+     inventory, `idempotency_key`, explicit operator approval, budget caps, and
+     `PAUSED` creation state before `live_writes_allowed=true`.
    - Execute live writes through a DB-backed publisher that creates Meta objects
      in `PAUSED` state, stores every returned ID, and keeps retries idempotent.
 

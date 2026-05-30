@@ -20,7 +20,7 @@ from backend.database import (
     PlatformMetaPublishAttempt,
 )
 from backend.platform_profile_extraction import PlatformProfileExtractionError, extract_client_profile_from_meeting
-from backend.meta_ads_publish import MetaAdsPublishError, preflight_meta_publish_attempt
+from backend.meta_ads_publish import MetaAdsPublishError, approve_meta_publish_attempt, preflight_meta_publish_attempt
 from backend.meta_ads_inventory import MetaInventoryError, sync_meta_inventory
 
 platform_router = APIRouter(prefix="/api/platform", tags=["platform"])
@@ -293,6 +293,25 @@ class PlatformMetaPublishPreflightResponse(BaseModel):
 
     attempt: PlatformMetaPublishAttemptResponse
     preflight: dict[str, Any]
+
+
+class PlatformMetaPublishApprovalCommand(BaseModel):
+    """Approve a staged Meta publish plan after budget and inventory checks."""
+
+    approved_by: str = Field(min_length=1)
+    approval_note: str = Field(default="", max_length=2000)
+    approve_live_writes: bool = False
+    require_inventory_ready: bool = True
+    max_daily_budget_usd: int = Field(default=50, ge=1)
+    max_lifetime_budget_usd: int = Field(default=1500, ge=0)
+    max_estimated_monthly_budget_usd: int = Field(default=1500, ge=1)
+
+
+class PlatformMetaPublishApprovalResponse(BaseModel):
+    """Meta publish approval gate response."""
+
+    attempt: PlatformMetaPublishAttemptResponse
+    approval: dict[str, Any]
 
 
 class PlatformMetaInventorySyncCommand(BaseModel):
@@ -962,7 +981,10 @@ async def list_meta_publish_attempts(
 @platform_router.post("/meta-publish-attempts", response_model=PlatformMetaPublishAttemptResponse)
 async def create_meta_publish_attempt(command: PlatformMetaPublishAttemptCommand) -> PlatformMetaPublishAttemptResponse:
     """Stage a Meta publish attempt without live Marketing API writes."""
-    row = PlatformMetaPublishAttempt.add(**command.model_dump())
+    try:
+        row = PlatformMetaPublishAttempt.add(**command.model_dump())
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
     emit_lifecycle_event(
         event_type="meta_publish_attempt.staged",
         lifecycle_stage="meta_publish",
@@ -997,6 +1019,38 @@ async def preflight_meta_publish_attempt_endpoint(
     return PlatformMetaPublishPreflightResponse(
         attempt=serialize_meta_publish_attempt(attempt),
         preflight=result.model_dump(mode="json"),
+    )
+
+
+@platform_router.post(
+    "/meta-publish-attempts/{attempt_id}/approve",
+    response_model=PlatformMetaPublishApprovalResponse,
+)
+async def approve_meta_publish_attempt_endpoint(
+    attempt_id: str,
+    command: PlatformMetaPublishApprovalCommand,
+) -> PlatformMetaPublishApprovalResponse:
+    """Apply the audited approval and budget gate before live Meta writes."""
+    try:
+        attempt, result = approve_meta_publish_attempt(
+            attempt_id=attempt_id,
+            approved_by=command.approved_by,
+            approval_note=command.approval_note,
+            approve_live_writes=command.approve_live_writes,
+            require_inventory_ready=command.require_inventory_ready,
+            max_daily_budget_usd=command.max_daily_budget_usd,
+            max_lifetime_budget_usd=command.max_lifetime_budget_usd,
+            max_estimated_monthly_budget_usd=command.max_estimated_monthly_budget_usd,
+            source="platform_api",
+            actor="operator",
+        )
+    except MetaAdsPublishError as error:
+        message = str(error)
+        status_code = 404 if message.startswith("Meta publish attempt not found") else 400
+        raise HTTPException(status_code=status_code, detail=message) from error
+    return PlatformMetaPublishApprovalResponse(
+        attempt=serialize_meta_publish_attempt(attempt),
+        approval=result.model_dump(mode="json"),
     )
 
 

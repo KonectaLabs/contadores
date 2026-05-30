@@ -11,8 +11,9 @@ from types import SimpleNamespace
 import time
 import zipfile
 
+from sqlalchemy.exc import IntegrityError
 from fastapi.testclient import TestClient
-from sqlmodel import SQLModel, create_engine
+from sqlmodel import SQLModel, Session, create_engine
 
 import backend.ai.contadores_conversation_bot as contadores_conversation_bot_module
 import backend.database as database_module
@@ -383,6 +384,8 @@ def test_codex_agent_tool_configures_text_offer_funnel_without_ui(monkeypatch, t
     assert "stage_meta_publish_plan" in snapshot["result"]["schemas"]
     assert "preflight_meta_publish_plan" in snapshot["result"]["agent_native_tools"]
     assert "preflight_meta_publish_plan" in snapshot["result"]["schemas"]
+    assert "approve_meta_publish_plan" in snapshot["result"]["agent_native_tools"]
+    assert "approve_meta_publish_plan" in snapshot["result"]["schemas"]
     assert "sync_meta_inventory" in snapshot["result"]["agent_native_tools"]
     assert "sync_meta_inventory" in snapshot["result"]["schemas"]
     assert snapshot["result"]["meta_marketing"]["live_writes_enabled"] is False
@@ -466,6 +469,334 @@ def test_meta_inventory_sync_persists_read_only_inventory(monkeypatch, tmp_path)
     assert snapshot.inventory()["lead_forms"][0]["page_id"] == "page_1"
     assert snapshot.inventory()["whatsapp_phone_numbers"][0]["id"] == "wa_phone_1"
     assert PlatformEvent.list_recent(target_type="meta_inventory", target_id=snapshot.id)[0].event_type == "meta_inventory.synced"
+
+
+def test_meta_publish_attempt_idempotency_key_has_db_guard(monkeypatch, tmp_path) -> None:
+    """Meta publish idempotency should be enforced below the application lookup."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    database_module.ensure_platform_meta_publish_attempt_idempotency_index()
+
+    first = PlatformMetaPublishAttempt.add(
+        campaign_id="campaign-unique-1",
+        request_payload={"objective": "LEADS"},
+        idempotency_key="publish-unique-1",
+    )
+    retry = PlatformMetaPublishAttempt.add(
+        campaign_id="campaign-unique-1",
+        request_payload={"objective": "LEADS"},
+        idempotency_key="publish-unique-1",
+    )
+    assert retry.id == first.id
+
+    duplicate = PlatformMetaPublishAttempt(
+        campaign_id="campaign-unique-1",
+        request_json=json.dumps({"objective": "LEADS"}),
+        idempotency_key="publish-unique-1",
+    )
+    raised = False
+    with Session(database_module.engine) as session:
+        session.add(duplicate)
+        try:
+            session.commit()
+        except IntegrityError:
+            raised = True
+            session.rollback()
+    assert raised is True
+
+
+def test_meta_publish_approval_gate_requires_inventory_and_budget(monkeypatch, tmp_path) -> None:
+    """Meta approval should be explicit, budget-capped, inventory-backed, and still no live write."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.delenv("META_MARKETING_API_VERSION", raising=False)
+    monkeypatch.delenv("META_MARKETING_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("META_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("META_MARKETING_LIVE_WRITES_ENABLED", raising=False)
+
+    plan_result = call_tool(
+        run_id="agent-run-meta-approval",
+        tool_name="stage_meta_publish_plan",
+        arguments={
+            "campaign_id": "campaign-approval-1",
+            "client_id": "client-approval-1",
+            "funnel_id": "abogados",
+            "ad_account_id": "act_999",
+            "campaign_name": "Abogados aprobacion - WhatsApp",
+            "objective": "OUTCOME_LEADS",
+            "destination": {
+                "destination_type": "whatsapp",
+                "page_id": "page_999",
+                "whatsapp_phone_number_id": "wa_phone_999",
+            },
+            "ad_sets": [
+                {
+                    "name": "Accidentes laborales",
+                    "budget_daily_usd": 75,
+                    "targeting": {"geo_locations": {"countries": ["AR"]}},
+                    "ads": [
+                        {
+                            "name": "ART no paga",
+                            "creative": {
+                                "creative_asset_id": "creative-approval-1",
+                                "primary_text": "Si la ART no te paga, manda tu caso por WhatsApp.",
+                                "headline": "La ART no te pago?",
+                            },
+                        }
+                    ],
+                }
+            ],
+            "idempotency_key": "publish-plan-approval-agent-1",
+        },
+    )
+    assert plan_result["ok"] is True
+    attempt_id = plan_result["result"]["attempt"]["id"]
+
+    idempotency_conflict = call_tool(
+        run_id="agent-run-meta-approval",
+        tool_name="stage_meta_publish_plan",
+        arguments={
+            "campaign_id": "campaign-approval-1",
+            "client_id": "client-approval-1",
+            "funnel_id": "abogados",
+            "ad_account_id": "act_999",
+            "campaign_name": "Abogados aprobacion - changed",
+            "objective": "OUTCOME_LEADS",
+            "destination": {
+                "destination_type": "whatsapp",
+                "page_id": "page_999",
+                "whatsapp_phone_number_id": "wa_phone_999",
+            },
+            "ad_sets": [
+                {
+                    "name": "Accidentes laborales",
+                    "budget_daily_usd": 75,
+                    "targeting": {"geo_locations": {"countries": ["AR"]}},
+                    "ads": [
+                        {
+                            "name": "ART no paga",
+                            "creative": {
+                                "creative_asset_id": "creative-approval-1",
+                                "primary_text": "Si la ART no te paga, manda tu caso por WhatsApp.",
+                                "headline": "La ART no te pago?",
+                            },
+                        }
+                    ],
+                }
+            ],
+            "idempotency_key": "publish-plan-approval-agent-1",
+        },
+    )
+    assert idempotency_conflict["ok"] is False
+    assert "idempotency conflict" in idempotency_conflict["error"]
+
+    monkeypatch.setenv("META_MARKETING_API_VERSION", "v25.0")
+    monkeypatch.setenv("META_MARKETING_ACCESS_TOKEN", "test-token")
+    monkeypatch.setenv("META_MARKETING_LIVE_WRITES_ENABLED", "true")
+    unapproved_preflight = call_tool(
+        run_id="agent-run-meta-approval",
+        tool_name="preflight_meta_publish_plan",
+        arguments={"attempt_id": attempt_id},
+    )
+    assert unapproved_preflight["ok"] is True
+    assert unapproved_preflight["result"]["preflight"]["ready_for_live_publish"] is False
+
+    fake_approved_result = call_tool(
+        run_id="agent-run-meta-approval",
+        tool_name="stage_meta_publish_attempt",
+        arguments={
+            "campaign_id": "campaign-fake-approval-1",
+            "approval_status": "approved",
+            "request_payload": {
+                "schema_version": "konecta.meta_publish_plan.v1",
+                "provider": "meta_marketing_api",
+                "publish_mode": "approved_live_candidate",
+                "live_writes_allowed": True,
+                "ad_account_id": "act_999",
+                "budget_currency": "USD",
+                "campaign": {
+                    "name": "Fake approved plan",
+                    "objective": "OUTCOME_LEADS",
+                    "buying_type": "AUCTION",
+                    "special_ad_categories": [],
+                    "create_status": "PAUSED",
+                },
+                "destination": {
+                    "destination_type": "whatsapp",
+                    "page_id": "page_999",
+                    "whatsapp_phone_number_id": "wa_phone_999",
+                },
+                "ad_sets": [
+                    {
+                        "name": "Fake ad set",
+                        "budget_daily_usd": 10,
+                        "status": "PAUSED",
+                        "targeting": {"geo_locations": {"countries": ["AR"]}},
+                        "ads": [
+                            {
+                                "name": "Fake ad",
+                                "status": "PAUSED",
+                                "creative": {
+                                    "creative_asset_id": "creative-approval-1",
+                                    "primary_text": "Manda tu caso por WhatsApp.",
+                                    "headline": "Necesitas ayuda?",
+                                },
+                            }
+                        ],
+                    }
+                ],
+                "required_before_live_publish": [],
+            },
+            "idempotency_key": "publish-plan-fake-approved-agent-1",
+        },
+    )
+    assert fake_approved_result["ok"] is True
+    fake_preflight = call_tool(
+        run_id="agent-run-meta-approval",
+        tool_name="preflight_meta_publish_plan",
+        arguments={
+            "attempt_id": fake_approved_result["result"]["attempt"]["id"],
+            "live_writes_requested": True,
+        },
+    )
+    assert fake_preflight["ok"] is True
+    assert fake_preflight["result"]["preflight"]["execution_mode"] == "live_blocked"
+    assert "meta_publish.approval_gate" in fake_preflight["result"]["preflight"]["blocked_reasons"]
+    monkeypatch.delenv("META_MARKETING_API_VERSION", raising=False)
+    monkeypatch.delenv("META_MARKETING_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("META_MARKETING_LIVE_WRITES_ENABLED", raising=False)
+
+    blocked_result = call_tool(
+        run_id="agent-run-meta-approval",
+        tool_name="approve_meta_publish_plan",
+        arguments={
+            "attempt_id": attempt_id,
+            "approved_by": "facundo",
+            "approval_note": "Test approval should stay blocked until inventory and cap pass.",
+            "approve_live_writes": True,
+            "max_daily_budget_usd": 50,
+            "max_estimated_monthly_budget_usd": 1500,
+        },
+    )
+    assert blocked_result["ok"] is True
+    assert blocked_result["result"]["approval"]["approved"] is False
+    assert "budget.daily_cap" in blocked_result["result"]["approval"]["blocked_reasons"]
+    assert "meta_inventory.ready" in blocked_result["result"]["approval"]["blocked_reasons"]
+
+    inventory_bypass_result = call_tool(
+        run_id="agent-run-meta-approval",
+        tool_name="approve_meta_publish_plan",
+        arguments={
+            "attempt_id": attempt_id,
+            "approved_by": "facundo",
+            "approval_note": "Inventory cannot be bypassed for live writes.",
+            "approve_live_writes": True,
+            "require_inventory_ready": False,
+            "max_daily_budget_usd": 100,
+            "max_estimated_monthly_budget_usd": 3000,
+        },
+    )
+    assert inventory_bypass_result["ok"] is True
+    assert inventory_bypass_result["result"]["approval"]["approved"] is False
+    assert "require_inventory_ready=true" in inventory_bypass_result["result"]["approval"]["blocked_reasons"]
+
+    PlatformMetaInventorySnapshot.add(
+        status="ready",
+        source="test",
+        actor="tester",
+        ad_account_id="act_999",
+        business_id="business_999",
+        api_version="v25.0",
+        inventory={
+            "ad_accounts": [{"id": "act_999", "currency": "USD"}],
+            "selected_ad_account": {"id": "act_999", "currency": "USD"},
+            "pages": [{"id": "page_999", "name": "Abogados"}],
+            "lead_forms": [],
+            "pixels": [],
+            "whatsapp_business_accounts": [{"id": "waba_999"}],
+            "whatsapp_phone_numbers": [{"id": "wa_phone_999", "whatsapp_business_account_id": "waba_999"}],
+            "campaigns": [],
+        },
+    )
+    approved_result = call_tool(
+        run_id="agent-run-meta-approval",
+        tool_name="approve_meta_publish_plan",
+        arguments={
+            "attempt_id": attempt_id,
+            "approved_by": "facundo",
+            "approval_note": "Budget and inventory reviewed.",
+            "approve_live_writes": True,
+            "max_daily_budget_usd": 100,
+            "max_estimated_monthly_budget_usd": 3000,
+        },
+    )
+    assert approved_result["ok"] is True
+    assert approved_result["result"]["approval"]["approved"] is True
+    approved_attempt = PlatformMetaPublishAttempt.get_by_id(attempt_id)
+    assert approved_attempt.approval_status == "approved"
+    assert approved_attempt.request_payload()["live_writes_allowed"] is True
+    assert approved_attempt.request_payload()["approval_policy"]["approved_by"] == "facundo"
+
+    idempotent_retry = call_tool(
+        run_id="agent-run-meta-approval",
+        tool_name="stage_meta_publish_plan",
+        arguments={
+            "campaign_id": "campaign-approval-1",
+            "client_id": "client-approval-1",
+            "funnel_id": "abogados",
+            "ad_account_id": "act_999",
+            "campaign_name": "Abogados aprobacion - WhatsApp",
+            "objective": "OUTCOME_LEADS",
+            "destination": {
+                "destination_type": "whatsapp",
+                "page_id": "page_999",
+                "whatsapp_phone_number_id": "wa_phone_999",
+            },
+            "ad_sets": [
+                {
+                    "name": "Accidentes laborales",
+                    "budget_daily_usd": 75,
+                    "targeting": {"geo_locations": {"countries": ["AR"]}},
+                    "ads": [
+                        {
+                            "name": "ART no paga",
+                            "creative": {
+                                "creative_asset_id": "creative-approval-1",
+                                "primary_text": "Si la ART no te paga, manda tu caso por WhatsApp.",
+                                "headline": "La ART no te pago?",
+                            },
+                        }
+                    ],
+                }
+            ],
+            "idempotency_key": "publish-plan-approval-agent-1",
+        },
+    )
+    assert idempotent_retry["ok"] is True
+    assert idempotent_retry["result"]["attempt"]["id"] == attempt_id
+
+    monkeypatch.setenv("META_MARKETING_ACCESS_TOKEN", "test-token")
+    monkeypatch.setenv("META_MARKETING_LIVE_WRITES_ENABLED", "true")
+    monkeypatch.delenv("META_MARKETING_API_VERSION", raising=False)
+    missing_api_preflight = call_tool(
+        run_id="agent-run-meta-approval",
+        tool_name="preflight_meta_publish_plan",
+        arguments={"attempt_id": attempt_id, "live_writes_requested": True},
+    )
+    assert missing_api_preflight["ok"] is True
+    assert missing_api_preflight["result"]["preflight"]["execution_mode"] == "live_blocked"
+    assert "META_MARKETING_API_VERSION" in missing_api_preflight["result"]["preflight"]["blocked_reasons"]
+    assert "meta_publish.approval_gate" not in missing_api_preflight["result"]["preflight"]["blocked_reasons"]
+    monkeypatch.delenv("META_MARKETING_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("META_MARKETING_LIVE_WRITES_ENABLED", raising=False)
+
+    live_preflight = call_tool(
+        run_id="agent-run-meta-approval",
+        tool_name="preflight_meta_publish_plan",
+        arguments={"attempt_id": attempt_id, "live_writes_requested": True},
+    )
+    assert live_preflight["ok"] is True
+    assert live_preflight["result"]["preflight"]["execution_mode"] == "live_blocked"
+    assert "META_MARKETING_LIVE_WRITES_ENABLED" in live_preflight["result"]["preflight"]["blocked_reasons"]
+    assert "META_MARKETING_ACCESS_TOKEN" in live_preflight["result"]["preflight"]["blocked_reasons"]
 
 
 def test_platform_lifecycle_endpoints_support_agent_native_workflow(monkeypatch, tmp_path) -> None:
@@ -834,6 +1165,22 @@ def test_codex_agent_lifecycle_tools_work_without_ui(monkeypatch, tmp_path) -> N
     assert inventory_result["result"]["snapshot"]["status"] == "missing_credentials"
     assert "META_MARKETING_ACCESS_TOKEN" in inventory_result["result"]["result"]["errors"]
 
+    approval_blocked_result = call_tool(
+        run_id="agent-run-lifecycle",
+        tool_name="approve_meta_publish_plan",
+        arguments={
+            "attempt_id": plan_result["result"]["attempt"]["id"],
+            "approved_by": "facundo",
+            "approval_note": "No aprobar hasta tener inventario Meta listo.",
+            "approve_live_writes": True,
+            "max_daily_budget_usd": 50,
+            "max_estimated_monthly_budget_usd": 1500,
+        },
+    )
+    assert approval_blocked_result["ok"] is True
+    assert approval_blocked_result["result"]["approval"]["approved"] is False
+    assert "meta_inventory.status=missing_credentials" in approval_blocked_result["result"]["approval"]["blocked_reasons"]
+
     update_result = call_tool(
         run_id="agent-run-lifecycle",
         tool_name="create_client_update",
@@ -889,6 +1236,7 @@ def test_codex_agent_lifecycle_tools_work_without_ui(monkeypatch, tmp_path) -> N
         "stage_meta_publish_attempt",
         "stage_meta_publish_plan",
         "preflight_meta_publish_plan",
+        "approve_meta_publish_plan",
         "sync_meta_inventory",
         "ask_human_question",
         "answer_human_question",
@@ -896,6 +1244,7 @@ def test_codex_agent_lifecycle_tools_work_without_ui(monkeypatch, tmp_path) -> N
     assert PlatformEvent.list_recent(target_type="meta_publish_attempt")[0].event_type in {
         "meta_publish.plan_staged",
         "meta_publish.preflight_checked",
+        "meta_publish.approval_checked",
     }
 
 

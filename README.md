@@ -108,7 +108,8 @@ formularios:
   planificar Meta.
 - `upsert_client_profile`: conocimiento revisado del cliente.
 - `stage_ad_campaign`, `stage_creative_asset`, `stage_meta_publish_plan`,
-  `sync_meta_inventory`, `preflight_meta_publish_plan` y
+  `sync_meta_inventory`, `preflight_meta_publish_plan`,
+  `approve_meta_publish_plan` y
   `stage_meta_publish_attempt`: ads, inventario y publicacion Meta en modo
   staged/aprobable.
 - `create_client_update`: actualizaciones de 24 horas para clientes.
@@ -134,7 +135,10 @@ Flujo Meta agent-native:
    ordenadas `campaign -> ad_set -> creative -> ad`, guarda el resultado en el
    intento y bloquea cualquier live write si faltan credenciales, aprobacion o
    politica.
-8. `stage_meta_publish_attempt` queda para payloads crudos, respuestas de Meta o
+8. `approve_meta_publish_plan` aplica el gate de aprobacion: presupuesto dentro
+   de caps, inventario listo, `idempotency_key`, todo creado en `PAUSED`, y
+   aprobacion explicita del operador antes de permitir un candidato live.
+9. `stage_meta_publish_attempt` queda para payloads crudos, respuestas de Meta o
    ejecuciones futuras hechas por el publicador aprobado.
 
 Ejemplo de plan Meta staged:
@@ -153,6 +157,15 @@ uv run python -m backend.ai.codex_agent_runtime call \
   --run-id platform-config-001 \
   --tool ask_human_question \
   --arguments-json '{"workflow":"meta_publish","target_type":"ad_campaign","target_id":"campaign-123","context_summary":"Meta pide confirmar categoria especial.","trying_to_do":"Publicar la campana del cliente.","question":"Uso categoria especial o dejo la campana staged?","options":["categoria especial","dejar staged"],"default_action":"Dejar staged si no hay respuesta en 4 minutos."}'
+```
+
+Ejemplo de aprobacion Meta agent-native:
+
+```bash
+uv run python -m backend.ai.codex_agent_runtime call \
+  --run-id meta-approval-001 \
+  --tool approve_meta_publish_plan \
+  --arguments-json '{"attempt_id":"ATTEMPT_ID","approved_by":"facundo","approval_note":"Presupuesto e inventario revisados.","approve_live_writes":true,"max_daily_budget_usd":50,"max_estimated_monthly_budget_usd":1500}'
 ```
 
 Validar antes de activar:

@@ -64,7 +64,7 @@ from backend.platform_profile_extraction import (
     PlatformProfileExtractionError,
     extract_client_profile_from_meeting as save_client_profile_from_meeting,
 )
-from backend.meta_ads_publish import MetaAdsPublishError, preflight_meta_publish_attempt
+from backend.meta_ads_publish import MetaAdsPublishError, approve_meta_publish_attempt, preflight_meta_publish_attempt
 from backend.meta_ads_inventory import MetaInventoryError, sync_meta_inventory
 
 
@@ -404,6 +404,19 @@ class PreflightMetaPublishPlanArgs(BaseModel):
     live_writes_requested: bool = False
 
 
+class ApproveMetaPublishPlanArgs(BaseModel):
+    """Arguments for the audited Meta publish approval gate."""
+
+    attempt_id: str = Field(min_length=1)
+    approved_by: str = Field(min_length=1)
+    approval_note: str = Field(default="", max_length=2000)
+    approve_live_writes: bool = False
+    require_inventory_ready: bool = True
+    max_daily_budget_usd: int = Field(default=50, ge=1)
+    max_lifetime_budget_usd: int = Field(default=1500, ge=0)
+    max_estimated_monthly_budget_usd: int = Field(default=1500, ge=1)
+
+
 class SyncMetaInventoryArgs(BaseModel):
     """Arguments for reading Meta account/page/form inventory."""
 
@@ -614,6 +627,11 @@ def tool_specs() -> list[CodexAgentToolSpec]:
             "preflight_meta_publish_plan",
             "Build the ordered Meta publish execution graph and persist preflight state without live writes by default.",
             PreflightMetaPublishPlanArgs,
+        ),
+        (
+            "approve_meta_publish_plan",
+            "Apply the explicit Meta publish approval gate with budget caps, inventory readiness, idempotency, and PAUSED-start checks.",
+            ApproveMetaPublishPlanArgs,
         ),
         (
             "sync_meta_inventory",
@@ -902,6 +920,7 @@ def read_platform_config(arguments: dict[str, Any]) -> dict[str, Any]:
             "stage_meta_publish_attempt",
             "stage_meta_publish_plan",
             "preflight_meta_publish_plan",
+            "approve_meta_publish_plan",
             "sync_meta_inventory",
             "create_client_update",
             "ask_human_question",
@@ -921,6 +940,7 @@ def read_platform_config(arguments: dict[str, Any]) -> dict[str, Any]:
             "stage_meta_publish_attempt": StageMetaPublishAttemptArgs.model_json_schema(),
             "stage_meta_publish_plan": StageMetaPublishPlanArgs.model_json_schema(),
             "preflight_meta_publish_plan": PreflightMetaPublishPlanArgs.model_json_schema(),
+            "approve_meta_publish_plan": ApproveMetaPublishPlanArgs.model_json_schema(),
             "sync_meta_inventory": SyncMetaInventoryArgs.model_json_schema(),
             "create_client_update": CreateClientUpdateArgs.model_json_schema(),
             "ask_human_question": AskHumanQuestionArgs.model_json_schema(),
@@ -1539,15 +1559,18 @@ def _meta_publish_plan_payload(args: StageMetaPublishPlanArgs, missing_fields: l
 def stage_meta_publish_plan(arguments: dict[str, Any]) -> dict[str, Any]:
     args = StageMetaPublishPlanArgs.model_validate(arguments)
     missing_fields = _missing_meta_plan_fields(args)
-    row = PlatformMetaPublishAttempt.add(
-        campaign_id=args.campaign_id,
-        status="blocked" if missing_fields else "staged",
-        approval_status="needs_preflight" if missing_fields else args.approval_status,
-        request_payload=_meta_publish_plan_payload(args, missing_fields),
-        response_payload={},
-        error="Missing live publish fields: " + ", ".join(missing_fields) if missing_fields else "",
-        idempotency_key=args.idempotency_key,
-    )
+    try:
+        row = PlatformMetaPublishAttempt.add(
+            campaign_id=args.campaign_id,
+            status="blocked" if missing_fields else "staged",
+            approval_status="needs_preflight" if missing_fields else args.approval_status,
+            request_payload=_meta_publish_plan_payload(args, missing_fields),
+            response_payload={},
+            error="Missing live publish fields: " + ", ".join(missing_fields) if missing_fields else "",
+            idempotency_key=args.idempotency_key,
+        )
+    except ValueError as error:
+        raise AgentToolError(str(error)) from error
     _emit_agent_lifecycle_event(
         event_type="meta_publish.plan_staged",
         lifecycle_stage="meta_publish",
@@ -1587,6 +1610,30 @@ def preflight_meta_publish_plan(arguments: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def approve_meta_publish_plan(arguments: dict[str, Any]) -> dict[str, Any]:
+    args = ApproveMetaPublishPlanArgs.model_validate(arguments)
+    try:
+        attempt, result = approve_meta_publish_attempt(
+            attempt_id=args.attempt_id,
+            approved_by=args.approved_by,
+            approval_note=args.approval_note,
+            approve_live_writes=args.approve_live_writes,
+            require_inventory_ready=args.require_inventory_ready,
+            max_daily_budget_usd=args.max_daily_budget_usd,
+            max_lifetime_budget_usd=args.max_lifetime_budget_usd,
+            max_estimated_monthly_budget_usd=args.max_estimated_monthly_budget_usd,
+            source="codex_agent_tool",
+            actor="agent",
+        )
+    except MetaAdsPublishError as error:
+        raise AgentToolError(str(error)) from error
+    return {
+        "saved": True,
+        "attempt": _meta_publish_attempt_payload(attempt),
+        "approval": result.model_dump(mode="json"),
+    }
+
+
 def sync_meta_inventory_tool(arguments: dict[str, Any]) -> dict[str, Any]:
     args = SyncMetaInventoryArgs.model_validate(arguments)
     try:
@@ -1613,7 +1660,10 @@ def sync_meta_inventory_tool(arguments: dict[str, Any]) -> dict[str, Any]:
 
 def stage_meta_publish_attempt(arguments: dict[str, Any]) -> dict[str, Any]:
     args = StageMetaPublishAttemptArgs.model_validate(arguments)
-    row = PlatformMetaPublishAttempt.add(**args.model_dump())
+    try:
+        row = PlatformMetaPublishAttempt.add(**args.model_dump())
+    except ValueError as error:
+        raise AgentToolError(str(error)) from error
     _emit_agent_lifecycle_event(
         event_type="meta_publish_attempt.staged",
         lifecycle_stage="meta_publish",
@@ -2377,6 +2427,7 @@ TOOL_HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {
     "stage_meta_publish_attempt": stage_meta_publish_attempt,
     "stage_meta_publish_plan": stage_meta_publish_plan,
     "preflight_meta_publish_plan": preflight_meta_publish_plan,
+    "approve_meta_publish_plan": approve_meta_publish_plan,
     "sync_meta_inventory": sync_meta_inventory_tool,
     "create_client_update": create_client_update,
     "ask_human_question": ask_human_question,
@@ -2441,6 +2492,8 @@ def _audit_target_for_tool(tool_name: str, arguments: dict[str, Any]) -> tuple[s
     if tool_name == "stage_meta_publish_plan":
         return "meta_publish_attempt", str(arguments.get("idempotency_key") or arguments.get("campaign_id") or "")
     if tool_name == "preflight_meta_publish_plan":
+        return "meta_publish_attempt", str(arguments.get("attempt_id") or "")
+    if tool_name == "approve_meta_publish_plan":
         return "meta_publish_attempt", str(arguments.get("attempt_id") or "")
     if tool_name == "sync_meta_inventory":
         return "meta_inventory", str(arguments.get("ad_account_id") or arguments.get("business_id") or "meta_inventory")

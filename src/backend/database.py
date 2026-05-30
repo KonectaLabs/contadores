@@ -21,6 +21,7 @@ import phonenumbers
 from pydantic import BaseModel, Field as PydanticField, field_serializer
 from phonenumbers import NumberParseException
 from sqlalchemy import Column, Enum as SQLAlchemyEnum, String, UniqueConstraint, and_, event, inspect, or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import aliased
 from sqlmodel import Field, Session, SQLModel, create_engine, select
 
@@ -2904,6 +2905,16 @@ def _json_dumps(value: Any) -> str:
     return json.dumps(value if value is not None else {}, ensure_ascii=True, default=str)
 
 
+def _meta_publish_idempotency_payload(value: dict[str, Any] | None) -> dict[str, Any]:
+    """Return the immutable part of a Meta publish request for idempotency checks."""
+    payload = dict(value or {})
+    if payload.get("schema_version") == "konecta.meta_publish_plan.v1":
+        payload.pop("approval_policy", None)
+        payload.pop("live_writes_allowed", None)
+        payload.pop("publish_mode", None)
+    return payload
+
+
 class PlatformMeeting(SQLModel, table=True):
     """Meeting scheduling and transcript handoff state."""
 
@@ -3363,6 +3374,7 @@ class PlatformMetaPublishAttempt(SQLModel, table=True):
     """One staged or executed Meta Marketing API publish attempt."""
 
     __tablename__ = "platform_meta_publish_attempts"
+    __table_args__ = (UniqueConstraint("idempotency_key", name="uq_platform_meta_publish_attempts_idempotency_key"),)
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     campaign_id: str = Field(default="", index=True)
@@ -3389,17 +3401,30 @@ class PlatformMetaPublishAttempt(SQLModel, table=True):
     ) -> "PlatformMetaPublishAttempt":
         """Create or return one publish attempt."""
         clean_key = (idempotency_key or "").strip() or None
+        clean_campaign_id = (campaign_id or "").strip()
+        clean_request_payload = request_payload or {}
+
+        def matches_existing(row: "PlatformMetaPublishAttempt") -> bool:
+            existing_payload = _meta_publish_idempotency_payload(row.request_payload())
+            next_payload = _meta_publish_idempotency_payload(clean_request_payload)
+            return row.campaign_id == clean_campaign_id and existing_payload == next_payload
+
         if clean_key:
             existing = cls.get_by_idempotency_key(clean_key)
             if existing is not None:
+                if not matches_existing(existing):
+                    raise ValueError(
+                        "Meta publish attempt idempotency conflict: "
+                        "existing attempt has a different campaign_id or request_payload"
+                    )
                 return existing
         now = datetime.now(timezone.utc)
         with Session(engine) as session:
             row = cls(
-                campaign_id=(campaign_id or "").strip(),
+                campaign_id=clean_campaign_id,
                 status=(status or "staged").strip() or "staged",
                 approval_status=(approval_status or "pending").strip() or "pending",
-                request_json=_json_dumps(request_payload or {}),
+                request_json=_json_dumps(clean_request_payload),
                 response_json=_json_dumps(response_payload or {}),
                 error=str(error or "")[:12000],
                 idempotency_key=clean_key,
@@ -3407,7 +3432,20 @@ class PlatformMetaPublishAttempt(SQLModel, table=True):
                 updated_at=now,
             )
             session.add(row)
-            session.commit()
+            try:
+                session.commit()
+            except IntegrityError as error:
+                session.rollback()
+                if clean_key:
+                    existing = cls.get_by_idempotency_key(clean_key)
+                    if existing is not None and matches_existing(existing):
+                        return existing
+                    if existing is not None:
+                        raise ValueError(
+                            "Meta publish attempt idempotency conflict: "
+                            "existing attempt has a different campaign_id or request_payload"
+                        ) from error
+                raise
             session.refresh(row)
             session.expunge(row)
             return row
@@ -3443,6 +3481,7 @@ class PlatformMetaPublishAttempt(SQLModel, table=True):
         *,
         status: str | None = None,
         approval_status: str | None = None,
+        request_payload: dict[str, Any] | None = None,
         response_payload: dict[str, Any] | None = None,
         error: str | None = None,
     ) -> Optional["PlatformMetaPublishAttempt"]:
@@ -3458,6 +3497,8 @@ class PlatformMetaPublishAttempt(SQLModel, table=True):
                 row.status = (status or row.status or "staged").strip() or "staged"
             if approval_status is not None:
                 row.approval_status = (approval_status or row.approval_status or "pending").strip() or "pending"
+            if request_payload is not None:
+                row.request_json = _json_dumps(request_payload)
             if response_payload is not None:
                 row.response_json = _json_dumps(response_payload)
             if error is not None:
@@ -6462,6 +6503,7 @@ def init_db() -> None:
     ensure_workstation_client_automation_columns()
     ensure_workstation_codex_thread_columns()
     ensure_platform_human_question_context_columns()
+    ensure_platform_meta_publish_attempt_idempotency_index()
     logger.info(f"Database initialized at {DATABASE_URL}")
 
 
@@ -6473,6 +6515,21 @@ def drop_legacy_contadores_events_table() -> None:
             return
         connection.exec_driver_sql("DROP TABLE contadores_events")
         logger.info("Dropped legacy contadores_events table.")
+
+
+def ensure_platform_meta_publish_attempt_idempotency_index() -> None:
+    """Enforce Meta publish idempotency keys on existing SQLite databases."""
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        if "platform_meta_publish_attempts" not in inspector.get_table_names():
+            return
+        connection.exec_driver_sql(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_platform_meta_publish_attempts_idempotency_key
+            ON platform_meta_publish_attempts (idempotency_key)
+            WHERE idempotency_key IS NOT NULL
+            """
+        )
 
 
 def ensure_contadores_funnel_columns() -> None:

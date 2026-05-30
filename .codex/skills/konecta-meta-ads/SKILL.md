@@ -38,6 +38,8 @@ agent-native flow first:
    persist the ordered campaign, ad-set, creative, and ad operations. Live
    writes stay blocked unless the platform has explicit approval, credentials,
    and budget policy.
+6. When Facundo/operator explicitly approves, run `approve_meta_publish_plan`
+   with budget caps and the approval note before any future live publish.
 
 ## The 10/10 Pattern
 
@@ -186,9 +188,11 @@ Use this order:
    pixels, WhatsApp numbers, and existing campaigns before asking for IDs.
 6. `preflight_meta_publish_plan` to build and save the ordered provider
    operation graph.
-7. `ask_human_question` when account/page/destination/category/budget details
+7. `approve_meta_publish_plan` only after explicit operator approval. It must
+   pass ready inventory, budget caps, idempotency, and `PAUSED` start checks.
+8. `ask_human_question` when account/page/destination/category/budget details
    are missing. Do not invent Meta IDs.
-8. `stage_meta_publish_attempt` only for raw payloads, provider responses, or a
+9. `stage_meta_publish_attempt` only for raw payloads, provider responses, or a
    future approved publisher execution record.
 
 Before any future live publish, the plan must have:
