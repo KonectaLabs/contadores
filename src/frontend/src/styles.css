@@ -2662,6 +2662,260 @@ body {
   font: 800 20px/1.05 var(--font-sans);
 }
 
+#contadoresView .ops-surface {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow: auto;
+  background:
+    radial-gradient(circle at 7% 0%, rgba(47, 124, 103, 0.1), transparent 28%),
+    radial-gradient(circle at 96% 8%, rgba(14, 165, 233, 0.1), transparent 25%),
+    linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+}
+
+#contadoresView .ops-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 16px;
+  border-radius: 18px;
+  background: #10201c;
+  color: #ffffff;
+  box-shadow: 0 20px 42px rgba(15, 23, 42, 0.14);
+}
+
+#contadoresView .ops-toolbar > div {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+#contadoresView .ops-toolbar span,
+#contadoresView .ops-toolbar small {
+  color: rgba(255, 255, 255, 0.64);
+  font: 700 12px/1 var(--font-mono);
+}
+
+#contadoresView .ops-toolbar strong {
+  color: #ffffff;
+  font: 800 34px/0.95 var(--font-sans);
+  letter-spacing: 0;
+}
+
+#contadoresView .ops-toolbar .ct-btn {
+  flex: 0 0 auto;
+  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+}
+
+#contadoresView .ops-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.75fr);
+  gap: 16px;
+  align-items: start;
+}
+
+#contadoresView .ops-main-column,
+#contadoresView .ops-side-column {
+  min-width: 0;
+  display: grid;
+  gap: 14px;
+}
+
+#contadoresView .ops-panel {
+  min-width: 0;
+  min-height: 0;
+  padding: 16px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.07), 0 14px 32px rgba(15, 23, 42, 0.06);
+}
+
+#contadoresView .ops-list,
+#contadoresView .ops-table-list {
+  display: grid;
+  gap: 9px;
+}
+
+#contadoresView .ops-list.compact {
+  gap: 8px;
+}
+
+#contadoresView .ops-item {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: var(--ct-radius);
+  background: #ffffff;
+}
+
+#contadoresView .ops-item[data-tone="danger"] {
+  border-color: rgba(185, 28, 28, 0.22);
+  background: #fff1f2;
+}
+
+#contadoresView .ops-item[data-tone="warn"] {
+  border-color: rgba(180, 83, 9, 0.24);
+  background: #fffbeb;
+}
+
+#contadoresView .ops-item-topline,
+#contadoresView .ops-item-meta,
+#contadoresView .ops-table-row,
+#contadoresView .ops-event-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+#contadoresView .ops-item strong,
+#contadoresView .ops-table-row strong,
+#contadoresView .ops-event-row strong {
+  min-width: 0;
+  color: var(--ct-ink);
+  font: 800 14px/1.2 var(--font-sans);
+  overflow-wrap: anywhere;
+}
+
+#contadoresView .ops-item p {
+  margin: 0;
+  color: var(--ct-ink-muted);
+  font: 600 12px/1.35 var(--font-sans);
+  overflow-wrap: anywhere;
+}
+
+#contadoresView .ops-item-meta {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+#contadoresView .ops-item-meta span,
+#contadoresView .ops-table-row span,
+#contadoresView .ops-event-row span,
+#contadoresView .ops-event-row em,
+#contadoresView .ops-item time,
+#contadoresView .ops-table-row time,
+#contadoresView .ops-event-row time {
+  color: var(--ct-ink-muted);
+  font: 700 10px/1.25 var(--font-mono);
+  font-style: normal;
+  overflow-wrap: anywhere;
+}
+
+#contadoresView .ops-table-row {
+  padding: 11px 0;
+  border-bottom: 1px solid var(--ct-line-soft);
+}
+
+#contadoresView .ops-table-row:last-child {
+  border-bottom: 0;
+}
+
+#contadoresView .ops-table-row > div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+#contadoresView .ops-status {
+  flex: 0 0 auto;
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
+  border-radius: var(--ct-radius-sm);
+  background: #e5e7eb;
+  color: #374151;
+  font: 800 10px/1 var(--font-mono);
+  text-transform: uppercase;
+}
+
+#contadoresView .ops-status[data-tone="danger"] {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+#contadoresView .ops-status[data-tone="warn"] {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+#contadoresView .ops-status[data-tone="ok"] {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+#contadoresView .ops-empty {
+  min-height: 92px;
+  display: grid;
+  place-items: center;
+  gap: 5px;
+  border: 1px dashed rgba(15, 23, 42, 0.14);
+  border-radius: var(--ct-radius);
+  background: rgba(255, 255, 255, 0.58);
+  color: var(--ct-ink-muted);
+  text-align: center;
+}
+
+#contadoresView .ops-empty strong {
+  color: var(--ct-ink);
+  font: 800 13px/1.1 var(--font-sans);
+}
+
+#contadoresView .ops-empty span {
+  font: 800 11px/1 var(--font-mono);
+}
+
+#contadoresView .ops-asset-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+#contadoresView .ops-asset-grid div {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 12px;
+  border-radius: var(--ct-radius);
+  background: #ffffff;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.07);
+}
+
+#contadoresView .ops-asset-grid strong {
+  color: var(--ct-ink);
+  font: 900 28px/0.9 var(--font-mono);
+}
+
+#contadoresView .ops-asset-grid span {
+  color: var(--ct-ink-muted);
+  font: 800 10px/1 var(--font-mono);
+  text-transform: uppercase;
+}
+
+#contadoresView .ops-event-stream {
+  display: grid;
+  gap: 0;
+}
+
+#contadoresView .ops-event-row {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr) minmax(120px, 0.35fr) 90px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--ct-line-soft);
+}
+
+#contadoresView .ops-event-row:last-child {
+  border-bottom: 0;
+}
+
 #contadoresView .runner-event-stack,
 #contadoresView .runner-compact-feed {
   display: grid;
@@ -6307,6 +6561,7 @@ body {
   }
 
   #contadoresView .runner-layout,
+  #contadoresView .ops-layout,
   #contadoresView .runner-secondary-grid,
   #contadoresView .runner-disclosure-row,
   #contadoresView .runner-tail-grid {
@@ -6411,6 +6666,11 @@ body {
     font-size: 34px;
   }
 
+  #contadoresView .ops-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
   #contadoresView .runner-command-center {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -6426,6 +6686,21 @@ body {
 
   #contadoresView .runner-signal strong {
     font-size: 44px;
+  }
+
+  #contadoresView .ops-event-row {
+    grid-template-columns: 1fr;
+    gap: 5px;
+  }
+
+  #contadoresView .ops-table-row,
+  #contadoresView .ops-item-topline {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  #contadoresView .ops-asset-grid {
+    grid-template-columns: 1fr;
   }
 
   #contadoresView .runner-event-card {

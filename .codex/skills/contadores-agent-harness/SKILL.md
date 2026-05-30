@@ -137,6 +137,8 @@ updates, or operator questions. The UI is a cockpit, not the source of truth.
 Record the state with a tool first, then schedule or continue the next agent
 step from that persisted state.
 
+- Use `/api/platform/overview` when you need the same lifecycle cockpit read
+  model the `Ops` tab uses.
 - Do not publish to Meta from these tools; stage the request and wait for the
   approval/publish mechanism.
 - Prefer `stage_meta_publish_plan` for normal Meta work. Use

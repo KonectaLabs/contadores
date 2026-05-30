@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
@@ -352,6 +352,35 @@ class PlatformHumanQuestionListResponse(BaseModel):
     questions: list[PlatformHumanQuestionResponse]
 
 
+class PlatformOverviewCounts(BaseModel):
+    """Operator cockpit aggregate counts."""
+
+    active_blockers: int
+    open_human_questions: int
+    blocked_meta_attempts: int
+    pending_campaigns: int
+    meetings: int
+    campaigns: int
+    creative_assets: int
+    client_updates: int
+    recent_events: int
+
+
+class PlatformOverviewResponse(BaseModel):
+    """Operator cockpit read model over platform lifecycle records."""
+
+    generated_at: datetime
+    counts: PlatformOverviewCounts
+    events: list[PlatformEventResponse]
+    meetings: list[PlatformMeetingResponse]
+    client_profiles: list[PlatformClientProfileResponse]
+    ad_campaigns: list[PlatformAdCampaignResponse]
+    creative_assets: list[PlatformCreativeAssetResponse]
+    meta_publish_attempts: list[PlatformMetaPublishAttemptResponse]
+    client_updates: list[PlatformClientUpdateResponse]
+    human_questions: list[PlatformHumanQuestionResponse]
+
+
 def serialize_platform_event(event: PlatformEvent) -> PlatformEventResponse:
     """Convert a persistence row to an API response."""
     return PlatformEventResponse(
@@ -539,6 +568,21 @@ def emit_lifecycle_event(
     )
 
 
+def is_open_human_question(row: PlatformHumanQuestion) -> bool:
+    """Return whether a human question still needs an operator answer."""
+    return row.status not in {"answered", "closed", "resolved", "cancelled"}
+
+
+def is_blocked_meta_attempt(row: PlatformMetaPublishAttempt) -> bool:
+    """Return whether a Meta publish attempt needs preflight or recovery."""
+    return row.status in {"blocked", "failed", "error"} or row.approval_status in {"needs_preflight", "rejected"}
+
+
+def is_pending_campaign(row: PlatformAdCampaign) -> bool:
+    """Return whether an ad campaign needs approval or publishing work."""
+    return row.status not in {"published", "closed", "archived"} or row.approval_status not in {"approved", "published"}
+
+
 @platform_router.get("/events", response_model=PlatformEventListResponse)
 async def list_platform_events(
     target_type: str | None = Query(default=None),
@@ -554,6 +598,49 @@ async def list_platform_events(
         limit=limit,
     )
     return PlatformEventListResponse(events=[serialize_platform_event(event) for event in events])
+
+
+@platform_router.get("/overview", response_model=PlatformOverviewResponse)
+async def platform_overview(
+    limit: int = Query(default=80, ge=1, le=200),
+) -> PlatformOverviewResponse:
+    """Return the lifecycle cockpit read model used by operators and agents."""
+    events = PlatformEvent.list_recent(limit=limit)
+    meetings = PlatformMeeting.list_recent(limit=limit)
+    client_profiles = PlatformClientProfile.list_recent(limit=limit)
+    ad_campaigns = PlatformAdCampaign.list_recent(limit=limit)
+    creative_assets = PlatformCreativeAsset.list_recent(limit=limit)
+    meta_publish_attempts = PlatformMetaPublishAttempt.list_recent(limit=limit)
+    client_updates = PlatformClientUpdate.list_recent(limit=limit)
+    human_questions = PlatformHumanQuestion.list_recent(limit=limit)
+
+    open_questions = sum(1 for row in human_questions if is_open_human_question(row))
+    blocked_meta = sum(1 for row in meta_publish_attempts if is_blocked_meta_attempt(row))
+    pending_campaigns = sum(1 for row in ad_campaigns if is_pending_campaign(row))
+    updates_with_blockers = sum(1 for row in client_updates if row.blockers())
+
+    return PlatformOverviewResponse(
+        generated_at=datetime.now(timezone.utc),
+        counts=PlatformOverviewCounts(
+            active_blockers=open_questions + blocked_meta + updates_with_blockers,
+            open_human_questions=open_questions,
+            blocked_meta_attempts=blocked_meta,
+            pending_campaigns=pending_campaigns,
+            meetings=len(meetings),
+            campaigns=len(ad_campaigns),
+            creative_assets=len(creative_assets),
+            client_updates=len(client_updates),
+            recent_events=len(events),
+        ),
+        events=[serialize_platform_event(event) for event in events],
+        meetings=[serialize_meeting(row) for row in meetings],
+        client_profiles=[serialize_client_profile(row) for row in client_profiles],
+        ad_campaigns=[serialize_ad_campaign(row) for row in ad_campaigns],
+        creative_assets=[serialize_creative_asset(row) for row in creative_assets],
+        meta_publish_attempts=[serialize_meta_publish_attempt(row) for row in meta_publish_attempts],
+        client_updates=[serialize_client_update(row) for row in client_updates],
+        human_questions=[serialize_human_question(row) for row in human_questions],
+    )
 
 
 @platform_router.get("/meetings", response_model=PlatformMeetingListResponse)

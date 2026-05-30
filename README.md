@@ -53,6 +53,12 @@ Ver eventos recientes de plataforma:
 curl http://127.0.0.1:8000/api/platform/events
 ```
 
+Ver el cockpit read model que usa la UI `Ops`:
+
+```bash
+curl http://127.0.0.1:8000/api/platform/overview
+```
+
 `platform_events` es append-only y arranca registrando los WhatsApp outbound
 encolados. Es la base para observar sheet import, mensajes, AI, scheduling,
 conversion, ads, delivery y client updates sin depender de logs sueltos.
@@ -145,8 +151,9 @@ uv run python -m backend.ai.codex_agent_runtime call \
 ```
 
 Todas esas llamadas quedan auditadas en `agent_tool_calls`,
-`data/agent-runs/<run-id>/tool_calls.jsonl` y `platform_events`. La UI queda
-como cockpit opcional para revisar, no como prerequisito de configuracion.
+`data/agent-runs/<run-id>/tool_calls.jsonl` y `platform_events`. La pestaña
+`Ops` lee `/api/platform/overview` para revisar meetings, campaigns, Meta,
+updates, questions y events; no es prerequisito de configuracion.
 
 ### Crear un funnel visualmente
 

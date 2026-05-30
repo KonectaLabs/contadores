@@ -490,6 +490,15 @@ def test_platform_lifecycle_endpoints_support_agent_native_workflow(monkeypatch,
 
     assert client.get("/api/platform/meetings").json()["meetings"][0]["id"] == meeting["id"]
     assert client.get("/api/platform/ad-campaigns").json()["campaigns"][0]["id"] == campaign["id"]
+    overview = client.get("/api/platform/overview")
+    assert overview.status_code == 200
+    overview_payload = overview.json()
+    assert overview_payload["counts"]["meetings"] == 1
+    assert overview_payload["counts"]["campaigns"] == 1
+    assert overview_payload["counts"]["pending_campaigns"] == 1
+    assert overview_payload["ad_campaigns"][0]["id"] == campaign["id"]
+    assert overview_payload["human_questions"][0]["status"] == "answered"
+    assert overview_payload["events"]
     events = client.get("/api/platform/events", params={"target_type": "human_question", "target_id": question["id"]})
     assert events.status_code == 200
     assert events.json()["events"][0]["event_type"] == "human_question.answered"

@@ -190,6 +190,170 @@ export interface RunnerStatusResponse {
   logs: RunnerLogItem[];
 }
 
+export interface PlatformEventItem {
+  id: number;
+  event_type: string;
+  lifecycle_stage: string;
+  target_type: string;
+  target_id: string;
+  funnel_id: string;
+  severity: string;
+  source: string;
+  actor: string;
+  summary: string;
+  payload: Record<string, unknown>;
+  idempotency_key: string | null;
+  correlation_id: string | null;
+  created_at: string;
+}
+
+export interface PlatformMeetingItem {
+  id: string;
+  lead_id: string;
+  client_id: string;
+  funnel_id: string;
+  status: string;
+  lead_email: string;
+  timezone: string;
+  requested_day: string;
+  requested_time: string;
+  calendar_event_id: string;
+  context_summary: string;
+  transcript_text: string;
+  transcript_path: string;
+  extracted_profile: Record<string, unknown>;
+  idempotency_key: string | null;
+  scheduled_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PlatformClientProfileItem {
+  id: string;
+  client_id: string;
+  lead_id: string;
+  funnel_id: string;
+  status: string;
+  source_meeting_id: string;
+  business_summary: string;
+  offer_summary: string;
+  market_summary: string;
+  objections: unknown[];
+  segments: unknown[];
+  knowledge: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PlatformAdCampaignItem {
+  id: string;
+  client_id: string;
+  funnel_id: string;
+  status: string;
+  objective: string;
+  budget_daily_usd: number | null;
+  budget_total_usd: number | null;
+  budget_currency: string;
+  target_segments: unknown[];
+  angles: unknown[];
+  meta_campaign_id: string;
+  approval_status: string;
+  idempotency_key: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PlatformCreativeAssetItem {
+  id: string;
+  campaign_id: string;
+  client_id: string;
+  status: string;
+  asset_type: string;
+  prompt: string;
+  file_path: string;
+  dimensions: string;
+  source_refs: unknown[];
+  meta_creative_id: string;
+  failure_reason: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PlatformMetaPublishAttemptItem {
+  id: string;
+  campaign_id: string;
+  status: string;
+  approval_status: string;
+  request_payload: Record<string, unknown>;
+  response_payload: Record<string, unknown>;
+  error: string;
+  idempotency_key: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PlatformClientUpdateItem {
+  id: string;
+  client_id: string;
+  campaign_id: string;
+  status: string;
+  summary_text: string;
+  leads_count: number;
+  blockers: unknown[];
+  next_action: string;
+  whatsapp_message_id: number | null;
+  window_started_at: string | null;
+  window_ended_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PlatformHumanQuestionItem {
+  id: string;
+  workflow: string;
+  target_type: string;
+  target_id: string;
+  funnel_id: string;
+  status: string;
+  context_summary: string;
+  trying_to_do: string;
+  question: string;
+  options: unknown[];
+  default_action: string;
+  timeout_at: string | null;
+  whatsapp_message_id: string;
+  answer_text: string;
+  answered_at: string | null;
+  promoted_to_memory_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PlatformOverviewCounts {
+  active_blockers: number;
+  open_human_questions: number;
+  blocked_meta_attempts: number;
+  pending_campaigns: number;
+  meetings: number;
+  campaigns: number;
+  creative_assets: number;
+  client_updates: number;
+  recent_events: number;
+}
+
+export interface PlatformOverviewResponse {
+  generated_at: string;
+  counts: PlatformOverviewCounts;
+  events: PlatformEventItem[];
+  meetings: PlatformMeetingItem[];
+  client_profiles: PlatformClientProfileItem[];
+  ad_campaigns: PlatformAdCampaignItem[];
+  creative_assets: PlatformCreativeAssetItem[];
+  meta_publish_attempts: PlatformMetaPublishAttemptItem[];
+  client_updates: PlatformClientUpdateItem[];
+  human_questions: PlatformHumanQuestionItem[];
+}
+
 export interface ContadoresMetrics {
   total: number;
   awaiting_initial_reply: number;

@@ -31,6 +31,9 @@ The repo already has the right single-server base:
   updates, and human questions. They are exposed through `/api/platform/*` and
   audited Codex tools, so the UI is optional for configuration and workflow
   state.
+- `/api/platform/overview` now provides the cockpit read model used by the
+  frontend `Ops` tab: blockers, human questions, campaigns, Meta publish
+  attempts, meetings, client updates, assets, and recent events.
 
 The major missing pieces are the live external integrations and cockpit depth:
 Google Calendar event creation, transcript ingestion from real calls,
@@ -219,6 +222,7 @@ Meta object ID back to platform records, and emits events for each response.
      delivery failures, and client updates due.
    - Keep the cockpit read/write over the same lifecycle records agents use;
      do not create UI-only configuration state.
+   - First pass shipped as the `Ops` tab backed by `/api/platform/overview`.
 
 4. Google Calendar scheduling
    - Add a calendar interface with mock mode.
