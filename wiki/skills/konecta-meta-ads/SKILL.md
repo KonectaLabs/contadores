@@ -143,6 +143,38 @@ Before choosing angles:
 7. Write `campaign-notes.md` explaining what changed and why.
 8. If sending to Alan, send a short label by client and then images.
 
+## Platform Publish Flow
+
+Meta publishing is agent-native, but live writes are not allowed from creative
+generation tools.
+
+Use this order:
+
+1. `stage_ad_campaign` for objective, segments, angles, and budget guardrails.
+2. `stage_creative_asset` for every generated or approved asset.
+3. `stage_meta_publish_plan` for the typed Meta plan:
+   `Campaign -> Ad Set -> Ad/Creative`, destination, budget, targeting,
+   initial `PAUSED` status, and missing fields before live publish.
+4. `ask_human_question` when account/page/destination/category/budget details
+   are missing. Do not invent Meta IDs.
+5. `stage_meta_publish_attempt` only for raw payloads, provider responses, or a
+   future approved publisher execution record.
+
+Before any future live publish, the plan must have:
+
+- ad account ID and account currency;
+- Page ID plus WhatsApp phone number ID, lead form ID, or landing page URL;
+- special ad category decision when applicable;
+- one or more ad sets with budget, targeting, placement/start-stop policy, and
+  at least one ad;
+- approved creative refs, final primary text, headline, and CTA;
+- operator approval, idempotency key, and rollback/disable order.
+
+Published lead flow must be traceable back to the platform. For
+Click-to-WhatsApp ads, keep `referral.source_id` mapped to the funnel. For lead
+forms, make sure the export/webhook path feeds the same Sheets/client-delivery
+loop instead of creating a side channel.
+
 ## Angle Selection
 
 For each client, choose the three most concrete buyer-side triggers.

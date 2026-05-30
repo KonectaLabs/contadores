@@ -98,11 +98,33 @@ formularios:
 - `create_platform_meeting` y `attach_meeting_transcript`: scheduling,
   transcript y handoff post-conversion.
 - `upsert_client_profile`: conocimiento revisado del cliente.
-- `stage_ad_campaign`, `stage_creative_asset` y `stage_meta_publish_attempt`:
-  ads y publicacion Meta en modo staged/aprobable.
+- `stage_ad_campaign`, `stage_creative_asset`, `stage_meta_publish_plan` y
+  `stage_meta_publish_attempt`: ads y publicacion Meta en modo
+  staged/aprobable.
 - `create_client_update`: actualizaciones de 24 horas para clientes.
 - `ask_human_question` y `answer_human_question`: dudas a Facundo/operador con
   contexto, accion por defecto y memoria reutilizable.
+
+Flujo Meta agent-native:
+
+1. `stage_ad_campaign` guarda el objetivo comercial, presupuesto y angulos.
+2. `stage_creative_asset` guarda prompts, archivos y referencias de imagen/video.
+3. `stage_meta_publish_plan` arma el plan tipado `Campaign -> Ad Set ->
+   Ad/Creative`, siempre en modo `PAUSED` y sin writes externos.
+4. Si faltan `ad_account_id`, `page_id`, destino WhatsApp/form, presupuesto,
+   targeting o creatividades, el resultado incluye `required_before_live_publish`
+   y el agente debe usar `ask_human_question` en vez de inventar datos.
+5. `stage_meta_publish_attempt` queda para payloads crudos, respuestas de Meta o
+   ejecuciones futuras hechas por el publicador aprobado.
+
+Ejemplo de plan Meta staged:
+
+```bash
+uv run python -m backend.ai.codex_agent_runtime call \
+  --run-id meta-plan-001 \
+  --tool stage_meta_publish_plan \
+  --arguments-json '{"campaign_id":"campaign-123","client_id":"client-123","funnel_id":"abogados","ad_account_id":"act_123","campaign_name":"Abogados - WhatsApp","objective":"OUTCOME_LEADS","destination":{"destination_type":"whatsapp","page_id":"page_123","whatsapp_phone_number_id":"wa_phone_123"},"ad_sets":[{"name":"Despidos CABA","budget_daily_usd":15,"targeting":{"geo_locations":{"countries":["AR"]}},"ads":[{"name":"Te despidieron","creative":{"creative_asset_id":"asset-123","primary_text":"Si te despidieron, manda tu caso por WhatsApp.","headline":"Te despidieron?"}}]}],"idempotency_key":"meta-plan-client-123-v1"}'
+```
 
 Ejemplo de duda agent-native:
 

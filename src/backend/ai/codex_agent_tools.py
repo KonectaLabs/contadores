@@ -307,6 +307,77 @@ class StageMetaPublishAttemptArgs(BaseModel):
     idempotency_key: str | None = None
 
 
+class MetaLeadDestinationPlan(BaseModel):
+    """Lead destination for a staged Meta publish plan."""
+
+    destination_type: str = Field(default="whatsapp", pattern="^(whatsapp|instant_form|landing_page)$")
+    page_id: str = ""
+    instagram_actor_id: str = ""
+    whatsapp_phone_number_id: str = ""
+    lead_form_id: str = ""
+    landing_page_url: str = ""
+
+
+class MetaCreativePlan(BaseModel):
+    """Creative reference and copy for one Meta ad."""
+
+    name: str = ""
+    creative_asset_id: str = ""
+    asset_file_path: str = ""
+    meta_creative_id: str = ""
+    image_hash: str = ""
+    video_id: str = ""
+    primary_text: str = Field(default="", max_length=4000)
+    headline: str = Field(default="", max_length=500)
+    description: str = Field(default="", max_length=1000)
+    call_to_action: str = "WHATSAPP_MESSAGE"
+    destination_url: str = ""
+
+
+class MetaAdPlan(BaseModel):
+    """One ad inside a staged Meta ad set."""
+
+    name: str = ""
+    status: str = "PAUSED"
+    creative: MetaCreativePlan = Field(default_factory=MetaCreativePlan)
+
+
+class MetaAdSetPlan(BaseModel):
+    """One ad set inside a staged Meta campaign."""
+
+    name: str = ""
+    status: str = "PAUSED"
+    budget_daily_usd: int | None = Field(default=None, ge=0)
+    budget_total_usd: int | None = Field(default=None, ge=0)
+    optimization_goal: str = "LEAD_GENERATION"
+    billing_event: str = "IMPRESSIONS"
+    bid_strategy: str = "LOWEST_COST_WITHOUT_CAP"
+    targeting: dict[str, Any] = Field(default_factory=dict)
+    placements: list[str] = Field(default_factory=list)
+    start_time: str = ""
+    end_time: str = ""
+    ads: list[MetaAdPlan] = Field(default_factory=list)
+
+
+class StageMetaPublishPlanArgs(BaseModel):
+    """Arguments for staging a first-class Meta campaign/adset/ad plan."""
+
+    campaign_id: str = ""
+    client_id: str = ""
+    funnel_id: str = ""
+    ad_account_id: str = ""
+    campaign_name: str = ""
+    objective: str = "OUTCOME_LEADS"
+    buying_type: str = "AUCTION"
+    special_ad_categories: list[str] = Field(default_factory=list)
+    budget_currency: str = "USD"
+    destination: MetaLeadDestinationPlan = Field(default_factory=MetaLeadDestinationPlan)
+    ad_sets: list[MetaAdSetPlan] = Field(default_factory=list)
+    notes: str = Field(default="", max_length=4000)
+    approval_status: str = "pending"
+    idempotency_key: str | None = None
+
+
 class CreateClientUpdateArgs(BaseModel):
     """Arguments for drafting or recording a 24-hour client update."""
 
@@ -489,6 +560,11 @@ def tool_specs() -> list[CodexAgentToolSpec]:
             "stage_meta_publish_attempt",
             "Stage a Meta Marketing API publish request without making live external writes.",
             StageMetaPublishAttemptArgs,
+        ),
+        (
+            "stage_meta_publish_plan",
+            "Stage a typed Meta Campaign -> Ad Set -> Ad/Creative plan and preflight checklist.",
+            StageMetaPublishPlanArgs,
         ),
         (
             "create_client_update",
@@ -757,6 +833,7 @@ def read_platform_config(arguments: dict[str, Any]) -> dict[str, Any]:
             "stage_ad_campaign",
             "stage_creative_asset",
             "stage_meta_publish_attempt",
+            "stage_meta_publish_plan",
             "create_client_update",
             "ask_human_question",
             "answer_human_question",
@@ -772,6 +849,7 @@ def read_platform_config(arguments: dict[str, Any]) -> dict[str, Any]:
             "stage_ad_campaign": StageAdCampaignArgs.model_json_schema(),
             "stage_creative_asset": StageCreativeAssetArgs.model_json_schema(),
             "stage_meta_publish_attempt": StageMetaPublishAttemptArgs.model_json_schema(),
+            "stage_meta_publish_plan": StageMetaPublishPlanArgs.model_json_schema(),
             "create_client_update": CreateClientUpdateArgs.model_json_schema(),
             "ask_human_question": AskHumanQuestionArgs.model_json_schema(),
             "answer_human_question": AnswerHumanQuestionArgs.model_json_schema(),
@@ -1242,6 +1320,143 @@ def stage_creative_asset(arguments: dict[str, Any]) -> dict[str, Any]:
         payload={"campaign_id": row.campaign_id, "client_id": row.client_id, "asset_type": row.asset_type},
     )
     return {"saved": True, "asset": _creative_asset_payload(row)}
+
+
+def _missing_meta_plan_fields(args: StageMetaPublishPlanArgs) -> list[str]:
+    """Return gaps that must be resolved before live Meta API writes."""
+    missing: list[str] = []
+    if not args.ad_account_id.strip():
+        missing.append("ad_account_id")
+    if not args.campaign_name.strip():
+        missing.append("campaign_name")
+    if not args.objective.strip():
+        missing.append("objective")
+    if not args.budget_currency.strip():
+        missing.append("budget_currency")
+
+    destination = args.destination
+    if destination.destination_type == "whatsapp":
+        if not destination.page_id.strip():
+            missing.append("destination.page_id")
+        if not destination.whatsapp_phone_number_id.strip():
+            missing.append("destination.whatsapp_phone_number_id")
+    if destination.destination_type == "instant_form":
+        if not destination.page_id.strip():
+            missing.append("destination.page_id")
+        if not destination.lead_form_id.strip():
+            missing.append("destination.lead_form_id")
+    if destination.destination_type == "landing_page" and not destination.landing_page_url.strip():
+        missing.append("destination.landing_page_url")
+
+    if not args.ad_sets:
+        missing.append("ad_sets")
+
+    for ad_set_index, ad_set in enumerate(args.ad_sets, start=1):
+        prefix = f"ad_sets[{ad_set_index}]"
+        if not ad_set.name.strip():
+            missing.append(f"{prefix}.name")
+        daily_budget = ad_set.budget_daily_usd or 0
+        total_budget = ad_set.budget_total_usd or 0
+        if daily_budget <= 0 and total_budget <= 0:
+            missing.append(f"{prefix}.budget")
+        if not ad_set.targeting:
+            missing.append(f"{prefix}.targeting")
+        if not ad_set.ads:
+            missing.append(f"{prefix}.ads")
+        for ad_index, ad in enumerate(ad_set.ads, start=1):
+            ad_prefix = f"{prefix}.ads[{ad_index}]"
+            if not ad.name.strip():
+                missing.append(f"{ad_prefix}.name")
+            creative = ad.creative
+            has_creative_ref = any(
+                [
+                    creative.creative_asset_id.strip(),
+                    creative.asset_file_path.strip(),
+                    creative.meta_creative_id.strip(),
+                    creative.image_hash.strip(),
+                    creative.video_id.strip(),
+                ]
+            )
+            if not has_creative_ref:
+                missing.append(f"{ad_prefix}.creative")
+            if not creative.primary_text.strip():
+                missing.append(f"{ad_prefix}.creative.primary_text")
+            if not creative.headline.strip():
+                missing.append(f"{ad_prefix}.creative.headline")
+    return missing
+
+
+def _meta_publish_plan_payload(args: StageMetaPublishPlanArgs, missing_fields: list[str]) -> dict[str, Any]:
+    """Build the canonical staged payload that a future publisher executes."""
+    return {
+        "schema_version": "konecta.meta_publish_plan.v1",
+        "provider": "meta_marketing_api",
+        "publish_mode": "staged_only",
+        "live_writes_allowed": False,
+        "operator_approval_required": True,
+        "client_id": args.client_id,
+        "funnel_id": args.funnel_id,
+        "ad_account_id": args.ad_account_id,
+        "budget_currency": args.budget_currency,
+        "campaign": {
+            "name": args.campaign_name,
+            "objective": args.objective,
+            "buying_type": args.buying_type,
+            "special_ad_categories": args.special_ad_categories,
+            "create_status": "PAUSED",
+        },
+        "destination": args.destination.model_dump(mode="json"),
+        "ad_sets": [ad_set.model_dump(mode="json") for ad_set in args.ad_sets],
+        "required_before_live_publish": missing_fields,
+        "live_execution_policy": {
+            "read_inventory_first": True,
+            "create_initial_status": "PAUSED",
+            "publish_order": ["campaign", "ad_sets", "creatives", "ads"],
+            "disable_order": ["ads", "ad_sets", "campaign"],
+            "store_meta_ids_on_success": True,
+        },
+        "observability_events": [
+            "meta_publish.plan_staged",
+            "meta_publish.preflight_checked",
+            "meta_publish.approval_requested",
+            "meta_publish.submitted",
+            "meta_publish.response_received",
+        ],
+        "notes": args.notes,
+    }
+
+
+def stage_meta_publish_plan(arguments: dict[str, Any]) -> dict[str, Any]:
+    args = StageMetaPublishPlanArgs.model_validate(arguments)
+    missing_fields = _missing_meta_plan_fields(args)
+    row = PlatformMetaPublishAttempt.add(
+        campaign_id=args.campaign_id,
+        status="blocked" if missing_fields else "staged",
+        approval_status="needs_preflight" if missing_fields else args.approval_status,
+        request_payload=_meta_publish_plan_payload(args, missing_fields),
+        response_payload={},
+        error="Missing live publish fields: " + ", ".join(missing_fields) if missing_fields else "",
+        idempotency_key=args.idempotency_key,
+    )
+    _emit_agent_lifecycle_event(
+        event_type="meta_publish.plan_staged",
+        lifecycle_stage="meta_publish",
+        target_type="meta_publish_attempt",
+        target_id=row.id,
+        funnel_id=args.funnel_id,
+        summary=f"Agent staged Meta publish plan {row.id}.",
+        payload={
+            "campaign_id": row.campaign_id,
+            "client_id": args.client_id,
+            "missing_fields": missing_fields,
+            "approval_status": row.approval_status,
+        },
+    )
+    return {
+        "saved": True,
+        "attempt": _meta_publish_attempt_payload(row),
+        "required_before_live_publish": missing_fields,
+    }
 
 
 def stage_meta_publish_attempt(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -2007,6 +2222,7 @@ TOOL_HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {
     "stage_ad_campaign": stage_ad_campaign,
     "stage_creative_asset": stage_creative_asset,
     "stage_meta_publish_attempt": stage_meta_publish_attempt,
+    "stage_meta_publish_plan": stage_meta_publish_plan,
     "create_client_update": create_client_update,
     "ask_human_question": ask_human_question,
     "answer_human_question": answer_human_question,
@@ -2064,6 +2280,8 @@ def _audit_target_for_tool(tool_name: str, arguments: dict[str, Any]) -> tuple[s
     if tool_name == "stage_creative_asset":
         return "creative_asset", str(arguments.get("campaign_id") or arguments.get("client_id") or "")
     if tool_name == "stage_meta_publish_attempt":
+        return "meta_publish_attempt", str(arguments.get("idempotency_key") or arguments.get("campaign_id") or "")
+    if tool_name == "stage_meta_publish_plan":
         return "meta_publish_attempt", str(arguments.get("idempotency_key") or arguments.get("campaign_id") or "")
     if tool_name == "create_client_update":
         return "client_update", str(arguments.get("client_id") or arguments.get("campaign_id") or "")

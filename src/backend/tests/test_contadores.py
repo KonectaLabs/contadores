@@ -327,6 +327,8 @@ def test_codex_agent_tool_configures_text_offer_funnel_without_ui(monkeypatch, t
     )
     assert snapshot["ok"] is True
     assert "funnel" in snapshot["result"]["schemas"]
+    assert "stage_meta_publish_plan" in snapshot["result"]["agent_native_tools"]
+    assert "stage_meta_publish_plan" in snapshot["result"]["schemas"]
     assert any(item["id"] == "dentistas" for item in snapshot["result"]["funnels"])
 
 
@@ -586,6 +588,64 @@ def test_codex_agent_lifecycle_tools_work_without_ui(monkeypatch, tmp_path) -> N
     assert publish_result["ok"] is True
     assert PlatformMetaPublishAttempt.list_recent(campaign_id=campaign_id)[0].request_payload()["objective"] == "LEADS"
 
+    blocked_plan_result = call_tool(
+        run_id="agent-run-lifecycle",
+        tool_name="stage_meta_publish_plan",
+        arguments={
+            "campaign_id": campaign_id,
+            "client_id": "client-agent-1",
+            "funnel_id": "abogados",
+            "campaign_name": "Plan incompleto",
+            "idempotency_key": "publish-plan-blocked-agent-1",
+        },
+    )
+    assert blocked_plan_result["ok"] is True
+    assert blocked_plan_result["result"]["attempt"]["status"] == "blocked"
+    assert "ad_account_id" in blocked_plan_result["result"]["required_before_live_publish"]
+    assert "ad_sets" in blocked_plan_result["result"]["required_before_live_publish"]
+
+    plan_result = call_tool(
+        run_id="agent-run-lifecycle",
+        tool_name="stage_meta_publish_plan",
+        arguments={
+            "campaign_id": campaign_id,
+            "client_id": "client-agent-1",
+            "funnel_id": "abogados",
+            "ad_account_id": "act_123",
+            "campaign_name": "Abogados laborales - WhatsApp",
+            "objective": "OUTCOME_LEADS",
+            "destination": {
+                "destination_type": "whatsapp",
+                "page_id": "page_123",
+                "whatsapp_phone_number_id": "wa_phone_123",
+            },
+            "ad_sets": [
+                {
+                    "name": "Despidos CABA",
+                    "budget_daily_usd": 15,
+                    "targeting": {"geo_locations": {"cities": [{"key": "Buenos Aires"}]}},
+                    "ads": [
+                        {
+                            "name": "Te despidieron",
+                            "creative": {
+                                "creative_asset_id": "creative-1",
+                                "primary_text": "Si te despidieron, manda tu caso por WhatsApp.",
+                                "headline": "Te despidieron?",
+                            },
+                        }
+                    ],
+                }
+            ],
+            "idempotency_key": "publish-plan-agent-1",
+        },
+    )
+    assert plan_result["ok"] is True
+    assert plan_result["result"]["required_before_live_publish"] == []
+    plan_payload = PlatformMetaPublishAttempt.list_recent(campaign_id=campaign_id)[0].request_payload()
+    assert plan_payload["schema_version"] == "konecta.meta_publish_plan.v1"
+    assert plan_payload["campaign"]["create_status"] == "PAUSED"
+    assert plan_payload["ad_sets"][0]["ads"][0]["creative"]["headline"] == "Te despidieron?"
+
     update_result = call_tool(
         run_id="agent-run-lifecycle",
         tool_name="create_client_update",
@@ -638,10 +698,11 @@ def test_codex_agent_lifecycle_tools_work_without_ui(monkeypatch, tmp_path) -> N
         "create_platform_meeting",
         "stage_ad_campaign",
         "stage_meta_publish_attempt",
+        "stage_meta_publish_plan",
         "ask_human_question",
         "answer_human_question",
     }
-    assert PlatformEvent.list_recent(target_type="meta_publish_attempt")[0].event_type == "meta_publish_attempt.staged"
+    assert PlatformEvent.list_recent(target_type="meta_publish_attempt")[0].event_type == "meta_publish.plan_staged"
 
 
 def test_codex_agent_tool_checks_domain_with_public_prices(monkeypatch, tmp_path) -> None:

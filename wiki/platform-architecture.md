@@ -60,6 +60,10 @@ doubts, and richer event/metric views across the lifecycle.
   campaign, ad set, ad, and creative concepts, so the repo should mirror those
   boundaries instead of storing one blob.
   Source: https://developers.facebook.com/docs/marketing-api/campaign-structure
+  The official Python Business SDK also confirms the account/access-token
+  boundary: Marketing API work requires an app, access token permissions, and
+  ad-account-scoped CRUD calls.
+  Source: https://github.com/facebook/facebook-python-business-sdk
 - DSPy: use it for reusable reasoning programs and evals: lead replies,
   transcript extraction, ad strategy/copy, client updates, and prompt/program
   optimization once reviewed examples exist.
@@ -150,6 +154,46 @@ Add these domains incrementally:
 - `HumanQuestion`: Facundo/operator doubt with exact question, options, timeout,
   default action, WhatsApp correlation, answer, and promoted knowledge.
 
+## Meta Ads Platform Flow
+
+Meta Ads is a first-class lifecycle, not a generic notes field. The platform
+should mirror Meta's own hierarchy and keep every live write behind a staged,
+audited, approved plan:
+
+1. `ClientProfile` holds reviewed client facts, offer, exclusions, market,
+   objections, geography, and proof.
+2. `PlatformAdCampaign` holds the campaign objective, budget guardrails,
+   segments, angles, approval state, and eventually the Meta campaign ID.
+3. `PlatformCreativeAsset` holds each generated image/video, prompt, source
+   refs, approval state, and eventually the Meta creative ID or asset hash.
+4. `stage_meta_publish_plan` creates the canonical staged payload:
+   `Campaign -> Ad Set -> Ad/Creative`, destination, targeting, budget,
+   initial `PAUSED` status, missing fields, and rollback/disable order.
+5. `PlatformMetaPublishAttempt` records the staged plan, future submit payload,
+   Meta response, error, idempotency key, and operator approval status.
+6. Lead delivery connects the published ad or lead form back into funnel routing:
+   Click-to-WhatsApp `referral.source_id` for WhatsApp conversations, Meta lead
+   form exports/webhooks for Sheets intake, then Client Lead Delivery to the
+   client's WhatsApp.
+7. Client updates summarize spend/leads/blockers from events, delivery records,
+   and Meta publish status.
+
+Live Meta writes stay disabled until the platform has:
+
+- ad account ID and account currency;
+- Page ID, and either WhatsApp phone number ID, lead form ID, or landing page;
+- special ad category decision when required;
+- approved creative assets and final copy;
+- campaign/ad set budgets, targeting, placements, start/stop dates, and
+  tracking parameters;
+- operator approval for publish and any budget increase;
+- an idempotency key and rollback plan that starts new objects as `PAUSED`.
+
+Do not add RabbitMQ/Kafka just for Meta publishing yet. The current next step is
+a DB-backed publisher/outbox that reads approved `PlatformMetaPublishAttempt`
+rows, performs preflight reads, submits Meta API calls in order, writes every
+Meta object ID back to platform records, and emits events for each response.
+
 ## Milestones
 
 1. Baseline cleanup and observability
@@ -199,9 +243,13 @@ Add these domains incrementally:
    - Use Codex SDK for asset workflows and OpenAI image APIs for images.
 
 8. Meta Ads publishing
-   - Add read-only Meta inventory first.
-   - Stage campaign/adset/ad/creative payloads.
+   - Add read-only Meta inventory first: ad accounts, pages, forms, pixels,
+     WhatsApp numbers, existing campaigns, and creatives.
+   - Stage typed campaign/adset/ad/creative payloads with
+     `stage_meta_publish_plan`.
    - Require operator approval for live publish and budget changes.
+   - Execute live writes through a DB-backed publisher that creates Meta objects
+     in `PAUSED` state, stores every returned ID, and keeps retries idempotent.
 
 9. Client updates and delivery loop
    - Generate 24-hour client updates from campaign and delivery events.
