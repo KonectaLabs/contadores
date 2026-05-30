@@ -9,7 +9,9 @@ __pycache__
 .codex/*
 !.codex/skills
 !.codex/skills/**
-media
+media/*
+!media/templates/
+!media/templates/**
 node_modules
 dist
 build
