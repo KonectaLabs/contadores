@@ -16,10 +16,12 @@ from backend.database import (
     PlatformEvent,
     PlatformHumanQuestion,
     PlatformMeeting,
+    PlatformMetaInventorySnapshot,
     PlatformMetaPublishAttempt,
 )
 from backend.platform_profile_extraction import PlatformProfileExtractionError, extract_client_profile_from_meeting
 from backend.meta_ads_publish import MetaAdsPublishError, preflight_meta_publish_attempt
+from backend.meta_ads_inventory import MetaInventoryError, sync_meta_inventory
 
 platform_router = APIRouter(prefix="/api/platform", tags=["platform"])
 
@@ -293,6 +295,47 @@ class PlatformMetaPublishPreflightResponse(BaseModel):
     preflight: dict[str, Any]
 
 
+class PlatformMetaInventorySyncCommand(BaseModel):
+    """Read Meta inventory without publishing ads."""
+
+    ad_account_id: str = ""
+    business_id: str = ""
+    page_ids: list[str] = Field(default_factory=list)
+    include_campaigns: bool = True
+    include_lead_forms: bool = True
+    include_pixels: bool = True
+    include_whatsapp: bool = True
+    limit: int = Field(default=50, ge=1, le=200)
+
+
+class PlatformMetaInventorySnapshotResponse(BaseModel):
+    """Serialized Meta inventory snapshot."""
+
+    id: str
+    status: str
+    source: str
+    actor: str
+    ad_account_id: str
+    business_id: str
+    api_version: str
+    inventory: dict[str, Any]
+    errors: list[Any]
+    created_at: datetime
+
+
+class PlatformMetaInventoryListResponse(BaseModel):
+    """Meta inventory snapshot list response."""
+
+    snapshots: list[PlatformMetaInventorySnapshotResponse]
+
+
+class PlatformMetaInventorySyncResponse(BaseModel):
+    """Meta inventory sync response."""
+
+    snapshot: PlatformMetaInventorySnapshotResponse
+    result: dict[str, Any]
+
+
 class PlatformClientUpdateCommand(BaseModel):
     """Create one client status update record."""
 
@@ -391,10 +434,12 @@ class PlatformOverviewCounts(BaseModel):
     active_blockers: int
     open_human_questions: int
     blocked_meta_attempts: int
+    blocked_meta_inventory: int
     pending_campaigns: int
     meetings: int
     campaigns: int
     creative_assets: int
+    meta_inventory_snapshots: int
     client_updates: int
     recent_events: int
 
@@ -409,6 +454,7 @@ class PlatformOverviewResponse(BaseModel):
     client_profiles: list[PlatformClientProfileResponse]
     ad_campaigns: list[PlatformAdCampaignResponse]
     creative_assets: list[PlatformCreativeAssetResponse]
+    meta_inventory_snapshots: list[PlatformMetaInventorySnapshotResponse]
     meta_publish_attempts: list[PlatformMetaPublishAttemptResponse]
     client_updates: list[PlatformClientUpdateResponse]
     human_questions: list[PlatformHumanQuestionResponse]
@@ -534,6 +580,22 @@ def serialize_meta_publish_attempt(row: PlatformMetaPublishAttempt) -> PlatformM
     )
 
 
+def serialize_meta_inventory_snapshot(row: PlatformMetaInventorySnapshot) -> PlatformMetaInventorySnapshotResponse:
+    """Serialize one Meta inventory snapshot."""
+    return PlatformMetaInventorySnapshotResponse(
+        id=row.id,
+        status=row.status,
+        source=row.source,
+        actor=row.actor,
+        ad_account_id=row.ad_account_id,
+        business_id=row.business_id,
+        api_version=row.api_version,
+        inventory=row.inventory(),
+        errors=row.errors(),
+        created_at=row.created_at,
+    )
+
+
 def serialize_client_update(row: PlatformClientUpdate) -> PlatformClientUpdateResponse:
     """Serialize one client update."""
     return PlatformClientUpdateResponse(
@@ -611,6 +673,11 @@ def is_blocked_meta_attempt(row: PlatformMetaPublishAttempt) -> bool:
     return row.status in {"blocked", "failed", "error"} or row.approval_status in {"needs_preflight", "rejected"}
 
 
+def is_blocked_meta_inventory(row: PlatformMetaInventorySnapshot) -> bool:
+    """Return whether the latest Meta inventory sync blocks publishing."""
+    return row.status in {"missing_credentials", "partial", "error", "blocked"}
+
+
 def is_pending_campaign(row: PlatformAdCampaign) -> bool:
     """Return whether an ad campaign needs approval or publishing work."""
     return row.status not in {"published", "closed", "archived"} or row.approval_status not in {"approved", "published"}
@@ -643,25 +710,29 @@ async def platform_overview(
     client_profiles = PlatformClientProfile.list_recent(limit=limit)
     ad_campaigns = PlatformAdCampaign.list_recent(limit=limit)
     creative_assets = PlatformCreativeAsset.list_recent(limit=limit)
+    meta_inventory_snapshots = PlatformMetaInventorySnapshot.list_recent(limit=limit)
     meta_publish_attempts = PlatformMetaPublishAttempt.list_recent(limit=limit)
     client_updates = PlatformClientUpdate.list_recent(limit=limit)
     human_questions = PlatformHumanQuestion.list_recent(limit=limit)
 
     open_questions = sum(1 for row in human_questions if is_open_human_question(row))
     blocked_meta = sum(1 for row in meta_publish_attempts if is_blocked_meta_attempt(row))
+    blocked_inventory = 1 if meta_inventory_snapshots and is_blocked_meta_inventory(meta_inventory_snapshots[0]) else 0
     pending_campaigns = sum(1 for row in ad_campaigns if is_pending_campaign(row))
     updates_with_blockers = sum(1 for row in client_updates if row.blockers())
 
     return PlatformOverviewResponse(
         generated_at=datetime.now(timezone.utc),
         counts=PlatformOverviewCounts(
-            active_blockers=open_questions + blocked_meta + updates_with_blockers,
+            active_blockers=open_questions + blocked_meta + blocked_inventory + updates_with_blockers,
             open_human_questions=open_questions,
             blocked_meta_attempts=blocked_meta,
+            blocked_meta_inventory=blocked_inventory,
             pending_campaigns=pending_campaigns,
             meetings=len(meetings),
             campaigns=len(ad_campaigns),
             creative_assets=len(creative_assets),
+            meta_inventory_snapshots=len(meta_inventory_snapshots),
             client_updates=len(client_updates),
             recent_events=len(events),
         ),
@@ -670,6 +741,7 @@ async def platform_overview(
         client_profiles=[serialize_client_profile(row) for row in client_profiles],
         ad_campaigns=[serialize_ad_campaign(row) for row in ad_campaigns],
         creative_assets=[serialize_creative_asset(row) for row in creative_assets],
+        meta_inventory_snapshots=[serialize_meta_inventory_snapshot(row) for row in meta_inventory_snapshots],
         meta_publish_attempts=[serialize_meta_publish_attempt(row) for row in meta_publish_attempts],
         client_updates=[serialize_client_update(row) for row in client_updates],
         human_questions=[serialize_human_question(row) for row in human_questions],
@@ -925,6 +997,40 @@ async def preflight_meta_publish_attempt_endpoint(
     return PlatformMetaPublishPreflightResponse(
         attempt=serialize_meta_publish_attempt(attempt),
         preflight=result.model_dump(mode="json"),
+    )
+
+
+@platform_router.get("/meta-inventory", response_model=PlatformMetaInventoryListResponse)
+async def list_meta_inventory_snapshots(
+    status: str | None = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=100),
+) -> PlatformMetaInventoryListResponse:
+    """Return recent read-only Meta inventory snapshots."""
+    rows = PlatformMetaInventorySnapshot.list_recent(status=status, limit=limit)
+    return PlatformMetaInventoryListResponse(snapshots=[serialize_meta_inventory_snapshot(row) for row in rows])
+
+
+@platform_router.post("/meta-inventory/sync", response_model=PlatformMetaInventorySyncResponse)
+async def sync_meta_inventory_endpoint(command: PlatformMetaInventorySyncCommand) -> PlatformMetaInventorySyncResponse:
+    """Read Meta inventory when credentials exist, or persist credential blockers."""
+    try:
+        snapshot, result = sync_meta_inventory(
+            ad_account_id=command.ad_account_id,
+            business_id=command.business_id,
+            page_ids=command.page_ids,
+            include_campaigns=command.include_campaigns,
+            include_lead_forms=command.include_lead_forms,
+            include_pixels=command.include_pixels,
+            include_whatsapp=command.include_whatsapp,
+            limit=command.limit,
+            source="platform_api",
+            actor="operator",
+        )
+    except MetaInventoryError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return PlatformMetaInventorySyncResponse(
+        snapshot=serialize_meta_inventory_snapshot(snapshot),
+        result=result.model_dump(mode="json"),
     )
 
 

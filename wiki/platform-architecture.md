@@ -170,18 +170,21 @@ audited, approved plan:
    segments, angles, approval state, and eventually the Meta campaign ID.
 3. `PlatformCreativeAsset` holds each generated image/video, prompt, source
    refs, approval state, and eventually the Meta creative ID or asset hash.
-4. `stage_meta_publish_plan` creates the canonical staged payload:
+4. `sync_meta_inventory` stores read-only ad account, Page, lead form, pixel,
+   WhatsApp number, and existing campaign snapshots when credentials exist; if
+   credentials are missing, it stores the blocker explicitly.
+5. `stage_meta_publish_plan` creates the canonical staged payload:
    `Campaign -> Ad Set -> Ad/Creative`, destination, targeting, budget,
    initial `PAUSED` status, missing fields, and rollback/disable order.
-5. `preflight_meta_publish_plan` turns the staged payload into an ordered,
+6. `preflight_meta_publish_plan` turns the staged payload into an ordered,
    persisted execution graph without live writes by default.
-6. `PlatformMetaPublishAttempt` records the staged plan, future submit payload,
+7. `PlatformMetaPublishAttempt` records the staged plan, future submit payload,
    Meta response, error, idempotency key, and operator approval status.
-7. Lead delivery connects the published ad or lead form back into funnel routing:
+8. Lead delivery connects the published ad or lead form back into funnel routing:
    Click-to-WhatsApp `referral.source_id` for WhatsApp conversations, Meta lead
    form exports/webhooks for Sheets intake, then Client Lead Delivery to the
    client's WhatsApp.
-8. Client updates summarize spend/leads/blockers from events, delivery records,
+9. Client updates summarize spend/leads/blockers from events, delivery records,
    and Meta publish status.
 
 Live Meta writes stay disabled until the platform has:
@@ -196,10 +199,10 @@ Live Meta writes stay disabled until the platform has:
 - an idempotency key and rollback plan that starts new objects as `PAUSED`.
 
 Do not add RabbitMQ/Kafka just for Meta publishing yet. The first DB-backed
-publisher slice is `preflight_meta_publish_plan`: it reads a staged
-`PlatformMetaPublishAttempt`, performs local preflight, stores ordered Meta
-operations, and emits events. Live submit remains blocked until credentials,
-approval policy, budget controls, and real provider calls are wired.
+publisher slices are `sync_meta_inventory` and `preflight_meta_publish_plan`:
+they read and persist readiness/inventory state, build ordered Meta operations,
+and emit events. Live submit remains blocked until credentials, approval policy,
+budget controls, and real provider calls are wired.
 
 ## Milestones
 
@@ -256,6 +259,8 @@ approval policy, budget controls, and real provider calls are wired.
 8. Meta Ads publishing
    - Add read-only Meta inventory first: ad accounts, pages, forms, pixels,
      WhatsApp numbers, existing campaigns, and creatives.
+   - First read-only inventory slice shipped as `sync_meta_inventory`; it
+     persists either provider inventory or explicit credential blockers.
    - Stage typed campaign/adset/ad/creative payloads with
      `stage_meta_publish_plan`.
    - First publisher slice shipped as `preflight_meta_publish_plan`, which

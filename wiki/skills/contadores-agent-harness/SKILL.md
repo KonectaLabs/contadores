@@ -69,6 +69,9 @@ Platform lifecycle tools:
 - `stage_creative_asset`: record generated or staged creative assets.
 - `stage_meta_publish_plan`: stage the typed Meta Campaign -> Ad Set ->
   Ad/Creative plan, missing fields, and rollback policy before approval.
+- `sync_meta_inventory`: read Meta ad accounts, Pages, lead forms, pixels,
+  WhatsApp numbers, and existing campaigns when credentials exist; otherwise
+  persist the missing-credentials blocker.
 - `preflight_meta_publish_plan`: turn a staged Meta plan into ordered provider
   operations and persist preflight state without live writes by default.
 - `stage_meta_publish_attempt`: stage the Meta publish request/response without
@@ -151,6 +154,10 @@ step from that persisted state.
   publish data.
 - Do not publish to Meta from these tools; stage the request and wait for the
   approval/publish mechanism.
+- Before asking for Meta IDs or running preflight, use `sync_meta_inventory` to
+  see whether the account/page/form/pixel/WhatsApp assets are already available.
+  If the sync stores `missing_credentials` or `partial`, treat it as a blocker
+  and ask a bounded operator question instead of guessing values.
 - Prefer `stage_meta_publish_plan` for normal Meta work. Use
   `preflight_meta_publish_plan` after staging to get the ordered campaign,
   ad-set, creative, and ad operation graph. Use `stage_meta_publish_attempt`

@@ -21,6 +21,7 @@ import backend.endpoints.workstation as workstation_endpoints
 import backend.platform_profile_extraction as profile_extraction_module
 from backend.audio_transcription import AudioTranscriptionError
 from backend.codex_utils import CodexSkill, CodexTurnResult
+from backend.meta_ads_inventory import sync_meta_inventory
 from backend.ai.client_profile_extractor import (
     ClientProfileAdAngle,
     ClientProfileExtractionResult,
@@ -45,6 +46,7 @@ from backend.database import (
     PlatformCreativeAsset,
     PlatformEvent,
     PlatformHumanQuestion,
+    PlatformMetaInventorySnapshot,
     PlatformMeeting,
     PlatformMetaPublishAttempt,
     ScheduledAgentTask,
@@ -324,6 +326,7 @@ def test_codex_agent_tool_memory_roundtrip(monkeypatch, tmp_path) -> None:
 def test_codex_agent_tool_configures_text_offer_funnel_without_ui(monkeypatch, tmp_path) -> None:
     """Agents should be able to configure a runnable text-offer funnel without the UI."""
     configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.delenv("META_MARKETING_LIVE_WRITES_ENABLED", raising=False)
 
     result = call_tool(
         run_id="agent-run-platform-config",
@@ -380,6 +383,9 @@ def test_codex_agent_tool_configures_text_offer_funnel_without_ui(monkeypatch, t
     assert "stage_meta_publish_plan" in snapshot["result"]["schemas"]
     assert "preflight_meta_publish_plan" in snapshot["result"]["agent_native_tools"]
     assert "preflight_meta_publish_plan" in snapshot["result"]["schemas"]
+    assert "sync_meta_inventory" in snapshot["result"]["agent_native_tools"]
+    assert "sync_meta_inventory" in snapshot["result"]["schemas"]
+    assert snapshot["result"]["meta_marketing"]["live_writes_enabled"] is False
     assert "extract_client_profile_from_meeting_transcript" in snapshot["result"]["agent_native_tools"]
     assert "extract_client_profile_from_meeting_transcript" in snapshot["result"]["schemas"]
     assert any(item["id"] == "dentistas" for item in snapshot["result"]["funnels"])
@@ -418,10 +424,57 @@ def test_codex_agent_tool_configures_client_lead_delivery_without_ui(monkeypatch
     assert events[0].event_type == "platform.client_lead_source_upserted"
 
 
+def test_meta_inventory_sync_persists_read_only_inventory(monkeypatch, tmp_path) -> None:
+    """Meta inventory sync should persist sanitized read-only provider state."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("META_MARKETING_API_VERSION", "v25.0")
+    monkeypatch.delenv("META_MARKETING_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("META_ACCESS_TOKEN", raising=False)
+
+    def fake_graph_get(path: str, params: dict | None = None) -> dict:
+        del params
+        if path == "me/adaccounts":
+            return {"data": [{"id": "act_123", "name": "Agency account", "currency": "USD"}]}
+        if path == "act_123":
+            return {"id": "act_123", "name": "Agency account", "account_status": 1}
+        if path == "act_123/campaigns":
+            return {"data": [{"id": "campaign_1", "name": "Existing campaign", "status": "PAUSED"}]}
+        if path == "act_123/adspixels":
+            return {"data": [{"id": "pixel_1", "name": "Main pixel"}]}
+        if path == "me/accounts":
+            return {"data": [{"id": "page_1", "name": "Client Page", "access_token": "secret-page-token"}]}
+        if path == "page_1/leadgen_forms":
+            return {"data": [{"id": "form_1", "name": "Lead form", "status": "ACTIVE"}]}
+        if path == "business_1/owned_whatsapp_business_accounts":
+            return {"data": [{"id": "waba_1", "name": "WABA"}]}
+        if path == "waba_1/phone_numbers":
+            return {"data": [{"id": "wa_phone_1", "display_phone_number": "+54 9 11 1234-5678"}]}
+        raise AssertionError(path)
+
+    snapshot, result = sync_meta_inventory(
+        ad_account_id="act_123",
+        business_id="business_1",
+        source="test",
+        actor="tester",
+        graph_get=fake_graph_get,
+    )
+
+    assert result.status == "ready"
+    assert snapshot.status == "ready"
+    assert snapshot.inventory()["ad_accounts"][0]["id"] == "act_123"
+    assert snapshot.inventory()["pages"][0].get("access_token") is None
+    assert snapshot.inventory()["lead_forms"][0]["page_id"] == "page_1"
+    assert snapshot.inventory()["whatsapp_phone_numbers"][0]["id"] == "wa_phone_1"
+    assert PlatformEvent.list_recent(target_type="meta_inventory", target_id=snapshot.id)[0].event_type == "meta_inventory.synced"
+
+
 def test_platform_lifecycle_endpoints_support_agent_native_workflow(monkeypatch, tmp_path) -> None:
     """Lifecycle endpoints should expose the full platform without requiring UI configuration."""
     configure_contadores_db(monkeypatch, tmp_path)
     monkeypatch.setattr(profile_extraction_module, "run_client_profile_extraction", fake_profile_extraction)
+    monkeypatch.delenv("META_MARKETING_API_VERSION", raising=False)
+    monkeypatch.delenv("META_MARKETING_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("META_ACCESS_TOKEN", raising=False)
     client = TestClient(app)
 
     meeting_response = client.post(
@@ -522,6 +575,12 @@ def test_platform_lifecycle_endpoints_support_agent_native_workflow(monkeypatch,
     assert preflight_response.json()["preflight"]["status"] == "blocked"
     assert "schema_version" in preflight_response.json()["preflight"]["blocked_reasons"]
 
+    inventory_response = client.post("/api/platform/meta-inventory/sync", json={})
+    assert inventory_response.status_code == 200
+    assert inventory_response.json()["snapshot"]["status"] == "missing_credentials"
+    assert "META_MARKETING_ACCESS_TOKEN" in inventory_response.json()["result"]["errors"]
+    assert client.get("/api/platform/meta-inventory").json()["snapshots"][0]["status"] == "missing_credentials"
+
     update_response = client.post(
         "/api/platform/client-updates",
         json={
@@ -568,7 +627,11 @@ def test_platform_lifecycle_endpoints_support_agent_native_workflow(monkeypatch,
     assert overview_payload["counts"]["meetings"] == 1
     assert overview_payload["counts"]["campaigns"] == 1
     assert overview_payload["counts"]["pending_campaigns"] == 1
+    assert overview_payload["counts"]["blocked_meta_inventory"] == 1
+    assert overview_payload["counts"]["meta_inventory_snapshots"] == 1
+    assert overview_payload["counts"]["active_blockers"] == 2
     assert overview_payload["ad_campaigns"][0]["id"] == campaign["id"]
+    assert overview_payload["meta_inventory_snapshots"][0]["status"] == "missing_credentials"
     assert overview_payload["human_questions"][0]["status"] == "answered"
     assert overview_payload["events"]
     events = client.get("/api/platform/events", params={"target_type": "human_question", "target_id": question["id"]})
@@ -581,6 +644,9 @@ def test_codex_agent_lifecycle_tools_work_without_ui(monkeypatch, tmp_path) -> N
     configure_contadores_db(monkeypatch, tmp_path)
     monkeypatch.setattr(database_module, "DATA_DIR", tmp_path / "data")
     monkeypatch.setattr(profile_extraction_module, "run_client_profile_extraction", fake_profile_extraction)
+    monkeypatch.delenv("META_MARKETING_API_VERSION", raising=False)
+    monkeypatch.delenv("META_MARKETING_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("META_ACCESS_TOKEN", raising=False)
 
     meeting_result = call_tool(
         run_id="agent-run-lifecycle",
@@ -759,6 +825,15 @@ def test_codex_agent_lifecycle_tools_work_without_ui(monkeypatch, tmp_path) -> N
     ]
     assert PlatformMetaPublishAttempt.get_by_id(plan_result["result"]["attempt"]["id"]).status == "preflight_ready"
 
+    inventory_result = call_tool(
+        run_id="agent-run-lifecycle",
+        tool_name="sync_meta_inventory",
+        arguments={"ad_account_id": "act_123", "business_id": "business_123"},
+    )
+    assert inventory_result["ok"] is True
+    assert inventory_result["result"]["snapshot"]["status"] == "missing_credentials"
+    assert "META_MARKETING_ACCESS_TOKEN" in inventory_result["result"]["result"]["errors"]
+
     update_result = call_tool(
         run_id="agent-run-lifecycle",
         tool_name="create_client_update",
@@ -814,6 +889,7 @@ def test_codex_agent_lifecycle_tools_work_without_ui(monkeypatch, tmp_path) -> N
         "stage_meta_publish_attempt",
         "stage_meta_publish_plan",
         "preflight_meta_publish_plan",
+        "sync_meta_inventory",
         "ask_human_question",
         "answer_human_question",
     }

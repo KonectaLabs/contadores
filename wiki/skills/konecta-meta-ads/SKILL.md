@@ -29,12 +29,15 @@ agent-native flow first:
    `knowledge.meta_planning`, source snippets, and unresolved questions before
    drafting creatives or a Meta publish plan.
 4. If required Meta fields are missing, stage the plan with
-   `stage_meta_publish_plan` and ask Facundo through `ask_human_question`; do
-   not invent ad account IDs, Page IDs, WhatsApp phone number IDs, budgets, or
-   special ad category decisions.
-5. After staging, run `preflight_meta_publish_plan` to persist the ordered
-   campaign, ad-set, creative, and ad operations. Live writes stay blocked
-   unless the platform has explicit approval, credentials, and budget policy.
+   `stage_meta_publish_plan`, run `sync_meta_inventory` to check existing
+   account/Page/form/pixel/WhatsApp assets, and ask Facundo through
+   `ask_human_question` for anything still missing; do not invent ad account
+   IDs, Page IDs, WhatsApp phone number IDs, budgets, or special ad category
+   decisions.
+5. After staging and inventory sync, run `preflight_meta_publish_plan` to
+   persist the ordered campaign, ad-set, creative, and ad operations. Live
+   writes stay blocked unless the platform has explicit approval, credentials,
+   and budget policy.
 
 ## The 10/10 Pattern
 
@@ -179,11 +182,13 @@ Use this order:
 4. `stage_meta_publish_plan` for the typed Meta plan:
    `Campaign -> Ad Set -> Ad/Creative`, destination, budget, targeting,
    initial `PAUSED` status, and missing fields before live publish.
-5. `preflight_meta_publish_plan` to build and save the ordered provider
+5. `sync_meta_inventory` to read available ad accounts, Pages, lead forms,
+   pixels, WhatsApp numbers, and existing campaigns before asking for IDs.
+6. `preflight_meta_publish_plan` to build and save the ordered provider
    operation graph.
-6. `ask_human_question` when account/page/destination/category/budget details
+7. `ask_human_question` when account/page/destination/category/budget details
    are missing. Do not invent Meta IDs.
-7. `stage_meta_publish_attempt` only for raw payloads, provider responses, or a
+8. `stage_meta_publish_attempt` only for raw payloads, provider responses, or a
    future approved publisher execution record.
 
 Before any future live publish, the plan must have:

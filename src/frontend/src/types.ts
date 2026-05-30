@@ -292,6 +292,19 @@ export interface PlatformMetaPublishAttemptItem {
   updated_at: string;
 }
 
+export interface PlatformMetaInventorySnapshotItem {
+  id: string;
+  status: string;
+  source: string;
+  actor: string;
+  ad_account_id: string;
+  business_id: string;
+  api_version: string;
+  inventory: Record<string, unknown>;
+  errors: unknown[];
+  created_at: string;
+}
+
 export interface PlatformClientUpdateItem {
   id: string;
   client_id: string;
@@ -333,10 +346,12 @@ export interface PlatformOverviewCounts {
   active_blockers: number;
   open_human_questions: number;
   blocked_meta_attempts: number;
+  blocked_meta_inventory: number;
   pending_campaigns: number;
   meetings: number;
   campaigns: number;
   creative_assets: number;
+  meta_inventory_snapshots: number;
   client_updates: number;
   recent_events: number;
 }
@@ -349,6 +364,7 @@ export interface PlatformOverviewResponse {
   client_profiles: PlatformClientProfileItem[];
   ad_campaigns: PlatformAdCampaignItem[];
   creative_assets: PlatformCreativeAssetItem[];
+  meta_inventory_snapshots: PlatformMetaInventorySnapshotItem[];
   meta_publish_attempts: PlatformMetaPublishAttemptItem[];
   client_updates: PlatformClientUpdateItem[];
   human_questions: PlatformHumanQuestionItem[];

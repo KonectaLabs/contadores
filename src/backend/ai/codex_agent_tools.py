@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import asyncio
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -41,6 +42,7 @@ from backend.database import (
     PlatformEvent,
     PlatformHumanQuestion,
     PlatformMeeting,
+    PlatformMetaInventorySnapshot,
     PlatformMetaPublishAttempt,
     ScheduledAgentTask,
     WorkstationAutomationStatus,
@@ -63,6 +65,7 @@ from backend.platform_profile_extraction import (
     extract_client_profile_from_meeting as save_client_profile_from_meeting,
 )
 from backend.meta_ads_publish import MetaAdsPublishError, preflight_meta_publish_attempt
+from backend.meta_ads_inventory import MetaInventoryError, sync_meta_inventory
 
 
 DEFAULT_AGENT_SEQUENCE_STEP = "codex_agent"
@@ -401,6 +404,19 @@ class PreflightMetaPublishPlanArgs(BaseModel):
     live_writes_requested: bool = False
 
 
+class SyncMetaInventoryArgs(BaseModel):
+    """Arguments for reading Meta account/page/form inventory."""
+
+    ad_account_id: str = ""
+    business_id: str = ""
+    page_ids: list[str] = Field(default_factory=list)
+    include_campaigns: bool = True
+    include_lead_forms: bool = True
+    include_pixels: bool = True
+    include_whatsapp: bool = True
+    limit: int = Field(default=50, ge=1, le=200)
+
+
 class CreateClientUpdateArgs(BaseModel):
     """Arguments for drafting or recording a 24-hour client update."""
 
@@ -598,6 +614,11 @@ def tool_specs() -> list[CodexAgentToolSpec]:
             "preflight_meta_publish_plan",
             "Build the ordered Meta publish execution graph and persist preflight state without live writes by default.",
             PreflightMetaPublishPlanArgs,
+        ),
+        (
+            "sync_meta_inventory",
+            "Read Meta ad accounts, pages, forms, pixels, WhatsApp numbers, and campaigns when credentials exist.",
+            SyncMetaInventoryArgs,
         ),
         (
             "create_client_update",
@@ -854,6 +875,18 @@ def read_platform_config(arguments: dict[str, Any]) -> dict[str, Any]:
         "delivery_config_errors": delivery_config_errors,
         "file_backed_delivery_sources": [entry.model_dump(mode="json") for entry in delivery_entries],
         "delivery_sources": [_client_source_payload(source) for source in ClientLeadSource.list_all()],
+        "meta_marketing": {
+            "api_version_configured": bool(os.getenv("META_MARKETING_API_VERSION", "").strip()),
+            "access_token_configured": bool(
+                os.getenv("META_MARKETING_ACCESS_TOKEN", "").strip() or os.getenv("META_ACCESS_TOKEN", "").strip()
+            ),
+            "live_writes_enabled": os.getenv("META_MARKETING_LIVE_WRITES_ENABLED", "").strip().lower()
+            in {"1", "true", "yes", "on"},
+        },
+        "meta_inventory_snapshots": [
+            _meta_inventory_snapshot_payload(snapshot)
+            for snapshot in PlatformMetaInventorySnapshot.list_recent(limit=5)
+        ],
         "agent_native_tools": [
             "read_platform_config",
             "validate_platform_config",
@@ -869,6 +902,7 @@ def read_platform_config(arguments: dict[str, Any]) -> dict[str, Any]:
             "stage_meta_publish_attempt",
             "stage_meta_publish_plan",
             "preflight_meta_publish_plan",
+            "sync_meta_inventory",
             "create_client_update",
             "ask_human_question",
             "answer_human_question",
@@ -887,6 +921,7 @@ def read_platform_config(arguments: dict[str, Any]) -> dict[str, Any]:
             "stage_meta_publish_attempt": StageMetaPublishAttemptArgs.model_json_schema(),
             "stage_meta_publish_plan": StageMetaPublishPlanArgs.model_json_schema(),
             "preflight_meta_publish_plan": PreflightMetaPublishPlanArgs.model_json_schema(),
+            "sync_meta_inventory": SyncMetaInventoryArgs.model_json_schema(),
             "create_client_update": CreateClientUpdateArgs.model_json_schema(),
             "ask_human_question": AskHumanQuestionArgs.model_json_schema(),
             "answer_human_question": AnswerHumanQuestionArgs.model_json_schema(),
@@ -1223,6 +1258,21 @@ def _meta_publish_attempt_payload(row: PlatformMetaPublishAttempt) -> dict[str, 
     }
 
 
+def _meta_inventory_snapshot_payload(row: PlatformMetaInventorySnapshot) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "status": row.status,
+        "source": row.source,
+        "actor": row.actor,
+        "ad_account_id": row.ad_account_id,
+        "business_id": row.business_id,
+        "api_version": row.api_version,
+        "inventory": row.inventory(),
+        "errors": row.errors(),
+        "created_at": row.created_at.isoformat(),
+    }
+
+
 def _client_update_payload(row: PlatformClientUpdate) -> dict[str, Any]:
     return {
         "id": row.id,
@@ -1534,6 +1584,30 @@ def preflight_meta_publish_plan(arguments: dict[str, Any]) -> dict[str, Any]:
         "saved": True,
         "attempt": _meta_publish_attempt_payload(attempt),
         "preflight": result.model_dump(mode="json"),
+    }
+
+
+def sync_meta_inventory_tool(arguments: dict[str, Any]) -> dict[str, Any]:
+    args = SyncMetaInventoryArgs.model_validate(arguments)
+    try:
+        snapshot, result = sync_meta_inventory(
+            ad_account_id=args.ad_account_id,
+            business_id=args.business_id,
+            page_ids=args.page_ids,
+            include_campaigns=args.include_campaigns,
+            include_lead_forms=args.include_lead_forms,
+            include_pixels=args.include_pixels,
+            include_whatsapp=args.include_whatsapp,
+            limit=args.limit,
+            source="codex_agent_tool",
+            actor="agent",
+        )
+    except MetaInventoryError as error:
+        raise AgentToolError(str(error)) from error
+    return {
+        "saved": True,
+        "snapshot": _meta_inventory_snapshot_payload(snapshot),
+        "result": result.model_dump(mode="json"),
     }
 
 
@@ -2303,6 +2377,7 @@ TOOL_HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {
     "stage_meta_publish_attempt": stage_meta_publish_attempt,
     "stage_meta_publish_plan": stage_meta_publish_plan,
     "preflight_meta_publish_plan": preflight_meta_publish_plan,
+    "sync_meta_inventory": sync_meta_inventory_tool,
     "create_client_update": create_client_update,
     "ask_human_question": ask_human_question,
     "answer_human_question": answer_human_question,
@@ -2367,6 +2442,8 @@ def _audit_target_for_tool(tool_name: str, arguments: dict[str, Any]) -> tuple[s
         return "meta_publish_attempt", str(arguments.get("idempotency_key") or arguments.get("campaign_id") or "")
     if tool_name == "preflight_meta_publish_plan":
         return "meta_publish_attempt", str(arguments.get("attempt_id") or "")
+    if tool_name == "sync_meta_inventory":
+        return "meta_inventory", str(arguments.get("ad_account_id") or arguments.get("business_id") or "meta_inventory")
     if tool_name == "create_client_update":
         return "client_update", str(arguments.get("client_id") or arguments.get("campaign_id") or "")
     if tool_name == "ask_human_question":

@@ -3500,6 +3500,82 @@ class PlatformMetaPublishAttempt(SQLModel, table=True):
         return _json_object(self.response_json)
 
 
+class PlatformMetaInventorySnapshot(SQLModel, table=True):
+    """Read-only Meta inventory snapshot used before publishing."""
+
+    __tablename__ = "platform_meta_inventory_snapshots"
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    status: str = Field(default="missing_credentials", index=True)
+    source: str = Field(default="", index=True)
+    actor: str = Field(default="")
+    ad_account_id: str = Field(default="", index=True)
+    business_id: str = Field(default="", index=True)
+    api_version: str = Field(default="")
+    inventory_json: str = Field(default="{}")
+    errors_json: str = Field(default="[]")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
+
+    @classmethod
+    def add(
+        cls,
+        *,
+        status: str = "missing_credentials",
+        source: str = "",
+        actor: str = "",
+        ad_account_id: str = "",
+        business_id: str = "",
+        api_version: str = "",
+        inventory: dict[str, Any] | None = None,
+        errors: list[Any] | None = None,
+    ) -> "PlatformMetaInventorySnapshot":
+        """Persist one Meta inventory snapshot."""
+        with Session(engine) as session:
+            row = cls(
+                status=(status or "missing_credentials").strip() or "missing_credentials",
+                source=(source or "").strip(),
+                actor=(actor or "").strip(),
+                ad_account_id=(ad_account_id or "").strip(),
+                business_id=(business_id or "").strip(),
+                api_version=(api_version or "").strip(),
+                inventory_json=_json_dumps(inventory or {}),
+                errors_json=_json_dumps(errors or []),
+                created_at=datetime.now(timezone.utc),
+            )
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            session.expunge(row)
+            return row
+
+    @classmethod
+    def list_recent(
+        cls,
+        *,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> list["PlatformMetaInventorySnapshot"]:
+        """List recent inventory snapshots."""
+        clean_limit = max(1, min(limit, 500))
+        with Session(engine) as session:
+            statement = select(cls)
+            if status:
+                statement = statement.where(cls.status == status.strip())
+            statement = statement.order_by(cls.created_at.desc()).limit(clean_limit)
+            rows = list(session.exec(statement).all())
+            for row in rows:
+                session.expunge(row)
+            return rows
+
+    def inventory(self) -> dict[str, Any]:
+        """Return parsed inventory payload."""
+        return _json_object(self.inventory_json)
+
+    def errors(self) -> list[Any]:
+        """Return parsed inventory errors."""
+        return _json_array(self.errors_json)
+
+
 class PlatformClientUpdate(SQLModel, table=True):
     """24-hour client update draft/send state."""
 

@@ -54,6 +54,7 @@ import type {
   MessageItem,
   PlatformAdCampaignItem,
   PlatformHumanQuestionItem,
+  PlatformMetaInventorySnapshotItem,
   PlatformMetaPublishAttemptItem,
   PlatformOverviewResponse,
   QuickActionResponse,
@@ -2844,17 +2845,20 @@ function PlatformOpsView({
   loading: boolean;
   onRefresh: () => void;
 }) {
-  const counts = overview?.counts ?? {
+  const defaultCounts = {
     active_blockers: 0,
     open_human_questions: 0,
     blocked_meta_attempts: 0,
+    blocked_meta_inventory: 0,
     pending_campaigns: 0,
     meetings: 0,
     campaigns: 0,
     creative_assets: 0,
+    meta_inventory_snapshots: 0,
     client_updates: 0,
     recent_events: 0,
   };
+  const counts = { ...defaultCounts, ...(overview?.counts ?? {}) };
   const questions = overview?.human_questions ?? [];
   const metaAttempts = overview?.meta_publish_attempts ?? [];
   const campaigns = overview?.ad_campaigns ?? [];
@@ -2863,6 +2867,7 @@ function PlatformOpsView({
   const events = overview?.events ?? [];
   const profiles = overview?.client_profiles ?? [];
   const creatives = overview?.creative_assets ?? [];
+  const inventorySnapshots = overview?.meta_inventory_snapshots ?? [];
   const openQuestions = questions.filter(isOpenPlatformQuestion);
   const blockedAttempts = metaAttempts.filter(isBlockedPlatformAttempt);
   const updatesWithBlockers = updates.filter((update) => update.blockers.length > 0);
@@ -2885,7 +2890,7 @@ function PlatformOpsView({
         <RunnerSignal icon={<WarningCircle size={30} weight="fill" />} label="Blockers" value={counts.active_blockers} tone={counts.active_blockers > 0 ? "danger" : "ok"} />
         <RunnerSignal icon={<ChatCircleText size={30} weight="fill" />} label="Questions" value={counts.open_human_questions} tone={counts.open_human_questions > 0 ? "warn" : "neutral"} />
         <RunnerSignal icon={<TrendUp size={30} weight="fill" />} label="Campaigns" value={counts.campaigns} tone={counts.pending_campaigns > 0 ? "violet" : "neutral"} />
-        <RunnerSignal icon={<PaperPlaneTilt size={30} weight="fill" />} label="Meta" value={counts.blocked_meta_attempts} tone={counts.blocked_meta_attempts > 0 ? "danger" : "neutral"} />
+        <RunnerSignal icon={<PaperPlaneTilt size={30} weight="fill" />} label="Meta" value={counts.blocked_meta_attempts + counts.blocked_meta_inventory} tone={counts.blocked_meta_attempts + counts.blocked_meta_inventory > 0 ? "danger" : "neutral"} />
         <RunnerSignal icon={<Pulse size={30} weight="fill" />} label="Events" value={counts.recent_events} tone={counts.recent_events > 0 ? "blue" : "neutral"} />
       </section>
 
@@ -2972,6 +2977,22 @@ function PlatformOpsView({
               {!metaAttempts.length ? <OpsEmpty title="No attempts" value="0" /> : null}
             </div>
           </OpsPanel>
+
+          <OpsPanel eyebrow={<ListChecks size={18} weight="fill" />} title="Meta inventory" meta={`${inventorySnapshots.length}`}>
+            <div className="ops-table-list">
+              {inventorySnapshots.slice(0, 5).map((snapshot) => (
+                <div className="ops-table-row" key={snapshot.id}>
+                  <div>
+                    <strong>{metaInventoryLabel(snapshot)}</strong>
+                    <span>{metaInventoryCounts(snapshot)}</span>
+                  </div>
+                  <OpsStatus value={snapshot.status} />
+                  <time>{relativeTime(snapshot.created_at)}</time>
+                </div>
+              ))}
+              {!inventorySnapshots.length ? <OpsEmpty title="No inventory" value="0" /> : null}
+            </div>
+          </OpsPanel>
         </div>
 
         <aside className="ops-side-column">
@@ -3018,8 +3039,8 @@ function PlatformOpsView({
                 <span>Creatives</span>
               </div>
               <div>
-                <strong>{compactNumber(counts.client_updates)}</strong>
-                <span>Updates</span>
+                <strong>{compactNumber(counts.meta_inventory_snapshots)}</strong>
+                <span>Inventory</span>
               </div>
             </div>
           </OpsPanel>
@@ -3106,10 +3127,13 @@ function opsStatusTone(value: string): "danger" | "warn" | "ok" | "neutral" {
   if (["failed", "error", "blocked", "rejected"].includes(normalized)) {
     return "danger";
   }
+  if (["missing_credentials", "partial"].includes(normalized)) {
+    return "danger";
+  }
   if (["pending", "needs_preflight", "not_requested", "draft", "staged"].includes(normalized)) {
     return "warn";
   }
-  if (["answered", "approved", "published", "sent", "delivered", "completed"].includes(normalized)) {
+  if (["answered", "approved", "published", "sent", "delivered", "completed", "ready"].includes(normalized)) {
     return "ok";
   }
   return "neutral";
@@ -3145,6 +3169,28 @@ function formatMissingMetaFields(attempt: PlatformMetaPublishAttemptItem): strin
     return `${missing.length} missing`;
   }
   return attempt.idempotency_key ? truncate(attempt.idempotency_key, 28) : "Ready";
+}
+
+function metaInventoryLabel(snapshot: PlatformMetaInventorySnapshotItem): string {
+  return snapshot.ad_account_id || snapshot.business_id || "Meta inventory";
+}
+
+function metaInventoryArrayCount(snapshot: PlatformMetaInventorySnapshotItem, key: string): number {
+  const value = snapshot.inventory[key];
+  return Array.isArray(value) ? value.length : 0;
+}
+
+function metaInventoryCounts(snapshot: PlatformMetaInventorySnapshotItem): string {
+  if (snapshot.errors.length > 0) {
+    return `${snapshot.errors.length} blocker${snapshot.errors.length === 1 ? "" : "s"}`;
+  }
+  const parts = [
+    `${metaInventoryArrayCount(snapshot, "ad_accounts")} accounts`,
+    `${metaInventoryArrayCount(snapshot, "pages")} pages`,
+    `${metaInventoryArrayCount(snapshot, "lead_forms")} forms`,
+    `${metaInventoryArrayCount(snapshot, "whatsapp_phone_numbers")} WA numbers`,
+  ];
+  return parts.join(" · ");
 }
 
 function RunnerStatusView({

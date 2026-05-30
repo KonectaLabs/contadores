@@ -108,8 +108,8 @@ formularios:
   planificar Meta.
 - `upsert_client_profile`: conocimiento revisado del cliente.
 - `stage_ad_campaign`, `stage_creative_asset`, `stage_meta_publish_plan`,
-  `preflight_meta_publish_plan` y `stage_meta_publish_attempt`: ads y
-  publicacion Meta en modo
+  `sync_meta_inventory`, `preflight_meta_publish_plan` y
+  `stage_meta_publish_attempt`: ads, inventario y publicacion Meta en modo
   staged/aprobable.
 - `create_client_update`: actualizaciones de 24 horas para clientes.
 - `ask_human_question` y `answer_human_question`: dudas a Facundo/operador con
@@ -124,14 +124,17 @@ Flujo Meta agent-native:
 3. `stage_creative_asset` guarda prompts, archivos y referencias de imagen/video.
 4. `stage_meta_publish_plan` arma el plan tipado `Campaign -> Ad Set ->
    Ad/Creative`, siempre en modo `PAUSED` y sin writes externos.
-5. Si faltan `ad_account_id`, `page_id`, destino WhatsApp/form, presupuesto,
+5. `sync_meta_inventory` lee cuentas, Pages, formularios, pixels, numeros de
+   WhatsApp y campanas existentes cuando hay credenciales; si faltan, guarda un
+   snapshot `missing_credentials` para observabilidad.
+6. Si faltan `ad_account_id`, `page_id`, destino WhatsApp/form, presupuesto,
    targeting o creatividades, el resultado incluye `required_before_live_publish`
    y el agente debe usar `ask_human_question` en vez de inventar datos.
-6. `preflight_meta_publish_plan` convierte el plan staged en operaciones
+7. `preflight_meta_publish_plan` convierte el plan staged en operaciones
    ordenadas `campaign -> ad_set -> creative -> ad`, guarda el resultado en el
    intento y bloquea cualquier live write si faltan credenciales, aprobacion o
    politica.
-7. `stage_meta_publish_attempt` queda para payloads crudos, respuestas de Meta o
+8. `stage_meta_publish_attempt` queda para payloads crudos, respuestas de Meta o
    ejecuciones futuras hechas por el publicador aprobado.
 
 Ejemplo de plan Meta staged:
