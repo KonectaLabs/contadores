@@ -52,4 +52,6 @@ def test_internal_token_paths_include_runtime_verification() -> None:
     """Deployment checks should be able to verify runtime readiness with the internal token."""
     assert is_internal_bot_api_path("/api/runtime") is True
     assert is_internal_bot_api_path("/api/funnels") is True
+    assert is_internal_bot_api_path("/api/platform/events") is True
+    assert is_internal_bot_api_path("/api/platform/human-questions") is True
     assert is_internal_bot_api_path("/api/workstation/automation/tick") is True

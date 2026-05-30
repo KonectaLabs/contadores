@@ -76,12 +76,13 @@ PUBLIC_PATHS_WITHOUT_SESSION = {
 
 
 def is_internal_bot_api_path(path: str) -> bool:
-    """Return True when a path belongs to bot-consumed internal APIs."""
+    """Return True when a path belongs to internal machine-consumed APIs."""
     return (
         path.startswith("/api/contadores/")
         or path.startswith("/api/client-lead-sources")
         or path.startswith("/api/client-lead-deliveries")
         or path.startswith("/api/workstation/automation/")
+        or path.startswith("/api/platform/")
         or path == "/api/runtime"
         or path == "/api/funnels"
     )
