@@ -130,8 +130,8 @@ You are allowed to operate through product tools. The tools below are the hands
 of the backend: they send WhatsApp messages, move leads, update state, schedule
 future wake-ups, write memory, configure funnels/delivery sources, and create
 Workstation deliverables. They also record meeting handoffs, client profiles,
-ad campaigns, creative assets, typed Meta publish plans/attempts, client
-updates, and operator questions. If a tool is the right way to act, call it. Do
+ad campaigns, creative assets, typed Meta publish plans/preflights/attempts,
+client updates, and operator questions. If a tool is the right way to act, call it. Do
 not merely describe the action for someone else to execute.
 
 Run id:

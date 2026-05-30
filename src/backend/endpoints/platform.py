@@ -19,6 +19,7 @@ from backend.database import (
     PlatformMetaPublishAttempt,
 )
 from backend.platform_profile_extraction import PlatformProfileExtractionError, extract_client_profile_from_meeting
+from backend.meta_ads_publish import MetaAdsPublishError, preflight_meta_publish_attempt
 
 platform_router = APIRouter(prefix="/api/platform", tags=["platform"])
 
@@ -277,6 +278,19 @@ class PlatformMetaPublishAttemptListResponse(BaseModel):
     """Meta publish attempt list response."""
 
     attempts: list[PlatformMetaPublishAttemptResponse]
+
+
+class PlatformMetaPublishPreflightCommand(BaseModel):
+    """Build/check a staged Meta publish plan without live writes by default."""
+
+    live_writes_requested: bool = False
+
+
+class PlatformMetaPublishPreflightResponse(BaseModel):
+    """Meta publish preflight response."""
+
+    attempt: PlatformMetaPublishAttemptResponse
+    preflight: dict[str, Any]
 
 
 class PlatformClientUpdateCommand(BaseModel):
@@ -886,6 +900,32 @@ async def create_meta_publish_attempt(command: PlatformMetaPublishAttemptCommand
         payload={"campaign_id": row.campaign_id, "status": row.status, "approval_status": row.approval_status},
     )
     return serialize_meta_publish_attempt(row)
+
+
+@platform_router.post(
+    "/meta-publish-attempts/{attempt_id}/preflight",
+    response_model=PlatformMetaPublishPreflightResponse,
+)
+async def preflight_meta_publish_attempt_endpoint(
+    attempt_id: str,
+    command: PlatformMetaPublishPreflightCommand,
+) -> PlatformMetaPublishPreflightResponse:
+    """Build an ordered Meta execution graph and persist preflight status."""
+    try:
+        attempt, result = preflight_meta_publish_attempt(
+            attempt_id=attempt_id,
+            live_writes_requested=command.live_writes_requested,
+            source="platform_api",
+            actor="operator",
+        )
+    except MetaAdsPublishError as error:
+        message = str(error)
+        status_code = 404 if message.startswith("Meta publish attempt not found") else 400
+        raise HTTPException(status_code=status_code, detail=message) from error
+    return PlatformMetaPublishPreflightResponse(
+        attempt=serialize_meta_publish_attempt(attempt),
+        preflight=result.model_dump(mode="json"),
+    )
 
 
 @platform_router.get("/client-updates", response_model=PlatformClientUpdateListResponse)

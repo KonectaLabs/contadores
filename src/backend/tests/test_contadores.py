@@ -378,6 +378,8 @@ def test_codex_agent_tool_configures_text_offer_funnel_without_ui(monkeypatch, t
     assert "funnel" in snapshot["result"]["schemas"]
     assert "stage_meta_publish_plan" in snapshot["result"]["agent_native_tools"]
     assert "stage_meta_publish_plan" in snapshot["result"]["schemas"]
+    assert "preflight_meta_publish_plan" in snapshot["result"]["agent_native_tools"]
+    assert "preflight_meta_publish_plan" in snapshot["result"]["schemas"]
     assert "extract_client_profile_from_meeting_transcript" in snapshot["result"]["agent_native_tools"]
     assert "extract_client_profile_from_meeting_transcript" in snapshot["result"]["schemas"]
     assert any(item["id"] == "dentistas" for item in snapshot["result"]["funnels"])
@@ -513,6 +515,12 @@ def test_platform_lifecycle_endpoints_support_agent_native_workflow(monkeypatch,
     )
     assert publish_response.status_code == 200
     assert publish_response.json()["request_payload"]["campaign_name"] == "Dentistas text offer"
+    publish_attempt = publish_response.json()
+
+    preflight_response = client.post(f"/api/platform/meta-publish-attempts/{publish_attempt['id']}/preflight", json={})
+    assert preflight_response.status_code == 200
+    assert preflight_response.json()["preflight"]["status"] == "blocked"
+    assert "schema_version" in preflight_response.json()["preflight"]["blocked_reasons"]
 
     update_response = client.post(
         "/api/platform/client-updates",
@@ -734,6 +742,23 @@ def test_codex_agent_lifecycle_tools_work_without_ui(monkeypatch, tmp_path) -> N
     assert plan_payload["campaign"]["create_status"] == "PAUSED"
     assert plan_payload["ad_sets"][0]["ads"][0]["creative"]["headline"] == "Te despidieron?"
 
+    preflight_result = call_tool(
+        run_id="agent-run-lifecycle",
+        tool_name="preflight_meta_publish_plan",
+        arguments={"attempt_id": plan_result["result"]["attempt"]["id"]},
+    )
+    assert preflight_result["ok"] is True
+    assert preflight_result["result"]["preflight"]["status"] == "preflight_ready"
+    assert preflight_result["result"]["preflight"]["ready_for_live_publish"] is False
+    assert preflight_result["result"]["preflight"]["operations"][0]["path"] == "/act_123/campaigns"
+    assert [operation["object_type"] for operation in preflight_result["result"]["preflight"]["operations"]] == [
+        "campaign",
+        "ad_set",
+        "creative",
+        "ad",
+    ]
+    assert PlatformMetaPublishAttempt.get_by_id(plan_result["result"]["attempt"]["id"]).status == "preflight_ready"
+
     update_result = call_tool(
         run_id="agent-run-lifecycle",
         tool_name="create_client_update",
@@ -788,10 +813,14 @@ def test_codex_agent_lifecycle_tools_work_without_ui(monkeypatch, tmp_path) -> N
         "stage_ad_campaign",
         "stage_meta_publish_attempt",
         "stage_meta_publish_plan",
+        "preflight_meta_publish_plan",
         "ask_human_question",
         "answer_human_question",
     }
-    assert PlatformEvent.list_recent(target_type="meta_publish_attempt")[0].event_type == "meta_publish.plan_staged"
+    assert PlatformEvent.list_recent(target_type="meta_publish_attempt")[0].event_type in {
+        "meta_publish.plan_staged",
+        "meta_publish.preflight_checked",
+    }
 
 
 def test_codex_agent_tool_checks_domain_with_public_prices(monkeypatch, tmp_path) -> None:

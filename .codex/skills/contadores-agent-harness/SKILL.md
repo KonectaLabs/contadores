@@ -69,6 +69,8 @@ Platform lifecycle tools:
 - `stage_creative_asset`: record generated or staged creative assets.
 - `stage_meta_publish_plan`: stage the typed Meta Campaign -> Ad Set ->
   Ad/Creative plan, missing fields, and rollback policy before approval.
+- `preflight_meta_publish_plan`: turn a staged Meta plan into ordered provider
+  operations and persist preflight state without live writes by default.
 - `stage_meta_publish_attempt`: stage the Meta publish request/response without
   live external writes.
 - `create_client_update`: draft or record 24-hour client updates.
@@ -150,8 +152,10 @@ step from that persisted state.
 - Do not publish to Meta from these tools; stage the request and wait for the
   approval/publish mechanism.
 - Prefer `stage_meta_publish_plan` for normal Meta work. Use
-  `stage_meta_publish_attempt` only for raw provider payloads or execution
-  records from an approved publisher.
+  `preflight_meta_publish_plan` after staging to get the ordered campaign,
+  ad-set, creative, and ad operation graph. Use `stage_meta_publish_attempt`
+  only for raw provider payloads or execution records from an approved
+  publisher.
 - Use `ask_human_question` only for real uncertainty. Include context, what you
   are trying to do, options when known, and the safe default action.
 - Do not wait forever for answers. Use the timeout/default action when safe.

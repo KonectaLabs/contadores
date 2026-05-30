@@ -173,13 +173,15 @@ audited, approved plan:
 4. `stage_meta_publish_plan` creates the canonical staged payload:
    `Campaign -> Ad Set -> Ad/Creative`, destination, targeting, budget,
    initial `PAUSED` status, missing fields, and rollback/disable order.
-5. `PlatformMetaPublishAttempt` records the staged plan, future submit payload,
+5. `preflight_meta_publish_plan` turns the staged payload into an ordered,
+   persisted execution graph without live writes by default.
+6. `PlatformMetaPublishAttempt` records the staged plan, future submit payload,
    Meta response, error, idempotency key, and operator approval status.
-6. Lead delivery connects the published ad or lead form back into funnel routing:
+7. Lead delivery connects the published ad or lead form back into funnel routing:
    Click-to-WhatsApp `referral.source_id` for WhatsApp conversations, Meta lead
    form exports/webhooks for Sheets intake, then Client Lead Delivery to the
    client's WhatsApp.
-7. Client updates summarize spend/leads/blockers from events, delivery records,
+8. Client updates summarize spend/leads/blockers from events, delivery records,
    and Meta publish status.
 
 Live Meta writes stay disabled until the platform has:
@@ -193,10 +195,11 @@ Live Meta writes stay disabled until the platform has:
 - operator approval for publish and any budget increase;
 - an idempotency key and rollback plan that starts new objects as `PAUSED`.
 
-Do not add RabbitMQ/Kafka just for Meta publishing yet. The current next step is
-a DB-backed publisher/outbox that reads approved `PlatformMetaPublishAttempt`
-rows, performs preflight reads, submits Meta API calls in order, writes every
-Meta object ID back to platform records, and emits events for each response.
+Do not add RabbitMQ/Kafka just for Meta publishing yet. The first DB-backed
+publisher slice is `preflight_meta_publish_plan`: it reads a staged
+`PlatformMetaPublishAttempt`, performs local preflight, stores ordered Meta
+operations, and emits events. Live submit remains blocked until credentials,
+approval policy, budget controls, and real provider calls are wired.
 
 ## Milestones
 
@@ -255,6 +258,9 @@ Meta object ID back to platform records, and emits events for each response.
      WhatsApp numbers, existing campaigns, and creatives.
    - Stage typed campaign/adset/ad/creative payloads with
      `stage_meta_publish_plan`.
+   - First publisher slice shipped as `preflight_meta_publish_plan`, which
+     builds and persists the ordered Meta operation graph without live writes by
+     default.
    - Require operator approval for live publish and budget changes.
    - Execute live writes through a DB-backed publisher that creates Meta objects
      in `PAUSED` state, stores every returned ID, and keeps retries idempotent.

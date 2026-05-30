@@ -62,6 +62,7 @@ from backend.platform_profile_extraction import (
     PlatformProfileExtractionError,
     extract_client_profile_from_meeting as save_client_profile_from_meeting,
 )
+from backend.meta_ads_publish import MetaAdsPublishError, preflight_meta_publish_attempt
 
 
 DEFAULT_AGENT_SEQUENCE_STEP = "codex_agent"
@@ -393,6 +394,13 @@ class StageMetaPublishPlanArgs(BaseModel):
     idempotency_key: str | None = None
 
 
+class PreflightMetaPublishPlanArgs(BaseModel):
+    """Arguments for checking a staged Meta plan before live publishing."""
+
+    attempt_id: str = Field(min_length=1)
+    live_writes_requested: bool = False
+
+
 class CreateClientUpdateArgs(BaseModel):
     """Arguments for drafting or recording a 24-hour client update."""
 
@@ -585,6 +593,11 @@ def tool_specs() -> list[CodexAgentToolSpec]:
             "stage_meta_publish_plan",
             "Stage a typed Meta Campaign -> Ad Set -> Ad/Creative plan and preflight checklist.",
             StageMetaPublishPlanArgs,
+        ),
+        (
+            "preflight_meta_publish_plan",
+            "Build the ordered Meta publish execution graph and persist preflight state without live writes by default.",
+            PreflightMetaPublishPlanArgs,
         ),
         (
             "create_client_update",
@@ -855,6 +868,7 @@ def read_platform_config(arguments: dict[str, Any]) -> dict[str, Any]:
             "stage_creative_asset",
             "stage_meta_publish_attempt",
             "stage_meta_publish_plan",
+            "preflight_meta_publish_plan",
             "create_client_update",
             "ask_human_question",
             "answer_human_question",
@@ -872,6 +886,7 @@ def read_platform_config(arguments: dict[str, Any]) -> dict[str, Any]:
             "stage_creative_asset": StageCreativeAssetArgs.model_json_schema(),
             "stage_meta_publish_attempt": StageMetaPublishAttemptArgs.model_json_schema(),
             "stage_meta_publish_plan": StageMetaPublishPlanArgs.model_json_schema(),
+            "preflight_meta_publish_plan": PreflightMetaPublishPlanArgs.model_json_schema(),
             "create_client_update": CreateClientUpdateArgs.model_json_schema(),
             "ask_human_question": AskHumanQuestionArgs.model_json_schema(),
             "answer_human_question": AnswerHumanQuestionArgs.model_json_schema(),
@@ -1501,6 +1516,24 @@ def stage_meta_publish_plan(arguments: dict[str, Any]) -> dict[str, Any]:
         "saved": True,
         "attempt": _meta_publish_attempt_payload(row),
         "required_before_live_publish": missing_fields,
+    }
+
+
+def preflight_meta_publish_plan(arguments: dict[str, Any]) -> dict[str, Any]:
+    args = PreflightMetaPublishPlanArgs.model_validate(arguments)
+    try:
+        attempt, result = preflight_meta_publish_attempt(
+            attempt_id=args.attempt_id,
+            live_writes_requested=args.live_writes_requested,
+            source="codex_agent_tool",
+            actor="agent",
+        )
+    except MetaAdsPublishError as error:
+        raise AgentToolError(str(error)) from error
+    return {
+        "saved": True,
+        "attempt": _meta_publish_attempt_payload(attempt),
+        "preflight": result.model_dump(mode="json"),
     }
 
 
@@ -2269,6 +2302,7 @@ TOOL_HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {
     "stage_creative_asset": stage_creative_asset,
     "stage_meta_publish_attempt": stage_meta_publish_attempt,
     "stage_meta_publish_plan": stage_meta_publish_plan,
+    "preflight_meta_publish_plan": preflight_meta_publish_plan,
     "create_client_update": create_client_update,
     "ask_human_question": ask_human_question,
     "answer_human_question": answer_human_question,
@@ -2331,6 +2365,8 @@ def _audit_target_for_tool(tool_name: str, arguments: dict[str, Any]) -> tuple[s
         return "meta_publish_attempt", str(arguments.get("idempotency_key") or arguments.get("campaign_id") or "")
     if tool_name == "stage_meta_publish_plan":
         return "meta_publish_attempt", str(arguments.get("idempotency_key") or arguments.get("campaign_id") or "")
+    if tool_name == "preflight_meta_publish_plan":
+        return "meta_publish_attempt", str(arguments.get("attempt_id") or "")
     if tool_name == "create_client_update":
         return "client_update", str(arguments.get("client_id") or arguments.get("campaign_id") or "")
     if tool_name == "ask_human_question":

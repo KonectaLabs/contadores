@@ -3425,6 +3425,51 @@ class PlatformMetaPublishAttempt(SQLModel, table=True):
             return row
 
     @classmethod
+    def get_by_id(cls, attempt_id: str) -> Optional["PlatformMetaPublishAttempt"]:
+        """Return one publish attempt by ID."""
+        clean_id = (attempt_id or "").strip()
+        if not clean_id:
+            return None
+        with Session(engine) as session:
+            row = session.get(cls, clean_id)
+            if row is not None:
+                session.expunge(row)
+            return row
+
+    @classmethod
+    def update_execution(
+        cls,
+        attempt_id: str,
+        *,
+        status: str | None = None,
+        approval_status: str | None = None,
+        response_payload: dict[str, Any] | None = None,
+        error: str | None = None,
+    ) -> Optional["PlatformMetaPublishAttempt"]:
+        """Update publish execution/preflight state."""
+        clean_id = (attempt_id or "").strip()
+        if not clean_id:
+            return None
+        with Session(engine) as session:
+            row = session.get(cls, clean_id)
+            if row is None:
+                return None
+            if status is not None:
+                row.status = (status or row.status or "staged").strip() or "staged"
+            if approval_status is not None:
+                row.approval_status = (approval_status or row.approval_status or "pending").strip() or "pending"
+            if response_payload is not None:
+                row.response_json = _json_dumps(response_payload)
+            if error is not None:
+                row.error = str(error or "")[:12000]
+            row.updated_at = datetime.now(timezone.utc)
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            session.expunge(row)
+            return row
+
+    @classmethod
     def list_recent(
         cls,
         *,

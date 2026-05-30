@@ -107,8 +107,9 @@ formularios:
   transcript en un perfil draft con segmentos, angulos y datos necesarios para
   planificar Meta.
 - `upsert_client_profile`: conocimiento revisado del cliente.
-- `stage_ad_campaign`, `stage_creative_asset`, `stage_meta_publish_plan` y
-  `stage_meta_publish_attempt`: ads y publicacion Meta en modo
+- `stage_ad_campaign`, `stage_creative_asset`, `stage_meta_publish_plan`,
+  `preflight_meta_publish_plan` y `stage_meta_publish_attempt`: ads y
+  publicacion Meta en modo
   staged/aprobable.
 - `create_client_update`: actualizaciones de 24 horas para clientes.
 - `ask_human_question` y `answer_human_question`: dudas a Facundo/operador con
@@ -126,7 +127,11 @@ Flujo Meta agent-native:
 5. Si faltan `ad_account_id`, `page_id`, destino WhatsApp/form, presupuesto,
    targeting o creatividades, el resultado incluye `required_before_live_publish`
    y el agente debe usar `ask_human_question` en vez de inventar datos.
-6. `stage_meta_publish_attempt` queda para payloads crudos, respuestas de Meta o
+6. `preflight_meta_publish_plan` convierte el plan staged en operaciones
+   ordenadas `campaign -> ad_set -> creative -> ad`, guarda el resultado en el
+   intento y bloquea cualquier live write si faltan credenciales, aprobacion o
+   politica.
+7. `stage_meta_publish_attempt` queda para payloads crudos, respuestas de Meta o
    ejecuciones futuras hechas por el publicador aprobado.
 
 Ejemplo de plan Meta staged:
