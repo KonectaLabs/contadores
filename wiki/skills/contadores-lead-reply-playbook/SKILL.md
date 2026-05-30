@@ -121,8 +121,9 @@ Yo escribo desde Argentina y trabajamos remoto para toda Latinoamerica.
 - Guarantee: if there are no new consultations/prospects to review in 30 days,
   money back. Never promise closed clients, legal cases, revenue, guaranteed
   appointments, ad approval, exact lead volume, rankings, or exact ROI.
-- Scheduling v1: no automatic calendar link. Collect email, day, time, and timezone
-  for a 15-minute call, then hand off to a human.
+- Scheduling: no automatic calendar link in WhatsApp. Collect email, day, time,
+  and timezone for a 15-minute call, then the platform can run
+  `schedule_platform_meeting` to build or create the Google Calendar event.
 - If a factual question falls outside this source of truth and current
   `funnel_info`, escalate instead of inventing.
 
@@ -307,9 +308,10 @@ sends that text to the lead and appends it to
 `references/operator-learned-answers.md` so similar questions can be answered
 next time.
 
-The bot does not book Google Calendar or Meeting in v1. It collects email, day,
-time, and timezone when needed. Once those details are complete, it confirms by
-WhatsApp that Facu will coordinate and the CRM alert must carry the details.
+The bot does not send calendar links. It collects email, day, time, and timezone
+when needed. Once those details are complete, the platform should persist a
+meeting record and use `schedule_platform_meeting`; if live calendar credentials
+are missing, confirm by WhatsApp that Facu will coordinate and keep the CRM alert.
 
 ### Lead says "lo analizo", "consulto", "retornamos", "te aviso"
 

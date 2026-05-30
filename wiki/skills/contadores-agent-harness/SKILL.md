@@ -56,8 +56,10 @@ Platform/config tools:
 
 Platform lifecycle tools:
 
-- `create_platform_meeting`: record meeting scheduling/handoff state without
-  creating a calendar event.
+- `create_platform_meeting`: record meeting scheduling/handoff state.
+- `schedule_platform_meeting`: build or create the Google Calendar event for a
+  meeting; dry-run first, and require explicit live writes plus calendar
+  credentials for real event creation.
 - `attach_meeting_transcript`: attach transcript text/path and extracted client
   fields after conversion.
 - `extract_client_profile_from_meeting_transcript`: run the DSPy extraction
@@ -149,6 +151,10 @@ step from that persisted state.
 
 - Use `/api/platform/overview` when you need the same lifecycle cockpit read
   model the `Ops` tab uses.
+- For scheduling, record the meeting first, then call
+  `schedule_platform_meeting` with calendar ID and internal attendees. If the
+  result is `calendar_blocked`, ask a bounded operator question or continue with
+  the safe fallback; do not invent emails, timezones, or calendar IDs.
 - After a conversion transcript is attached, prefer
   `extract_client_profile_from_meeting_transcript` before staging ads or Meta
   plans. Use the saved `ClientProfile.knowledge.meta_planning` and

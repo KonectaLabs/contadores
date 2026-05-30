@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 from sqlmodel import SQLModel, Session, create_engine
 
 import backend.ai.contadores_conversation_bot as contadores_conversation_bot_module
+import backend.calendar_events as calendar_events_module
 import backend.database as database_module
 import backend.endpoints.contadores as contadores_endpoints
 import backend.endpoints.workstation as workstation_endpoints
@@ -386,6 +387,8 @@ def test_codex_agent_tool_configures_text_offer_funnel_without_ui(monkeypatch, t
     assert "preflight_meta_publish_plan" in snapshot["result"]["schemas"]
     assert "approve_meta_publish_plan" in snapshot["result"]["agent_native_tools"]
     assert "approve_meta_publish_plan" in snapshot["result"]["schemas"]
+    assert "schedule_platform_meeting" in snapshot["result"]["agent_native_tools"]
+    assert "schedule_platform_meeting" in snapshot["result"]["schemas"]
     assert "sync_meta_inventory" in snapshot["result"]["agent_native_tools"]
     assert "sync_meta_inventory" in snapshot["result"]["schemas"]
     assert snapshot["result"]["meta_marketing"]["live_writes_enabled"] is False
@@ -799,6 +802,131 @@ def test_meta_publish_approval_gate_requires_inventory_and_budget(monkeypatch, t
     assert "META_MARKETING_ACCESS_TOKEN" in live_preflight["result"]["preflight"]["blocked_reasons"]
 
 
+def test_platform_meeting_calendar_gate_builds_and_creates_event(monkeypatch, tmp_path) -> None:
+    """Meeting scheduling should build the Calendar payload and gate live writes on credentials."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.delenv("GOOGLE_CALENDAR_SERVICE_ACCOUNT_FILE", raising=False)
+    monkeypatch.delenv("GOOGLE_CALENDAR_DELEGATED_USER", raising=False)
+    scheduled_at = datetime(2026, 7, 2, 18, 0, tzinfo=timezone.utc)
+    meeting_result = call_tool(
+        run_id="agent-run-calendar",
+        tool_name="create_platform_meeting",
+        arguments={
+            "lead_id": "lead-calendar-1",
+            "client_id": "client-calendar-1",
+            "funnel_id": "abogados",
+            "lead_email": "Lead.Calendar@Example.com",
+            "timezone": "America/Argentina/Buenos_Aires",
+            "requested_day": "martes",
+            "requested_time": "15:00",
+            "context_summary": "Lead quiere confirmar si el plan de 599 incluye pagina.",
+            "scheduled_at": scheduled_at,
+            "idempotency_key": "meeting-calendar-1",
+        },
+    )
+    assert meeting_result["ok"] is True
+    meeting_id = meeting_result["result"]["meeting"]["id"]
+
+    dry_result = call_tool(
+        run_id="agent-run-calendar",
+        tool_name="schedule_platform_meeting",
+        arguments={
+            "meeting_id": meeting_id,
+            "calendar_id": "team-calendar@example.com",
+            "internal_attendees": ["facundo@example.com", "yoel@example.com"],
+        },
+    )
+    assert dry_result["ok"] is True
+    assert dry_result["result"]["calendar"]["status"] == "calendar_ready"
+    assert dry_result["result"]["calendar"]["live_write_executed"] is False
+    assert dry_result["result"]["calendar"]["attendees"] == [
+        "lead.calendar@example.com",
+        "facundo@example.com",
+        "yoel@example.com",
+    ]
+    assert dry_result["result"]["calendar"]["event_payload"]["start"]["timeZone"] == "America/Argentina/Buenos_Aires"
+    assert dry_result["result"]["calendar"]["event_payload"]["start"]["dateTime"] == "2026-07-02T15:00:00-03:00"
+    assert PlatformMeeting.get_by_id(meeting_id).status == "calendar_ready"
+
+    blocked_live = call_tool(
+        run_id="agent-run-calendar",
+        tool_name="schedule_platform_meeting",
+        arguments={
+            "meeting_id": meeting_id,
+            "calendar_id": "team-calendar@example.com",
+            "internal_attendees": ["facundo@example.com", "yoel@example.com"],
+            "live_writes_requested": True,
+        },
+    )
+    assert blocked_live["ok"] is True
+    assert blocked_live["result"]["calendar"]["status"] == "calendar_blocked"
+    assert "GOOGLE_CALENDAR_SERVICE_ACCOUNT_FILE" in blocked_live["result"]["calendar"]["blocked_reasons"]
+    assert "GOOGLE_CALENDAR_DELEGATED_USER" in blocked_live["result"]["calendar"]["blocked_reasons"]
+
+    insert_calls: list[dict] = []
+
+    def fake_insert(calendar_id: str, event_payload: dict, send_updates: str, conference_data_version: int) -> dict:
+        assert calendar_id == "team-calendar@example.com"
+        assert send_updates == "all"
+        assert conference_data_version == 1
+        assert event_payload["attendees"][0]["email"] == "lead.calendar@example.com"
+        insert_calls.append(event_payload)
+        return {"id": "calendar-event-1", "htmlLink": "https://calendar.google.com/event?eid=1"}
+
+    monkeypatch.setenv("GOOGLE_CALENDAR_SERVICE_ACCOUNT_FILE", str(tmp_path / "service-account.json"))
+    monkeypatch.setenv("GOOGLE_CALENDAR_DELEGATED_USER", "scheduler@example.com")
+    monkeypatch.setattr(calendar_events_module, "_insert_google_calendar_event", fake_insert)
+    live_result = call_tool(
+        run_id="agent-run-calendar",
+        tool_name="schedule_platform_meeting",
+        arguments={
+            "meeting_id": meeting_id,
+            "calendar_id": "team-calendar@example.com",
+            "internal_attendees": ["facundo@example.com", "yoel@example.com"],
+            "create_google_meet": True,
+            "live_writes_requested": True,
+        },
+    )
+    assert live_result["ok"] is True
+    assert live_result["result"]["calendar"]["status"] == "scheduled"
+    assert live_result["result"]["calendar"]["calendar_event_id"] == "calendar-event-1"
+    scheduled = PlatformMeeting.get_by_id(meeting_id)
+    assert scheduled.status == "scheduled"
+    assert scheduled.calendar_event_id == "calendar-event-1"
+    assert scheduled.calendar_event_link == "https://calendar.google.com/event?eid=1"
+    assert PlatformEvent.list_recent(target_type="meeting", target_id=meeting_id)[0].event_type == "meeting.calendar_event_checked"
+    assert len(insert_calls) == 1
+
+    duplicate_live_result = call_tool(
+        run_id="agent-run-calendar",
+        tool_name="schedule_platform_meeting",
+        arguments={
+            "meeting_id": meeting_id,
+            "calendar_id": "team-calendar@example.com",
+            "internal_attendees": ["facundo@example.com", "yoel@example.com"],
+            "live_writes_requested": True,
+        },
+    )
+    assert duplicate_live_result["ok"] is True
+    assert duplicate_live_result["result"]["calendar"]["status"] == "scheduled"
+    assert duplicate_live_result["result"]["calendar"]["live_write_executed"] is False
+    assert duplicate_live_result["result"]["calendar"]["calendar_event_id"] == "calendar-event-1"
+    assert len(insert_calls) == 1
+
+    dry_after_scheduled = call_tool(
+        run_id="agent-run-calendar",
+        tool_name="schedule_platform_meeting",
+        arguments={
+            "meeting_id": meeting_id,
+            "calendar_id": "team-calendar@example.com",
+            "internal_attendees": ["facundo@example.com", "yoel@example.com"],
+        },
+    )
+    assert dry_after_scheduled["ok"] is True
+    assert dry_after_scheduled["result"]["calendar"]["status"] == "scheduled"
+    assert PlatformMeeting.get_by_id(meeting_id).status == "scheduled"
+
+
 def test_platform_lifecycle_endpoints_support_agent_native_workflow(monkeypatch, tmp_path) -> None:
     """Lifecycle endpoints should expose the full platform without requiring UI configuration."""
     configure_contadores_db(monkeypatch, tmp_path)
@@ -815,14 +943,26 @@ def test_platform_lifecycle_endpoints_support_agent_native_workflow(monkeypatch,
             "client_id": "client-123",
             "funnel_id": "dentistas",
             "lead_email": "Lead@Example.com",
+            "timezone": "America/Argentina/Buenos_Aires",
             "requested_day": "martes",
             "requested_time": "15:00",
             "context_summary": "Lead quiere saber si el plan incluye pagina.",
+            "scheduled_at": (now_utc() + timedelta(days=1)).isoformat(),
         },
     )
     assert meeting_response.status_code == 200
     meeting = meeting_response.json()
     assert meeting["lead_email"] == "lead@example.com"
+
+    calendar_response = client.post(
+        f"/api/platform/meetings/{meeting['id']}/calendar-event",
+        json={
+            "calendar_id": "team-calendar@example.com",
+            "internal_attendees": ["facundo@example.com", "yoel@example.com"],
+        },
+    )
+    assert calendar_response.status_code == 200
+    assert calendar_response.json()["calendar"]["status"] == "calendar_ready"
 
     transcript_response = client.post(
         f"/api/platform/meetings/{meeting['id']}/transcript",
@@ -987,14 +1127,28 @@ def test_codex_agent_lifecycle_tools_work_without_ui(monkeypatch, tmp_path) -> N
             "client_id": "client-agent-1",
             "funnel_id": "abogados",
             "lead_email": "lead-agent@example.com",
+            "timezone": "America/Argentina/Buenos_Aires",
             "requested_day": "jueves",
             "requested_time": "10:30",
             "context_summary": "Lead quiere avanzar con el plan mensual.",
+            "scheduled_at": now_utc() + timedelta(days=2),
             "idempotency_key": "meeting-agent-1",
         },
     )
     assert meeting_result["ok"] is True
     meeting_id = meeting_result["result"]["meeting"]["id"]
+
+    schedule_result = call_tool(
+        run_id="agent-run-lifecycle",
+        tool_name="schedule_platform_meeting",
+        arguments={
+            "meeting_id": meeting_id,
+            "calendar_id": "team-calendar@example.com",
+            "internal_attendees": ["facundo@example.com", "yoel@example.com"],
+        },
+    )
+    assert schedule_result["ok"] is True
+    assert schedule_result["result"]["calendar"]["status"] == "calendar_ready"
 
     transcript_result = call_tool(
         run_id="agent-run-lifecycle",
@@ -1231,6 +1385,7 @@ def test_codex_agent_lifecycle_tools_work_without_ui(monkeypatch, tmp_path) -> N
     assert [call.status for call in calls] == ["succeeded"] * len(calls)
     assert {call.tool_name for call in calls} >= {
         "create_platform_meeting",
+        "schedule_platform_meeting",
         "extract_client_profile_from_meeting_transcript",
         "stage_ad_campaign",
         "stage_meta_publish_attempt",

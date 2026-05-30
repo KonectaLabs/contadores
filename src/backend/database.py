@@ -16,6 +16,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Literal, Optional, overload
 from urllib.parse import parse_qs, unquote, urlsplit, urlunsplit
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import phonenumbers
 from pydantic import BaseModel, Field as PydanticField, field_serializer
@@ -2915,6 +2916,29 @@ def _meta_publish_idempotency_payload(value: dict[str, Any] | None) -> dict[str,
     return payload
 
 
+def _meeting_zone_or_utc(timezone_name: str) -> ZoneInfo | timezone:
+    """Return the meeting timezone, falling back to UTC when missing or invalid."""
+    clean_timezone = (timezone_name or "").strip()
+    if not clean_timezone:
+        return timezone.utc
+    try:
+        return ZoneInfo(clean_timezone)
+    except ZoneInfoNotFoundError:
+        return timezone.utc
+
+
+def _normalize_platform_meeting_scheduled_at(
+    scheduled_at: datetime | None,
+    timezone_name: str,
+) -> datetime | None:
+    """Persist meeting start times as UTC-naive because SQLite drops tzinfo."""
+    if scheduled_at is None:
+        return None
+    if scheduled_at.tzinfo is None:
+        scheduled_at = scheduled_at.replace(tzinfo=_meeting_zone_or_utc(timezone_name))
+    return scheduled_at.astimezone(timezone.utc).replace(tzinfo=None)
+
+
 class PlatformMeeting(SQLModel, table=True):
     """Meeting scheduling and transcript handoff state."""
 
@@ -2929,7 +2953,12 @@ class PlatformMeeting(SQLModel, table=True):
     timezone: str = Field(default="")
     requested_day: str = Field(default="")
     requested_time: str = Field(default="")
+    calendar_id: str = Field(default="")
     calendar_event_id: str = Field(default="", index=True)
+    calendar_event_link: str = Field(default="")
+    calendar_event_payload_json: str = Field(default="{}")
+    calendar_result_json: str = Field(default="{}")
+    calendar_error: str = Field(default="")
     context_summary: str = Field(default="")
     transcript_text: str = Field(default="")
     transcript_path: str = Field(default="")
@@ -2951,7 +2980,12 @@ class PlatformMeeting(SQLModel, table=True):
         timezone_name: str = "",
         requested_day: str = "",
         requested_time: str = "",
+        calendar_id: str = "",
         calendar_event_id: str = "",
+        calendar_event_link: str = "",
+        calendar_event_payload: dict[str, Any] | None = None,
+        calendar_result: dict[str, Any] | None = None,
+        calendar_error: str = "",
         context_summary: str = "",
         transcript_text: str = "",
         transcript_path: str = "",
@@ -2976,16 +3010,60 @@ class PlatformMeeting(SQLModel, table=True):
                 timezone=(timezone_name or "").strip(),
                 requested_day=(requested_day or "").strip(),
                 requested_time=(requested_time or "").strip(),
+                calendar_id=(calendar_id or "").strip(),
                 calendar_event_id=(calendar_event_id or "").strip(),
+                calendar_event_link=(calendar_event_link or "").strip(),
+                calendar_event_payload_json=_json_dumps(calendar_event_payload or {}),
+                calendar_result_json=_json_dumps(calendar_result or {}),
+                calendar_error=str(calendar_error or "")[:12000],
                 context_summary=str(context_summary or "")[:4000],
                 transcript_text=str(transcript_text or "")[:50000],
                 transcript_path=(transcript_path or "").strip(),
                 extracted_profile_json=_json_dumps(extracted_profile or {}),
                 idempotency_key=clean_key,
-                scheduled_at=scheduled_at,
+                scheduled_at=_normalize_platform_meeting_scheduled_at(scheduled_at, timezone_name),
                 created_at=now,
                 updated_at=now,
             )
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            session.expunge(row)
+            return row
+
+    @classmethod
+    def update_calendar(
+        cls,
+        meeting_id: str,
+        *,
+        status: str | None = None,
+        calendar_id: str | None = None,
+        calendar_event_id: str | None = None,
+        calendar_event_link: str | None = None,
+        calendar_event_payload: dict[str, Any] | None = None,
+        calendar_result: dict[str, Any] | None = None,
+        calendar_error: str | None = None,
+    ) -> Optional["PlatformMeeting"]:
+        """Persist Google Calendar scheduling state for one meeting."""
+        with Session(engine) as session:
+            row = session.get(cls, meeting_id)
+            if row is None:
+                return None
+            if status is not None:
+                row.status = (status or row.status or "collecting_details").strip() or "collecting_details"
+            if calendar_id is not None:
+                row.calendar_id = (calendar_id or "").strip()
+            if calendar_event_id is not None:
+                row.calendar_event_id = (calendar_event_id or "").strip()
+            if calendar_event_link is not None:
+                row.calendar_event_link = (calendar_event_link or "").strip()
+            if calendar_event_payload is not None:
+                row.calendar_event_payload_json = _json_dumps(calendar_event_payload)
+            if calendar_result is not None:
+                row.calendar_result_json = _json_dumps(calendar_result)
+            if calendar_error is not None:
+                row.calendar_error = str(calendar_error or "")[:12000]
+            row.updated_at = datetime.now(timezone.utc)
             session.add(row)
             session.commit()
             session.refresh(row)
@@ -3071,6 +3149,14 @@ class PlatformMeeting(SQLModel, table=True):
     def extracted_profile(self) -> dict[str, Any]:
         """Return parsed extracted profile fields."""
         return _json_object(self.extracted_profile_json)
+
+    def calendar_event_payload(self) -> dict[str, Any]:
+        """Return parsed Google Calendar event payload."""
+        return _json_object(self.calendar_event_payload_json)
+
+    def calendar_result(self) -> dict[str, Any]:
+        """Return parsed Google Calendar scheduling result."""
+        return _json_object(self.calendar_result_json)
 
 
 class PlatformClientProfile(SQLModel, table=True):
@@ -6504,6 +6590,7 @@ def init_db() -> None:
     ensure_workstation_codex_thread_columns()
     ensure_platform_human_question_context_columns()
     ensure_platform_meta_publish_attempt_idempotency_index()
+    ensure_platform_meeting_calendar_columns()
     logger.info(f"Database initialized at {DATABASE_URL}")
 
 
@@ -6530,6 +6617,26 @@ def ensure_platform_meta_publish_attempt_idempotency_index() -> None:
             WHERE idempotency_key IS NOT NULL
             """
         )
+
+
+def ensure_platform_meeting_calendar_columns() -> None:
+    """Add Google Calendar scheduling columns to existing platform meeting tables."""
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        if "platform_meetings" not in inspector.get_table_names():
+            return
+        columns = {column["name"] for column in inspector.get_columns("platform_meetings")}
+        column_sql = {
+            "calendar_id": "ALTER TABLE platform_meetings ADD COLUMN calendar_id TEXT NOT NULL DEFAULT ''",
+            "calendar_event_link": "ALTER TABLE platform_meetings ADD COLUMN calendar_event_link TEXT NOT NULL DEFAULT ''",
+            "calendar_event_payload_json": "ALTER TABLE platform_meetings ADD COLUMN calendar_event_payload_json TEXT NOT NULL DEFAULT '{}'",
+            "calendar_result_json": "ALTER TABLE platform_meetings ADD COLUMN calendar_result_json TEXT NOT NULL DEFAULT '{}'",
+            "calendar_error": "ALTER TABLE platform_meetings ADD COLUMN calendar_error TEXT NOT NULL DEFAULT ''",
+        }
+        for column_name, sql in column_sql.items():
+            if column_name not in columns:
+                connection.exec_driver_sql(sql)
+                logger.info("Added missing platform_meetings.%s column.", column_name)
 
 
 def ensure_contadores_funnel_columns() -> None:

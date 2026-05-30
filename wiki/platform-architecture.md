@@ -35,10 +35,11 @@ The repo already has the right single-server base:
   frontend `Ops` tab: blockers, human questions, campaigns, Meta publish
   attempts, meetings, client updates, assets, and recent events.
 
-The major missing pieces are the live external integrations and cockpit depth:
-Google Calendar event creation, transcript ingestion from real calls into the
-meeting record, review/approval UX, Meta Marketing API writes, WhatsApp delivery
-for Facundo doubts, and richer event/metric views across the lifecycle.
+The major missing pieces are live credentials plus cockpit depth: production
+Google Calendar credentials/internal attendee ownership, transcript ingestion
+from real calls into the meeting record, review/approval UX, Meta Marketing API
+writes, WhatsApp delivery for Facundo doubts, and richer event/metric views
+across the lifecycle.
 
 ## Research Decisions
 
@@ -50,10 +51,11 @@ for Facundo doubts, and richer event/metric views across the lifecycle.
 - Sheets ingestion: keep the current pull/import path; the Sheets values API is
   a stable source for row values by spreadsheet ID and range.
   Source: https://developers.google.com/workspace/sheets/api/guides/values
-- Scheduling: use Google Calendar `events.insert` for real event creation once
-  credentials and attendee rules are available. Until then, keep the current
-  detail collection and human handoff.
-  Source: https://developers.google.com/workspace/calendar/api/guides/create-events
+- Scheduling: use Google Calendar `events.insert` with explicit attendees,
+  start/end timezone, and send updates. Service-account attendee writes require
+  delegated Workspace authority, so the platform keeps a dry-run gate when
+  credentials are missing.
+  Source: https://developers.google.com/workspace/calendar/api/v3/reference/events/insert
 - WhatsApp: keep production on WhatsApp Cloud API/templates/webhooks, with
   `wacli` only as a local/operator fallback. External sends must stay
   outbox-first and idempotent.
@@ -142,8 +144,9 @@ Add these domains incrementally:
 - `PlatformEvent`: append-only event stream for sheet import, outbound queue,
   send result, inbound message, AI decision, tool call, scheduling, conversion,
   ad draft, publish attempt, delivery, client update, and human question.
-- `Meeting`: collected scheduling details, Google Calendar event ID, attendees,
-  timezone, status, transcript link/file, extracted profile status.
+- `Meeting`: collected scheduling details, Google Calendar payload/result,
+  event ID/link, attendees, timezone, status, transcript link/file, extracted
+  profile status.
 - `ClientProfile`: normalized business, offer, market, objections, target
   segments, locations, tone, proof, exclusions, and reviewed knowledge.
 - `Campaign`: client, funnel, objective, budget plan, Meta campaign/adset/ad IDs,
@@ -156,6 +159,24 @@ Add these domains incrementally:
   WhatsApp delivery state.
 - `HumanQuestion`: Facundo/operator doubt with exact question, options, timeout,
   default action, WhatsApp correlation, answer, and promoted knowledge.
+
+## Meeting Scheduling Flow
+
+Scheduling is agent-native and does not depend on the legacy scheduling-link UI:
+
+1. The WhatsApp bot collects email, day, time, and timezone after the offer.
+2. `create_platform_meeting` records the handoff state and conversation context.
+3. `schedule_platform_meeting` builds the Google Calendar event payload with
+   start/end timezone, lead attendee, internal attendees, description context,
+   and private platform IDs.
+4. Dry-run is allowed without credentials and stores `calendar_ready` or
+   `calendar_blocked` on the meeting.
+5. Live event creation requires explicit `live_writes_requested=true`,
+   `PLATFORM_MEETING_CALENDAR_ID`, internal attendees, a Google service account,
+   and a delegated Workspace user because Calendar attendees require delegated
+   authority for service-account writes.
+6. Successful writes store `calendar_event_id`, `calendar_event_link`, provider
+   response, and an event in `platform_events`.
 
 ## Meta Ads Platform Flow
 
@@ -242,6 +263,9 @@ state pass. It still performs no external writes.
    - Store meeting records and event IDs.
    - Create events only when email, date/time, timezone, and attendee rules are
      clear.
+   - First scheduling gate shipped as `schedule_platform_meeting` plus
+     `/api/platform/meetings/{meeting_id}/calendar-event`: dry-run payload,
+     credential blockers, and optional live Google Calendar create.
 
 5. Human doubt escalation
    - Connect `HumanQuestion` to WhatsApp delivery/correlation.
@@ -291,8 +315,9 @@ state pass. It still performs no external writes.
 
 ## Known Blockers
 
-- No Google Calendar credentials or final attendee/calendar ownership policy.
-- No Meta Marketing API credentials, ad account IDs, or publish approval policy.
+- No Google Calendar credentials/internal attendee env on the production server.
+- No Meta Marketing API credentials, ad account IDs, or final live publish
+  executor.
 - No current Loom for the $599 offer, so the default offer path is text-only.
 - Production `data/funnels.json` may still override the versioned seed; rollout
   must inspect/update the server override before deployment.

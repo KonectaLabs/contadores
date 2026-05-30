@@ -7,7 +7,7 @@ import asyncio
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 import httpx
 from pydantic import BaseModel, Field, ValidationError
@@ -50,6 +50,7 @@ from backend.database import (
     WorkstationClientStatus,
     WorkstationClientWorkType,
 )
+from backend.calendar_events import CalendarSchedulingError, schedule_meeting_calendar_event
 from backend.funnel_config import (
     FunnelDefinition,
     FunnelStrategyDefinition,
@@ -244,6 +245,18 @@ class CreatePlatformMeetingArgs(BaseModel):
     extracted_profile: dict[str, Any] = Field(default_factory=dict)
     idempotency_key: str | None = None
     scheduled_at: datetime | None = None
+
+
+class SchedulePlatformMeetingArgs(BaseModel):
+    """Arguments for building or creating a Google Calendar meeting event."""
+
+    meeting_id: str = Field(min_length=1)
+    calendar_id: str = ""
+    internal_attendees: list[str] = Field(default_factory=list)
+    duration_minutes: int = Field(default=15, ge=5, le=180)
+    create_google_meet: bool = False
+    live_writes_requested: bool = False
+    send_updates: Literal["all", "externalOnly", "none"] = "all"
 
 
 class AttachMeetingTranscriptArgs(BaseModel):
@@ -585,8 +598,13 @@ def tool_specs() -> list[CodexAgentToolSpec]:
         ),
         (
             "create_platform_meeting",
-            "Record meeting scheduling or handoff state without using the UI or creating a calendar event.",
+            "Record meeting scheduling or handoff state without using the UI.",
             CreatePlatformMeetingArgs,
+        ),
+        (
+            "schedule_platform_meeting",
+            "Build or create the Google Calendar event for a meeting with attendees, timezone, context, and credential blockers.",
+            SchedulePlatformMeetingArgs,
         ),
         (
             "attach_meeting_transcript",
@@ -912,6 +930,7 @@ def read_platform_config(arguments: dict[str, Any]) -> dict[str, Any]:
             "upsert_funnel_config",
             "upsert_client_lead_delivery_source",
             "create_platform_meeting",
+            "schedule_platform_meeting",
             "attach_meeting_transcript",
             "extract_client_profile_from_meeting_transcript",
             "upsert_client_profile",
@@ -933,6 +952,7 @@ def read_platform_config(arguments: dict[str, Any]) -> dict[str, Any]:
             "configure_text_offer_funnel": ConfigureTextOfferFunnelArgs.model_json_schema(),
             "client_lead_delivery_source": UpsertClientLeadDeliverySourceArgs.model_json_schema(),
             "create_platform_meeting": CreatePlatformMeetingArgs.model_json_schema(),
+            "schedule_platform_meeting": SchedulePlatformMeetingArgs.model_json_schema(),
             "extract_client_profile_from_meeting_transcript": ExtractClientProfileFromMeetingArgs.model_json_schema(),
             "upsert_client_profile": UpsertClientProfileArgs.model_json_schema(),
             "stage_ad_campaign": StageAdCampaignArgs.model_json_schema(),
@@ -1208,7 +1228,12 @@ def _meeting_payload(row: PlatformMeeting) -> dict[str, Any]:
         "timezone": row.timezone,
         "requested_day": row.requested_day,
         "requested_time": row.requested_time,
+        "calendar_id": row.calendar_id,
         "calendar_event_id": row.calendar_event_id,
+        "calendar_event_link": row.calendar_event_link,
+        "calendar_event_payload": row.calendar_event_payload(),
+        "calendar_result": row.calendar_result(),
+        "calendar_error": row.calendar_error,
         "context_summary": row.context_summary,
         "transcript_path": row.transcript_path,
         "has_transcript_text": bool(row.transcript_text.strip()),
@@ -1357,6 +1382,29 @@ def create_platform_meeting(arguments: dict[str, Any]) -> dict[str, Any]:
         payload={"lead_id": row.lead_id, "client_id": row.client_id, "status": row.status},
     )
     return {"saved": True, "meeting": _meeting_payload(row)}
+
+
+def schedule_platform_meeting(arguments: dict[str, Any]) -> dict[str, Any]:
+    args = SchedulePlatformMeetingArgs.model_validate(arguments)
+    try:
+        row, result = schedule_meeting_calendar_event(
+            meeting_id=args.meeting_id,
+            calendar_id=args.calendar_id,
+            internal_attendees=args.internal_attendees,
+            duration_minutes=args.duration_minutes,
+            create_google_meet=args.create_google_meet,
+            live_writes_requested=args.live_writes_requested,
+            send_updates=args.send_updates,
+            source="codex_agent_tool",
+            actor="agent",
+        )
+    except CalendarSchedulingError as error:
+        raise AgentToolError(str(error)) from error
+    return {
+        "saved": True,
+        "meeting": _meeting_payload(row),
+        "calendar": result.model_dump(mode="json"),
+    }
 
 
 def attach_meeting_transcript(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -2419,6 +2467,7 @@ TOOL_HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {
     "upsert_funnel_config": upsert_funnel_config,
     "upsert_client_lead_delivery_source": upsert_client_lead_delivery_source,
     "create_platform_meeting": create_platform_meeting,
+    "schedule_platform_meeting": schedule_platform_meeting,
     "attach_meeting_transcript": attach_meeting_transcript,
     "extract_client_profile_from_meeting_transcript": extract_client_profile_from_meeting_transcript,
     "upsert_client_profile": upsert_client_profile,
@@ -2477,6 +2526,8 @@ def _audit_target_for_tool(tool_name: str, arguments: dict[str, Any]) -> tuple[s
         return "client_lead_source", str(arguments.get("source_id") or arguments.get("label") or "")
     if tool_name == "create_platform_meeting":
         return "meeting", str(arguments.get("idempotency_key") or arguments.get("lead_id") or arguments.get("client_id") or "")
+    if tool_name == "schedule_platform_meeting":
+        return "meeting", str(arguments.get("meeting_id") or "")
     if tool_name == "attach_meeting_transcript":
         return "meeting", str(arguments.get("meeting_id") or "")
     if tool_name == "extract_client_profile_from_meeting_transcript":

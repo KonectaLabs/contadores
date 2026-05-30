@@ -101,8 +101,9 @@ uv run python -m backend.ai.codex_agent_runtime call \
 El ciclo operativo tambien se puede mover por tools auditadas, sin depender de
 formularios:
 
-- `create_platform_meeting` y `attach_meeting_transcript`: scheduling,
-  transcript y handoff post-conversion.
+- `create_platform_meeting`, `schedule_platform_meeting` y
+  `attach_meeting_transcript`: scheduling, Google Calendar gate, transcript y
+  handoff post-conversion.
 - `extract_client_profile_from_meeting_transcript`: usa DSPy para convertir el
   transcript en un perfil draft con segmentos, angulos y datos necesarios para
   planificar Meta.
@@ -906,10 +907,15 @@ Acciones manuales de Meeting:
 - El link legacy sale de `calendly_base_url` del funnel activo.
 - Ambas acciones registran `calendly_sent_at` y mantienen el lead en Manual.
 - La automatizacion nueva no manda links automaticamente. Para avanzar, el
-  bot pide email, dia y horario para que Facu coordine la llamada manualmente.
-- Hoy el codigo no crea eventos de Google Calendar ni links de agenda desde texto
-  libre; cuando junta los datos, marca `booking_details_collected`, pausa en
-  `needs_human` y dispara la alerta por email.
+  bot pide email, dia, horario y timezone.
+- Cuando esos datos estan completos, un agente puede usar
+  `schedule_platform_meeting` para armar y persistir el payload de Google
+  Calendar con el lead y los asistentes internos. El tool hace dry-run sin
+  credenciales y guarda blockers; solo crea el evento real si
+  `live_writes_requested=true` y hay calendar ID, service account y usuario
+  delegado configurados.
+- Si faltan datos o credenciales, el meeting queda `calendar_blocked` y el
+  detalle aparece en Ops/`/api/platform/overview`.
 
 Promo solo pagina:
 

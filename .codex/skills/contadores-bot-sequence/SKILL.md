@@ -175,8 +175,9 @@ Use this source of truth before any dynamic context:
   definition persuasively and do not ask for email/day/time in that same answer.
 - Never start a reply with `Para estar claros:`, `Para ser claros:`,
   `En resumen:`, or by repeating the lead's question as a heading.
-- Scheduling v1: no automatic calendar link. Collect email, day, time, and timezone
-  for a 15-minute call, then hand off to a human.
+- Scheduling: no automatic calendar link in WhatsApp. Collect email, day, time,
+  and timezone for a 15-minute call; the platform can then run
+  `schedule_platform_meeting` to build or create the Google Calendar event.
 - If a factual question falls outside this source of truth and `funnel_info`,
   use `handoff_human` instead of inventing.
 
@@ -220,7 +221,9 @@ Operators have these backoffice actions:
 
 Both actions record `calendly_sent_at` and keep the lead in Manual.
 Automation must not send calendar links automatically in the conversational bot flow;
-it asks for email, day, and time, then hands the scheduling details to Facu.
+it asks for email, day, time, and timezone. Once a meeting record exists, an
+agent can run `schedule_platform_meeting`; live calendar creation still requires
+explicit write approval and Google Calendar credentials.
 The legacy scheduling URL comes from the active funnel's `calendly_base_url`.
 
 ## Promo solo pagina automation

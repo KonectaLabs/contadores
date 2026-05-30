@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -19,6 +19,7 @@ from backend.database import (
     PlatformMetaInventorySnapshot,
     PlatformMetaPublishAttempt,
 )
+from backend.calendar_events import CalendarSchedulingError, schedule_meeting_calendar_event
 from backend.platform_profile_extraction import PlatformProfileExtractionError, extract_client_profile_from_meeting
 from backend.meta_ads_publish import MetaAdsPublishError, approve_meta_publish_attempt, preflight_meta_publish_attempt
 from backend.meta_ads_inventory import MetaInventoryError, sync_meta_inventory
@@ -62,7 +63,12 @@ class PlatformMeetingCommand(BaseModel):
     timezone: str = ""
     requested_day: str = ""
     requested_time: str = ""
+    calendar_id: str = ""
     calendar_event_id: str = ""
+    calendar_event_link: str = ""
+    calendar_event_payload: dict[str, Any] = Field(default_factory=dict)
+    calendar_result: dict[str, Any] = Field(default_factory=dict)
+    calendar_error: str = ""
     context_summary: str = ""
     transcript_text: str = ""
     transcript_path: str = ""
@@ -102,7 +108,12 @@ class PlatformMeetingResponse(BaseModel):
     timezone: str
     requested_day: str
     requested_time: str
+    calendar_id: str
     calendar_event_id: str
+    calendar_event_link: str
+    calendar_event_payload: dict[str, Any]
+    calendar_result: dict[str, Any]
+    calendar_error: str
     context_summary: str
     transcript_text: str
     transcript_path: str
@@ -117,6 +128,24 @@ class PlatformMeetingListResponse(BaseModel):
     """Meeting list response."""
 
     meetings: list[PlatformMeetingResponse]
+
+
+class PlatformMeetingCalendarCommand(BaseModel):
+    """Preflight or create one Google Calendar event for a meeting."""
+
+    calendar_id: str = ""
+    internal_attendees: list[str] = Field(default_factory=list)
+    duration_minutes: int = Field(default=15, ge=5, le=180)
+    create_google_meet: bool = False
+    live_writes_requested: bool = False
+    send_updates: Literal["all", "externalOnly", "none"] = "all"
+
+
+class PlatformMeetingCalendarResponse(BaseModel):
+    """Meeting calendar scheduling response."""
+
+    meeting: PlatformMeetingResponse
+    calendar: dict[str, Any]
 
 
 class PlatformClientProfileCommand(BaseModel):
@@ -511,7 +540,12 @@ def serialize_meeting(row: PlatformMeeting) -> PlatformMeetingResponse:
         timezone=row.timezone,
         requested_day=row.requested_day,
         requested_time=row.requested_time,
+        calendar_id=row.calendar_id,
         calendar_event_id=row.calendar_event_id,
+        calendar_event_link=row.calendar_event_link,
+        calendar_event_payload=row.calendar_event_payload(),
+        calendar_result=row.calendar_result(),
+        calendar_error=row.calendar_error,
         context_summary=row.context_summary,
         transcript_text=row.transcript_text,
         transcript_path=row.transcript_path,
@@ -798,7 +832,12 @@ async def create_meeting(command: PlatformMeetingCommand) -> PlatformMeetingResp
         timezone_name=command.timezone,
         requested_day=command.requested_day,
         requested_time=command.requested_time,
+        calendar_id=command.calendar_id,
         calendar_event_id=command.calendar_event_id,
+        calendar_event_link=command.calendar_event_link,
+        calendar_event_payload=command.calendar_event_payload,
+        calendar_result=command.calendar_result,
+        calendar_error=command.calendar_error,
         context_summary=command.context_summary,
         transcript_text=command.transcript_text,
         transcript_path=command.transcript_path,
@@ -816,6 +855,34 @@ async def create_meeting(command: PlatformMeetingCommand) -> PlatformMeetingResp
         payload={"lead_id": row.lead_id, "client_id": row.client_id, "status": row.status},
     )
     return serialize_meeting(row)
+
+
+@platform_router.post("/meetings/{meeting_id}/calendar-event", response_model=PlatformMeetingCalendarResponse)
+async def schedule_meeting_calendar_event_endpoint(
+    meeting_id: str,
+    command: PlatformMeetingCalendarCommand,
+) -> PlatformMeetingCalendarResponse:
+    """Build or create a Google Calendar event for one meeting."""
+    try:
+        row, result = schedule_meeting_calendar_event(
+            meeting_id=meeting_id,
+            calendar_id=command.calendar_id,
+            internal_attendees=command.internal_attendees,
+            duration_minutes=command.duration_minutes,
+            create_google_meet=command.create_google_meet,
+            live_writes_requested=command.live_writes_requested,
+            send_updates=command.send_updates,
+            source="platform_api",
+            actor="operator",
+        )
+    except CalendarSchedulingError as error:
+        message = str(error)
+        status_code = 404 if message.startswith("Meeting not found") else 400
+        raise HTTPException(status_code=status_code, detail=message) from error
+    return PlatformMeetingCalendarResponse(
+        meeting=serialize_meeting(row),
+        calendar=result.model_dump(mode="json"),
+    )
 
 
 @platform_router.post("/meetings/{meeting_id}/transcript", response_model=PlatformMeetingResponse)

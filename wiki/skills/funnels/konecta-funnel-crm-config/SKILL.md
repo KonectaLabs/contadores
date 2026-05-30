@@ -63,7 +63,7 @@ Use `configure_text_offer_funnel` for normal mission-offer funnels and
 are known.
 
 The same agent-native rule applies after conversion: use
-`create_platform_meeting`, `attach_meeting_transcript`,
+`create_platform_meeting`, `schedule_platform_meeting`, `attach_meeting_transcript`,
 `extract_client_profile_from_meeting_transcript`, `upsert_client_profile`,
 `stage_ad_campaign`, `stage_creative_asset`,
 `stage_meta_publish_plan`, `sync_meta_inventory`,

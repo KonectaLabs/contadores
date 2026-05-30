@@ -217,7 +217,12 @@ export interface PlatformMeetingItem {
   timezone: string;
   requested_day: string;
   requested_time: string;
+  calendar_id: string;
   calendar_event_id: string;
+  calendar_event_link: string;
+  calendar_event_payload: Record<string, unknown>;
+  calendar_result: Record<string, unknown>;
+  calendar_error: string;
   context_summary: string;
   transcript_text: string;
   transcript_path: string;

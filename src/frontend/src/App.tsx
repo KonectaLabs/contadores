@@ -3006,6 +3006,13 @@ function PlatformOpsView({
                   </div>
                   <strong>{meeting.lead_email || formatPlatformRef("lead", meeting.lead_id)}</strong>
                   <p>{[meeting.requested_day, meeting.requested_time, meeting.timezone].filter(Boolean).join(" · ") || meeting.context_summary || "-"}</p>
+                  {meeting.calendar_event_link ? (
+                    <a href={meeting.calendar_event_link} target="_blank" rel="noreferrer">
+                      Calendar event
+                    </a>
+                  ) : meeting.calendar_error ? (
+                    <p>{meeting.calendar_error}</p>
+                  ) : null}
                 </article>
               ))}
               {!meetings.length ? <OpsEmpty title="No meetings" value="0" /> : null}
