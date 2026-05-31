@@ -771,6 +771,34 @@ class ContadoresLeadStage(str, Enum):
     ARCHIVED = "archived"
 
 
+CONTADORES_LEAD_PIPELINE_STAGES = {
+    "new",
+    "contacted",
+    "offer_sent",
+    "meeting_sent",
+    "converted",
+    "closed",
+    "archived",
+}
+CONTADORES_LEAD_QUEUE_STATES = {"automation", "operator", "workstation", "paused", "none"}
+CONTADORES_LEAD_TERMINAL_STATES = {"open", "closed", "archived"}
+CONTADORES_LEAD_ATTENTION_STATES = {"clear", "needs_reply", "answered", "paused", "converted", "closed", "archived"}
+WORKSTATION_OPERATOR_HANDOFF_REASONS = {
+    "workstation_agent_handoff",
+    "workstation_no_response_handoff",
+    "workstation_solo_page_approved",
+}
+
+
+def normalize_lifecycle_datetime(value: datetime | None) -> datetime | None:
+    """Return a timezone-aware datetime for lifecycle comparisons."""
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def _default_contadores_post_loom_min_seconds() -> int:
     """Return the configured post-Loom minimum wait, defaulting to 5 minutes."""
     return max(60, int(os.getenv("CONTADORES_POST_LOOM_MIN_SECONDS", "300")))
@@ -1016,6 +1044,10 @@ class ContadoresLead(SQLModel, table=True):
     tags_json: str = Field(default="[]")
     sheet_created_time: datetime | None = Field(default=None)
     stage: ContadoresLeadStage = Field(default=ContadoresLeadStage.AWAITING_INITIAL_REPLY, index=True)
+    pipeline_stage: str = Field(default="new", index=True)
+    queue_state: str = Field(default="automation", index=True)
+    terminal_state: str = Field(default="open", index=True)
+    attention_state: str = Field(default="clear", index=True)
     calendly_tracking_token: str = Field(default_factory=lambda: uuid.uuid4().hex, index=True)
     last_classification_label: str | None = Field(default=None, index=True)
     last_classification_reason: str | None = Field(default=None)
@@ -1057,6 +1089,214 @@ class ContadoresLead(SQLModel, table=True):
             if candidate.value == value:
                 return candidate
         return ContadoresLeadStage.AWAITING_INITIAL_REPLY
+
+    @classmethod
+    def open_workstation_client(cls, lead: "ContadoresLead") -> Any | None:
+        """Return the active Workstation client without importing endpoint code."""
+        workstation_client_cls = globals().get("WorkstationClient")
+        workstation_status_cls = globals().get("WorkstationClientStatus")
+        if workstation_client_cls is None or workstation_status_cls is None:
+            return None
+        client = workstation_client_cls.get_by_lead_id(lead.id)
+        if client is None:
+            return None
+        if client.status in {workstation_status_cls.CLOSED, workstation_status_cls.ARCHIVED}:
+            return None
+        return client
+
+    @classmethod
+    def workstation_handoff_requires_operator(
+        cls,
+        lead: "ContadoresLead",
+        client: Any | None = None,
+    ) -> bool:
+        """Return True only when Workstation explicitly handed the lead back."""
+        workstation_client = client or cls.open_workstation_client(lead)
+        workstation_automation_status_cls = globals().get("WorkstationAutomationStatus")
+        if workstation_client is None or workstation_automation_status_cls is None:
+            return False
+        return (
+            workstation_client.automation_status == workstation_automation_status_cls.NEEDS_HUMAN
+            and lead.automation_paused_reason in WORKSTATION_OPERATOR_HANDOFF_REASONS
+        )
+
+    @classmethod
+    def lead_is_workstation_managed_without_operator_handoff(cls, lead: "ContadoresLead") -> bool:
+        """Return True when Workstation owns the lead without an operator handoff."""
+        workstation_client = cls.open_workstation_client(lead)
+        if workstation_client is None:
+            return False
+        return not cls.workstation_handoff_requires_operator(lead, workstation_client)
+
+    @classmethod
+    def derive_effective_stage(cls, lead: "ContadoresLead") -> ContadoresLeadStage:
+        """Return the current operator-facing legacy stage."""
+        if lead.stage == ContadoresLeadStage.ARCHIVED or lead.archived_at is not None:
+            return ContadoresLeadStage.ARCHIVED
+        if lead.stage == ContadoresLeadStage.CLOSED or lead.closed_at is not None:
+            return ContadoresLeadStage.CLOSED
+        if lead.stage == ContadoresLeadStage.NEEDS_HUMAN:
+            workstation_client = cls.open_workstation_client(lead)
+            if workstation_client is not None:
+                if cls.workstation_handoff_requires_operator(lead, workstation_client):
+                    return ContadoresLeadStage.NEEDS_HUMAN
+                return ContadoresLeadStage.BOOKED
+            if lead.booked_at is not None:
+                return ContadoresLeadStage.BOOKED
+            return ContadoresLeadStage.NEEDS_HUMAN
+        if lead.booked_at is not None:
+            return ContadoresLeadStage.BOOKED
+        if lead.calendly_sent_at is not None:
+            return ContadoresLeadStage.CALENDLY_SENT
+        return lead.stage
+
+    @classmethod
+    def derive_manual_reply_status(
+        cls,
+        lead: "ContadoresLead",
+        *,
+        effective_stage: ContadoresLeadStage | None = None,
+    ) -> str | None:
+        """Return whether the current manual handoff needs an operator reply."""
+        if cls.lead_is_workstation_managed_without_operator_handoff(lead):
+            return None
+        if (effective_stage or cls.derive_effective_stage(lead)) != ContadoresLeadStage.NEEDS_HUMAN:
+            return None
+
+        last_inbound_at = normalize_lifecycle_datetime(lead.last_inbound_at)
+        latest_answer_at = max(
+            [
+                item
+                for item in [
+                    normalize_lifecycle_datetime(lead.last_outbound_at),
+                    normalize_lifecycle_datetime(lead.manual_reply_handled_at),
+                ]
+                if item is not None
+            ],
+            default=None,
+        )
+        if last_inbound_at is not None and (latest_answer_at is None or last_inbound_at > latest_answer_at):
+            return "needs_reply"
+        if last_inbound_at is not None or latest_answer_at is not None:
+            return "answered"
+        return None
+
+    @classmethod
+    def derive_terminal_state(
+        cls,
+        lead: "ContadoresLead",
+        *,
+        effective_stage: ContadoresLeadStage | None = None,
+    ) -> str:
+        """Return the terminal overlay without mixing it into the sales pipeline."""
+        stage = effective_stage or cls.derive_effective_stage(lead)
+        if stage == ContadoresLeadStage.ARCHIVED or lead.archived_at is not None:
+            return "archived"
+        if stage == ContadoresLeadStage.CLOSED or lead.closed_at is not None:
+            return "closed"
+        return "open"
+
+    @classmethod
+    def derive_pipeline_stage(
+        cls,
+        lead: "ContadoresLead",
+        *,
+        effective_stage: ContadoresLeadStage | None = None,
+    ) -> str:
+        """Return the conceptual commercial milestone for operator UI and filters."""
+        stage = effective_stage or cls.derive_effective_stage(lead)
+        if stage == ContadoresLeadStage.ARCHIVED:
+            return "archived"
+        if stage == ContadoresLeadStage.CLOSED:
+            return "closed"
+        if stage == ContadoresLeadStage.BOOKED or lead.booked_at is not None:
+            return "converted"
+        if stage == ContadoresLeadStage.CALENDLY_SENT or lead.calendly_sent_at is not None:
+            return "meeting_sent"
+        if stage == ContadoresLeadStage.AWAITING_VIDEO_REPLY or lead.loom_sent_at is not None:
+            return "offer_sent"
+        if lead.opener_sent_at is not None:
+            return "contacted"
+        return "new"
+
+    @classmethod
+    def derive_queue_state(
+        cls,
+        lead: "ContadoresLead",
+        *,
+        effective_stage: ContadoresLeadStage | None = None,
+        manual_reply_status: str | None = None,
+    ) -> str:
+        """Return who owns the next action."""
+        stage = effective_stage or cls.derive_effective_stage(lead)
+        terminal_state = cls.derive_terminal_state(lead, effective_stage=stage)
+        if terminal_state != "open":
+            return "none"
+        if manual_reply_status in {"needs_reply", "answered"} or stage == ContadoresLeadStage.NEEDS_HUMAN:
+            return "operator"
+        if cls.open_workstation_client(lead) is not None:
+            return "workstation"
+        if stage == ContadoresLeadStage.BOOKED or lead.booked_at is not None:
+            return "none"
+        if lead.automation_paused:
+            return "paused"
+        return "automation"
+
+    @classmethod
+    def derive_attention_state(
+        cls,
+        lead: "ContadoresLead",
+        *,
+        effective_stage: ContadoresLeadStage | None = None,
+        manual_reply_status: str | None = None,
+    ) -> str:
+        """Return the strongest operator-facing attention state."""
+        stage = effective_stage or cls.derive_effective_stage(lead)
+        terminal_state = cls.derive_terminal_state(lead, effective_stage=stage)
+        if terminal_state != "open":
+            return terminal_state
+        if manual_reply_status in {"needs_reply", "answered"}:
+            return manual_reply_status
+        if stage == ContadoresLeadStage.BOOKED or lead.booked_at is not None:
+            return "converted"
+        if lead.automation_paused:
+            return "paused"
+        return "clear"
+
+    @classmethod
+    def refresh_lifecycle_fields(cls, lead: "ContadoresLead") -> None:
+        """Persist the v2 lifecycle projection on the lead row itself."""
+        effective_stage = cls.derive_effective_stage(lead)
+        manual_reply_status = cls.derive_manual_reply_status(lead, effective_stage=effective_stage)
+        lead.pipeline_stage = cls.derive_pipeline_stage(lead, effective_stage=effective_stage)
+        lead.terminal_state = cls.derive_terminal_state(lead, effective_stage=effective_stage)
+        lead.queue_state = cls.derive_queue_state(
+            lead,
+            effective_stage=effective_stage,
+            manual_reply_status=manual_reply_status,
+        )
+        lead.attention_state = cls.derive_attention_state(
+            lead,
+            effective_stage=effective_stage,
+            manual_reply_status=manual_reply_status,
+        )
+
+    @classmethod
+    def sync_lifecycle_fields(cls, lead_id: str) -> Optional["ContadoresLead"]:
+        """Recompute persisted lifecycle fields for one existing lead."""
+        with Session(engine) as session:
+            item = session.get(cls, lead_id)
+            if item is None:
+                return None
+            before = (item.pipeline_stage, item.queue_state, item.terminal_state, item.attention_state)
+            cls.refresh_lifecycle_fields(item)
+            after = (item.pipeline_stage, item.queue_state, item.terminal_state, item.attention_state)
+            if after != before:
+                session.add(item)
+                session.commit()
+                session.refresh(item)
+            session.expunge(item)
+            return item
 
     @classmethod
     def get_by_id(cls, lead_id: str) -> Optional["ContadoresLead"]:
@@ -1230,6 +1470,7 @@ class ContadoresLead(SQLModel, table=True):
                     created_at=now,
                     updated_at=now,
                 )
+                cls.refresh_lifecycle_fields(item)
                 session.add(item)
                 session.commit()
                 session.refresh(item)
@@ -1266,6 +1507,7 @@ class ContadoresLead(SQLModel, table=True):
                 item.archived_at = None
                 item.calendly_tracking_token = uuid.uuid4().hex
             item.updated_at = now
+            cls.refresh_lifecycle_fields(item)
             session.add(item)
             session.commit()
             session.refresh(item)
@@ -1450,6 +1692,7 @@ class ContadoresLead(SQLModel, table=True):
             item.automation_paused = item.stage == ContadoresLeadStage.NEEDS_HUMAN
             item.automation_paused_reason = "manual_funnel_move" if item.automation_paused else None
             item.updated_at = datetime.now(timezone.utc)
+            cls.refresh_lifecycle_fields(item)
             session.add(item)
             session.commit()
             session.refresh(item)
@@ -1549,6 +1792,7 @@ class ContadoresLead(SQLModel, table=True):
             if automation_paused_reason is not None:
                 item.automation_paused_reason = (automation_paused_reason or "").strip() or None
             item.updated_at = datetime.now(timezone.utc)
+            cls.refresh_lifecycle_fields(item)
             session.add(item)
             session.commit()
             session.refresh(item)
@@ -1729,6 +1973,7 @@ class ContadoresMessage(SQLModel, table=True):
                     if lead.first_reply_received_at is None:
                         lead.first_reply_received_at = now
                 lead.updated_at = now
+                ContadoresLead.refresh_lifecycle_fields(lead)
                 session.add(lead)
             session.commit()
             session.refresh(row)
@@ -4685,6 +4930,7 @@ class WorkstationClient(SQLModel, table=True):
             session.commit()
             session.refresh(item)
             session.expunge(item)
+            ContadoresLead.sync_lifecycle_fields(lead.id)
             return item
 
     @classmethod
@@ -4734,6 +4980,7 @@ class WorkstationClient(SQLModel, table=True):
             item = session.get(cls, client_id)
             if item is None:
                 return None
+            lead_id = item.lead_id
             if automation_status is not None:
                 item.automation_status = normalize_workstation_automation_status(automation_status)
             if status is not None:
@@ -4755,6 +5002,7 @@ class WorkstationClient(SQLModel, table=True):
             session.commit()
             session.refresh(item)
             session.expunge(item)
+            ContadoresLead.sync_lifecycle_fields(lead_id)
             return item
 
     @classmethod
@@ -4784,12 +5032,14 @@ class WorkstationClient(SQLModel, table=True):
             item = session.get(cls, client_id)
             if item is None:
                 return None
+            lead_id = item.lead_id
             item.status = normalize_workstation_client_status(status)
             item.updated_at = datetime.now(timezone.utc)
             session.add(item)
             session.commit()
             session.refresh(item)
             session.expunge(item)
+            ContadoresLead.sync_lifecycle_fields(lead_id)
             return item
 
     @classmethod
@@ -6773,6 +7023,7 @@ def init_db() -> None:
     ensure_contadores_config_strategy_weights_column()
     ensure_workstation_client_automation_columns()
     ensure_workstation_codex_thread_columns()
+    ensure_contadores_lifecycle_columns()
     ensure_platform_human_question_context_columns()
     ensure_platform_ad_campaign_creative_columns()
     ensure_platform_creative_asset_meta_columns()
@@ -6980,6 +7231,53 @@ def ensure_contadores_manual_reply_columns() -> None:
                 "ALTER TABLE contadores_leads ADD COLUMN manual_reply_handled_at TIMESTAMP"
             )
             logger.info("Added missing contadores_leads.manual_reply_handled_at column.")
+
+
+def ensure_contadores_lifecycle_columns() -> None:
+    """Add and backfill persisted v2 lifecycle columns for Contadores leads."""
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        if "contadores_leads" not in inspector.get_table_names():
+            return
+        lead_columns = {column["name"] for column in inspector.get_columns("contadores_leads")}
+        column_definitions = {
+            "pipeline_stage": "TEXT NOT NULL DEFAULT 'new'",
+            "queue_state": "TEXT NOT NULL DEFAULT 'automation'",
+            "terminal_state": "TEXT NOT NULL DEFAULT 'open'",
+            "attention_state": "TEXT NOT NULL DEFAULT 'clear'",
+        }
+        for column_name, column_type in column_definitions.items():
+            if column_name in lead_columns:
+                continue
+            connection.exec_driver_sql(
+                f"ALTER TABLE contadores_leads ADD COLUMN {column_name} {column_type}"
+            )
+            logger.info("Added missing contadores_leads.%s column.", column_name)
+        for column_name in column_definitions:
+            connection.exec_driver_sql(
+                f"CREATE INDEX IF NOT EXISTS ix_contadores_leads_{column_name} "
+                f"ON contadores_leads ({column_name})"
+            )
+
+    backfill_contadores_lifecycle_columns()
+
+
+def backfill_contadores_lifecycle_columns() -> None:
+    """Recompute persisted v2 lifecycle fields for existing rows."""
+    with Session(engine) as session:
+        leads = list(session.exec(select(ContadoresLead)).all())
+        changed = 0
+        for lead in leads:
+            before = (lead.pipeline_stage, lead.queue_state, lead.terminal_state, lead.attention_state)
+            ContadoresLead.refresh_lifecycle_fields(lead)
+            after = (lead.pipeline_stage, lead.queue_state, lead.terminal_state, lead.attention_state)
+            if after == before:
+                continue
+            session.add(lead)
+            changed += 1
+        if changed:
+            session.commit()
+            logger.info("Backfilled lifecycle fields for %s Contadores leads.", changed)
 
 
 def ensure_contadores_conversation_processing_columns() -> None:

@@ -46,6 +46,10 @@ from backend.contadores_strategies import (
     list_funnel_strategies,
 )
 from backend.database import (
+    CONTADORES_LEAD_ATTENTION_STATES,
+    CONTADORES_LEAD_PIPELINE_STAGES,
+    CONTADORES_LEAD_QUEUE_STATES,
+    CONTADORES_LEAD_TERMINAL_STATES,
     ContadoresConfig,
     ContadoresLead,
     ContadoresLeadStage,
@@ -61,6 +65,7 @@ from backend.database import (
     WorkstationClientStatus,
     WorkstationClientWorkType,
     WorkstationMediaAsset,
+    WORKSTATION_OPERATOR_HANDOFF_REASONS,
     engine,
     normalize_contadores_tags,
     normalize_email,
@@ -118,11 +123,6 @@ SOLO_PAGE_PROMO_TEXT_TEMPLATE = (
     "Si le interesa esa opcion, le mando un ejemplo."
 )
 WORKSTATION_SOLO_PAGE_STARTED_REASON = "workstation_solo_page_started"
-WORKSTATION_OPERATOR_HANDOFF_REASONS = {
-    "workstation_agent_handoff",
-    "workstation_no_response_handoff",
-    "workstation_solo_page_approved",
-}
 UNANSWERED_LEAD_QUESTION_REASON = "unanswered_lead_question"
 ALERT_TRANSCRIPT_MAX_MESSAGES = 80
 ALERT_TRANSCRIPT_MAX_CHARS = 20000
@@ -1081,24 +1081,7 @@ def lead_is_workstation_managed_without_operator_handoff(lead: ContadoresLead) -
 
 def derive_effective_lead_stage(lead: ContadoresLead) -> ContadoresLeadStage:
     """Return the operator-facing stage derived from the clearest completed milestone."""
-    if lead.stage == ContadoresLeadStage.ARCHIVED or lead.archived_at is not None:
-        return ContadoresLeadStage.ARCHIVED
-    if lead.stage == ContadoresLeadStage.CLOSED or lead.closed_at is not None:
-        return ContadoresLeadStage.CLOSED
-    if lead.stage == ContadoresLeadStage.NEEDS_HUMAN:
-        workstation_client = open_workstation_client_for_lead(lead)
-        if workstation_client is not None:
-            if workstation_handoff_requires_operator(lead, workstation_client):
-                return ContadoresLeadStage.NEEDS_HUMAN
-            return ContadoresLeadStage.BOOKED
-        if lead.booked_at is not None:
-            return ContadoresLeadStage.BOOKED
-        return ContadoresLeadStage.NEEDS_HUMAN
-    if lead.booked_at is not None:
-        return ContadoresLeadStage.BOOKED
-    if lead.calendly_sent_at is not None:
-        return ContadoresLeadStage.CALENDLY_SENT
-    return lead.stage
+    return ContadoresLead.derive_effective_stage(lead)
 
 
 def lead_counts_in_calendly_bucket(lead: ContadoresLead) -> bool:
@@ -1113,40 +1096,19 @@ def lead_counts_in_calendly_bucket(lead: ContadoresLead) -> bool:
     return lead.calendly_sent_at is not None
 
 
-def derive_manual_reply_status(lead: ContadoresLead) -> str | None:
+def derive_manual_reply_status(
+    lead: ContadoresLead,
+    *,
+    effective_stage: ContadoresLeadStage | None = None,
+) -> str | None:
     """Return whether the current manual handoff needs an operator reply."""
-    if lead_is_workstation_managed_without_operator_handoff(lead):
-        return None
-    if derive_effective_lead_stage(lead) != ContadoresLeadStage.NEEDS_HUMAN:
-        return None
-
-    last_inbound_at = ensure_utc_datetime(lead.last_inbound_at)
-    last_outbound_at = ensure_utc_datetime(lead.last_outbound_at)
-    handled_at = ensure_utc_datetime(lead.manual_reply_handled_at)
-    latest_answer_at = max(
-        [item for item in [last_outbound_at, handled_at] if item is not None],
-        default=None,
-    )
-
-    if last_inbound_at is not None and (latest_answer_at is None or last_inbound_at > latest_answer_at):
-        return "needs_reply"
-    if last_inbound_at is not None or latest_answer_at is not None:
-        return "answered"
-    return None
+    return ContadoresLead.derive_manual_reply_status(lead, effective_stage=effective_stage)
 
 
-VALID_LEAD_PIPELINE_STAGES = {
-    "new",
-    "contacted",
-    "offer_sent",
-    "meeting_sent",
-    "converted",
-    "closed",
-    "archived",
-}
-VALID_LEAD_QUEUE_STATES = {"automation", "operator", "workstation", "paused", "none"}
-VALID_LEAD_TERMINAL_STATES = {"open", "closed", "archived"}
-VALID_LEAD_ATTENTION_STATES = {"clear", "needs_reply", "answered", "paused", "converted", "closed", "archived"}
+VALID_LEAD_PIPELINE_STAGES = CONTADORES_LEAD_PIPELINE_STAGES
+VALID_LEAD_QUEUE_STATES = CONTADORES_LEAD_QUEUE_STATES
+VALID_LEAD_TERMINAL_STATES = CONTADORES_LEAD_TERMINAL_STATES
+VALID_LEAD_ATTENTION_STATES = CONTADORES_LEAD_ATTENTION_STATES
 
 
 def derive_lead_terminal_state(
@@ -1155,12 +1117,7 @@ def derive_lead_terminal_state(
     effective_stage: ContadoresLeadStage | None = None,
 ) -> str:
     """Return the terminal overlay without mixing it into the sales pipeline."""
-    stage = effective_stage or derive_effective_lead_stage(lead)
-    if stage == ContadoresLeadStage.ARCHIVED or lead.archived_at is not None:
-        return "archived"
-    if stage == ContadoresLeadStage.CLOSED or lead.closed_at is not None:
-        return "closed"
-    return "open"
+    return ContadoresLead.derive_terminal_state(lead, effective_stage=effective_stage)
 
 
 def derive_lead_conversion_type(
@@ -1188,20 +1145,7 @@ def derive_lead_pipeline_stage(
     effective_stage: ContadoresLeadStage | None = None,
 ) -> str:
     """Return the conceptual commercial milestone for the operator UI."""
-    stage = effective_stage or derive_effective_lead_stage(lead)
-    if stage == ContadoresLeadStage.ARCHIVED:
-        return "archived"
-    if stage == ContadoresLeadStage.CLOSED:
-        return "closed"
-    if stage == ContadoresLeadStage.BOOKED or lead.booked_at is not None:
-        return "converted"
-    if stage == ContadoresLeadStage.CALENDLY_SENT or lead.calendly_sent_at is not None:
-        return "meeting_sent"
-    if stage == ContadoresLeadStage.AWAITING_VIDEO_REPLY or lead.loom_sent_at is not None:
-        return "offer_sent"
-    if lead.opener_sent_at is not None:
-        return "contacted"
-    return "new"
+    return ContadoresLead.derive_pipeline_stage(lead, effective_stage=effective_stage)
 
 
 def derive_lead_queue_state(
@@ -1212,19 +1156,12 @@ def derive_lead_queue_state(
     workstation_client: WorkstationClient | None = None,
 ) -> str:
     """Return who owns the next action: automation, operator, Workstation, or nobody."""
-    stage = effective_stage or derive_effective_lead_stage(lead)
-    terminal_state = derive_lead_terminal_state(lead, effective_stage=stage)
-    if terminal_state != "open":
-        return "none"
-    if manual_reply_status in {"needs_reply", "answered"} or stage == ContadoresLeadStage.NEEDS_HUMAN:
-        return "operator"
-    if workstation_client is not None:
-        return "workstation"
-    if stage == ContadoresLeadStage.BOOKED or lead.booked_at is not None:
-        return "none"
-    if lead.automation_paused:
-        return "paused"
-    return "automation"
+    del workstation_client
+    return ContadoresLead.derive_queue_state(
+        lead,
+        effective_stage=effective_stage,
+        manual_reply_status=manual_reply_status,
+    )
 
 
 def derive_lead_attention_state(
@@ -1234,17 +1171,11 @@ def derive_lead_attention_state(
     manual_reply_status: str | None = None,
 ) -> str:
     """Return the strongest operator-facing attention state for one lead."""
-    stage = effective_stage or derive_effective_lead_stage(lead)
-    terminal_state = derive_lead_terminal_state(lead, effective_stage=stage)
-    if terminal_state != "open":
-        return terminal_state
-    if manual_reply_status in {"needs_reply", "answered"}:
-        return manual_reply_status
-    if stage == ContadoresLeadStage.BOOKED or lead.booked_at is not None:
-        return "converted"
-    if lead.automation_paused:
-        return "paused"
-    return "clear"
+    return ContadoresLead.derive_attention_state(
+        lead,
+        effective_stage=effective_stage,
+        manual_reply_status=manual_reply_status,
+    )
 
 
 def get_lead_last_interaction_at(lead: ContadoresLead) -> datetime | None:
@@ -1284,7 +1215,7 @@ def build_contadores_metrics(leads: list[ContadoresLead]) -> "ContadoresMetrics"
 
     for lead in leads:
         effective_stage = derive_effective_lead_stage(lead)
-        manual_reply_status = derive_manual_reply_status(lead)
+        manual_reply_status = derive_manual_reply_status(lead, effective_stage=effective_stage)
         legacy_counts[effective_stage.value] += 1
         if (
             effective_stage
@@ -1296,22 +1227,28 @@ def build_contadores_metrics(leads: list[ContadoresLead]) -> "ContadoresMetrics"
             and lead.calendly_sent_at is not None
         ):
             calendly_count += 1
-        pipeline_counts[derive_lead_pipeline_stage(lead, effective_stage=effective_stage)] += 1
-        queue_counts[
-            derive_lead_queue_state(
-                lead,
-                effective_stage=effective_stage,
-                manual_reply_status=manual_reply_status,
-            )
-        ] += 1
-        attention_counts[
-            derive_lead_attention_state(
-                lead,
-                effective_stage=effective_stage,
-                manual_reply_status=manual_reply_status,
-            )
-        ] += 1
-        terminal_counts[derive_lead_terminal_state(lead, effective_stage=effective_stage)] += 1
+        lead_pipeline_stage = lead.pipeline_stage or derive_lead_pipeline_stage(
+            lead,
+            effective_stage=effective_stage,
+        )
+        lead_queue_state = lead.queue_state or derive_lead_queue_state(
+            lead,
+            effective_stage=effective_stage,
+            manual_reply_status=manual_reply_status,
+        )
+        lead_attention_state = lead.attention_state or derive_lead_attention_state(
+            lead,
+            effective_stage=effective_stage,
+            manual_reply_status=manual_reply_status,
+        )
+        lead_terminal_state = lead.terminal_state or derive_lead_terminal_state(
+            lead,
+            effective_stage=effective_stage,
+        )
+        pipeline_counts[lead_pipeline_stage] += 1
+        queue_counts[lead_queue_state] += 1
+        attention_counts[lead_attention_state] += 1
+        terminal_counts[lead_terminal_state] += 1
 
     return ContadoresMetrics(
         total=len(leads),
@@ -1588,7 +1525,7 @@ def build_lead_summary(
     """Serialize one lead row for list/detail views."""
     effective_stage = derive_effective_lead_stage(lead)
     workstation_client = WorkstationClient.get_by_lead_id(lead.id)
-    manual_reply_status = derive_manual_reply_status(lead)
+    manual_reply_status = derive_manual_reply_status(lead, effective_stage=effective_stage)
     outbound_error_count = ContadoresMessage.count_delivery_issues_by_lead(lead.id)
     return ContadoresLeadSummary(
         id=lead.id,
@@ -1604,15 +1541,21 @@ def build_lead_summary(
         sheet_created_time=format_timestamp_seconds(lead.sheet_created_time),
         stage=effective_stage.value,
         raw_stage=lead.stage.value,
-        pipeline_stage=derive_lead_pipeline_stage(lead, effective_stage=effective_stage),
-        queue_state=derive_lead_queue_state(
+        pipeline_stage=lead.pipeline_stage or derive_lead_pipeline_stage(
+            lead,
+            effective_stage=effective_stage,
+        ),
+        queue_state=lead.queue_state or derive_lead_queue_state(
             lead,
             effective_stage=effective_stage,
             manual_reply_status=manual_reply_status,
             workstation_client=workstation_client,
         ),
-        terminal_state=derive_lead_terminal_state(lead, effective_stage=effective_stage),
-        attention_state=derive_lead_attention_state(
+        terminal_state=lead.terminal_state or derive_lead_terminal_state(
+            lead,
+            effective_stage=effective_stage,
+        ),
+        attention_state=lead.attention_state or derive_lead_attention_state(
             lead,
             effective_stage=effective_stage,
             manual_reply_status=manual_reply_status,
@@ -4947,41 +4890,37 @@ async def list_contadores_leads(
 
         metric_leads.append(lead)
         effective_stage = derive_effective_lead_stage(lead)
-        lead_manual_reply_status = derive_manual_reply_status(lead)
+        lead_manual_reply_status = derive_manual_reply_status(lead, effective_stage=effective_stage)
+        lead_pipeline_stage = lead.pipeline_stage or derive_lead_pipeline_stage(
+            lead,
+            effective_stage=effective_stage,
+        )
+        lead_queue_state = lead.queue_state or derive_lead_queue_state(
+            lead,
+            effective_stage=effective_stage,
+            manual_reply_status=lead_manual_reply_status,
+        )
+        lead_terminal_state = lead.terminal_state or derive_lead_terminal_state(
+            lead,
+            effective_stage=effective_stage,
+        )
+        lead_attention_state = lead.attention_state or derive_lead_attention_state(
+            lead,
+            effective_stage=effective_stage,
+            manual_reply_status=lead_manual_reply_status,
+        )
         if normalized_stage == ContadoresLeadStage.CALENDLY_SENT:
             if not lead_counts_in_calendly_bucket(lead):
                 continue
         elif normalized_stage is not None and effective_stage != normalized_stage:
             continue
-        if (
-            normalized_pipeline_stage is not None
-            and derive_lead_pipeline_stage(lead, effective_stage=effective_stage) != normalized_pipeline_stage
-        ):
+        if normalized_pipeline_stage is not None and lead_pipeline_stage != normalized_pipeline_stage:
             continue
-        if (
-            normalized_queue_state is not None
-            and derive_lead_queue_state(
-                lead,
-                effective_stage=effective_stage,
-                manual_reply_status=lead_manual_reply_status,
-            )
-            != normalized_queue_state
-        ):
+        if normalized_queue_state is not None and lead_queue_state != normalized_queue_state:
             continue
-        if (
-            normalized_terminal_state is not None
-            and derive_lead_terminal_state(lead, effective_stage=effective_stage) != normalized_terminal_state
-        ):
+        if normalized_terminal_state is not None and lead_terminal_state != normalized_terminal_state:
             continue
-        if (
-            normalized_attention_state is not None
-            and derive_lead_attention_state(
-                lead,
-                effective_stage=effective_stage,
-                manual_reply_status=lead_manual_reply_status,
-            )
-            != normalized_attention_state
-        ):
+        if normalized_attention_state is not None and lead_attention_state != normalized_attention_state:
             continue
         if booked is True and lead.booked_at is None:
             continue

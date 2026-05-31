@@ -4038,6 +4038,126 @@ def test_mark_converted_action_keeps_legacy_booked_storage_without_queueing_temp
     assert lead_payload["automation_paused_reason"] == "manual_booked"
 
 
+def test_lifecycle_v2_fields_are_persisted_after_flow_updates(monkeypatch, tmp_path) -> None:
+    """The conceptual lifecycle state should live in DB, not only response serialization."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-lifecycle-v2",
+        phone="+5491888888801",
+        full_name="Lifecycle Persisted",
+    )
+
+    assert ContadoresLead.get_by_id(lead.id).pipeline_stage == "new"
+
+    ContadoresLead.update_flow_state(
+        lead.id,
+        stage=ContadoresLeadStage.CALENDLY_SENT,
+        calendly_sent_at=now_utc(),
+    )
+    meeting_lead = ContadoresLead.get_by_id(lead.id)
+    assert meeting_lead.pipeline_stage == "meeting_sent"
+    assert meeting_lead.queue_state == "automation"
+    assert meeting_lead.terminal_state == "open"
+    assert meeting_lead.attention_state == "clear"
+
+    ContadoresLead.update_flow_state(
+        lead.id,
+        stage=ContadoresLeadStage.BOOKED,
+        booked_at=now_utc(),
+        automation_paused=True,
+        automation_paused_reason="manual_booked",
+    )
+    converted_lead = ContadoresLead.get_by_id(lead.id)
+    assert converted_lead.pipeline_stage == "converted"
+    assert converted_lead.queue_state == "none"
+    assert converted_lead.terminal_state == "open"
+    assert converted_lead.attention_state == "converted"
+
+    ContadoresLead.update_flow_state(
+        lead.id,
+        stage=ContadoresLeadStage.CLOSED,
+        closed_at=now_utc(),
+        stage_before_closed=ContadoresLeadStage.BOOKED,
+    )
+    closed_lead = ContadoresLead.get_by_id(lead.id)
+    assert closed_lead.pipeline_stage == "closed"
+    assert closed_lead.queue_state == "none"
+    assert closed_lead.terminal_state == "closed"
+    assert closed_lead.attention_state == "closed"
+
+
+def test_lifecycle_v2_fields_refresh_after_message_activity(monkeypatch, tmp_path) -> None:
+    """Inbound/outbound messages should update persisted owner and attention state."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-lifecycle-messages",
+        phone="+5491888888802",
+        full_name="Lifecycle Messages",
+    )
+    ContadoresLead.update_flow_state(
+        lead.id,
+        stage=ContadoresLeadStage.NEEDS_HUMAN,
+        automation_paused=True,
+        automation_paused_reason="manual_handoff",
+    )
+
+    inbound_at = now_utc()
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=False,
+        text="tengo una duda",
+        created_at=inbound_at,
+    )
+    needs_reply_lead = ContadoresLead.get_by_id(lead.id)
+    assert needs_reply_lead.queue_state == "operator"
+    assert needs_reply_lead.attention_state == "needs_reply"
+
+    ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=True,
+        text="ahi te respondo",
+        created_at=inbound_at + timedelta(minutes=1),
+    )
+    answered_lead = ContadoresLead.get_by_id(lead.id)
+    assert answered_lead.queue_state == "operator"
+    assert answered_lead.attention_state == "answered"
+
+
+def test_lifecycle_v2_backfill_repairs_stale_persisted_values(monkeypatch, tmp_path) -> None:
+    """Schema maintenance should repair v2 lifecycle fields on existing rows."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-lifecycle-backfill",
+        phone="+5491888888803",
+        full_name="Lifecycle Backfill",
+    )
+    ContadoresLead.update_flow_state(
+        lead.id,
+        stage=ContadoresLeadStage.BOOKED,
+        booked_at=now_utc(),
+    )
+    with database_module.engine.begin() as connection:
+        connection.exec_driver_sql(
+            """
+            UPDATE contadores_leads
+            SET pipeline_stage = 'new',
+                queue_state = 'automation',
+                terminal_state = 'open',
+                attention_state = 'clear'
+            WHERE id = ?
+            """,
+            (lead.id,),
+        )
+
+    database_module.ensure_contadores_lifecycle_columns()
+
+    backfilled_lead = ContadoresLead.get_by_id(lead.id)
+    assert backfilled_lead.pipeline_stage == "converted"
+    assert backfilled_lead.queue_state == "none"
+    assert backfilled_lead.terminal_state == "open"
+    assert backfilled_lead.attention_state == "converted"
+
+
 def test_pause_automation_action_keeps_stage_and_blocks_due_agent_followup(monkeypatch, tmp_path) -> None:
     """Operators can stop bot automation without moving the lead or sending WhatsApp."""
     configure_contadores_db(monkeypatch, tmp_path)
