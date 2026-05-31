@@ -1,0 +1,960 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Konecta Platform - Update y guia de operador</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f5f6f8;
+        --panel: #ffffff;
+        --ink: #17202a;
+        --muted: #667085;
+        --line: #d8dee8;
+        --accent: #0f766e;
+        --accent-soft: #d8f5ef;
+        --warn: #a15c07;
+        --warn-soft: #fff3d6;
+        --danger: #b42318;
+        --danger-soft: #ffe4e2;
+        --ok: #067647;
+        --ok-soft: #dcfae6;
+        --blue: #175cd3;
+        --blue-soft: #dbeafe;
+        --shadow: 0 14px 40px rgba(15, 23, 42, 0.08);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        line-height: 1.5;
+      }
+
+      a {
+        color: var(--blue);
+      }
+
+      code {
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: #f8fafc;
+        padding: 2px 6px;
+        font-size: 0.92em;
+      }
+
+      .page {
+        width: min(1180px, calc(100% - 32px));
+        margin: 0 auto;
+        padding: 32px 0 56px;
+      }
+
+      .hero {
+        display: grid;
+        gap: 18px;
+        margin-bottom: 22px;
+        padding: 30px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--panel);
+        box-shadow: var(--shadow);
+      }
+
+      .hero h1 {
+        margin: 0;
+        max-width: 920px;
+        font-size: clamp(2rem, 4vw, 4rem);
+        line-height: 1.02;
+        letter-spacing: 0;
+      }
+
+      .hero p {
+        margin: 0;
+        max-width: 860px;
+        color: var(--muted);
+        font-size: 1.05rem;
+      }
+
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        min-height: 32px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: #fff;
+        padding: 6px 11px;
+        color: var(--muted);
+        font-size: 0.9rem;
+        font-weight: 650;
+      }
+
+      .chip.ok {
+        border-color: #abefc6;
+        background: var(--ok-soft);
+        color: var(--ok);
+      }
+
+      .chip.warn {
+        border-color: #fedf89;
+        background: var(--warn-soft);
+        color: var(--warn);
+      }
+
+      .chip.danger {
+        border-color: #fecdca;
+        background: var(--danger-soft);
+        color: var(--danger);
+      }
+
+      .nav {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 22px;
+        padding: 12px 0;
+        background: rgba(245, 246, 248, 0.92);
+        backdrop-filter: blur(12px);
+      }
+
+      .nav a {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fff;
+        padding: 8px 12px;
+        color: var(--ink);
+        font-size: 0.92rem;
+        font-weight: 700;
+        text-decoration: none;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(12, 1fr);
+        gap: 18px;
+      }
+
+      .section {
+        grid-column: 1 / -1;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--panel);
+        box-shadow: var(--shadow);
+        overflow: hidden;
+      }
+
+      .section-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 18px;
+        padding: 24px 26px;
+        border-bottom: 1px solid var(--line);
+        background: #fbfcfe;
+      }
+
+      .section-head h2,
+      .card h3 {
+        margin: 0;
+        letter-spacing: 0;
+      }
+
+      .section-head p {
+        margin: 4px 0 0;
+        color: var(--muted);
+      }
+
+      .section-body {
+        padding: 24px 26px;
+      }
+
+      .cards {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .card {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fff;
+        padding: 16px;
+      }
+
+      .card strong.label {
+        display: inline-block;
+        margin-bottom: 8px;
+        color: var(--accent);
+        font-size: 0.78rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .card p,
+      .card li {
+        color: var(--muted);
+      }
+
+      .card p:last-child,
+      .card ul:last-child,
+      .card ol:last-child {
+        margin-bottom: 0;
+      }
+
+      .wide {
+        grid-column: span 2;
+      }
+
+      .full {
+        grid-column: 1 / -1;
+      }
+
+      .status-table {
+        width: 100%;
+        border-collapse: collapse;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+      }
+
+      .status-table th,
+      .status-table td {
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--line);
+        vertical-align: top;
+        text-align: left;
+      }
+
+      .status-table th {
+        background: #f8fafc;
+        font-size: 0.78rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .status-table tr:last-child td {
+        border-bottom: 0;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        padding: 4px 9px;
+        font-size: 0.82rem;
+        font-weight: 750;
+        white-space: nowrap;
+      }
+
+      .pill.ok {
+        background: var(--ok-soft);
+        color: var(--ok);
+      }
+
+      .pill.warn {
+        background: var(--warn-soft);
+        color: var(--warn);
+      }
+
+      .pill.danger {
+        background: var(--danger-soft);
+        color: var(--danger);
+      }
+
+      .pill.blue {
+        background: var(--blue-soft);
+        color: var(--blue);
+      }
+
+      .timeline {
+        display: grid;
+        gap: 12px;
+        counter-reset: step;
+      }
+
+      .step {
+        display: grid;
+        grid-template-columns: 44px 1fr;
+        gap: 12px;
+        align-items: start;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 14px;
+        background: #fff;
+      }
+
+      .step::before {
+        counter-increment: step;
+        content: counter(step);
+        display: grid;
+        width: 32px;
+        height: 32px;
+        place-items: center;
+        border-radius: 999px;
+        background: var(--accent-soft);
+        color: var(--accent);
+        font-weight: 800;
+      }
+
+      .step h3 {
+        margin: 2px 0 4px;
+        font-size: 1rem;
+      }
+
+      .step p {
+        margin: 0;
+        color: var(--muted);
+      }
+
+      .callout {
+        border: 1px solid #fedf89;
+        border-radius: 8px;
+        background: var(--warn-soft);
+        padding: 14px 16px;
+        color: #713b12;
+      }
+
+      .callout strong {
+        display: block;
+        margin-bottom: 4px;
+      }
+
+      .callout.danger {
+        border-color: #fecdca;
+        background: var(--danger-soft);
+        color: var(--danger);
+      }
+
+      .callout.ok {
+        border-color: #abefc6;
+        background: var(--ok-soft);
+        color: var(--ok);
+      }
+
+      .kbd-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin: 10px 0 0;
+      }
+
+      .kbd-list span {
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: #f8fafc;
+        padding: 5px 8px;
+        font-size: 0.86rem;
+        font-weight: 700;
+      }
+
+      .two-column {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 14px;
+      }
+
+      .footer {
+        margin-top: 22px;
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+
+      @media (max-width: 920px) {
+        .cards,
+        .two-column {
+          grid-template-columns: 1fr;
+        }
+
+        .wide {
+          grid-column: auto;
+        }
+
+        .section-head {
+          flex-direction: column;
+        }
+      }
+
+      @media print {
+        body {
+          background: #fff;
+        }
+
+        .page {
+          width: 100%;
+          padding: 0;
+        }
+
+        .nav {
+          display: none;
+        }
+
+        .hero,
+        .section {
+          box-shadow: none;
+          break-inside: avoid;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <header class="hero">
+        <div class="chips">
+          <span class="chip ok">Deploy live: 4c20369</span>
+          <span class="chip ok">Backend healthy</span>
+          <span class="chip ok">239 backend tests</span>
+          <span class="chip warn">Meta API keys pending</span>
+          <span class="chip warn">Calendar keys pending</span>
+        </div>
+        <h1>Konecta platform update y guia para operar el flujo</h1>
+        <p>
+          Resumen corto de las features agregadas, que hacen, que ya esta probado,
+          que quedo bloqueado por credenciales y como deberia usar la plataforma
+          un empleado como Mati en el dia a dia.
+        </p>
+      </header>
+
+      <nav class="nav" aria-label="Contenido">
+        <a href="#changelog">Changelog para Facu</a>
+        <a href="#estado">Estado real</a>
+        <a href="#bloqueos">Bloqueos</a>
+        <a href="#guia">Guia para Mati</a>
+        <a href="#meta-flow">Meta Ads flow</a>
+        <a href="#diario">Rutina diaria</a>
+      </nav>
+
+      <div class="grid">
+        <section class="section" id="changelog">
+          <div class="section-head">
+            <div>
+              <h2>Changelog para Facu</h2>
+              <p>Lo importante que cambio en la plataforma.</p>
+            </div>
+            <span class="pill blue">Agent-native + UI cockpit</span>
+          </div>
+          <div class="section-body">
+            <div class="cards">
+              <article class="card">
+                <strong class="label">Config sin UI</strong>
+                <h3>La UI ya no es la fuente de verdad</h3>
+                <p>
+                  Agregue tools auditadas para que Codex configure funnels,
+                  delivery sources, meetings, perfiles de cliente, campanas,
+                  creatividades, planes de Meta, preguntas a humano y updates.
+                </p>
+              </article>
+              <article class="card">
+                <strong class="label">Ops</strong>
+                <h3>Cockpit de observabilidad</h3>
+                <p>
+                  La pestaña <code>Ops</code> lee <code>/api/platform/overview</code>
+                  y muestra blockers, preguntas abiertas, campanas, Meta publish,
+                  inventario, agent runs, tool calls, updates y eventos.
+                </p>
+              </article>
+              <article class="card">
+                <strong class="label">Meetings</strong>
+                <h3>Handoff post-conversion</h3>
+                <p>
+                  La plataforma puede guardar meeting records, adjuntar transcript,
+                  extraer un perfil de cliente con DSPy y preparar el brief para ads.
+                  El calendario real esta gateado por credenciales.
+                </p>
+              </article>
+              <article class="card">
+                <strong class="label">Ads</strong>
+                <h3>Benchmark Eliana v3</h3>
+                <p>
+                  Agregue <code>creative_benchmark</code> y
+                  <code>creative_testing</code> a campanas. El default ahora es
+                  Eliana v3, con la imagen de choque desde atras como referencia,
+                  y 3 conceptos x 10 variantes.
+                </p>
+              </article>
+              <article class="card">
+                <strong class="label">Meta</strong>
+                <h3>Publicacion por etapas</h3>
+                <p>
+                  El flujo Meta ahora tiene inventario, plan staged, preflight,
+                  approval gate, creative upload y executor. Todo crea objetos en
+                  <code>PAUSED</code>, persiste IDs y evita duplicados por idempotencia.
+                </p>
+              </article>
+              <article class="card">
+                <strong class="label">Lead Delivery</strong>
+                <h3>Sheets + Meta Lead Ads</h3>
+                <p>
+                  Delivery sigue leyendo Google Sheets, pero tambien puede importar
+                  leads de Meta instant forms. Si solo llega un <code>leadgen_id</code>,
+                  el backend lo busca por Graph API y lo mete al mismo delivery.
+                </p>
+              </article>
+              <article class="card">
+                <strong class="label">WhatsApp</strong>
+                <h3>Ruteo Click-to-WhatsApp</h3>
+                <p>
+                  Los anuncios Click-to-WhatsApp pueden rutear por
+                  <code>referral.source_id</code>. Cuando el executor cree anuncios,
+                  guarda los IDs devueltos por Meta en el funnel para que los
+                  mensajes entrantes vuelvan al flujo correcto.
+                </p>
+              </article>
+              <article class="card">
+                <strong class="label">Offer</strong>
+                <h3>Oferta text-first</h3>
+                <p>
+                  El flujo no depende de tener un Loom nuevo. Para el offer nuevo
+                  se puede operar con texto, igual que los ejemplos existentes del CRM.
+                </p>
+              </article>
+              <article class="card">
+                <strong class="label">Preguntas</strong>
+                <h3>Dudas de operador</h3>
+                <p>
+                  Cuando el agente no puede decidir algo de forma segura, guarda una
+                  <code>HumanQuestion</code> con contexto, opciones y accion por
+                  defecto. Esa deuda aparece en Ops como blocker.
+                </p>
+              </article>
+            </div>
+          </div>
+        </section>
+
+        <section class="section" id="estado">
+          <div class="section-head">
+            <div>
+              <h2>Estado real</h2>
+              <p>Que esta listo, que esta gateado y que fue probado.</p>
+            </div>
+            <span class="pill ok">Probado y deployado</span>
+          </div>
+          <div class="section-body">
+            <table class="status-table">
+              <thead>
+                <tr>
+                  <th>Area</th>
+                  <th>Estado</th>
+                  <th>Que significa</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>CRM por funnels</td>
+                  <td><span class="pill ok">Listo</span></td>
+                  <td>El operador puede revisar leads, responder, pausar, marcar booked, cerrar, convertir a Workstation y crear funnels desde UI si hace falta.</td>
+                </tr>
+                <tr>
+                  <td>Agent-native config</td>
+                  <td><span class="pill ok">Listo</span></td>
+                  <td>Codex puede configurar sin pedir clicks en la UI. Todo queda auditado en tool calls y eventos.</td>
+                </tr>
+                <tr>
+                  <td>Delivery de leads a clientes</td>
+                  <td><span class="pill ok">Listo</span></td>
+                  <td>Lee Sheets, agrupa por contacto, muestra filas reales, registra Sent chat, y reintenta envios fallidos.</td>
+                </tr>
+                <tr>
+                  <td>Meta Lead Ads intake</td>
+                  <td><span class="pill warn">Necesita token para fetch</span></td>
+                  <td>La importacion de payloads ya recuperados anda. El fetch por <code>leadgen_id</code> necesita token Meta.</td>
+                </tr>
+                <tr>
+                  <td>Meta publish</td>
+                  <td><span class="pill warn">Gateado</span></td>
+                  <td>El plan, preflight, approval y executor existen. Para crear objetos reales faltan credenciales y activar live writes.</td>
+                </tr>
+                <tr>
+                  <td>Ads creatives</td>
+                  <td><span class="pill blue">Workflow listo</span></td>
+                  <td>La plataforma guarda campana, benchmark, testing policy y assets. La generacion sigue corriendo via Codex/image workflow, no como boton final unico.</td>
+                </tr>
+                <tr>
+                  <td>Google Calendar</td>
+                  <td><span class="pill warn">Dry-run listo</span></td>
+                  <td>Puede armar y guardar el payload. Crear eventos reales necesita credenciales Calendar.</td>
+                </tr>
+                <tr>
+                  <td>Ops observability</td>
+                  <td><span class="pill ok">Listo</span></td>
+                  <td>La UI muestra blockers, Meta, meetings, updates, assets, agent activity y event stream.</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="two-column" style="margin-top: 14px;">
+              <div class="callout ok">
+                <strong>Checks corridos</strong>
+                Backend completo: <code>239 passed</code>. Frontend build: OK.
+                Deploy real: backend healthy. DB real: columnas
+                <code>creative_benchmark_json</code> y
+                <code>creative_testing_json</code> aplicadas.
+              </div>
+              <div class="callout">
+                <strong>Que no probe como live write</strong>
+                No cree campanas reales en Meta ni eventos reales de Calendar
+                porque el server no tiene credenciales ni live writes activados.
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="section" id="bloqueos">
+          <div class="section-head">
+            <div>
+              <h2>Bloqueos exactos</h2>
+              <p>Lo que falta para pasar de staged/dry-run a ejecucion externa real.</p>
+            </div>
+            <span class="pill danger">Credenciales faltantes</span>
+          </div>
+          <div class="section-body">
+            <div class="cards">
+              <article class="card wide">
+                <strong class="label">Meta Ads</strong>
+                <h3>Faltan env vars en el server</h3>
+                <p>
+                  Estas variables aparecen vacias en produccion. Con esto cargado,
+                  la plataforma puede leer inventario, buscar leads por API,
+                  subir creatividades y ejecutar planes aprobados.
+                </p>
+                <div class="kbd-list">
+                  <span>META_MARKETING_API_VERSION</span>
+                  <span>META_MARKETING_ACCESS_TOKEN</span>
+                  <span>META_ACCESS_TOKEN</span>
+                  <span>META_AD_ACCOUNT_ID</span>
+                  <span>META_MARKETING_LIVE_WRITES_ENABLED</span>
+                </div>
+              </article>
+              <article class="card">
+                <strong class="label">Accion siguiente</strong>
+                <h3>Conseguir token y ad account</h3>
+                <p>
+                  Usar 1Password/API si existe. Si no tenemos acceso, pedirle a
+                  Alan el token, el ad account y confirmacion de activar live writes.
+                </p>
+              </article>
+              <article class="card wide">
+                <strong class="label">Google Calendar</strong>
+                <h3>Faltan env vars de calendario</h3>
+                <p>
+                  El scheduler esta preparado para dry-run y para guardar blockers,
+                  pero crear eventos reales requiere estas variables.
+                </p>
+                <div class="kbd-list">
+                  <span>PLATFORM_MEETING_CALENDAR_ID</span>
+                  <span>PLATFORM_MEETING_INTERNAL_ATTENDEES</span>
+                  <span>GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON</span>
+                  <span>GOOGLE_CALENDAR_DELEGATED_USER</span>
+                </div>
+              </article>
+              <article class="card">
+                <strong class="label">Accion siguiente</strong>
+                <h3>Definir calendario operativo</h3>
+                <p>
+                  Decidir en que calendar se crean reuniones, quienes van como
+                  asistentes internos y con que usuario delegado escribe Google.
+                </p>
+              </article>
+            </div>
+          </div>
+        </section>
+
+        <section class="section" id="guia">
+          <div class="section-head">
+            <div>
+              <h2>Guia de usuario para Mati</h2>
+              <p>Flow operativo para recibir leads, revisar clientes y controlar que todo corra.</p>
+            </div>
+            <span class="pill blue">Empleado operador</span>
+          </div>
+          <div class="section-body">
+            <div class="timeline">
+              <article class="step">
+                <div>
+                  <h3>Abrir la plataforma</h3>
+                  <p>
+                    Entrar a <code>https://crm.fgoiriz.com</code>. En local de
+                    desarrollo, usar <code>http://localhost:5173/</code>. Arriba
+                    estan las secciones principales: <code>CRM</code>,
+                    <code>Workstation</code>, <code>Delivery</code>,
+                    <code>Ops</code> y <code>Runner</code>.
+                  </p>
+                </div>
+              </article>
+              <article class="step">
+                <div>
+                  <h3>Empezar por Ops</h3>
+                  <p>
+                    Tocar <code>Ops</code> y despues <code>Refresh</code>. Mirar
+                    primero <code>Blockers</code>, <code>Questions</code>,
+                    <code>Meta</code> y <code>Agents</code>. Si hay un blocker,
+                    no asumir: leer el texto y escalarlo.
+                  </p>
+                </div>
+              </article>
+              <article class="step">
+                <div>
+                  <h3>Responder leads en CRM</h3>
+                  <p>
+                    Ir a <code>CRM</code>, elegir el funnel arriba
+                    (<code>Contadores</code>, <code>Abogados</code>, etc.) y filtrar
+                    por <code>Needs answer</code>. Abrir cada lead, leer
+                    <code>Messages</code> y usar <code>Send</code> para responder.
+                  </p>
+                </div>
+              </article>
+              <article class="step">
+                <div>
+                  <h3>Decidir el estado del lead</h3>
+                  <p>
+                    Usar <code>Answered</code> si ya se respondio, <code>Manual</code>
+                    para dejarlo en manejo humano, <code>Booked</code> si ya tiene
+                    reunion, <code>Close</code> si no va mas, y <code>Reopen</code>
+                    si hay que revivir uno cerrado.
+                  </p>
+                </div>
+              </article>
+              <article class="step">
+                <div>
+                  <h3>Usar Codex con cuidado</h3>
+                  <p>
+                    El switch <code>Codex</code> activa/desactiva ayuda AI para ese
+                    lead. Si el lead pregunta algo delicado o falta informacion,
+                    pausarlo con <code>Manual</code> y pedir contexto a Facu.
+                  </p>
+                </div>
+              </article>
+              <article class="step">
+                <div>
+                  <h3>Convertir un cliente</h3>
+                  <p>
+                    Si el lead pago o ya es cliente, tocar <code>Convert</code>.
+                    Si solo compro una pagina, tocar <code>Solo page</code>.
+                    Despues seguirlo desde <code>Workstation</code>.
+                  </p>
+                </div>
+              </article>
+              <article class="step">
+                <div>
+                  <h3>Trabajar clientes en Workstation</h3>
+                  <p>
+                    Ir a <code>Workstation</code>, elegir el cliente, revisar
+                    <code>Meeting notes</code>, subir archivos en <code>Client files</code>,
+                    copiar contexto con <code>Copy all</code> y bajar entregables
+                    con el link de ZIP cuando este disponible.
+                  </p>
+                </div>
+              </article>
+              <article class="step">
+                <div>
+                  <h3>Revisar Delivery de leads a clientes</h3>
+                  <p>
+                    Ir a <code>Delivery</code>, elegir el contacto del cliente y
+                    mirar <code>Leads from sheet</code>. Los filtros
+                    <code>All sheets</code> y cada sheet/campana separan las fuentes.
+                    No hay boton manual de sync: al seleccionar contacto refresca solo.
+                  </p>
+                </div>
+              </article>
+              <article class="step">
+                <div>
+                  <h3>Resolver envios fallidos</h3>
+                  <p>
+                    En Delivery mirar <code>Sent chat</code>, <code>Delivery</code>
+                    y las columnas <code>blocked</code>/<code>failed</code>. Usar
+                    <code>Retry</code> solo si el error es retryable. Usar
+                    <code>Copy</code> o <code>Copy all</code> para pasar datos a Facu.
+                  </p>
+                </div>
+              </article>
+              <article class="step">
+                <div>
+                  <h3>Mirar Runner si algo se queda parado</h3>
+                  <p>
+                    <code>Runner</code> muestra si hay procesos agenticos corriendo,
+                    idle o fallando. Si esta en failed/error, sacar contexto de
+                    <code>Ops</code> antes de tocar configuracion.
+                  </p>
+                </div>
+              </article>
+            </div>
+          </div>
+        </section>
+
+        <section class="section" id="meta-flow">
+          <div class="section-head">
+            <div>
+              <h2>Meta Ads flow</h2>
+              <p>Como deberia funcionar cuando el empleado pide ads y cuando se habiliten credenciales.</p>
+            </div>
+            <span class="pill warn">Publicacion real bloqueada hasta API keys</span>
+          </div>
+          <div class="section-body">
+            <div class="cards">
+              <article class="card">
+                <strong class="label">1. Brief</strong>
+                <h3>Transcript o notas</h3>
+                <p>
+                  El agente guarda transcript/notas del cliente, extrae perfil,
+                  oferta, objeciones, geografia, segmentos y angulos de ads.
+                </p>
+              </article>
+              <article class="card">
+                <strong class="label">2. Campana</strong>
+                <h3>Stage ad campaign</h3>
+                <p>
+                  Se guarda objetivo, presupuesto, segmentos, angulos,
+                  <code>creative_benchmark</code> y <code>creative_testing</code>.
+                  Default: Eliana v3 y 3 conceptos x 10 variantes.
+                </p>
+              </article>
+              <article class="card">
+                <strong class="label">3. Creatividades</strong>
+                <h3>Generar batch, no elegir a ojo</h3>
+                <p>
+                  Por cada concepto se generan 10 variantes. Cada imagen aceptada
+                  se guarda como <code>CreativeAsset</code>. La idea no es elegir
+                  una sola manualmente: Meta deberia optimizar.
+                </p>
+              </article>
+              <article class="card">
+                <strong class="label">4. Inventario</strong>
+                <h3>Sync Meta inventory</h3>
+                <p>
+                  Con credenciales, la plataforma lee ad account, Page, formularios,
+                  pixels, WhatsApp numbers y campanas existentes. Sin credenciales,
+                  Ops muestra <code>missing_credentials</code>.
+                </p>
+              </article>
+              <article class="card">
+                <strong class="label">5. Plan</strong>
+                <h3>Stage + preflight</h3>
+                <p>
+                  Se arma el plan <code>Campaign -> Ad Set -> Creative -> Ad</code>
+                  en estado <code>PAUSED</code>. Preflight valida campos, ruteo,
+                  presupuesto, approval y creatividades Meta-ready.
+                </p>
+              </article>
+              <article class="card">
+                <strong class="label">6. Approval</strong>
+                <h3>Facu aprueba presupuesto</h3>
+                <p>
+                  Antes de live write, Facu o un operador autorizado aprueba caps,
+                  nota, idempotency key y que todo arranque pausado.
+                </p>
+              </article>
+              <article class="card">
+                <strong class="label">7. Execute</strong>
+                <h3>Crear objetos reales en Meta</h3>
+                <p>
+                  Solo con <code>META_MARKETING_LIVE_WRITES_ENABLED=true</code>,
+                  token y approval. El executor guarda IDs devueltos por Meta para
+                  no duplicar en retries.
+                </p>
+              </article>
+              <article class="card">
+                <strong class="label">8. Leads</strong>
+                <h3>Volver al CRM o Delivery</h3>
+                <p>
+                  Click-to-WhatsApp vuelve al funnel por source/ad ID. Instant
+                  forms entran a <code>Client Lead Delivery</code> por
+                  <code>client_lead_source_id</code>.
+                </p>
+              </article>
+              <article class="card">
+                <strong class="label">9. Updates</strong>
+                <h3>Reporte cada 24 horas</h3>
+                <p>
+                  Ops y client updates deben mostrar leads, delivery, blockers,
+                  Meta status y proximo paso para mandar un update claro al cliente.
+                </p>
+              </article>
+            </div>
+
+            <div class="callout" style="margin-top: 14px;">
+              <strong>Regla creativa para Mati</strong>
+              No pedir "haceme un ad lindo". Pedir el batch completo:
+              3 conceptos concretos del problema del cliente, 10 variantes por
+              concepto, estilo Eliana v3, problema visible primero, persona visible,
+              texto grande y WhatsApp/legal secundario.
+            </div>
+          </div>
+        </section>
+
+        <section class="section" id="diario">
+          <div class="section-head">
+            <div>
+              <h2>Rutina diaria recomendada</h2>
+              <p>Checklist operativo simple para que Mati no se pierda.</p>
+            </div>
+            <span class="pill ok">15 minutos al empezar</span>
+          </div>
+          <div class="section-body">
+            <div class="two-column">
+              <article class="card">
+                <strong class="label">Manana</strong>
+                <h3>Primer chequeo</h3>
+                <ol>
+                  <li>Abrir <code>Ops</code> y tocar <code>Refresh</code>.</li>
+                  <li>Revisar <code>Blockers</code> y <code>Questions</code>.</li>
+                  <li>Entrar a <code>CRM</code> y filtrar <code>Needs answer</code>.</li>
+                  <li>Responder o pausar leads que no pueda resolver.</li>
+                  <li>Entrar a <code>Delivery</code> y mirar failed/blocked.</li>
+                </ol>
+              </article>
+              <article class="card">
+                <strong class="label">Durante el dia</strong>
+                <h3>Operacion normal</h3>
+                <ol>
+                  <li>Cuando entra un lead importante, revisar mensajes completos antes de responder.</li>
+                  <li>Si hay intencion de llamada, marcar <code>Booked</code> solo cuando tenga datos reales.</li>
+                  <li>Si pago, usar <code>Convert</code> y mover a <code>Workstation</code>.</li>
+                  <li>Si un cliente pregunta por leads, revisar <code>Delivery</code> y <code>Sent chat</code>.</li>
+                  <li>Si Meta esta bloqueado por credenciales, no inventar IDs: escalar.</li>
+                </ol>
+              </article>
+              <article class="card">
+                <strong class="label">Antes de cerrar</strong>
+                <h3>Control final</h3>
+                <ol>
+                  <li>Volver a <code>Ops</code> y confirmar blockers nuevos.</li>
+                  <li>Revisar <code>Client updates</code> para updates de 24 horas.</li>
+                  <li>Dejar preguntas abiertas con contexto claro para Facu.</li>
+                  <li>No dejar leads buenos en <code>Needs answer</code> si ya se respondieron.</li>
+                </ol>
+              </article>
+              <article class="card">
+                <strong class="label">No tocar sin permiso</strong>
+                <h3>Guardrails</h3>
+                <ul>
+                  <li>No borrar leads, funnels o delivery sources sin confirmar.</li>
+                  <li>No cambiar <code>Runtime</code>, <code>Funnel</code> o <code>Config</code> si no sabe por que.</li>
+                  <li>No aprobar Meta live writes sin presupuesto y OK explicito.</li>
+                  <li>No elegir una sola creatividad ganadora antes de datos de Meta.</li>
+                </ul>
+              </article>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <p class="footer">
+        Archivo generado como handoff operativo. Fuente de verdad tecnica:
+        repo <code>contadores</code>, README, platform architecture, skills y estado
+        deployado al commit <code>4c20369</code>.
+      </p>
+    </main>
+  </body>
+</html>
