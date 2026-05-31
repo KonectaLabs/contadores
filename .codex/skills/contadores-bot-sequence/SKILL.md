@@ -228,6 +228,9 @@ Operators have these backoffice actions:
   MP4 with the lawyer copy.
 
 Both actions record `calendly_sent_at` and keep the lead in Manual.
+Calendly webhook events record `meeting_scheduled_at`, move the lead into the
+Meeting milestone, pause CRM automation, and must not set `booked_at` or
+`converted_at`.
 Automation must not send calendar links automatically in the conversational bot flow;
 it asks for email, day, time, and timezone. Once a meeting record exists, an
 agent can run `schedule_platform_meeting`; live calendar creation still requires

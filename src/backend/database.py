@@ -1068,6 +1068,7 @@ class ContadoresLead(SQLModel, table=True):
     video_check_sent_at: datetime | None = Field(default=None, index=True)
     classification_completed_at: datetime | None = Field(default=None)
     calendly_sent_at: datetime | None = Field(default=None, index=True)
+    meeting_scheduled_at: datetime | None = Field(default=None, index=True)
     booked_at: datetime | None = Field(default=None, index=True)
     closed_at: datetime | None = Field(default=None, index=True)
     stage_before_closed: ContadoresLeadStage | None = Field(default=None)
@@ -1154,9 +1155,13 @@ class ContadoresLead(SQLModel, table=True):
                 return ContadoresLeadStage.BOOKED
             if lead.booked_at is not None:
                 return ContadoresLeadStage.BOOKED
+            if lead.meeting_scheduled_at is not None:
+                return ContadoresLeadStage.CALENDLY_SENT
             return ContadoresLeadStage.NEEDS_HUMAN
         if lead.booked_at is not None:
             return ContadoresLeadStage.BOOKED
+        if lead.meeting_scheduled_at is not None:
+            return ContadoresLeadStage.CALENDLY_SENT
         if lead.calendly_sent_at is not None:
             return ContadoresLeadStage.CALENDLY_SENT
         return lead.stage
@@ -1222,7 +1227,11 @@ class ContadoresLead(SQLModel, table=True):
             return "closed"
         if stage == ContadoresLeadStage.BOOKED or lead.booked_at is not None:
             return "converted"
-        if stage == ContadoresLeadStage.CALENDLY_SENT or lead.calendly_sent_at is not None:
+        if (
+            stage == ContadoresLeadStage.CALENDLY_SENT
+            or lead.calendly_sent_at is not None
+            or lead.meeting_scheduled_at is not None
+        ):
             return "meeting_sent"
         if stage == ContadoresLeadStage.AWAITING_VIDEO_REPLY or lead.loom_sent_at is not None:
             return "offer_sent"
@@ -1508,6 +1517,7 @@ class ContadoresLead(SQLModel, table=True):
                 item.video_check_sent_at = None
                 item.classification_completed_at = None
                 item.calendly_sent_at = None
+                item.meeting_scheduled_at = None
                 item.booked_at = None
                 item.closed_at = None
                 item.stage_before_closed = None
@@ -1724,6 +1734,7 @@ class ContadoresLead(SQLModel, table=True):
         video_check_sent_at: datetime | None = None,
         classification_completed_at: datetime | None = None,
         calendly_sent_at: datetime | None = None,
+        meeting_scheduled_at: datetime | None = None,
         booked_at: datetime | None = None,
         closed_at: datetime | None = None,
         clear_closed_at: bool = False,
@@ -1765,6 +1776,8 @@ class ContadoresLead(SQLModel, table=True):
                 item.classification_completed_at = classification_completed_at
             if calendly_sent_at is not None:
                 item.calendly_sent_at = calendly_sent_at
+            if meeting_scheduled_at is not None:
+                item.meeting_scheduled_at = meeting_scheduled_at
             if booked_at is not None:
                 item.booked_at = booked_at
             if normalized_stage is not None and normalized_stage != ContadoresLeadStage.CLOSED:
@@ -7268,6 +7281,7 @@ def ensure_contadores_lifecycle_columns() -> None:
             "queue_state": "TEXT NOT NULL DEFAULT 'automation'",
             "terminal_state": "TEXT NOT NULL DEFAULT 'open'",
             "attention_state": "TEXT NOT NULL DEFAULT 'clear'",
+            "meeting_scheduled_at": "TIMESTAMP",
         }
         for column_name, column_type in column_definitions.items():
             if column_name in lead_columns:

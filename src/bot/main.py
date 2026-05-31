@@ -431,7 +431,7 @@ async def handle_calendly_webhook(
     backend_client: httpx.AsyncClient,
     payload: dict[str, Any],
 ) -> dict[str, Any]:
-    """Reconcile Calendly bookings back into the Contadores lead state."""
+    """Reconcile Calendly meeting events back into the Contadores lead state."""
     event_type = str(payload.get("event") or payload.get("event_type") or "").strip() or "unknown"
     token = extract_nested_utm_content(payload)
     if not token:
@@ -572,7 +572,7 @@ async def health() -> dict[str, str]:
 
 @app.post("/webhook/calendly")
 async def calendly_webhook(request: Request) -> dict[str, Any]:
-    """Receive Calendly webhook events and reconcile bookings into Contadores."""
+    """Receive Calendly webhook events and reconcile scheduled meetings into Contadores."""
     backend_client = getattr(app.state, "backend_client", None)
     if backend_client is None:
         raise HTTPException(status_code=503, detail="Backend runtime is not ready")

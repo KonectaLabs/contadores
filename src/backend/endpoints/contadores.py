@@ -1080,7 +1080,17 @@ def apply_config_update_to_file_backed_funnel(command: "UpdateContadoresConfigCo
 
 def lead_has_new_inbound_after_calendly(lead: ContadoresLead) -> bool:
     """Return True when the lead replied after the latest Calendly handoff."""
-    calendly_sent_at = ensure_utc_datetime(lead.calendly_sent_at)
+    calendly_sent_at = max(
+        [
+            item
+            for item in [
+                ensure_utc_datetime(lead.calendly_sent_at),
+                ensure_utc_datetime(lead.meeting_scheduled_at),
+            ]
+            if item is not None
+        ],
+        default=None,
+    )
     last_inbound_at = ensure_utc_datetime(lead.last_inbound_at)
     if calendly_sent_at is None or last_inbound_at is None or lead.booked_at is not None:
         return False
@@ -1133,7 +1143,7 @@ def lead_counts_in_calendly_bucket(lead: ContadoresLead) -> bool:
         ContadoresLeadStage.BOOKED,
     }:
         return False
-    return lead.calendly_sent_at is not None
+    return lead.calendly_sent_at is not None or lead.meeting_scheduled_at is not None
 
 
 def derive_manual_reply_status(
@@ -1264,7 +1274,7 @@ def build_contadores_metrics(leads: list[ContadoresLead]) -> "ContadoresMetrics"
                 ContadoresLeadStage.CLOSED,
                 ContadoresLeadStage.BOOKED,
             }
-            and lead.calendly_sent_at is not None
+            and (lead.calendly_sent_at is not None or lead.meeting_scheduled_at is not None)
         ):
             calendly_count += 1
         lead_pipeline_stage = derive_lead_pipeline_stage(
@@ -1474,8 +1484,10 @@ def build_contadores_strategy_stats(funnel_id: str = "contadores") -> "Contadore
         lead = leads_by_id.get(assignment.lead_id)
         assigned_at = ensure_utc_datetime(assignment.assigned_at)
         calendly_sent_at = ensure_utc_datetime(lead.calendly_sent_at) if lead else None
+        meeting_scheduled_at = ensure_utc_datetime(lead.meeting_scheduled_at) if lead else None
         booked_at = ensure_utc_datetime(lead.booked_at) if lead else None
-        if assigned_at is not None and calendly_sent_at is not None and calendly_sent_at >= assigned_at:
+        meeting_at = max([item for item in [calendly_sent_at, meeting_scheduled_at] if item is not None], default=None)
+        if assigned_at is not None and meeting_at is not None and meeting_at >= assigned_at:
             item["reached_calendly"] += 1
             item["reached_meeting"] += 1
         if assigned_at is not None and booked_at is not None and booked_at >= assigned_at:
@@ -1503,6 +1515,8 @@ def infer_stage_from_timestamps(lead: ContadoresLead) -> ContadoresLeadStage:
     """Pick the most plausible active stage based on persisted milestones."""
     if lead.booked_at is not None:
         return ContadoresLeadStage.BOOKED
+    if lead.meeting_scheduled_at is not None:
+        return ContadoresLeadStage.CALENDLY_SENT
     if lead.calendly_sent_at is not None:
         return ContadoresLeadStage.CALENDLY_SENT
     if lead.loom_sent_at is not None:
@@ -1592,6 +1606,7 @@ def build_lead_summary(
     )
     meeting_url = build_calendly_url(base_url=config.calendly_base_url)
     meeting_sent_at = format_timestamp_seconds(lead.calendly_sent_at)
+    meeting_scheduled_at = format_timestamp_seconds(lead.meeting_scheduled_at)
     converted_at = format_timestamp_seconds(lead.booked_at)
     return ContadoresLeadSummary(
         id=lead.id,
@@ -1626,6 +1641,7 @@ def build_lead_summary(
         classification_completed_at=format_timestamp_seconds(lead.classification_completed_at),
         calendly_sent_at=meeting_sent_at,
         meeting_sent_at=meeting_sent_at,
+        meeting_scheduled_at=meeting_scheduled_at,
         booked_at=converted_at,
         converted_at=converted_at,
         closed_at=format_timestamp_seconds(lead.closed_at),
@@ -1871,6 +1887,7 @@ def build_followup_lead_snapshot(
         loom_sent_at=format_timestamp_seconds(lead.loom_sent_at),
         video_check_sent_at=format_timestamp_seconds(lead.video_check_sent_at),
         calendly_sent_at=format_timestamp_seconds(lead.calendly_sent_at),
+        meeting_scheduled_at=format_timestamp_seconds(lead.meeting_scheduled_at),
         booked_at=format_timestamp_seconds(lead.booked_at),
         closed_at=format_timestamp_seconds(lead.closed_at),
         archived_at=format_timestamp_seconds(lead.archived_at),
@@ -1959,6 +1976,7 @@ def build_followup_snapshot_csv(snapshots: list[ContadoresFollowupLeadSnapshot])
         "loom_sent_at",
         "video_check_sent_at",
         "calendly_sent_at",
+        "meeting_scheduled_at",
         "booked_at",
         "closed_at",
         "archived_at",
@@ -2001,6 +2019,7 @@ def build_followup_snapshot_csv(snapshots: list[ContadoresFollowupLeadSnapshot])
                 "loom_sent_at": snapshot.loom_sent_at or "",
                 "video_check_sent_at": snapshot.video_check_sent_at or "",
                 "calendly_sent_at": snapshot.calendly_sent_at or "",
+                "meeting_scheduled_at": snapshot.meeting_scheduled_at or "",
                 "booked_at": snapshot.booked_at or "",
                 "closed_at": snapshot.closed_at or "",
                 "archived_at": snapshot.archived_at or "",
@@ -3881,6 +3900,7 @@ class ContadoresLeadSummary(BaseModel):
     classification_completed_at: str | None = None
     calendly_sent_at: str | None = None
     meeting_sent_at: str | None = None
+    meeting_scheduled_at: str | None = None
     booked_at: str | None = None
     converted_at: str | None = None
     closed_at: str | None = None
@@ -3988,6 +4008,7 @@ class ContadoresFollowupLeadSnapshot(BaseModel):
     loom_sent_at: str | None = None
     video_check_sent_at: str | None = None
     calendly_sent_at: str | None = None
+    meeting_scheduled_at: str | None = None
     booked_at: str | None = None
     closed_at: str | None = None
     archived_at: str | None = None
@@ -6223,15 +6244,20 @@ async def mark_contadores_booked(
 async def register_contadores_calendly_event(
     command: ContadoresCalendlyWebhookCommand,
 ) -> ContadoresLeadSummary:
-    """Record a meeting-scheduled conversion from a Calendly webhook token."""
+    """Record a meeting schedule milestone from a Calendly webhook token."""
     lead = ContadoresLead.get_by_calendly_tracking_token(command.token)
     if lead is None:
         raise HTTPException(status_code=404, detail="Lead not found for Calendly token")
     config = get_effective_funnel_config(lead.funnel_id)
     if command.event_type.strip().lower() in {"invitee.created", "booking_created", "scheduled"}:
-        updated = ContadoresLead.mark_converted(
+        scheduled_at = command.occurred_at or now_utc()
+        updated = ContadoresLead.update_flow_state(
             lead.id,
-            converted_at=command.occurred_at,
+            stage=ContadoresLeadStage.CALENDLY_SENT,
+            meeting_scheduled_at=scheduled_at,
+            automation_paused=True,
+            automation_paused_reason="meeting_scheduled",
+            clear_needs_human_notified_at=True,
         )
         return build_lead_summary(updated or lead, config=config)
     return build_lead_summary(lead, config=config)

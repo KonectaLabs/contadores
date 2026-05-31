@@ -680,8 +680,8 @@ Template manual de ping:
   nueva eso se muestra como `Converted`; marcar un lead convertido no envia
   WhatsApp y solo pausa la automatizacion.
 - Los payloads nuevos deben preferir `converted_at`, `meeting_sent_at`,
-  `meeting_url`, `converted=true` y las metricas canonicales de meeting/conversion
-  aunque los aliases legacy sigan disponibles.
+  `meeting_scheduled_at`, `meeting_url`, `converted=true` y las metricas
+  canonicales de meeting/conversion aunque los aliases legacy sigan disponibles.
 
 Modelo de estado para UI/API:
 
@@ -693,8 +693,9 @@ Modelo de estado para UI/API:
 - `terminal_state` separa cierre/archivo: `open`, `closed`, `archived`.
 - `attention_state` separa urgencias operativas: `clear`, `needs_reply`,
   `answered`, `paused`, `converted`, `closed`, `archived`.
-- `conversion_type` explica el origen de `converted`: `meeting`, `manual` o
-  `workstation`.
+- `meeting_scheduled_at` registra agenda confirmada y no convierte el lead.
+- `conversion_type` explica el origen de `converted`: `manual`, `workstation` o
+  `meeting` solo para historico legacy.
 - El ledger vivo del rediseño frontend esta en
   `wiki/frontend-concept-ledger.md`; ahi se registra que superficie ya recibio
   una pasada deliberada, que quedo igual a proposito y que riesgo queda.
@@ -1003,6 +1004,8 @@ Acciones manuales de Meeting:
 - `Meeting link only` encola solo el link legacy de agenda.
 - El link legacy sale de `calendly_base_url` del funnel activo.
 - Ambas acciones registran `calendly_sent_at` y mantienen el lead en Manual.
+- El webhook Calendly registra `meeting_scheduled_at`, mueve el lead al hito
+  `Meeting`, pausa la automatizacion y no setea `booked_at/converted_at`.
 - La automatizacion nueva no manda links automaticamente. Para avanzar, el
   bot pide email, dia, horario y timezone.
 - Cuando esos datos estan completos, un agente puede usar

@@ -1132,7 +1132,7 @@ async def register_contadores_calendly_event(
     event_type: str,
     occurred_at: datetime | None = None,
 ) -> dict[str, Any]:
-    """Forward one Calendly booking event to the backend by tracking token."""
+    """Forward one Calendly meeting event to the backend by tracking token."""
     response = await client.post(
         backend_url("/api/contadores/calendly/webhook"),
         json={

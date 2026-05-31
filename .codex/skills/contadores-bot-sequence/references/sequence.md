@@ -150,6 +150,8 @@ Manual operators can also choose `send-calendly-link` from the CRM to send only
 the active funnel's `calendly_base_url`. That manual shortcut still marks the
 lead as having reached Meeting, keeps the lead in Manual, and is not used by
 automation.
+Calendly webhook events mark `meeting_scheduled_at` and pause CRM automation;
+they must not mark `booked_at` or `converted_at`.
 
 ## Human handoff
 

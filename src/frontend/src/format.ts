@@ -35,6 +35,7 @@ const readableLabels: Record<string, string> = {
   manual_calendly_send: "Manual meeting send",
   manual_message: "Manual message",
   manual_pause: "Paused manually",
+  meeting_scheduled: "Meeting scheduled",
   manual_ping_template: "Manual ping template",
   manual_review: "Manual review",
   manual_send_loom: "Manual offer send",

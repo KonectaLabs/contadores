@@ -1356,11 +1356,16 @@ def test_platform_meeting_calendar_gate_builds_and_creates_event(monkeypatch, tm
     monkeypatch.delenv("GOOGLE_CALENDAR_SERVICE_ACCOUNT_FILE", raising=False)
     monkeypatch.delenv("GOOGLE_CALENDAR_DELEGATED_USER", raising=False)
     scheduled_at = datetime(2026, 7, 2, 18, 0, tzinfo=timezone.utc)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-platform-meeting",
+        phone="+5491333333301",
+        full_name="Platform Meeting Lead",
+    )
     meeting_result = call_tool(
         run_id="agent-run-calendar",
         tool_name="create_platform_meeting",
         arguments={
-            "lead_id": "lead-calendar-1",
+            "lead_id": lead.id,
             "client_id": "client-calendar-1",
             "funnel_id": "abogados",
             "lead_email": "Lead.Calendar@Example.com",
@@ -1442,6 +1447,13 @@ def test_platform_meeting_calendar_gate_builds_and_creates_event(monkeypatch, tm
     assert scheduled.status == "scheduled"
     assert scheduled.calendar_event_id == "calendar-event-1"
     assert scheduled.calendar_event_link == "https://calendar.google.com/event?eid=1"
+    refreshed_lead = ContadoresLead.get_by_id(lead.id)
+    assert refreshed_lead.meeting_scheduled_at == scheduled.scheduled_at
+    assert refreshed_lead.stage == ContadoresLeadStage.AWAITING_INITIAL_REPLY
+    assert refreshed_lead.pipeline_stage == "meeting_sent"
+    assert refreshed_lead.booked_at is None
+    assert refreshed_lead.automation_paused is True
+    assert refreshed_lead.automation_paused_reason == "meeting_scheduled"
     assert PlatformEvent.list_recent(target_type="meeting", target_id=meeting_id)[0].event_type == "meeting.calendar_event_checked"
     assert len(insert_calls) == 1
 
@@ -6172,6 +6184,51 @@ def test_contadores_send_calendly_link_only_marks_calendly_sent(monkeypatch, tmp
     assert detail.json()["lead"]["calendly_url"] == "https://calendly.com/test/contadores"
     assert [item["sequence_step"] for item in pending.json()["messages"]] == ["calendly_url"]
     assert pending.json()["messages"][0]["text"] == "https://calendly.com/test/contadores"
+
+
+def test_calendly_webhook_records_scheduled_meeting_without_conversion(monkeypatch, tmp_path) -> None:
+    """Calendly scheduled is a meeting milestone; it is not a converted client."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-calendly-scheduled",
+        phone="+5491444444404",
+        full_name="Scheduled Meeting",
+    )
+    scheduled_at = now_utc()
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/contadores/calendly/webhook",
+            json={
+                "token": lead.calendly_tracking_token,
+                "event_type": "invitee.created",
+                "occurred_at": scheduled_at.isoformat(),
+            },
+        )
+        meeting_response = client.get("/api/contadores/leads?stage=calendly_sent")
+        converted_response = client.get("/api/contadores/leads?converted=true")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["stage"] == "calendly_sent"
+    assert payload["pipeline_stage"] == "meeting_sent"
+    assert payload["queue_state"] == "paused"
+    assert payload["attention_state"] == "paused"
+    assert payload["meeting_scheduled_at"] is not None
+    assert payload["meeting_scheduled_at"] != payload["converted_at"]
+    assert payload["converted_at"] is None
+    assert payload["booked_at"] is None
+    assert payload["conversion_type"] is None
+    assert payload["automation_paused"] is True
+    assert payload["automation_paused_reason"] == "meeting_scheduled"
+
+    assert meeting_response.status_code == 200
+    assert meeting_response.json()["metrics"]["meeting_sent"] == 1
+    assert meeting_response.json()["metrics"]["converted"] == 0
+    assert [item["id"] for item in meeting_response.json()["leads"]] == [lead.id]
+
+    assert converted_response.status_code == 200
+    assert converted_response.json()["leads"] == []
 
 
 def test_contadores_post_calendly_inbound_does_not_immediately_handoff(monkeypatch, tmp_path) -> None:

@@ -465,6 +465,13 @@ export function App() {
   const selectedLeadCustomBlockReason = customMessageBlockReason(selectedLead);
   const bulkCustomBlockedCount = selectedVisibleLeads.filter((lead) => customMessageBlockReason(lead)).length;
   const bulkClosedCount = selectedVisibleLeads.filter((lead) => lead.terminal_state === "closed" || lead.stage === "closed").length;
+  const bulkConvertedCount = selectedVisibleLeads.filter(
+    (lead) => lead.pipeline_stage === "converted" || lead.stage === "booked",
+  ).length;
+  const bulkArchivedCount = selectedVisibleLeads.filter((lead) => lead.terminal_state === "archived" || lead.stage === "archived").length;
+  const bulkOutboundBlockedCount = bulkSendKind === "set-tags"
+    ? 0
+    : bulkClosedCount + bulkConvertedCount + bulkArchivedCount;
   const workstationClients = workstationList?.clients ?? [];
   const selectedDeliverySource = deliveryEditorMode === "edit"
     ? deliverySources.find((source) => source.id === selectedDeliverySourceId) ?? null
@@ -1630,8 +1637,22 @@ export function App() {
 
     setActionBusy("bulk-send-modal");
     try {
-      if (bulkSendKind !== "set-tags" && bulkClosedCount > 0) {
-        setError(`${bulkClosedCount} selected lead${bulkClosedCount === 1 ? " is" : "s are"} closed. Reopen before sending WhatsApp messages.`);
+      if (bulkSendKind !== "set-tags" && bulkOutboundBlockedCount > 0) {
+        const reasons: string[] = [];
+        if (bulkClosedCount > 0) {
+          reasons.push(`${bulkClosedCount} selected lead${bulkClosedCount === 1 ? " is" : "s are"} closed. Reopen before sending WhatsApp messages.`);
+        }
+        if (bulkConvertedCount > 0) {
+          reasons.push(
+            `${bulkConvertedCount} selected lead${bulkConvertedCount === 1 ? " is" : "s are"} converted. Use Workstation delivery instead of CRM follow-up messages.`,
+          );
+        }
+        if (bulkArchivedCount > 0) {
+          reasons.push(
+            `${bulkArchivedCount} selected lead${bulkArchivedCount === 1 ? " is" : "s are"} archived. Unarchive before sending WhatsApp messages.`,
+          );
+        }
+        setError(reasons.join(" "));
         return;
       }
       if (bulkSendKind === "custom" && bulkCustomBlockedCount > 0) {
@@ -2387,6 +2408,8 @@ export function App() {
           selectedCount={selectedLeadIds.length}
           customBlockedCount={bulkCustomBlockedCount}
           closedCount={bulkClosedCount}
+          convertedCount={bulkConvertedCount}
+          archivedCount={bulkArchivedCount}
           manualPingConfirmed={bulkManualPingConfirmed}
           busy={actionBusy === "bulk-send-modal"}
           onKindChange={(nextKind) => {
@@ -6795,6 +6818,8 @@ function BulkSendModal({
   selectedCount,
   customBlockedCount,
   closedCount,
+  convertedCount,
+  archivedCount,
   manualPingConfirmed,
   busy,
   onKindChange,
@@ -6811,6 +6836,8 @@ function BulkSendModal({
   selectedCount: number;
   customBlockedCount: number;
   closedCount: number;
+  convertedCount: number;
+  archivedCount: number;
   manualPingConfirmed: boolean;
   busy: boolean;
   onKindChange: (kind: BulkSendKind) => void;
@@ -6832,6 +6859,22 @@ function BulkSendModal({
   const tagValues = tagsText.split(",").map((tag) => tag.trim()).filter(Boolean);
   const customBlocked = customBlockedCount > 0;
   const closedBlocked = closedCount > 0 && kind !== "set-tags";
+  const convertedBlocked = convertedCount > 0 && kind !== "set-tags";
+  const archivedBlocked = archivedCount > 0 && kind !== "set-tags";
+  const bulkOutboundBlocked = closedBlocked || convertedBlocked || archivedBlocked;
+  const bulkOutboundReasons = [
+    ...(closedCount > 0
+      ? [`${closedCount} selected lead${closedCount === 1 ? " is" : "s are"} closed. Reopen before sending WhatsApp messages.`]
+      : []),
+    ...(convertedCount > 0
+      ? [
+          `${convertedCount} selected lead${convertedCount === 1 ? " is" : "s are"} converted. Use Workstation delivery instead of CRM follow-up messages.`,
+        ]
+      : []),
+    ...(archivedCount > 0
+      ? [`${archivedCount} selected lead${archivedCount === 1 ? " is" : "s are"} archived. Unarchive before sending WhatsApp messages.`]
+      : []),
+  ];
   const manualPingNeedsConfirmation = kind === "send-manual-ping" && !manualPingConfirmed;
 
   return (
@@ -6848,8 +6891,8 @@ function BulkSendModal({
         <div className="ct-modal-body">
           <p className="ct-modal-warning">
             <strong>Heads up:</strong> this will apply to every selected chat in the current list.
-            {closedBlocked
-              ? ` ${closedCount} selected lead${closedCount === 1 ? " is" : "s are"} closed. Reopen before sending WhatsApp messages.`
+            {bulkOutboundBlocked
+              ? ` ${bulkOutboundReasons.join(" ")}`
               : kind === "set-tags"
               ? " Tags will be replaced for those leads."
               : pausesAutomation
@@ -6865,7 +6908,7 @@ function BulkSendModal({
                   type="radio"
                   name="ctBulkSendKind"
                   value={option.value}
-                  disabled={(option.value !== "set-tags" && closedCount > 0) || (option.value === "custom" && customBlocked)}
+                  disabled={(option.value !== "set-tags" && bulkOutboundBlocked) || (option.value === "custom" && customBlocked)}
                   checked={kind === option.value}
                   onChange={() => onKindChange(option.value)}
                 />
@@ -6912,7 +6955,11 @@ function BulkSendModal({
         </div>
         <footer className="ct-modal-foot">
           <button type="button" className="ct-btn ct-btn-ghost" onClick={onClose}>Cancel</button>
-          <button type="submit" className="ct-btn ct-btn-primary" disabled={busy || !selectedCount || closedBlocked || manualPingNeedsConfirmation || (kind === "custom" && (customBlocked || !text.trim())) || (kind === "set-tags" && !tagValues.length)}>
+          <button
+            type="submit"
+            className="ct-btn ct-btn-primary"
+            disabled={busy || !selectedCount || bulkOutboundBlocked || manualPingNeedsConfirmation || (kind === "custom" && (customBlocked || !text.trim())) || (kind === "set-tags" && !tagValues.length)}
+          >
             {busy ? "Applying..." : `Apply to ${selectedCount}`}
           </button>
         </footer>
@@ -7710,6 +7757,9 @@ function leadPreview(lead: LeadSummary): string {
   if (lead.pipeline_stage === "converted" || lead.stage === "booked") {
     return `Converted by ${formatConversionType(lead.conversion_type)}.`;
   }
+  if (lead.meeting_scheduled_at) {
+    return `Meeting scheduled ${relativeTime(lead.meeting_scheduled_at)}.`;
+  }
   if (lead.last_classification_reason) {
     return truncate(lead.last_classification_reason, 120);
   }
@@ -7746,6 +7796,7 @@ function buildLeadContextText({
     `External lead ID: ${lead.external_lead_id || "-"}`,
     `Tags: ${lead.tags.length ? lead.tags.join(", ") : "-"}`,
     `Meeting URL: ${lead.meeting_url || lead.calendly_url || "-"}`,
+    `Meeting scheduled: ${lead.meeting_scheduled_at ? `${relativeTime(lead.meeting_scheduled_at)} (${shortDate(lead.meeting_scheduled_at)})` : "-"}`,
     `Last activity: ${relativeTime(lastActivity)} (${shortDate(lastActivity)})`,
     `Automation: ${lead.automation_paused ? `Paused (${humanize(lead.automation_paused_reason || "")})` : "Active"}`,
     `Workstation: ${lead.workstation_client_id || "-"}`,

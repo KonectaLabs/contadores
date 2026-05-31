@@ -491,6 +491,7 @@ export interface LeadSummary {
   classification_completed_at: string | null;
   calendly_sent_at: string | null;
   meeting_sent_at: string | null;
+  meeting_scheduled_at: string | null;
   booked_at: string | null;
   converted_at: string | null;
   closed_at: string | null;

@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, Field
 
-from backend.database import PlatformEvent, PlatformMeeting, normalize_email
+from backend.database import ContadoresLead, PlatformEvent, PlatformMeeting, normalize_email
 
 
 class CalendarSchedulingError(RuntimeError):
@@ -325,6 +325,13 @@ def schedule_meeting_calendar_event(
     )
     if updated is None:
         raise CalendarSchedulingError(f"Meeting disappeared during calendar scheduling: {meeting.id}")
+    if updated.lead_id and updated.scheduled_at is not None:
+        ContadoresLead.update_flow_state(
+            updated.lead_id,
+            meeting_scheduled_at=updated.scheduled_at,
+            automation_paused=True,
+            automation_paused_reason="meeting_scheduled",
+        )
     PlatformEvent.add(
         event_type="meeting.calendar_event_checked",
         lifecycle_stage="meeting",
