@@ -2158,28 +2158,25 @@ export function App() {
               <strong>{crmModeLabel}</strong>
               <span>{totalCount ? `${visibleCount}/${totalCount}` : "0"}</span>
             </div>
-            <details className="ct-compact-disclosure">
-              <summary>Views</summary>
-              <section className="ct-pipeline" aria-label="Lead stages">
-                {stageFilters.map((filter) => {
-                  const count = Number(metrics?.[filter.metric ?? "total"] ?? 0);
+            <section className="ct-pipeline" aria-label="Lead stages">
+              {stageFilters.map((filter) => {
+                const count = Number(metrics?.[filter.metric ?? "total"] ?? 0);
 
-                  return (
-                    <button
-                      key={filter.value}
-                      type="button"
-                      className={`ct-stage ${stageFilter === filter.value ? "active" : ""}`}
-                      data-tone={filter.tone}
-                      aria-pressed={stageFilter === filter.value}
-                      onClick={() => setStageFilter(filter.value)}
-                    >
-                      <span className="ct-stage-count">{compactNumber(count)}</span>
-                      <span className="ct-stage-label">{filter.label}</span>
-                    </button>
-                  );
-                })}
-              </section>
-            </details>
+                return (
+                  <button
+                    key={filter.value}
+                    type="button"
+                    className={`ct-stage ${stageFilter === filter.value ? "active" : ""}`}
+                    data-tone={filter.tone}
+                    aria-pressed={stageFilter === filter.value}
+                    onClick={() => setStageFilter(filter.value)}
+                  >
+                    <span className="ct-stage-count">{compactNumber(count)}</span>
+                    <span className="ct-stage-label">{filter.label}</span>
+                  </button>
+                );
+              })}
+            </section>
             {(strategyStats.length || tagOptions.length) ? (
               <details className="ct-compact-disclosure">
                 <summary>Filters</summary>

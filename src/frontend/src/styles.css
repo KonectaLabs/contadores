@@ -3718,19 +3718,21 @@ body {
 
 #contadoresView .ct-pipeline {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
+  flex: 1 1 760px;
+  grid-template-columns: repeat(10, minmax(74px, 1fr));
+  min-width: 0;
   overflow: hidden;
   border: 1px solid var(--ct-line);
   border-radius: var(--ct-radius);
-  background: var(--ct-surface);
+  background: var(--ct-line);
 }
 
 #contadoresView .ct-queue-bar {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: stretch;
   gap: 8px;
-  padding: 10px 14px 0;
+  padding: 10px 14px 2px;
 }
 
 #contadoresView .ct-queue-bar > div:first-child {
@@ -3798,7 +3800,6 @@ body {
   color: var(--ct-accent-strong);
 }
 
-#contadoresView .ct-compact-disclosure > .ct-pipeline,
 #contadoresView .ct-compact-disclosure > .ct-filter-strip {
   position: absolute;
   z-index: 40;
@@ -3819,17 +3820,21 @@ body {
 }
 
 #contadoresView .ct-stage {
+  --stage-accent: #64748b;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   align-items: center;
-  gap: 5px;
-  min-height: 52px;
-  padding: 10px 14px;
+  align-content: center;
+  gap: 6px;
+  min-height: 58px;
+  padding: 9px 12px 10px;
   border: 0;
   border-right: 1px solid var(--ct-line-soft);
-  background: transparent;
+  border-top: 3px solid transparent;
+  background: var(--ct-surface);
   color: var(--ct-ink);
   text-align: left;
+  transition: background 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
 }
 
 #contadoresView .ct-stage:last-child {
@@ -3837,30 +3842,35 @@ body {
 }
 
 #contadoresView .ct-stage:hover:not(.active) {
-  background: var(--ct-surface-2);
+  background: #f8fafc;
 }
 
 #contadoresView .ct-stage.active {
-  background: var(--ct-accent-soft);
+  border-top-color: var(--stage-accent);
+  background: #eef6ff;
+  box-shadow: inset 0 -1px 0 rgba(37, 99, 235, 0.18);
 }
 
 #contadoresView .ct-stage[data-tone="warn"].active {
-  background: var(--ct-warn-bg);
+  background: #fff7ed;
+  box-shadow: inset 0 -1px 0 rgba(217, 119, 6, 0.2);
 }
 
 #contadoresView .ct-stage[data-tone="success"].active {
-  background: var(--ct-success-bg);
+  background: #ecfdf5;
+  box-shadow: inset 0 -1px 0 rgba(5, 150, 105, 0.2);
 }
 
 #contadoresView .ct-stage-count {
-  color: var(--ct-ink);
+  color: var(--stage-accent);
   font: 700 1.15rem/1 var(--font-mono);
 }
 
-#contadoresView .ct-stage[data-tone="warn"] .ct-stage-count { color: var(--ct-warn); }
-#contadoresView .ct-stage[data-tone="accent"] .ct-stage-count { color: var(--ct-accent-strong); }
-#contadoresView .ct-stage[data-tone="success"] .ct-stage-count { color: var(--ct-success); }
-#contadoresView .ct-stage[data-tone="muted"] .ct-stage-count { color: var(--ct-ink-soft); }
+#contadoresView .ct-stage[data-tone="all"] { --stage-accent: #1f2937; }
+#contadoresView .ct-stage[data-tone="warn"] { --stage-accent: #b45309; }
+#contadoresView .ct-stage[data-tone="accent"] { --stage-accent: #2563eb; }
+#contadoresView .ct-stage[data-tone="success"] { --stage-accent: #059669; }
+#contadoresView .ct-stage[data-tone="muted"] { --stage-accent: #64748b; }
 
 #contadoresView .ct-stage-label {
   color: var(--ct-ink-muted);
@@ -4511,13 +4521,36 @@ body {
 #contadoresView .ct-lead-strategies {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 9px;
+}
+
+#contadoresView .ct-timeline {
+  padding: 2px 4px 16px;
 }
 
 #contadoresView .crm-message-shell {
   display: grid;
-  grid-template-columns: 20px minmax(0, 1fr);
+  grid-template-columns: 22px minmax(0, 1fr) 15%;
   gap: 10px;
+}
+
+#contadoresView .crm-message-shell.outbound {
+  grid-template-columns: 15% minmax(0, 1fr) 22px;
+}
+
+#contadoresView .crm-message-shell.outbound .crm-message-rail {
+  grid-column: 3;
+  grid-row: 1;
+}
+
+#contadoresView .crm-message-shell.outbound .crm-message-card {
+  grid-column: 2;
+  justify-self: end;
+}
+
+#contadoresView .crm-message-shell.inbound .crm-message-card {
+  grid-column: 2;
+  justify-self: start;
 }
 
 #contadoresView .crm-message-rail {
@@ -4530,11 +4563,13 @@ body {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--ct-accent);
+  background: #2563eb;
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.1);
 }
 
 #contadoresView .crm-message-dot.inbound {
-  background: var(--ct-warn);
+  background: #d97706;
+  box-shadow: 0 0 0 4px rgba(217, 119, 6, 0.12);
 }
 
 #contadoresView .crm-message-dot.failed {
@@ -4552,20 +4587,28 @@ body {
 
 #contadoresView .crm-message-card,
 #contadoresView .ct-lead-strategy-card {
-  padding: 12px 14px;
+  padding: 11px 13px;
   border: 1px solid var(--ct-line);
-  border-radius: var(--ct-radius);
+  border-left-width: 4px;
+  border-radius: 7px;
   background: var(--ct-surface-2);
 }
 
+#contadoresView .crm-message-card {
+  width: min(860px, 100%);
+  box-shadow: 0 1px 0 rgba(15, 23, 42, 0.04);
+}
+
 #contadoresView .crm-message-card.outbound {
-  border-color: rgba(15, 118, 110, 0.2);
-  background: var(--ct-accent-soft);
+  border-color: #cbd5e1;
+  border-left-color: #2563eb;
+  background: #f8fbff;
 }
 
 #contadoresView .crm-message-card.inbound {
-  border-color: rgba(194, 65, 12, 0.18);
-  background: var(--ct-warn-bg);
+  border-color: rgba(217, 119, 6, 0.24);
+  border-left-color: #d97706;
+  background: #fff8ed;
 }
 
 #contadoresView .crm-message-card.failed {
@@ -4583,6 +4626,7 @@ body {
 
 #contadoresView .crm-message-card.acknowledged {
   border-color: var(--ct-line);
+  border-left-color: #94a3b8;
   background: var(--ct-surface-2);
 }
 
@@ -4597,20 +4641,32 @@ body {
 #contadoresView .crm-message-eyebrow {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   color: var(--ct-ink-muted);
   font: 500 11px/1 var(--font-mono);
 }
 
 #contadoresView .crm-message-author {
+  display: inline-flex;
+  min-height: 20px;
+  align-items: center;
+  padding: 0 7px;
+  border-radius: 4px;
   color: var(--ct-ink-muted);
   font: 700 10px/1 var(--font-mono);
-  letter-spacing: 0.08em;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
-#contadoresView .crm-message-author.outbound { color: var(--ct-accent-strong); }
-#contadoresView .crm-message-author.inbound { color: var(--ct-warn); }
+#contadoresView .crm-message-author.outbound {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+#contadoresView .crm-message-author.inbound {
+  background: #ffedd5;
+  color: #b45309;
+}
 
 #contadoresView .crm-message-error-icon {
   flex: 0 0 auto;
@@ -7283,7 +7339,7 @@ body {
   }
 
   #contadoresView .ct-pipeline {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(82px, 1fr));
   }
 
   #contadoresView .ct-funnel-grid {
@@ -7468,6 +7524,16 @@ body {
     padding: 16px 16px 24px;
   }
 
+  #contadoresView .ct-pipeline {
+    display: flex;
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+
+  #contadoresView .ct-stage {
+    flex: 0 0 108px;
+  }
+
   #contadoresView .runner-hero {
     grid-template-columns: auto minmax(0, 1fr) auto;
     min-height: 0;
@@ -7617,12 +7683,24 @@ body {
     text-align: left;
   }
 
-  #contadoresView .crm-message-shell {
+  #contadoresView .crm-message-shell,
+  #contadoresView .crm-message-shell.outbound {
     grid-template-columns: 12px minmax(0, 1fr);
     gap: 8px;
   }
 
+  #contadoresView .crm-message-shell.outbound .crm-message-rail {
+    grid-column: 1;
+  }
+
+  #contadoresView .crm-message-shell.outbound .crm-message-card,
+  #contadoresView .crm-message-shell.inbound .crm-message-card {
+    grid-column: 2;
+    justify-self: stretch;
+  }
+
   #contadoresView .crm-message-card {
+    width: 100%;
     padding: 11px 12px;
   }
 
@@ -7790,7 +7868,6 @@ body {
     position: static;
   }
 
-  #contadoresView .ct-compact-disclosure > .ct-pipeline,
   #contadoresView .ct-compact-disclosure > .ct-filter-strip {
     left: 0;
     width: 100%;
