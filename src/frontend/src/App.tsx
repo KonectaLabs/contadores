@@ -78,10 +78,11 @@ const WORKSTATION_DETAIL_REFRESH_MS = 4000;
 const DELIVERY_AUTO_SYNC_MS = 10000;
 const WHATSAPP_CUSTOM_WINDOW_MS = 24 * 60 * 60 * 1000;
 const DASHBOARD_FUNNEL_STORAGE_KEY = "contadores.dashboard.selectedFunnelId";
-const DASHBOARD_STAGE_STORAGE_KEY = "contadores.dashboard.stageFilter";
+const DASHBOARD_LEAD_VIEW_FILTER_STORAGE_KEY = "contadores.dashboard.leadViewFilter";
+const LEGACY_DASHBOARD_STAGE_FILTER_STORAGE_KEY = "contadores.dashboard.stageFilter";
 const DASHBOARD_SECTION_STORAGE_KEY = "contadores.dashboard.activeSection";
 
-type StageFilterValue =
+type LeadViewFilterValue =
   | "all"
   | "pipeline:new"
   | "pipeline:contacted"
@@ -92,13 +93,13 @@ type StageFilterValue =
   | "queue:operator"
   | "queue:paused"
   | "terminal:closed";
-type StageFilterGroupId = "overview" | "pipeline" | "action" | "system";
-type StageFilterOption = {
-  value: StageFilterValue;
+type LeadViewGroupId = "overview" | "pipeline" | "action" | "system";
+type LeadViewFilterOption = {
+  value: LeadViewFilterValue;
   label: string;
   metric?: keyof ContadoresMetrics;
   tone: "all" | "neutral" | "accent" | "success" | "warn" | "muted";
-  group: StageFilterGroupId;
+  group: LeadViewGroupId;
 };
 type ActiveSection = "crm" | "sell" | "workstation" | "delivery" | "ops";
 type LoadWorkstationDetailOptions = {
@@ -156,8 +157,8 @@ type ClientLeadSourceMutationPayload = {
   context_field_mapping: Record<string, string>;
 };
 
-const stageFilterGroups: Array<{
-  id: StageFilterGroupId;
+const leadViewGroups: Array<{
+  id: LeadViewGroupId;
   label: string;
   help: string;
 }> = [
@@ -167,7 +168,7 @@ const stageFilterGroups: Array<{
   { id: "system", label: "System", help: "Automation and terminal" },
 ];
 
-const stageFilters: StageFilterOption[] = [
+const leadViewFilters: LeadViewFilterOption[] = [
   { value: "all", label: "All", metric: "total", tone: "all", group: "overview" },
   { value: "pipeline:new", label: "New", metric: "pipeline_new", tone: "neutral", group: "pipeline" },
   { value: "pipeline:contacted", label: "Contacted", metric: "pipeline_contacted", tone: "neutral", group: "pipeline" },
@@ -180,8 +181,8 @@ const stageFilters: StageFilterOption[] = [
   { value: "terminal:closed", label: "Closed", metric: "terminal_closed", tone: "muted", group: "system" },
 ];
 
-const validStageFilterValues = new Set<StageFilterValue>(stageFilters.map((filter) => filter.value));
-const legacyStageFilterValues: Record<string, StageFilterValue> = {
+const validLeadViewFilterValues = new Set<LeadViewFilterValue>(leadViewFilters.map((filter) => filter.value));
+const legacyLeadViewFilterValues: Record<string, LeadViewFilterValue> = {
   awaiting_initial_reply: "pipeline:new",
   awaiting_video_reply: "pipeline:offer_sent",
   calendly_sent: "pipeline:meeting_sent",
@@ -211,15 +212,16 @@ function readStoredFunnelId(): string {
   return readStoredValue(DASHBOARD_FUNNEL_STORAGE_KEY) || "contadores";
 }
 
-function readStoredStageFilter(): StageFilterValue {
-  const value = readStoredValue(DASHBOARD_STAGE_STORAGE_KEY);
-  if (validStageFilterValues.has(value as StageFilterValue)) {
-    return value as StageFilterValue;
+function readStoredLeadViewFilter(): LeadViewFilterValue {
+  const value = readStoredValue(DASHBOARD_LEAD_VIEW_FILTER_STORAGE_KEY)
+    ?? readStoredValue(LEGACY_DASHBOARD_STAGE_FILTER_STORAGE_KEY);
+  if (validLeadViewFilterValues.has(value as LeadViewFilterValue)) {
+    return value as LeadViewFilterValue;
   }
-  return legacyStageFilterValues[value || ""] ?? "all";
+  return legacyLeadViewFilterValues[value || ""] ?? "all";
 }
 
-function applyLeadViewFilter(params: URLSearchParams, filter: StageFilterValue) {
+function applyLeadViewFilter(params: URLSearchParams, filter: LeadViewFilterValue) {
   if (filter === "all") {
     return;
   }
@@ -390,7 +392,7 @@ export function App() {
   const [strategyStats, setStrategyStats] = useState<StrategyStatsItem[]>([]);
   const [detail, setDetail] = useState<LeadDetailResponse | null>(null);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
-  const [stageFilter, setStageFilter] = useState<StageFilterValue>(readStoredStageFilter);
+  const [leadViewFilter, setLeadViewFilter] = useState<LeadViewFilterValue>(readStoredLeadViewFilter);
   const [tagFilter, setTagFilter] = useState("");
   const [strategyFilter, setStrategyFilter] = useState<{ step: string; strategyId: string }>({ step: "", strategyId: "" });
   const [activeTab, setActiveTab] = useState<DetailTab>("messages");
@@ -517,7 +519,7 @@ export function App() {
     const activeIsInbox = activeFunnel?.kind === "inbox";
     const params = new URLSearchParams({ limit: "500", archived: "false", funnel_id: activeFunnelId });
     if (!activeIsInbox) {
-      applyLeadViewFilter(params, stageFilter);
+      applyLeadViewFilter(params, leadViewFilter);
     }
     if (!activeIsInbox && strategyFilter.step) {
       params.set("strategy_step", strategyFilter.step);
@@ -548,7 +550,7 @@ export function App() {
       }
       return leadsPayload.leads[0]?.id ?? null;
     });
-  }, [debouncedQuery, detail?.lead.id, selectedFunnelId, stageFilter, strategyFilter.step, strategyFilter.strategyId, tagFilter]);
+  }, [debouncedQuery, detail?.lead.id, selectedFunnelId, leadViewFilter, strategyFilter.step, strategyFilter.strategyId, tagFilter]);
 
   const loadWorkstation = useCallback(async () => {
     const params = new URLSearchParams({ limit: "500" });
@@ -669,8 +671,8 @@ export function App() {
   }, [deliverySources]);
 
   useEffect(() => {
-    writeStoredValue(DASHBOARD_STAGE_STORAGE_KEY, stageFilter);
-  }, [stageFilter]);
+    writeStoredValue(DASHBOARD_LEAD_VIEW_FILTER_STORAGE_KEY, leadViewFilter);
+  }, [leadViewFilter]);
 
   useEffect(() => {
     setSelectedLeadIds((current) => current.filter((leadId) => visibleLeadIds.includes(leadId)));
@@ -680,7 +682,7 @@ export function App() {
     if (!isInboxFunnel) {
       return;
     }
-    setStageFilter("all");
+    setLeadViewFilter("all");
     setStrategyFilter({ step: "", strategyId: "" });
     setActiveTab("messages");
   }, [isInboxFunnel]);
@@ -1961,10 +1963,10 @@ export function App() {
                 onClick={() => {
                   setActiveSection(operation.section);
                   if (operation.section === "crm") {
-                    setStageFilter("attention:needs_reply");
+                    setLeadViewFilter("attention:needs_reply");
                   }
-                  if (operation.section === "sell" && stageFilter === "attention:needs_reply") {
-                    setStageFilter("all");
+                  if (operation.section === "sell" && leadViewFilter === "attention:needs_reply") {
+                    setLeadViewFilter("all");
                   }
                 }}
               >
@@ -2171,16 +2173,16 @@ export function App() {
               <span>{totalCount ? `${visibleCount}/${totalCount}` : "0"}</span>
             </div>
             <section className="ct-pipeline" aria-label="Lead views">
-              {stageFilterGroups.map((group) => {
-                const filters = stageFilters.filter((filter) => filter.group === group.id);
+              {leadViewGroups.map((group) => {
+                const filters = leadViewFilters.filter((filter) => filter.group === group.id);
 
                 return (
-                  <div className="ct-stage-group" data-group={group.id} key={group.id}>
-                    <div className="ct-stage-group-head">
+                  <div className="ct-lead-view-group" data-group={group.id} key={group.id}>
+                    <div className="ct-lead-view-group-head">
                       <span>{group.label}</span>
                       <em>{group.help}</em>
                     </div>
-                    <div className="ct-stage-group-strip" role="group" aria-label={`${group.label} lead views`}>
+                    <div className="ct-lead-view-group-strip" role="group" aria-label={`${group.label} lead views`}>
                       {filters.map((filter) => {
                         const count = Number(metrics?.[filter.metric ?? "total"] ?? 0);
 
@@ -2188,13 +2190,13 @@ export function App() {
                           <button
                             key={filter.value}
                             type="button"
-                            className={`ct-stage ${stageFilter === filter.value ? "active" : ""}`}
+                            className={`ct-lead-view ${leadViewFilter === filter.value ? "active" : ""}`}
                             data-tone={filter.tone}
-                            aria-pressed={stageFilter === filter.value}
-                            onClick={() => setStageFilter(filter.value)}
+                            aria-pressed={leadViewFilter === filter.value}
+                            onClick={() => setLeadViewFilter(filter.value)}
                           >
-                            <span className="ct-stage-count">{compactNumber(count)}</span>
-                            <span className="ct-stage-label">{filter.label}</span>
+                            <span className="ct-lead-view-count">{compactNumber(count)}</span>
+                            <span className="ct-lead-view-label">{filter.label}</span>
                           </button>
                         );
                       })}
