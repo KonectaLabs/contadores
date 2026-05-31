@@ -167,9 +167,12 @@ Before enabling a live Delivery source:
    `sheets` are expanded into one DB source per sheet/campaign.
    Meta instant-form publish plans must reference this source with
    `destination.client_lead_source_id` before approval.
-3. If a Meta Lead Ads instant-form lead has already been retrieved by API or a
-   future verified webhook, import it through `import_meta_lead_form_to_delivery`
-   or `POST /api/client-lead-sources/{source_id}/meta-lead`. Do not create a
+3. If a Meta Lead Ads webhook only has `leadgen_id`, fetch and import it through
+   `fetch_meta_lead_form_to_delivery` or
+   `POST /api/client-lead-sources/{source_id}/meta-lead/fetch`. If the full
+   payload has already been retrieved, import it through
+   `import_meta_lead_form_to_delivery` or
+   `POST /api/client-lead-sources/{source_id}/meta-lead`. Do not create a
    parallel delivery table; the same `client_lead_deliveries` queue handles
    dedupe, blocking, retry, and WhatsApp notification.
 4. Decide whether the first sync should notify historical rows. First sync

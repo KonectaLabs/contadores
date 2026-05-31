@@ -115,6 +115,8 @@ formularios:
   staged/aprobable.
 - `import_meta_lead_form_to_delivery`: importa un lead ya recuperado de Meta
   Lead Ads por `leadgen_id` a la misma cola de Client Lead Delivery.
+- `fetch_meta_lead_form_to_delivery`: lee un `leadgen_id` desde Graph API y lo
+  importa en Delivery sin abrir la UI.
 - `create_client_update`: actualizaciones de 24 horas para clientes.
 - `ask_human_question` y `answer_human_question`: dudas a Facundo/operador con
   contexto, accion por defecto y memoria reutilizable.
@@ -160,7 +162,11 @@ Flujo Meta agent-native:
    Click-to-WhatsApp, tambien persiste los IDs de anuncios creados como
    `whatsapp_referral_source_ids` del funnel, para que los webhooks entrantes
    vuelvan al mismo flujo.
-11. `stage_meta_publish_attempt` queda para payloads crudos, respuestas de Meta
+11. Cuando un instant form genera un `leadgen_id`, el agente usa
+   `fetch_meta_lead_form_to_delivery` para traer `field_data` desde Graph API y
+   meter el lead en Client Lead Delivery. Si ya tiene el payload completo, usa
+   `import_meta_lead_form_to_delivery`.
+12. `stage_meta_publish_attempt` queda para payloads crudos, respuestas de Meta
    o registros manuales del publicador aprobado.
 
 Ejemplo de plan Meta staged:
@@ -700,6 +706,13 @@ Client Lead Delivery:
   `leadgen_id` como clave idempotente por fuente, guarda el raw row en
   `client_lead_deliveries` y deja la notificacion WhatsApp `pending` igual que
   un sync de Sheets.
+- Si solo tenes el `leadgen_id` del webhook, usar
+  `POST /api/client-lead-sources/{source_id}/meta-lead/fetch` o el tool
+  `fetch_meta_lead_form_to_delivery`. El fetch lee
+  `created_time,id,ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,form_id,platform,field_data`
+  desde Graph API con `META_MARKETING_API_VERSION` y
+  `META_MARKETING_ACCESS_TOKEN` / `META_ACCESS_TOKEN`. No requiere
+  `META_MARKETING_LIVE_WRITES_ENABLED` porque es read-only.
 - Las fuentes tambien se pueden declarar por archivo. El seed versionado es
   `config/default-client-lead-sources.json`; el override editable del server es
   `CLIENT_LEAD_SOURCES_CONFIG_PATH` o `data/client-lead-sources.json`.

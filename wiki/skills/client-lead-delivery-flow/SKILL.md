@@ -181,9 +181,19 @@ curl -fsS -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
   http://127.0.0.1:8000/api/client-lead-deliveries/pending
 ```
 
-6. For retrieved Meta Lead Ads instant-form payloads, do not create a separate
-   delivery path. Import the retrieved `leadgen_id` and `field_data` into the
-   selected Delivery source:
+6. For Meta Lead Ads instant forms, do not create a separate delivery path. If
+   you only have the webhook `leadgen_id`, fetch and import it into the selected
+   Delivery source:
+
+```bash
+uv run python -m backend.ai.codex_agent_runtime call \
+  --run-id meta-lead-fetch-001 \
+  --tool fetch_meta_lead_form_to_delivery \
+  --arguments-json '{"source_id":"{source_id}","leadgen_id":"META_LEAD_ID"}'
+```
+
+   If the full payload is already available, import the retrieved `leadgen_id`
+   and `field_data` directly:
 
 ```bash
 uv run python -m backend.ai.codex_agent_runtime call \

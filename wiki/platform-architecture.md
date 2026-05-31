@@ -260,6 +260,12 @@ through `POST /api/client-lead-sources/{source_id}/meta-lead` or the audited
 `import_meta_lead_form_to_delivery` tool. It flattens `field_data`, dedupes by
 `leadgen_id` within the selected Delivery source, and queues the same WhatsApp
 client notification used by Google Sheets imports.
+The Graph retrieval slice now accepts a bare webhook `leadgen_id` through
+`POST /api/client-lead-sources/{source_id}/meta-lead/fetch` or
+`fetch_meta_lead_form_to_delivery`. It reads the lead fields from Meta with the
+Marketing API token, imports through the same Delivery path, redacts token-like
+provider fields, and does not require `META_MARKETING_LIVE_WRITES_ENABLED`
+because it performs no campaign writes.
 
 ## Milestones
 

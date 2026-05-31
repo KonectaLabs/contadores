@@ -98,8 +98,11 @@ Delivery flow without using the UI.
 Meta instant-form publish plans must reference a ready source with
 `destination.client_lead_source_id`; otherwise the Meta approval/preflight gate
 must stay blocked because the leads would not have a delivery path.
-When a Meta Lead Ads payload has already been retrieved by API/webhook, import
-it through `import_meta_lead_form_to_delivery` or
+When a Meta Lead Ads webhook only has `leadgen_id`, fetch and import it through
+`fetch_meta_lead_form_to_delivery` or
+`POST /api/client-lead-sources/{source_id}/meta-lead/fetch`. When the full
+payload has already been retrieved, import it through
+`import_meta_lead_form_to_delivery` or
 `POST /api/client-lead-sources/{source_id}/meta-lead`; do not create a separate
 delivery table.
 

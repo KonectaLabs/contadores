@@ -75,6 +75,7 @@ from backend.meta_ads_publish import (
     upload_meta_creative_asset,
 )
 from backend.meta_ads_inventory import MetaInventoryError, sync_meta_inventory
+from backend.meta_lead_ads import DEFAULT_META_LEAD_FIELDS, MetaLeadAdsCredentialsError, MetaLeadAdsError
 
 
 DEFAULT_AGENT_SEQUENCE_STEP = "codex_agent"
@@ -246,6 +247,15 @@ class ImportMetaLeadFormToDeliveryArgs(BaseModel):
     field_data: list[dict[str, Any]] = Field(default_factory=list)
     raw_payload: dict[str, Any] = Field(default_factory=dict)
     reason: str = Field(default="Imported by Codex agent.", max_length=1000)
+
+
+class FetchMetaLeadFormToDeliveryArgs(BaseModel):
+    """Arguments for fetching one Meta Lead Ads lead and importing it."""
+
+    source_id: str = Field(min_length=1, max_length=120)
+    leadgen_id: str = Field(min_length=1, max_length=160)
+    fields: str | None = DEFAULT_META_LEAD_FIELDS
+    reason: str = Field(default="Fetched from Meta Lead Ads by Codex agent.", max_length=1000)
 
 
 class ValidatePlatformConfigArgs(BaseModel):
@@ -649,6 +659,11 @@ def tool_specs() -> list[CodexAgentToolSpec]:
             ImportMetaLeadFormToDeliveryArgs,
         ),
         (
+            "fetch_meta_lead_form_to_delivery",
+            "Fetch one Meta Lead Ads leadgen_id from Graph API and import it into Client Lead Delivery without using the UI.",
+            FetchMetaLeadFormToDeliveryArgs,
+        ),
+        (
             "create_platform_meeting",
             "Record meeting scheduling or handoff state without using the UI.",
             CreatePlatformMeetingArgs,
@@ -992,6 +1007,7 @@ def read_platform_config(arguments: dict[str, Any]) -> dict[str, Any]:
             "upsert_funnel_config",
             "upsert_client_lead_delivery_source",
             "import_meta_lead_form_to_delivery",
+            "fetch_meta_lead_form_to_delivery",
             "create_platform_meeting",
             "schedule_platform_meeting",
             "attach_meeting_transcript",
@@ -1017,6 +1033,7 @@ def read_platform_config(arguments: dict[str, Any]) -> dict[str, Any]:
             "configure_text_offer_funnel": ConfigureTextOfferFunnelArgs.model_json_schema(),
             "client_lead_delivery_source": UpsertClientLeadDeliverySourceArgs.model_json_schema(),
             "import_meta_lead_form_to_delivery": ImportMetaLeadFormToDeliveryArgs.model_json_schema(),
+            "fetch_meta_lead_form_to_delivery": FetchMetaLeadFormToDeliveryArgs.model_json_schema(),
             "create_platform_meeting": CreatePlatformMeetingArgs.model_json_schema(),
             "schedule_platform_meeting": SchedulePlatformMeetingArgs.model_json_schema(),
             "extract_client_profile_from_meeting_transcript": ExtractClientProfileFromMeetingArgs.model_json_schema(),
@@ -1307,6 +1324,55 @@ def import_meta_lead_form_to_delivery(arguments: dict[str, Any]) -> dict[str, An
         },
         idempotency_key=f"meta_lead:{source.id}:{args.leadgen_id.strip()}",
     )
+    return result.model_dump(mode="json")
+
+
+def fetch_meta_lead_form_to_delivery(arguments: dict[str, Any]) -> dict[str, Any]:
+    """Fetch one Meta Lead Ads lead and route it through the Delivery queue."""
+    from backend.endpoints.client_leads import MetaLeadFormFetchCommand, fetch_and_import_meta_lead_form_record
+
+    args = FetchMetaLeadFormToDeliveryArgs.model_validate(arguments)
+    source = ClientLeadSource.get_by_id(args.source_id.strip())
+    if source is None:
+        raise AgentToolError(f"Client lead delivery source not found: {args.source_id}")
+    if not source.enabled:
+        source = ClientLeadSource.mark_sync(source.id, status="disabled", note="source disabled") or source
+        return {"status": "disabled", "source": _client_source_payload(source)}
+
+    command = MetaLeadFormFetchCommand(
+        leadgen_id=args.leadgen_id,
+        fields=args.fields or DEFAULT_META_LEAD_FIELDS,
+        reason=args.reason,
+    )
+    try:
+        result = fetch_and_import_meta_lead_form_record(
+            source,
+            command,
+            event_source="codex_agent_tool",
+            actor="agent",
+        )
+    except MetaLeadAdsCredentialsError as error:
+        note = f"missing Meta Lead Ads credentials: {', '.join(error.missing)}"
+        source = ClientLeadSource.mark_sync(source.id, status="failed", note=note) or source
+        PlatformEvent.add(
+            event_type="client_lead.meta_form_fetch_blocked",
+            lifecycle_stage="delivery",
+            target_type="client_lead_source",
+            target_id=source.id,
+            source="codex_agent_tool",
+            actor="agent",
+            summary=f"Could not fetch Meta lead {args.leadgen_id.strip()}: {note}.",
+            payload={"leadgen_id": args.leadgen_id.strip(), "errors": error.missing, "reason": args.reason},
+            idempotency_key=f"meta_lead_fetch_blocked:{source.id}:{args.leadgen_id.strip()}",
+        )
+        return {
+            "status": "missing_credentials",
+            "source": _client_source_payload(source),
+            "errors": error.missing,
+        }
+    except MetaLeadAdsError as error:
+        ClientLeadSource.mark_sync(source.id, status="failed", note=str(error))
+        raise AgentToolError(str(error)) from error
     return result.model_dump(mode="json")
 
 
@@ -2691,6 +2757,7 @@ TOOL_HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {
     "upsert_funnel_config": upsert_funnel_config,
     "upsert_client_lead_delivery_source": upsert_client_lead_delivery_source,
     "import_meta_lead_form_to_delivery": import_meta_lead_form_to_delivery,
+    "fetch_meta_lead_form_to_delivery": fetch_meta_lead_form_to_delivery,
     "create_platform_meeting": create_platform_meeting,
     "schedule_platform_meeting": schedule_platform_meeting,
     "attach_meeting_transcript": attach_meeting_transcript,
@@ -2751,7 +2818,7 @@ def _audit_target_for_tool(tool_name: str, arguments: dict[str, Any]) -> tuple[s
         return "funnel", str(arguments.get("funnel_id") or "")
     if tool_name == "upsert_client_lead_delivery_source":
         return "client_lead_source", str(arguments.get("source_id") or arguments.get("label") or "")
-    if tool_name == "import_meta_lead_form_to_delivery":
+    if tool_name in {"import_meta_lead_form_to_delivery", "fetch_meta_lead_form_to_delivery"}:
         return "client_lead_source", str(arguments.get("source_id") or "")
     if tool_name == "create_platform_meeting":
         return "meeting", str(arguments.get("idempotency_key") or arguments.get("lead_id") or arguments.get("client_id") or "")

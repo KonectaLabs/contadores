@@ -33,6 +33,12 @@ from backend.database import (
     normalize_client_lead_column_mapping,
     normalize_phone,
 )
+from backend.meta_lead_ads import (
+    DEFAULT_META_LEAD_FIELDS,
+    MetaLeadAdsCredentialsError,
+    MetaLeadAdsError,
+    fetch_meta_lead_payload,
+)
 
 client_leads_router = APIRouter(prefix="/api/client-lead-sources", tags=["client-leads"])
 client_lead_deliveries_router = APIRouter(prefix="/api/client-lead-deliveries", tags=["client-leads"])
@@ -204,6 +210,14 @@ class MetaLeadFormImportCommand(BaseModel):
     platform: str | None = None
     field_data: list[dict[str, Any]] = Field(default_factory=list)
     raw_payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class MetaLeadFormFetchCommand(BaseModel):
+    """Fetch one Meta Lead Ads instant-form lead and import it."""
+
+    leadgen_id: str = Field(min_length=1)
+    fields: str | None = DEFAULT_META_LEAD_FIELDS
+    reason: str | None = Field(default=None, max_length=1000)
 
 
 class ClientLeadPendingNotification(BaseModel):
@@ -627,6 +641,67 @@ def import_meta_lead_form_record(source: ClientLeadSource, command: MetaLeadForm
     """Import one retrieved Meta Lead Ads record through the Delivery queue."""
     row = meta_field_data_to_row(command)
     return import_sheet_records(source, [row])
+
+
+def meta_payload_to_import_command(payload: dict[str, Any], requested_leadgen_id: str) -> MetaLeadFormImportCommand:
+    """Convert a fetched Graph payload into the generic import command."""
+    leadgen_id = stringify_meta_field_value(
+        payload.get("id") or payload.get("leadgen_id") or requested_leadgen_id
+    )
+    field_data = payload.get("field_data")
+    return MetaLeadFormImportCommand(
+        leadgen_id=leadgen_id,
+        created_time=stringify_meta_field_value(payload.get("created_time")) or None,
+        form_id=stringify_meta_field_value(payload.get("form_id")) or None,
+        ad_id=stringify_meta_field_value(payload.get("ad_id")) or None,
+        ad_name=stringify_meta_field_value(payload.get("ad_name")) or None,
+        adset_id=stringify_meta_field_value(payload.get("adset_id") or payload.get("adgroup_id")) or None,
+        adset_name=stringify_meta_field_value(payload.get("adset_name") or payload.get("adgroup_name")) or None,
+        campaign_id=stringify_meta_field_value(payload.get("campaign_id")) or None,
+        campaign_name=stringify_meta_field_value(payload.get("campaign_name")) or None,
+        platform=stringify_meta_field_value(payload.get("platform")) or None,
+        field_data=field_data if isinstance(field_data, list) else [],
+        raw_payload=payload,
+    )
+
+
+def fetch_and_import_meta_lead_form_record(
+    source: ClientLeadSource,
+    command: MetaLeadFormFetchCommand,
+    *,
+    event_source: str,
+    actor: str,
+) -> ClientLeadSyncResponse:
+    """Fetch one Meta lead by id and import it through Delivery."""
+    payload = fetch_meta_lead_payload(
+        leadgen_id=command.leadgen_id,
+        fields=command.fields or DEFAULT_META_LEAD_FIELDS,
+    )
+    import_command = meta_payload_to_import_command(payload, command.leadgen_id)
+    result = import_meta_lead_form_record(source, import_command)
+    PlatformEvent.add(
+        event_type="client_lead.meta_form_fetched_imported",
+        lifecycle_stage="delivery",
+        target_type="client_lead_source",
+        target_id=source.id,
+        source=event_source,
+        actor=actor,
+        summary=f"Fetched and imported Meta lead {import_command.leadgen_id.strip()} into Delivery source {source.id}.",
+        payload={
+            "reason": command.reason,
+            "leadgen_id": import_command.leadgen_id.strip(),
+            "requested_leadgen_id": command.leadgen_id.strip(),
+            "form_id": import_command.form_id,
+            "campaign_id": import_command.campaign_id,
+            "ad_id": import_command.ad_id,
+            "imported": result.imported,
+            "updated": result.updated,
+            "blocked": result.blocked,
+            "queued": result.queued,
+        },
+        idempotency_key=f"meta_lead_fetch:{source.id}:{import_command.leadgen_id.strip()}",
+    )
+    return result
 
 
 def normalize_delivery_error(command: ClientLeadDeliveryFailureCommand | ClientLeadDeliveryByExternalIdCommand) -> str:
@@ -1069,6 +1144,46 @@ async def import_meta_lead_form_for_source(
         idempotency_key=f"meta_lead:{source.id}:{command.leadgen_id.strip()}",
     )
     return result
+
+
+@client_leads_router.post("/{source_id}/meta-lead/fetch", response_model=ClientLeadSyncResponse)
+async def fetch_meta_lead_form_for_source(
+    source_id: str,
+    command: MetaLeadFormFetchCommand,
+) -> ClientLeadSyncResponse:
+    """Fetch one Meta Lead Ads instant-form lead and import it into Delivery."""
+    source = get_required_source(source_id)
+    if not source.enabled:
+        source = ClientLeadSource.mark_sync(source.id, status="disabled", note="source disabled") or source
+        return ClientLeadSyncResponse(status="disabled", source=build_source_response(source))
+    try:
+        return fetch_and_import_meta_lead_form_record(
+            source,
+            command,
+            event_source="meta_lead_ads_graph",
+            actor="agent",
+        )
+    except MetaLeadAdsCredentialsError as exc:
+        note = f"missing Meta Lead Ads credentials: {', '.join(exc.missing)}"
+        ClientLeadSource.mark_sync(source.id, status="failed", note=note)
+        PlatformEvent.add(
+            event_type="client_lead.meta_form_fetch_blocked",
+            lifecycle_stage="delivery",
+            target_type="client_lead_source",
+            target_id=source.id,
+            source="meta_lead_ads_graph",
+            actor="agent",
+            summary=f"Could not fetch Meta lead {command.leadgen_id.strip()}: {note}.",
+            payload={"leadgen_id": command.leadgen_id.strip(), "errors": exc.missing},
+            idempotency_key=f"meta_lead_fetch_blocked:{source.id}:{command.leadgen_id.strip()}",
+        )
+        raise HTTPException(
+            status_code=503,
+            detail={"status": "missing_credentials", "errors": exc.missing},
+        ) from exc
+    except MetaLeadAdsError as exc:
+        ClientLeadSource.mark_sync(source.id, status="failed", note=str(exc))
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @client_leads_router.get("/{source_id}/leads", response_model=ClientLeadDeliveryListResponse)

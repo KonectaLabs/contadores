@@ -9,6 +9,7 @@ from sqlmodel import SQLModel, create_engine
 import backend.client_lead_config as client_lead_config
 import backend.database as database_module
 import backend.endpoints.client_leads as client_leads_endpoints
+from backend.meta_lead_ads import DEFAULT_META_LEAD_FIELDS
 from backend.ai.codex_agent_tools import call_tool
 from backend.database import ClientLeadDelivery, ClientLeadDeliveryStatus, ContadoresLead, PlatformEvent
 from backend.main import app
@@ -379,6 +380,84 @@ def test_meta_lead_form_import_blocks_invalid_phone(monkeypatch, tmp_path) -> No
         assert client.get("/api/client-lead-deliveries/pending").json()["notifications"] == []
 
 
+def test_meta_lead_form_fetch_imports_from_graph(monkeypatch, tmp_path) -> None:
+    """A leadgen_id fetch should import through the same Delivery queue."""
+    configure_delivery_db(monkeypatch, tmp_path)
+
+    def fake_fetch_meta_lead_payload(*, leadgen_id, fields):
+        assert leadgen_id == "meta-fetch-lead-1"
+        assert fields == DEFAULT_META_LEAD_FIELDS
+        return {
+            "id": "meta-fetch-lead-1",
+            "created_time": "2026-05-30T13:00:00+0000",
+            "form_id": "form_fetch_1",
+            "ad_id": "ad_fetch_1",
+            "campaign_id": "campaign_fetch_1",
+            "campaign_name": "Meta Fetch Campaign",
+            "field_data": [
+                {"name": "full_name", "values": ["Fetch Lead"]},
+                {"name": "phone_number", "values": ["+5491155556666"]},
+                {"name": "email", "values": ["fetch@example.com"]},
+            ],
+        }
+
+    monkeypatch.setattr(client_leads_endpoints, "fetch_meta_lead_payload", fake_fetch_meta_lead_payload)
+
+    with TestClient(app) as client:
+        source_id = client.post("/api/client-lead-sources", json=source_payload()).json()["id"]
+
+        imported = client.post(
+            f"/api/client-lead-sources/{source_id}/meta-lead/fetch",
+            json={"leadgen_id": "meta-fetch-lead-1"},
+        )
+        assert imported.status_code == 200
+        payload = imported.json()
+        assert payload["imported"] == 1
+        assert payload["queued"] == 1
+
+        repeated = client.post(
+            f"/api/client-lead-sources/{source_id}/meta-lead/fetch",
+            json={"leadgen_id": "meta-fetch-lead-1"},
+        )
+        assert repeated.status_code == 200
+        assert repeated.json()["updated"] == 1
+        assert repeated.json()["queued"] == 0
+
+        lead = client.get(f"/api/client-lead-sources/{source_id}/leads").json()["leads"][0]
+        assert lead["source_row_key"] == "meta-fetch-lead-1"
+        assert lead["raw_row"]["campaign_name"] == "Meta Fetch Campaign"
+        assert lead["delivery_status"] == "pending"
+
+        events = PlatformEvent.list_recent(target_type="client_lead_source", target_id=source_id)
+        assert [event.event_type for event in events] == ["client_lead.meta_form_fetched_imported"]
+        assert events[0].payload_dict()["leadgen_id"] == "meta-fetch-lead-1"
+
+
+def test_meta_lead_form_fetch_reports_missing_credentials(monkeypatch, tmp_path) -> None:
+    """Graph fetch should fail before network calls when Meta credentials are absent."""
+    configure_delivery_db(monkeypatch, tmp_path)
+    monkeypatch.delenv("META_MARKETING_API_VERSION", raising=False)
+    monkeypatch.delenv("META_MARKETING_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("META_ACCESS_TOKEN", raising=False)
+
+    with TestClient(app) as client:
+        source_id = client.post("/api/client-lead-sources", json=source_payload()).json()["id"]
+
+        response = client.post(
+            f"/api/client-lead-sources/{source_id}/meta-lead/fetch",
+            json={"leadgen_id": "missing-creds-lead"},
+        )
+        assert response.status_code == 503
+        assert response.json()["detail"] == {
+            "status": "missing_credentials",
+            "errors": ["META_MARKETING_API_VERSION", "META_MARKETING_ACCESS_TOKEN"],
+        }
+
+        source = client.get("/api/client-lead-sources").json()["sources"][0]
+        assert source["last_sync_status"] == "failed"
+        assert "META_MARKETING_ACCESS_TOKEN" in source["last_sync_note"]
+
+
 def test_codex_tool_imports_meta_lead_form_to_delivery(monkeypatch, tmp_path) -> None:
     """Agents should be able to route retrieved Meta form leads without the UI."""
     configure_delivery_db(monkeypatch, tmp_path)
@@ -407,6 +486,47 @@ def test_codex_tool_imports_meta_lead_form_to_delivery(monkeypatch, tmp_path) ->
     assert result["result"]["queued"] == 1
     row = ClientLeadDelivery.list_by_source(source_id)[0]
     assert row.source_row_key == "meta-agent-lead-1"
+    assert row.delivery_status == ClientLeadDeliveryStatus.PENDING
+
+
+def test_codex_tool_fetches_meta_lead_form_to_delivery(monkeypatch, tmp_path) -> None:
+    """Agents should be able to fetch a Meta leadgen_id and route it without the UI."""
+    configure_delivery_db(monkeypatch, tmp_path)
+
+    def fake_fetch_meta_lead_payload(*, leadgen_id, fields):
+        assert leadgen_id == "meta-agent-fetch-1"
+        assert "field_data" in fields
+        return {
+            "id": "meta-agent-fetch-1",
+            "form_id": "form_agent_fetch",
+            "campaign_name": "Agent Fetch Campaign",
+            "field_data": [
+                {"name": "full_name", "values": ["Agente Fetch"]},
+                {"name": "phone_number", "values": ["+5491177778888"]},
+                {"name": "email", "values": ["agent-fetch@example.com"]},
+            ],
+        }
+
+    monkeypatch.setattr(client_leads_endpoints, "fetch_meta_lead_payload", fake_fetch_meta_lead_payload)
+
+    with TestClient(app) as client:
+        source_id = client.post("/api/client-lead-sources", json=source_payload()).json()["id"]
+
+    result = call_tool(
+        run_id="agent-run-meta-lead-fetch",
+        tool_name="fetch_meta_lead_form_to_delivery",
+        arguments={
+            "source_id": source_id,
+            "leadgen_id": "meta-agent-fetch-1",
+            "reason": "Webhook lead id fetched by agent.",
+        },
+    )
+
+    assert result["ok"] is True
+    assert result["result"]["imported"] == 1
+    assert result["result"]["queued"] == 1
+    row = ClientLeadDelivery.list_by_source(source_id)[0]
+    assert row.source_row_key == "meta-agent-fetch-1"
     assert row.delivery_status == ClientLeadDeliveryStatus.PENDING
 
 

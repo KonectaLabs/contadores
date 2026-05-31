@@ -85,6 +85,9 @@ Platform lifecycle tools:
 - `import_meta_lead_form_to_delivery`: import one retrieved Meta Lead Ads
   `leadgen_id` payload into a Client Lead Delivery source, deduping and queuing
   the normal WhatsApp notification without the UI.
+- `fetch_meta_lead_form_to_delivery`: fetch one Meta Lead Ads `leadgen_id` from
+  Graph API and import it into Client Lead Delivery without the UI. It is
+  read-only and does not require Meta live writes.
 - `stage_meta_publish_attempt`: stage the Meta publish request/response without
   live external writes.
 - `create_client_update`: draft or record 24-hour client updates.
@@ -186,8 +189,9 @@ step from that persisted state.
   returned Meta ad IDs into the funnel. Instant-form plans must pass
   `destination.client_lead_source_id` for a ready Client Lead Delivery source.
   When a Meta instant-form lead is retrieved by API/webhook, route it through
-  `import_meta_lead_form_to_delivery` instead of creating a separate delivery
-  channel.
+  `fetch_meta_lead_form_to_delivery` if you only have the webhook `leadgen_id`.
+  Use `import_meta_lead_form_to_delivery` if the full `field_data` payload is
+  already available. Do not create a separate delivery channel.
 - Use `ask_human_question` only for real uncertainty. Include context, what you
   are trying to do, options when known, and the safe default action.
 - Do not wait forever for answers. Use the timeout/default action when safe.
