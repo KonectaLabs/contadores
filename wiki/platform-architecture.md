@@ -38,7 +38,9 @@ The repo already has the right single-server base:
 - `/api/platform/overview` now provides the cockpit read model used by the
   frontend `Ops` tab: blockers, human questions, campaigns, Meta publish
   attempts, meetings, client updates, assets, agent runs/tool calls, and recent
-  events.
+  events. The UI now starts with a next-action command center, daily operator
+  route, prioritized action queue, and Meta readiness lane, all derived from the
+  same read model.
 
 The major missing pieces are live credentials plus cockpit depth: production
 Google Calendar credentials/internal attendee ownership, transcript ingestion
@@ -294,6 +296,9 @@ because it performs no campaign writes.
    - Keep the cockpit read/write over the same lifecycle records agents use;
      do not create UI-only configuration state.
    - First pass shipped as the `Ops` tab backed by `/api/platform/overview`.
+   - The current pass promotes the same data into an operator command center:
+     next best action, daily route, action queue, Meta readiness, blockers,
+     agent activity, assets, and event stream.
 
 4. Google Calendar scheduling
    - Add a calendar interface with mock mode.

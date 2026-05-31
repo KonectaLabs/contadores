@@ -229,8 +229,9 @@ uv run python -m backend.ai.codex_agent_runtime call \
 
 Todas esas llamadas quedan auditadas en `agent_tool_calls`,
 `data/agent-runs/<run-id>/tool_calls.jsonl` y `platform_events`. La pestaña
-`Ops` lee `/api/platform/overview` para revisar meetings, campaigns, Meta,
-updates, questions y events; no es prerequisito de configuracion.
+`Ops` lee `/api/platform/overview` para revisar next best action, action queue,
+Meta readiness, meetings, campaigns, Meta, updates, questions y events; no es
+prerequisito de configuracion.
 
 ### Crear un funnel visualmente
 

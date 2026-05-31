@@ -1913,6 +1913,7 @@ export function App() {
         <PlatformOpsView
           overview={platformOverview}
           loading={platformLoading}
+          onOpenSection={setActiveSection}
           onRefresh={() => {
             setPlatformLoading(true);
             loadPlatformOverview()
@@ -2837,13 +2838,33 @@ function ClientLeadDeliveryView({
   );
 }
 
+type OpsActionTone = "danger" | "warn";
+type OpsActionItem = {
+  id: string;
+  tone: OpsActionTone;
+  area: string;
+  title: string;
+  detail: string;
+  action: string;
+  status: string;
+  updatedAt: string | null;
+};
+type OpsReadinessStatus = "ready" | "partial" | "blocked" | "missing" | string;
+type OpsReadinessItem = {
+  label: string;
+  status: OpsReadinessStatus;
+  detail: string;
+};
+
 function PlatformOpsView({
   overview,
   loading,
+  onOpenSection,
   onRefresh,
 }: {
   overview: PlatformOverviewResponse | null;
   loading: boolean;
+  onOpenSection: (section: ActiveSection) => void;
   onRefresh: () => void;
 }) {
   const defaultCounts = {
@@ -2882,19 +2903,167 @@ function PlatformOpsView({
   const uploadBlockedCreatives = creatives.filter((creative) => ["upload_blocked", "upload_failed"].includes(creative.status));
   const failedAgentRuns = agentRuns.filter((run) => ["failed", "error", "blocked"].includes(run.status));
   const failedAgentToolCalls = agentToolCalls.filter((call) => call.status === "failed");
+  const latestInventory = inventorySnapshots[0] ?? null;
+  const latestInventoryBlocked = latestInventory
+    ? latestInventory.status === "missing_credentials" || latestInventory.status === "partial" || latestInventory.errors.length > 0
+    : false;
+  const inventoryBlockers = latestInventory && latestInventoryBlocked ? [latestInventory] : [];
+  const metaCredentialsPendingAction: OpsActionItem[] = !latestInventory ? [{
+    id: "setup:meta-credentials",
+    tone: "warn",
+    area: "Setup",
+    title: "Meta credentials not connected",
+    detail: "Inventory has not been synced yet, so live Meta publish and lead fetch stay blocked.",
+    action: "Get Alan to provide the Marketing API token, ad account ID, and live-write confirmation.",
+    status: "missing",
+    updatedAt: overview?.generated_at ?? null,
+  }] : [];
+  const rawOperatorActions: OpsActionItem[] = [
+    ...openQuestions.map((question) => ({
+      id: `question:${question.id}`,
+      tone: "warn" as const,
+      area: "Question",
+      title: question.question,
+      detail: question.trying_to_do || question.context_summary || question.workflow || "Operator answer needed.",
+      action: question.default_action || "Answer or choose the safe default.",
+      status: question.status,
+      updatedAt: question.updated_at,
+    })),
+    ...blockedAttempts.map((attempt) => ({
+      id: `meta:${attempt.id}`,
+      tone: "danger" as const,
+      area: "Meta",
+      title: platformCampaignNameFromAttempt(attempt) || "Meta publish blocked",
+      detail: attempt.error || formatMissingMetaFields(attempt),
+      action: "Complete missing fields, credentials, or approval before live publish.",
+      status: metaPublishStatusValue(attempt),
+      updatedAt: attempt.updated_at,
+    })),
+    ...inventoryBlockers.map((snapshot) => ({
+      id: `inventory:${snapshot.id}`,
+      tone: "danger" as const,
+      area: "Inventory",
+      title: "Meta inventory needs access",
+      detail: snapshot.errors.length ? formatUnknownList(snapshot.errors) : metaInventoryCounts(snapshot),
+      action: "Add Meta credentials or ask Alan for the missing access.",
+      status: snapshot.status,
+      updatedAt: snapshot.created_at,
+    })),
+    ...metaCredentialsPendingAction,
+    ...updatesWithBlockers.map((update) => ({
+      id: `update:${update.id}`,
+      tone: "warn" as const,
+      area: "Client update",
+      title: update.summary_text || formatPlatformRef("client", update.client_id),
+      detail: formatUnknownList(update.blockers),
+      action: update.next_action || "Resolve blockers before sending update.",
+      status: update.status,
+      updatedAt: update.updated_at,
+    })),
+    ...uploadBlockedCreatives.map((creative) => ({
+      id: `creative:${creative.id}`,
+      tone: "warn" as const,
+      area: "Creative",
+      title: creative.file_path ? truncate(creative.file_path, 54) : formatPlatformRef("creative", creative.id),
+      detail: creative.failure_reason || metaCreativeDetail(creative),
+      action: "Upload to Meta after credentials and file readiness are confirmed.",
+      status: creative.status,
+      updatedAt: creative.updated_at,
+    })),
+    ...failedAgentRuns.map((run) => ({
+      id: `run:${run.id}`,
+      tone: "danger" as const,
+      area: "Agent",
+      title: run.agent_kind || "Agent run failed",
+      detail: run.error_preview || run.final_response_preview || formatPlatformRef(run.target_type, run.target_id),
+      action: "Inspect the run context before retrying.",
+      status: run.status,
+      updatedAt: run.finished_at || run.started_at,
+    })),
+    ...failedAgentToolCalls.map((call) => ({
+      id: `tool:${call.id}`,
+      tone: "danger" as const,
+      area: "Tool",
+      title: call.tool_name,
+      detail: call.error_preview || call.arguments_preview || formatPlatformRef(call.target_type, call.target_id),
+      action: "Fix the input or provider blocker, then rerun the tool.",
+      status: call.status,
+      updatedAt: call.created_at,
+    })),
+  ];
+  const operatorActions = [...rawOperatorActions].sort(compareOpsActions);
+  const primaryAction = operatorActions[0] ?? null;
+  const opsMode = counts.active_blockers > 0 || operatorActions.some((item) => item.tone === "danger")
+    ? "blocked"
+    : operatorActions.length > 0
+      ? "review"
+      : "clean";
+  const opsHero = opsMode === "blocked"
+    ? {
+      label: "Next best action",
+      title: primaryAction?.title || "Resolve blockers first",
+      detail: primaryAction?.action || "Start with Meta, agent, or delivery blockers before normal lead review.",
+    }
+    : opsMode === "review"
+      ? {
+        label: "Next best action",
+        title: primaryAction?.title || "Review pending work",
+        detail: primaryAction?.action || "Clear the open queue before publishing or sending client updates.",
+      }
+      : {
+        label: "System state",
+        title: "Clean operating window",
+        detail: "No active platform blockers in the lifecycle cockpit.",
+      };
+  const metaReadiness: OpsReadinessItem[] = [
+    {
+      label: "Credentials",
+      status: inventoryBlockers.length ? "blocked" : latestInventory ? latestInventory.status : "missing",
+      detail: inventoryBlockers.length ? "Meta access missing or partial" : latestInventory ? metaInventoryCounts(latestInventory) : "No inventory sync yet",
+    },
+    {
+      label: "Campaign brief",
+      status: campaigns.length ? "ready" : "missing",
+      detail: campaigns.length ? `${campaigns.length} staged` : "Stage campaign after client profile",
+    },
+    {
+      label: "Creative batch",
+      status: metaReadyCreatives.length ? "ready" : creatives.length ? "partial" : "missing",
+      detail: `${creatives.length} assets · ${metaReadyCreatives.length} Meta-ready`,
+    },
+    {
+      label: "Publish plan",
+      status: metaAttempts.length ? (blockedAttempts.length ? "blocked" : "ready") : "missing",
+      detail: metaAttempts.length ? `${metaAttempts.length} attempts · ${blockedAttempts.length} blocked` : "No Meta plan staged",
+    },
+    {
+      label: "Approval gate",
+      status: metaAttempts.some((attempt) => attempt.approval_status === "approved" || attempt.response_payload.schema_version === "konecta.meta_publish_execution.v1") ? "ready" : "missing",
+      detail: "Needs explicit approval before live writes",
+    },
+  ];
 
   return (
     <div className="ct-surface ops-surface">
-      <section className="ops-toolbar" aria-label="Platform lifecycle status">
-        <div>
-          <span>{overview?.generated_at ? relativeTime(overview.generated_at) : "No sync"}</span>
-          <strong>Lifecycle</strong>
-          <small>{overview?.generated_at ? shortDate(overview.generated_at) : "-"}</small>
+      <section className="ops-toolbar" data-mode={opsMode} aria-label="Platform lifecycle status">
+        <div className="ops-toolbar-main">
+          <span>{opsHero.label}</span>
+          <strong>{opsHero.title}</strong>
+          <small>{opsHero.detail}</small>
         </div>
-        <button type="button" className="ct-btn ct-btn-ghost" onClick={onRefresh} disabled={loading}>
-          {loading ? <SpinnerGap size={16} weight="bold" /> : <ArrowsClockwise size={16} weight="bold" />}
-          Refresh
-        </button>
+        <div className="ops-toolbar-side">
+          <div className="ops-route" aria-label="Daily operator route">
+            <button type="button" onClick={() => onOpenSection("ops")}>Ops</button>
+            <button type="button" onClick={() => onOpenSection("crm")}>CRM</button>
+            <button type="button" onClick={() => onOpenSection("delivery")}>Delivery</button>
+            <button type="button" onClick={() => onOpenSection("workstation")}>Workstation</button>
+            <button type="button" onClick={() => onOpenSection("runner")}>Runner</button>
+          </div>
+          <button type="button" className="ct-btn ct-btn-ghost" onClick={onRefresh} disabled={loading}>
+            {loading ? <SpinnerGap size={16} weight="bold" /> : <ArrowsClockwise size={16} weight="bold" />}
+            Refresh
+          </button>
+        </div>
       </section>
 
       <section className="runner-command-center ops-signal-grid" aria-label="Platform signals">
@@ -2908,6 +3077,26 @@ function PlatformOpsView({
 
       <section className="ops-layout">
         <div className="ops-main-column">
+          <OpsPanel eyebrow={<ListChecks size={18} weight="fill" />} title="Action queue" meta={`${operatorActions.length}`}>
+            {operatorActions.length ? (
+              <div className="ops-action-queue">
+                {operatorActions.slice(0, 7).map((item) => (
+                  <OpsActionCard item={item} key={item.id} />
+                ))}
+              </div>
+            ) : (
+              <OpsEmpty title="No open actions" value="0" />
+            )}
+          </OpsPanel>
+
+          <OpsPanel eyebrow={<PaperPlaneTilt size={18} weight="fill" />} title="Meta readiness" meta={`${metaReadyCreatives.length} ready creatives`}>
+            <div className="ops-readiness-lane">
+              {metaReadiness.map((step) => (
+                <OpsReadinessStep step={step} key={step.label} />
+              ))}
+            </div>
+          </OpsPanel>
+
           <OpsPanel eyebrow={<ListChecks size={18} weight="fill" />} title="Blockers" meta={`${openQuestions.length + blockedAttempts.length + updatesWithBlockers.length}`}>
             <div className="ops-list">
               {openQuestions.map((question) => (
@@ -3166,6 +3355,40 @@ function OpsPanel({
   );
 }
 
+function OpsActionCard({ item }: { item: OpsActionItem }) {
+  return (
+    <article className="ops-action-card" data-tone={item.tone}>
+      <div className="ops-action-marker">
+        {item.tone === "danger" ? <WarningCircle size={18} weight="fill" /> : <ClockCountdown size={18} weight="fill" />}
+      </div>
+      <div className="ops-action-copy">
+        <div className="ops-action-topline">
+          <span>{item.area}</span>
+          <time>{relativeTime(item.updatedAt)}</time>
+        </div>
+        <strong>{item.title}</strong>
+        <p>{item.detail}</p>
+        <em>{item.action}</em>
+      </div>
+      <OpsStatus value={item.status} />
+    </article>
+  );
+}
+
+function OpsReadinessStep({ step }: { step: OpsReadinessItem }) {
+  const tone = opsReadinessTone(step.status);
+  return (
+    <article className="ops-readiness-step" data-tone={tone}>
+      <span className="ops-readiness-dot" aria-hidden="true" />
+      <div>
+        <strong>{step.label}</strong>
+        <p>{step.detail}</p>
+      </div>
+      <OpsStatus value={step.status} />
+    </article>
+  );
+}
+
 function OpsStatus({ value }: { value: string }) {
   const tone = opsStatusTone(value);
   return <span className="ops-status" data-tone={tone}>{humanize(value)}</span>;
@@ -3237,6 +3460,37 @@ function opsStatusTone(value: string): "danger" | "warn" | "ok" | "neutral" {
     return "ok";
   }
   return "neutral";
+}
+
+function opsReadinessTone(value: string): "danger" | "warn" | "ok" | "neutral" {
+  const normalized = value.toLowerCase();
+  if (["blocked", "failed", "error", "missing_credentials"].includes(normalized)) {
+    return "danger";
+  }
+  if (["missing", "partial", "pending", "staged", "not_requested"].includes(normalized)) {
+    return "warn";
+  }
+  if (["ready", "approved", "uploaded", "published", "completed"].includes(normalized)) {
+    return "ok";
+  }
+  return "neutral";
+}
+
+function compareOpsActions(a: OpsActionItem, b: OpsActionItem): number {
+  const toneDifference = opsActionToneRank(a.tone) - opsActionToneRank(b.tone);
+  if (toneDifference !== 0) {
+    return toneDifference;
+  }
+  return timestampValue(b.updatedAt) - timestampValue(a.updatedAt);
+}
+
+function opsActionToneRank(tone: OpsActionTone): number {
+  return tone === "danger" ? 0 : 1;
+}
+
+function timestampValue(value: string | null): number {
+  const parsed = Date.parse(value ?? "");
+  return Number.isNaN(parsed) ? 0 : parsed;
 }
 
 function formatPlatformRef(type: string, id: string): string {
