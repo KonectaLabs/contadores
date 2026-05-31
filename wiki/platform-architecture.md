@@ -31,9 +31,14 @@ The repo already has the right single-server base:
   staged Meta publish attempts, client updates, and human questions. They are
   exposed through `/api/platform/*` and audited Codex tools, so the UI is
   optional for configuration and workflow state.
+- Meta publishing now has staged plan, inventory, media upload, preflight,
+  approval, live execution, and lead-routing readiness slices. Click-to-WhatsApp
+  executions persist returned Meta ad IDs into the funnel config; instant forms
+  must point at a ready Client Lead Delivery source.
 - `/api/platform/overview` now provides the cockpit read model used by the
   frontend `Ops` tab: blockers, human questions, campaigns, Meta publish
-  attempts, meetings, client updates, assets, and recent events.
+  attempts, meetings, client updates, assets, agent runs/tool calls, and recent
+  events.
 
 The major missing pieces are live credentials plus cockpit depth: production
 Google Calendar credentials/internal attendee ownership, transcript ingestion
@@ -196,7 +201,10 @@ audited, approved plan:
    credentials are missing, it stores the blocker explicitly.
 5. `stage_meta_publish_plan` creates the canonical staged payload:
    `Campaign -> Ad Set -> Ad/Creative`, destination, targeting, budget,
-   initial `PAUSED` status, missing fields, and rollback/disable order.
+   initial `PAUSED` status, lead-routing metadata, missing fields, and
+   rollback/disable order. Click-to-WhatsApp plans carry `funnel_id` plus an
+   optional existing `destination.whatsapp_referral_source_id`; instant-form
+   plans carry `destination.client_lead_source_id`.
 6. `preflight_meta_publish_plan` turns the staged payload into an ordered,
    persisted execution graph without live writes by default.
 7. `approve_meta_publish_plan` applies the audited approval gate: budget caps,
@@ -205,12 +213,15 @@ audited, approved plan:
 8. `execute_meta_publish_plan` runs the approved operation graph only when live
    writes are explicitly requested and enabled, then persists returned Meta IDs
    so retries skip already-created Campaign, Ad Set, Creative, and Ad objects.
+   For Click-to-WhatsApp ads, returned ad IDs are also appended to the funnel's
+   `whatsapp_referral_source_ids` so inbound webhooks route back to the same
+   funnel.
 9. `PlatformMetaPublishAttempt` records the staged plan, execution state, Meta
    response, error, idempotency key, and operator approval status.
 10. Lead delivery connects the published ad or lead form back into funnel routing:
-   Click-to-WhatsApp `referral.source_id` for WhatsApp conversations, Meta lead
-   form exports/webhooks for Sheets intake, then Client Lead Delivery to the
-   client's WhatsApp.
+   Click-to-WhatsApp `referral.source_id` for WhatsApp conversations; Meta lead
+   forms through a configured `client_lead_source_id`, Sheets intake, then
+   Client Lead Delivery to the client's WhatsApp.
 11. Client updates summarize spend/leads/blockers from events, delivery records,
    and Meta publish status.
 
@@ -218,6 +229,8 @@ Live Meta writes stay disabled until the platform has:
 
 - ad account ID and account currency;
 - Page ID, and either WhatsApp phone number ID, lead form ID, or landing page;
+- lead routing: mapped Click-to-WhatsApp source ID or new-ad ID persistence
+  plan, and a ready Client Lead Delivery source for instant forms;
 - special ad category decision when required;
 - approved creative assets and final copy;
 - a Meta-ready creative reference (`meta_creative_id`, `image_hash`, or
@@ -238,6 +251,9 @@ and persist provider IDs for idempotent retries.
 The approval policy slice is `approve_meta_publish_plan`: it records operator
 approval only when budget caps, inventory IDs, idempotency, and `PAUSED` start
 state pass. It still performs no external writes.
+The lead-routing slice now blocks unsafe instant-form plans, validates existing
+Click-to-WhatsApp source IDs against the target funnel, and updates funnel
+routing after successful live ad creation.
 
 ## Milestones
 
@@ -310,6 +326,10 @@ state pass. It still performs no external writes.
    - First live executor slice shipped as `execute_meta_publish_plan`; it
      creates Meta objects in `PAUSED` state when live writes are explicitly
      requested/enabled, stores every returned ID, and keeps retries idempotent.
+   - Lead-routing readiness shipped: instant forms require a ready
+     `client_lead_source_id`; Click-to-WhatsApp source IDs are validated when
+     known and returned ad IDs are persisted to funnel routing after live
+     execution.
 
 9. Client updates and delivery loop
    - Generate 24-hour client updates from campaign and delivery events.

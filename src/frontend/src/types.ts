@@ -350,6 +350,37 @@ export interface PlatformHumanQuestionItem {
   updated_at: string;
 }
 
+export interface PlatformAgentRunItem {
+  id: string;
+  agent_kind: string;
+  target_type: string;
+  target_id: string;
+  status: string;
+  prompt_version: string;
+  context_path: string;
+  codex_thread_id: string | null;
+  codex_turn_id: string | null;
+  final_response_preview: string;
+  error_preview: string;
+  started_at: string;
+  finished_at: string | null;
+  created_at: string;
+}
+
+export interface PlatformAgentToolCallItem {
+  id: number;
+  run_id: string;
+  tool_name: string;
+  target_type: string;
+  target_id: string;
+  status: string;
+  idempotency_key: string | null;
+  arguments_preview: string;
+  result_preview: string;
+  error_preview: string;
+  created_at: string;
+}
+
 export interface PlatformOverviewCounts {
   active_blockers: number;
   open_human_questions: number;
@@ -361,6 +392,10 @@ export interface PlatformOverviewCounts {
   creative_assets: number;
   meta_inventory_snapshots: number;
   client_updates: number;
+  agent_runs: number;
+  failed_agent_runs: number;
+  agent_tool_calls: number;
+  failed_agent_tool_calls: number;
   recent_events: number;
 }
 
@@ -376,6 +411,8 @@ export interface PlatformOverviewResponse {
   meta_publish_attempts: PlatformMetaPublishAttemptItem[];
   client_updates: PlatformClientUpdateItem[];
   human_questions: PlatformHumanQuestionItem[];
+  agent_runs: PlatformAgentRunItem[];
+  agent_tool_calls: PlatformAgentToolCallItem[];
 }
 
 export interface ContadoresMetrics {

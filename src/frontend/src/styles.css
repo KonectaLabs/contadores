@@ -2515,6 +2515,17 @@ body {
   gap: 10px;
 }
 
+#contadoresView .ops-signal-grid {
+  flex: 0 0 auto;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-auto-rows: minmax(120px, auto);
+  align-items: stretch;
+}
+
+#contadoresView .ops-signal-grid .runner-signal {
+  height: 100%;
+}
+
 #contadoresView .runner-signal {
   position: relative;
   min-height: 120px;
@@ -6578,6 +6589,10 @@ body {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  #contadoresView .ops-signal-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   #contadoresView .workstation-grid,
   #contadoresView .workstation-upload {
     grid-template-columns: 1fr;
@@ -6678,6 +6693,10 @@ body {
   }
 
   #contadoresView .runner-command-center {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  #contadoresView .ops-signal-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 

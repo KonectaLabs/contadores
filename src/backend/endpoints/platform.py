@@ -9,6 +9,8 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from backend.database import (
+    AgentRun,
+    AgentToolCall,
     PlatformAdCampaign,
     PlatformClientProfile,
     PlatformClientUpdate,
@@ -56,6 +58,41 @@ class PlatformEventListResponse(BaseModel):
     """Recent platform events for operator observability."""
 
     events: list[PlatformEventResponse]
+
+
+class PlatformAgentRunResponse(BaseModel):
+    """Serialized autonomous agent run."""
+
+    id: str
+    agent_kind: str
+    target_type: str
+    target_id: str
+    status: str
+    prompt_version: str
+    context_path: str
+    codex_thread_id: str | None
+    codex_turn_id: str | None
+    final_response_preview: str
+    error_preview: str
+    started_at: datetime
+    finished_at: datetime | None
+    created_at: datetime
+
+
+class PlatformAgentToolCallResponse(BaseModel):
+    """Serialized audited agent tool call."""
+
+    id: int
+    run_id: str
+    tool_name: str
+    target_type: str
+    target_id: str
+    status: str
+    idempotency_key: str | None
+    arguments_preview: str
+    result_preview: str
+    error_preview: str
+    created_at: datetime
 
 
 class PlatformMeetingCommand(BaseModel):
@@ -528,6 +565,10 @@ class PlatformOverviewCounts(BaseModel):
     creative_assets: int
     meta_inventory_snapshots: int
     client_updates: int
+    agent_runs: int
+    failed_agent_runs: int
+    agent_tool_calls: int
+    failed_agent_tool_calls: int
     recent_events: int
 
 
@@ -545,6 +586,8 @@ class PlatformOverviewResponse(BaseModel):
     meta_publish_attempts: list[PlatformMetaPublishAttemptResponse]
     client_updates: list[PlatformClientUpdateResponse]
     human_questions: list[PlatformHumanQuestionResponse]
+    agent_runs: list[PlatformAgentRunResponse]
+    agent_tool_calls: list[PlatformAgentToolCallResponse]
 
 
 def serialize_platform_event(event: PlatformEvent) -> PlatformEventResponse:
@@ -564,6 +607,51 @@ def serialize_platform_event(event: PlatformEvent) -> PlatformEventResponse:
         idempotency_key=event.idempotency_key,
         correlation_id=event.correlation_id,
         created_at=event.created_at,
+    )
+
+
+def compact_overview_text(value: str, *, limit: int = 500) -> str:
+    """Return a small single-line preview for high-frequency overview payloads."""
+    text = " ".join(str(value or "").split())
+    if len(text) <= limit:
+        return text
+    return f"{text[: max(0, limit - 3)]}..."
+
+
+def serialize_agent_run(row: AgentRun) -> PlatformAgentRunResponse:
+    """Convert one agent run to the platform cockpit shape."""
+    return PlatformAgentRunResponse(
+        id=row.id,
+        agent_kind=row.agent_kind,
+        target_type=row.target_type,
+        target_id=row.target_id,
+        status=row.status,
+        prompt_version=row.prompt_version,
+        context_path=row.context_path,
+        codex_thread_id=row.codex_thread_id,
+        codex_turn_id=row.codex_turn_id,
+        final_response_preview=compact_overview_text(row.final_response),
+        error_preview=compact_overview_text(row.error, limit=320),
+        started_at=row.started_at,
+        finished_at=row.finished_at,
+        created_at=row.created_at,
+    )
+
+
+def serialize_agent_tool_call(row: AgentToolCall) -> PlatformAgentToolCallResponse:
+    """Convert one audited tool call to the platform cockpit shape."""
+    return PlatformAgentToolCallResponse(
+        id=int(row.id or 0),
+        run_id=row.run_id,
+        tool_name=row.tool_name,
+        target_type=row.target_type,
+        target_id=row.target_id,
+        status=row.status,
+        idempotency_key=row.idempotency_key,
+        arguments_preview=compact_overview_text(row.arguments_json, limit=700),
+        result_preview=compact_overview_text(row.result_json, limit=700),
+        error_preview=compact_overview_text(row.error, limit=320),
+        created_at=row.created_at,
     )
 
 
@@ -809,12 +897,16 @@ async def platform_overview(
     meta_publish_attempts = PlatformMetaPublishAttempt.list_recent(limit=limit)
     client_updates = PlatformClientUpdate.list_recent(limit=limit)
     human_questions = PlatformHumanQuestion.list_recent(limit=limit)
+    agent_runs = AgentRun.list_recent(limit=limit)
+    agent_tool_calls = AgentToolCall.list_recent(limit=limit)
 
     open_questions = sum(1 for row in human_questions if is_open_human_question(row))
     blocked_meta = sum(1 for row in meta_publish_attempts if is_blocked_meta_attempt(row))
     blocked_inventory = 1 if meta_inventory_snapshots and is_blocked_meta_inventory(meta_inventory_snapshots[0]) else 0
     pending_campaigns = sum(1 for row in ad_campaigns if is_pending_campaign(row))
     updates_with_blockers = sum(1 for row in client_updates if row.blockers())
+    failed_agent_runs = sum(1 for row in agent_runs if row.status in {"failed", "error", "blocked"})
+    failed_tool_calls = sum(1 for row in agent_tool_calls if row.status == "failed")
 
     return PlatformOverviewResponse(
         generated_at=datetime.now(timezone.utc),
@@ -829,6 +921,10 @@ async def platform_overview(
             creative_assets=len(creative_assets),
             meta_inventory_snapshots=len(meta_inventory_snapshots),
             client_updates=len(client_updates),
+            agent_runs=len(agent_runs),
+            failed_agent_runs=failed_agent_runs,
+            agent_tool_calls=len(agent_tool_calls),
+            failed_agent_tool_calls=failed_tool_calls,
             recent_events=len(events),
         ),
         events=[serialize_platform_event(event) for event in events],
@@ -840,6 +936,8 @@ async def platform_overview(
         meta_publish_attempts=[serialize_meta_publish_attempt(row) for row in meta_publish_attempts],
         client_updates=[serialize_client_update(row) for row in client_updates],
         human_questions=[serialize_human_question(row) for row in human_questions],
+        agent_runs=[serialize_agent_run(row) for row in agent_runs],
+        agent_tool_calls=[serialize_agent_tool_call(row) for row in agent_tool_calls],
     )
 
 

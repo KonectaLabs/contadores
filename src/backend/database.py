@@ -2751,6 +2751,28 @@ class AgentRun(SQLModel, table=True):
             session.expunge(row)
             return row
 
+    @classmethod
+    def list_recent(
+        cls,
+        *,
+        status: str | None = None,
+        target_type: str | None = None,
+        limit: int = 100,
+    ) -> list["AgentRun"]:
+        """List recent autonomous runs for operator observability."""
+        clean_limit = max(1, min(limit, 500))
+        with Session(engine) as session:
+            statement = select(cls)
+            if status:
+                statement = statement.where(cls.status == status.strip())
+            if target_type:
+                statement = statement.where(cls.target_type == target_type.strip())
+            statement = statement.order_by(cls.started_at.desc(), cls.created_at.desc()).limit(clean_limit)
+            rows = list(session.exec(statement).all())
+            for row in rows:
+                session.expunge(row)
+            return rows
+
 
 class AgentToolCall(SQLModel, table=True):
     """One tool call made by an autonomous Codex run."""
@@ -2807,6 +2829,28 @@ class AgentToolCall(SQLModel, table=True):
         """List audited tool calls for one run."""
         with Session(engine) as session:
             statement = select(cls).where(cls.run_id == run_id).order_by(cls.created_at, cls.id)
+            rows = list(session.exec(statement).all())
+            for row in rows:
+                session.expunge(row)
+            return rows
+
+    @classmethod
+    def list_recent(
+        cls,
+        *,
+        run_id: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> list["AgentToolCall"]:
+        """List recent audited tool calls for the platform cockpit."""
+        clean_limit = max(1, min(limit, 500))
+        with Session(engine) as session:
+            statement = select(cls)
+            if run_id:
+                statement = statement.where(cls.run_id == run_id.strip())
+            if status:
+                statement = statement.where(cls.status == status.strip())
+            statement = statement.order_by(cls.created_at.desc(), cls.id.desc()).limit(clean_limit)
             rows = list(session.exec(statement).all())
             for row in rows:
                 session.expunge(row)

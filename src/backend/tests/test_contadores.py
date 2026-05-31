@@ -1928,6 +1928,26 @@ def test_codex_agent_lifecycle_tools_work_without_ui(monkeypatch, tmp_path) -> N
         "meta_publish.approval_checked",
         "meta_publish.execution_checked",
     }
+    failed_tool_result = call_tool(
+        run_id="agent-run-observability-failure",
+        tool_name="unknown_platform_tool",
+        arguments={"target_type": "meta_publish_attempt", "target_id": "obs-failure"},
+    )
+    assert failed_tool_result["ok"] is False
+
+    overview = TestClient(app).get("/api/platform/overview").json()
+    assert overview["counts"]["agent_runs"] >= 1
+    assert overview["counts"]["failed_agent_runs"] >= 1
+    assert overview["counts"]["agent_tool_calls"] >= len(calls)
+    assert overview["counts"]["failed_agent_tool_calls"] >= 1
+    lifecycle_run = next(run for run in overview["agent_runs"] if run["id"] == "agent-run-lifecycle")
+    assert "final_response_preview" in lifecycle_run
+    assert "final_response" not in lifecycle_run
+    staged_call = next(call for call in overview["agent_tool_calls"] if call["tool_name"] == "stage_meta_publish_plan")
+    assert staged_call["arguments_preview"]
+    assert staged_call["result_preview"]
+    failed_call = next(call for call in overview["agent_tool_calls"] if call["tool_name"] == "unknown_platform_tool")
+    assert "Unknown tool" in failed_call["error_preview"]
 
 
 def test_codex_agent_tool_checks_domain_with_public_prices(monkeypatch, tmp_path) -> None:

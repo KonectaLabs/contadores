@@ -2857,6 +2857,10 @@ function PlatformOpsView({
     creative_assets: 0,
     meta_inventory_snapshots: 0,
     client_updates: 0,
+    agent_runs: 0,
+    failed_agent_runs: 0,
+    agent_tool_calls: 0,
+    failed_agent_tool_calls: 0,
     recent_events: 0,
   };
   const counts = { ...defaultCounts, ...(overview?.counts ?? {}) };
@@ -2869,11 +2873,15 @@ function PlatformOpsView({
   const profiles = overview?.client_profiles ?? [];
   const creatives = overview?.creative_assets ?? [];
   const inventorySnapshots = overview?.meta_inventory_snapshots ?? [];
+  const agentRuns = overview?.agent_runs ?? [];
+  const agentToolCalls = overview?.agent_tool_calls ?? [];
   const openQuestions = questions.filter(isOpenPlatformQuestion);
   const blockedAttempts = metaAttempts.filter(isBlockedPlatformAttempt);
   const updatesWithBlockers = updates.filter((update) => update.blockers.length > 0);
   const metaReadyCreatives = creatives.filter(isMetaReadyCreative);
   const uploadBlockedCreatives = creatives.filter((creative) => ["upload_blocked", "upload_failed"].includes(creative.status));
+  const failedAgentRuns = agentRuns.filter((run) => ["failed", "error", "blocked"].includes(run.status));
+  const failedAgentToolCalls = agentToolCalls.filter((call) => call.status === "failed");
 
   return (
     <div className="ct-surface ops-surface">
@@ -2894,6 +2902,7 @@ function PlatformOpsView({
         <RunnerSignal icon={<ChatCircleText size={30} weight="fill" />} label="Questions" value={counts.open_human_questions} tone={counts.open_human_questions > 0 ? "warn" : "neutral"} />
         <RunnerSignal icon={<TrendUp size={30} weight="fill" />} label="Campaigns" value={counts.campaigns} tone={counts.pending_campaigns > 0 ? "violet" : "neutral"} />
         <RunnerSignal icon={<PaperPlaneTilt size={30} weight="fill" />} label="Meta" value={counts.blocked_meta_attempts + counts.blocked_meta_inventory} tone={counts.blocked_meta_attempts + counts.blocked_meta_inventory > 0 ? "danger" : "neutral"} />
+        <RunnerSignal icon={<GearSix size={30} weight="fill" />} label="Agents" value={counts.failed_agent_runs + counts.failed_agent_tool_calls} tone={counts.failed_agent_runs + counts.failed_agent_tool_calls > 0 ? "danger" : "neutral"} />
         <RunnerSignal icon={<Pulse size={30} weight="fill" />} label="Events" value={counts.recent_events} tone={counts.recent_events > 0 ? "blue" : "neutral"} />
       </section>
 
@@ -2995,6 +3004,48 @@ function PlatformOpsView({
               ))}
               {!inventorySnapshots.length ? <OpsEmpty title="No inventory" value="0" /> : null}
             </div>
+          </OpsPanel>
+
+          <OpsPanel eyebrow={<GearSix size={18} weight="fill" />} title="Agent activity" meta={`${agentRuns.length} runs · ${agentToolCalls.length} calls`}>
+            <div className="ops-table-list">
+              {agentRuns.slice(0, 6).map((run) => {
+                const runDetail = run.error_preview || run.final_response_preview;
+                return (
+                  <div className="ops-table-row" key={run.id}>
+                    <div>
+                      <strong>{run.agent_kind || "agent"}</strong>
+                      <span>{formatPlatformRef(run.target_type, run.target_id)} · {run.prompt_version || "-"}</span>
+                      {runDetail ? <span>{truncate(runDetail, 120)}</span> : null}
+                    </div>
+                    <OpsStatus value={run.status} />
+                    <time>{relativeTime(run.finished_at || run.started_at)}</time>
+                  </div>
+                );
+              })}
+              {!agentRuns.length ? <OpsEmpty title="No runs" value="0" /> : null}
+            </div>
+            {failedAgentRuns.length ? (
+              <p className="ops-panel-note">{compactNumber(failedAgentRuns.length)} failed agent run{failedAgentRuns.length === 1 ? "" : "s"}.</p>
+            ) : null}
+            <div className="ops-table-list">
+              {agentToolCalls.slice(0, 6).map((call) => {
+                const callDetail = call.error_preview || call.result_preview || call.arguments_preview;
+                return (
+                  <div className="ops-table-row" key={call.id}>
+                    <div>
+                      <strong>{call.tool_name}</strong>
+                      <span>{formatPlatformRef(call.target_type, call.target_id)} · {truncate(call.run_id, 20)}</span>
+                      {callDetail ? <span>{truncate(callDetail, 120)}</span> : null}
+                    </div>
+                    <OpsStatus value={call.status} />
+                    <time>{relativeTime(call.created_at)}</time>
+                  </div>
+                );
+              })}
+            </div>
+            {failedAgentToolCalls.length ? (
+              <p className="ops-panel-note">{compactNumber(failedAgentToolCalls.length)} failed tool call{failedAgentToolCalls.length === 1 ? "" : "s"}.</p>
+            ) : null}
           </OpsPanel>
         </div>
 
