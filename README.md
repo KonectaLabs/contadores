@@ -671,9 +671,14 @@ Template manual de ping:
 - Las acciones masivas del CRM no deben preseleccionar `Manual ping`; el operador tiene que elegir ese template explicitamente.
 - `Manual ping` en bulk requiere confirmacion explicita en el payload/UI y queda auditado como batch.
 - No se puede mandar ningun WhatsApp outbound a un lead `closed`; primero hay que reabrirlo.
-- El storage/API legacy conserva `stage=booked` y el alias `send-manual-booked`
-  por compatibilidad. En la UI nueva eso se muestra como `Converted`; marcar un
-  lead convertido no envia WhatsApp y solo pausa la automatizacion.
+- La ruta canonical para conversion manual es `/api/contadores/conversions/mark`
+  o la accion `mark-converted`; el storage/API legacy conserva `stage=booked`,
+  `booked_at`, `mark-booked` y `send-manual-booked` por compatibilidad. En la UI
+  nueva eso se muestra como `Converted`; marcar un lead convertido no envia
+  WhatsApp y solo pausa la automatizacion.
+- Los payloads nuevos deben preferir `converted_at`, `meeting_sent_at`,
+  `meeting_url`, `converted=true` y las metricas canonicales de meeting/conversion
+  aunque los aliases legacy sigan disponibles.
 
 Modelo de estado para UI/API:
 

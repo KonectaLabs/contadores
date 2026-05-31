@@ -783,6 +783,8 @@ CONTADORES_LEAD_PIPELINE_STAGES = {
 CONTADORES_LEAD_QUEUE_STATES = {"automation", "operator", "workstation", "paused", "none"}
 CONTADORES_LEAD_TERMINAL_STATES = {"open", "closed", "archived"}
 CONTADORES_LEAD_ATTENTION_STATES = {"clear", "needs_reply", "answered", "paused", "converted", "closed", "archived"}
+CONTADORES_LEAD_MANUAL_CONVERTED_REASON = "manual_converted"
+CONTADORES_LEAD_LEGACY_MANUAL_BOOKED_REASON = "manual_booked"
 WORKSTATION_OPERATOR_HANDOFF_REASONS = {
     "workstation_agent_handoff",
     "workstation_no_response_handoff",
@@ -1798,6 +1800,26 @@ class ContadoresLead(SQLModel, table=True):
             session.refresh(item)
             session.expunge(item)
             return item
+
+    @classmethod
+    def mark_converted(
+        cls,
+        lead_id: str,
+        *,
+        converted_at: datetime | None = None,
+        automation_paused: bool | None = None,
+        automation_paused_reason: str | None = None,
+    ) -> Optional["ContadoresLead"]:
+        """Record a completed conversion while preserving legacy booked storage."""
+        flow_updates: dict[str, Any] = {
+            "stage": ContadoresLeadStage.BOOKED,
+            "booked_at": converted_at or datetime.now(timezone.utc),
+        }
+        if automation_paused is not None:
+            flow_updates["automation_paused"] = automation_paused
+        if automation_paused_reason is not None:
+            flow_updates["automation_paused_reason"] = automation_paused_reason
+        return cls.update_flow_state(lead_id, **flow_updates)
 
 
 class ContadoresStrategyAssignment(SQLModel, table=True):

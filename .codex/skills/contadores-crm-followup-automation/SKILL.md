@@ -140,8 +140,8 @@ POST http://149.50.136.121/api/contadores/followup/leads/{lead_id}/actions
 
 Allowed action values are the existing quick actions, including
 `send-manual-ping`, `send-opener`, `send-loom`, `send-video-check`,
-`send-calendly`, `send-calendly-link`, `mark-booked` (legacy alias for marking
-`Converted`), `mark-answered`, `close`,
+`send-calendly`, `send-calendly-link`, `mark-converted`,
+`mark-booked` (legacy alias for marking `Converted`), `mark-answered`, `close`,
 `reopen`, `archive`, and `unarchive`.
 
 Update one lead's classification/stage:

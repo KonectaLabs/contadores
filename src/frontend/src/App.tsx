@@ -5964,7 +5964,7 @@ function LeadDetailHeader({
   const paused = Boolean(lead?.automation_paused);
   const codexEnabled = Boolean(lead?.codex_enabled);
   const canMarkAnswered = lead?.manual_reply_status === "needs_reply" && !closed;
-  const converted = Boolean(lead?.workstation_client_id);
+  const hasWorkstationClient = Boolean(lead?.workstation_client_id);
 
   return (
     <header className="ct-detail-head">
@@ -5988,7 +5988,7 @@ function LeadDetailHeader({
           <PaperPlaneTilt size={15} weight="bold" />
           Send
         </button>
-        {converted && lead?.workstation_client_id ? (
+        {hasWorkstationClient && lead?.workstation_client_id ? (
           <button
             type="button"
             className="ct-btn ct-btn-ghost"
@@ -6025,7 +6025,7 @@ function LeadDetailHeader({
               <Copy size={15} weight="bold" />
               Copy
             </button>
-            {!converted ? (
+            {!hasWorkstationClient ? (
               <button
                 type="button"
                 className="ct-btn ct-btn-ghost"
@@ -6692,8 +6692,8 @@ function StrategyStatsPanel({
             </label>
             <div className="ct-strategy-metrics">
               <span>{item.assigned} assigned</span>
-              <span>{formatRate(item.calendly_rate)} meeting</span>
-              <span>{formatRate(item.booked_rate)} converted</span>
+              <span>{formatRate(item.meeting_rate ?? item.calendly_rate)} meeting</span>
+              <span>{formatRate(item.conversion_rate ?? item.booked_rate)} converted</span>
             </div>
           </article>
         ))}
@@ -7743,7 +7743,7 @@ function buildLeadContextText({
     `Platform: ${lead.platform || "-"}`,
     `External lead ID: ${lead.external_lead_id || "-"}`,
     `Tags: ${lead.tags.length ? lead.tags.join(", ") : "-"}`,
-    `Scheduling URL: ${lead.calendly_url || "-"}`,
+    `Meeting URL: ${lead.meeting_url || lead.calendly_url || "-"}`,
     `Last activity: ${relativeTime(lastActivity)} (${shortDate(lastActivity)})`,
     `Automation: ${lead.automation_paused ? `Paused (${humanize(lead.automation_paused_reason || "")})` : "Active"}`,
     `Workstation: ${lead.workstation_client_id || "-"}`,

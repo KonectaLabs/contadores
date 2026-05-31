@@ -3267,8 +3267,12 @@ def test_contadores_strategy_stats_count_calendly_and_booked(monkeypatch, tmp_pa
     assert items["text_offer_599"]["sent"] == 1
     assert items["text_offer_599"]["delivered"] == 1
     assert items["text_offer_599"]["reached_calendly"] == 1
+    assert items["text_offer_599"]["reached_meeting"] == 1
     assert items["text_offer_599"]["booked"] == 1
+    assert items["text_offer_599"]["converted"] == 1
     assert items["text_offer_599"]["calendly_rate"] == 1
+    assert items["text_offer_599"]["meeting_rate"] == 1
+    assert items["text_offer_599"]["conversion_rate"] == 1
 
 
 def test_contadores_pending_delivery_exposes_name_country_opener_params(monkeypatch, tmp_path) -> None:
@@ -4035,7 +4039,52 @@ def test_mark_converted_action_keeps_legacy_booked_storage_without_queueing_temp
     assert lead_payload["pipeline_stage"] == "converted"
     assert lead_payload["booked_at"] is not None
     assert lead_payload["automation_paused"] is True
-    assert lead_payload["automation_paused_reason"] == "manual_booked"
+    assert lead_payload["automation_paused_reason"] == "manual_converted"
+
+
+def test_mark_converted_endpoint_is_canonical_and_bookings_endpoint_is_legacy_alias(monkeypatch, tmp_path) -> None:
+    """The public conversion endpoint should be canonical while old booking marks still work."""
+    monkeypatch.setenv("FUNNELS_CONFIG_PATH", str(tmp_path / "funnels.json"))
+    configure_contadores_db(monkeypatch, tmp_path)
+    converted_lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-conversions-mark",
+        phone="+5491888888811",
+        full_name="Conversions Endpoint",
+    )
+    legacy_lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-bookings-legacy",
+        phone="+5491888888812",
+        full_name="Bookings Alias",
+    )
+    converted_at = now_utc()
+    legacy_at = now_utc()
+
+    with TestClient(app) as client:
+        converted_response = client.post(
+            f"/api/contadores/conversions/mark?lead_id={converted_lead.id}",
+            json={"converted_at": converted_at.isoformat()},
+        )
+        legacy_response = client.post(
+            f"/api/contadores/bookings/mark?lead_id={legacy_lead.id}",
+            json={"booked_at": legacy_at.isoformat()},
+        )
+
+    assert converted_response.status_code == 200
+    converted_payload = converted_response.json()
+    assert converted_payload["stage"] == "booked"
+    assert converted_payload["pipeline_stage"] == "converted"
+    assert converted_payload["attention_state"] == "converted"
+    assert converted_payload["converted_at"] is not None
+    assert converted_payload["converted_at"] == converted_payload["booked_at"]
+    assert converted_payload["automation_paused_reason"] == "manual_converted"
+
+    assert legacy_response.status_code == 200
+    legacy_payload = legacy_response.json()
+    assert legacy_payload["stage"] == "booked"
+    assert legacy_payload["pipeline_stage"] == "converted"
+    assert legacy_payload["converted_at"] is not None
+    assert legacy_payload["converted_at"] == legacy_payload["booked_at"]
+    assert legacy_payload["automation_paused_reason"] == "manual_converted"
 
 
 def test_lifecycle_v2_fields_are_persisted_after_flow_updates(monkeypatch, tmp_path) -> None:
@@ -4065,7 +4114,7 @@ def test_lifecycle_v2_fields_are_persisted_after_flow_updates(monkeypatch, tmp_p
         stage=ContadoresLeadStage.BOOKED,
         booked_at=now_utc(),
         automation_paused=True,
-        automation_paused_reason="manual_booked",
+        automation_paused_reason="manual_converted",
     )
     converted_lead = ContadoresLead.get_by_id(lead.id)
     assert converted_lead.pipeline_stage == "converted"
@@ -4205,8 +4254,8 @@ def test_pause_automation_action_keeps_stage_and_blocks_due_agent_followup(monke
     assert lead_payload["automation_paused_reason"] == "manual_pause"
 
 
-def test_booked_leads_do_not_expose_pending_manual_ping(monkeypatch, tmp_path) -> None:
-    """Booked leads must stay out of WhatsApp dispatch even if a ping was queued earlier."""
+def test_legacy_mark_booked_alias_keeps_converted_leads_out_of_pending_manual_ping(monkeypatch, tmp_path) -> None:
+    """The old mark-booked action must still convert and block pending WhatsApp dispatch."""
     monkeypatch.setenv("FUNNELS_CONFIG_PATH", str(tmp_path / "funnels.json"))
     configure_contadores_db(monkeypatch, tmp_path)
     lead = ContadoresLead.upsert(
@@ -5963,11 +6012,13 @@ def test_contadores_send_calendly_keeps_manual_handoff(monkeypatch, tmp_path) ->
     assert payload["lead"]["automation_paused"] is True
     assert payload["lead"]["automation_paused_reason"] == "manual_calendly_send"
     assert payload["lead"]["calendly_sent_at"] is not None
+    assert payload["lead"]["meeting_sent_at"] == payload["lead"]["calendly_sent_at"]
     assert payload["queued_message_ids"] == [2, 3]
 
     assert detail.status_code == 200
     assert detail.json()["lead"]["stage"] == "needs_human"
     assert detail.json()["lead"]["calendly_url"] == "https://calendly.com/test/contadores"
+    assert detail.json()["lead"]["meeting_url"] == "https://calendly.com/test/contadores"
     assert "calendly_tracking_token" not in detail.json()["lead"]
     assert detail.json()["lead"]["automation_paused"] is True
     assert [item["sequence_step"] for item in pending.json()["messages"]] == ["calendly_intro", "calendly_url"]
@@ -6548,11 +6599,13 @@ def test_contadores_overview_and_alerts_use_effective_stage(monkeypatch, tmp_pat
 
     with TestClient(app) as client:
         booked_response = client.get("/api/contadores/leads?stage=booked&booked=true")
+        converted_response = client.get("/api/contadores/leads?converted=true")
         needs_human_response = client.get("/api/contadores/leads?needs_human=true")
         alerts_response = client.get("/api/contadores/alerts/pending")
 
     assert booked_response.status_code == 200
     assert booked_response.json()["metrics"]["booked"] == 1
+    assert booked_response.json()["metrics"]["converted"] == 1
     assert booked_response.json()["metrics"]["pipeline_converted"] == 1
     assert [item["id"] for item in booked_response.json()["leads"]] == [lead.id]
     assert booked_response.json()["leads"][0]["stage"] == "booked"
@@ -6560,6 +6613,10 @@ def test_contadores_overview_and_alerts_use_effective_stage(monkeypatch, tmp_pat
     assert booked_response.json()["leads"][0]["pipeline_stage"] == "converted"
     assert booked_response.json()["leads"][0]["terminal_state"] == "open"
     assert booked_response.json()["leads"][0]["attention_state"] == "converted"
+    assert booked_response.json()["leads"][0]["converted_at"] == booked_response.json()["leads"][0]["booked_at"]
+
+    assert converted_response.status_code == 200
+    assert [item["id"] for item in converted_response.json()["leads"]] == [lead.id]
 
     assert needs_human_response.status_code == 200
     assert needs_human_response.json()["metrics"]["needs_human"] == 0
@@ -6593,6 +6650,7 @@ def test_contadores_calendly_bucket_includes_manual_post_calendly_leads(monkeypa
 
     assert calendly_response.status_code == 200
     assert calendly_response.json()["metrics"]["calendly_sent"] == 1
+    assert calendly_response.json()["metrics"]["meeting_sent"] == 1
     assert calendly_response.json()["metrics"]["pipeline_meeting_sent"] == 1
     assert calendly_response.json()["metrics"]["attention_needs_reply"] == 1
     assert [item["id"] for item in calendly_response.json()["leads"]] == [lead.id]

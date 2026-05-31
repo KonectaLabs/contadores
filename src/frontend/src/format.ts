@@ -31,6 +31,7 @@ const readableLabels: Record<string, string> = {
   loom_mp4: "WhatsApp video",
   loom_video: "Loom video",
   manual_booked: "Marked converted manually",
+  manual_converted: "Marked converted manually",
   manual_calendly_send: "Manual meeting send",
   manual_message: "Manual message",
   manual_pause: "Paused manually",

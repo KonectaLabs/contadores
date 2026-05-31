@@ -47,6 +47,8 @@ from backend.contadores_strategies import (
 )
 from backend.database import (
     CONTADORES_LEAD_ATTENTION_STATES,
+    CONTADORES_LEAD_LEGACY_MANUAL_BOOKED_REASON,
+    CONTADORES_LEAD_MANUAL_CONVERTED_REASON,
     CONTADORES_LEAD_PIPELINE_STAGES,
     CONTADORES_LEAD_QUEUE_STATES,
     CONTADORES_LEAD_TERMINAL_STATES,
@@ -1132,7 +1134,7 @@ def derive_lead_conversion_type(
         return None
 
     reason = (lead.automation_paused_reason or "").strip()
-    if reason == "manual_booked":
+    if reason in {CONTADORES_LEAD_MANUAL_CONVERTED_REASON, CONTADORES_LEAD_LEGACY_MANUAL_BOOKED_REASON}:
         return "manual"
     if reason.startswith("workstation_"):
         return "workstation"
@@ -1227,21 +1229,21 @@ def build_contadores_metrics(leads: list[ContadoresLead]) -> "ContadoresMetrics"
             and lead.calendly_sent_at is not None
         ):
             calendly_count += 1
-        lead_pipeline_stage = lead.pipeline_stage or derive_lead_pipeline_stage(
+        lead_pipeline_stage = derive_lead_pipeline_stage(
             lead,
             effective_stage=effective_stage,
         )
-        lead_queue_state = lead.queue_state or derive_lead_queue_state(
-            lead,
-            effective_stage=effective_stage,
-            manual_reply_status=manual_reply_status,
-        )
-        lead_attention_state = lead.attention_state or derive_lead_attention_state(
+        lead_queue_state = derive_lead_queue_state(
             lead,
             effective_stage=effective_stage,
             manual_reply_status=manual_reply_status,
         )
-        lead_terminal_state = lead.terminal_state or derive_lead_terminal_state(
+        lead_attention_state = derive_lead_attention_state(
+            lead,
+            effective_stage=effective_stage,
+            manual_reply_status=manual_reply_status,
+        )
+        lead_terminal_state = derive_lead_terminal_state(
             lead,
             effective_stage=effective_stage,
         )
@@ -1256,7 +1258,9 @@ def build_contadores_metrics(leads: list[ContadoresLead]) -> "ContadoresMetrics"
         awaiting_video_reply=legacy_counts[ContadoresLeadStage.AWAITING_VIDEO_REPLY.value],
         needs_human=legacy_counts[ContadoresLeadStage.NEEDS_HUMAN.value],
         calendly_sent=calendly_count,
+        meeting_sent=calendly_count,
         booked=legacy_counts[ContadoresLeadStage.BOOKED.value],
+        converted=pipeline_counts["converted"],
         closed=legacy_counts[ContadoresLeadStage.CLOSED.value],
         archived=legacy_counts[ContadoresLeadStage.ARCHIVED.value],
         pipeline_new=pipeline_counts["new"],
@@ -1383,7 +1387,9 @@ def build_contadores_strategy_stats(funnel_id: str = "contadores") -> "Contadore
             "sent": 0,
             "delivered": 0,
             "reached_calendly": 0,
+            "reached_meeting": 0,
             "booked": 0,
+            "converted": 0,
         }
 
     assignments = ContadoresStrategyAssignment.list_all(funnel_id=funnel.id)
@@ -1414,7 +1420,9 @@ def build_contadores_strategy_stats(funnel_id: str = "contadores") -> "Contadore
                 "sent": 0,
                 "delivered": 0,
                 "reached_calendly": 0,
+                "reached_meeting": 0,
                 "booked": 0,
+                "converted": 0,
             }
 
         item = stats[key]
@@ -1431,8 +1439,10 @@ def build_contadores_strategy_stats(funnel_id: str = "contadores") -> "Contadore
         booked_at = ensure_utc_datetime(lead.booked_at) if lead else None
         if assigned_at is not None and calendly_sent_at is not None and calendly_sent_at >= assigned_at:
             item["reached_calendly"] += 1
+            item["reached_meeting"] += 1
         if assigned_at is not None and booked_at is not None and booked_at >= assigned_at:
             item["booked"] += 1
+            item["converted"] += 1
 
     items: list[ContadoresStrategyStatsItem] = []
     for raw in stats.values():
@@ -1441,7 +1451,9 @@ def build_contadores_strategy_stats(funnel_id: str = "contadores") -> "Contadore
             ContadoresStrategyStatsItem(
                 **raw,
                 calendly_rate=round(raw["reached_calendly"] / assigned, 4) if assigned else 0.0,
+                meeting_rate=round(raw["reached_meeting"] / assigned, 4) if assigned else 0.0,
                 booked_rate=round(raw["booked"] / assigned, 4) if assigned else 0.0,
+                conversion_rate=round(raw["converted"] / assigned, 4) if assigned else 0.0,
             )
         )
     return ContadoresStrategyStatsResponse(
@@ -1527,6 +1539,22 @@ def build_lead_summary(
     workstation_client = WorkstationClient.get_by_lead_id(lead.id)
     manual_reply_status = derive_manual_reply_status(lead, effective_stage=effective_stage)
     outbound_error_count = ContadoresMessage.count_delivery_issues_by_lead(lead.id)
+    pipeline_stage = derive_lead_pipeline_stage(lead, effective_stage=effective_stage)
+    queue_state = derive_lead_queue_state(
+        lead,
+        effective_stage=effective_stage,
+        manual_reply_status=manual_reply_status,
+        workstation_client=workstation_client,
+    )
+    terminal_state = derive_lead_terminal_state(lead, effective_stage=effective_stage)
+    attention_state = derive_lead_attention_state(
+        lead,
+        effective_stage=effective_stage,
+        manual_reply_status=manual_reply_status,
+    )
+    meeting_url = build_calendly_url(base_url=config.calendly_base_url)
+    meeting_sent_at = format_timestamp_seconds(lead.calendly_sent_at)
+    converted_at = format_timestamp_seconds(lead.booked_at)
     return ContadoresLeadSummary(
         id=lead.id,
         funnel_id=lead.funnel_id,
@@ -1541,30 +1569,16 @@ def build_lead_summary(
         sheet_created_time=format_timestamp_seconds(lead.sheet_created_time),
         stage=effective_stage.value,
         raw_stage=lead.stage.value,
-        pipeline_stage=lead.pipeline_stage or derive_lead_pipeline_stage(
-            lead,
-            effective_stage=effective_stage,
-        ),
-        queue_state=lead.queue_state or derive_lead_queue_state(
-            lead,
-            effective_stage=effective_stage,
-            manual_reply_status=manual_reply_status,
-            workstation_client=workstation_client,
-        ),
-        terminal_state=lead.terminal_state or derive_lead_terminal_state(
-            lead,
-            effective_stage=effective_stage,
-        ),
-        attention_state=lead.attention_state or derive_lead_attention_state(
-            lead,
-            effective_stage=effective_stage,
-            manual_reply_status=manual_reply_status,
-        ),
+        pipeline_stage=pipeline_stage,
+        queue_state=queue_state,
+        terminal_state=terminal_state,
+        attention_state=attention_state,
         conversion_type=derive_lead_conversion_type(
             lead,
             workstation_client=workstation_client,
         ),
-        calendly_url=build_calendly_url(base_url=config.calendly_base_url),
+        calendly_url=meeting_url,
+        meeting_url=meeting_url,
         last_classification_label=lead.last_classification_label,
         last_classification_reason=lead.last_classification_reason,
         opener_sent_at=format_timestamp_seconds(lead.opener_sent_at),
@@ -1572,8 +1586,10 @@ def build_lead_summary(
         loom_sent_at=format_timestamp_seconds(lead.loom_sent_at),
         video_check_sent_at=format_timestamp_seconds(lead.video_check_sent_at),
         classification_completed_at=format_timestamp_seconds(lead.classification_completed_at),
-        calendly_sent_at=format_timestamp_seconds(lead.calendly_sent_at),
-        booked_at=format_timestamp_seconds(lead.booked_at),
+        calendly_sent_at=meeting_sent_at,
+        meeting_sent_at=meeting_sent_at,
+        booked_at=converted_at,
+        converted_at=converted_at,
         closed_at=format_timestamp_seconds(lead.closed_at),
         stage_before_closed=lead.stage_before_closed.value if lead.stage_before_closed else None,
         needs_human_notified_at=format_timestamp_seconds(lead.needs_human_notified_at),
@@ -3527,12 +3543,10 @@ def run_quick_action_for_lead(
             raise HTTPException(status_code=400, detail="Manual ping template is not configured")
         queued_rows = send_manual_ping_template(lead=lead)
     elif normalized_action in {"mark-converted", "mark-booked", "send-manual-booked"}:
-        updated = ContadoresLead.update_flow_state(
+        updated = ContadoresLead.mark_converted(
             lead.id,
-            stage=ContadoresLeadStage.BOOKED,
-            booked_at=now_utc(),
             automation_paused=True,
-            automation_paused_reason="manual_booked",
+            automation_paused_reason=CONTADORES_LEAD_MANUAL_CONVERTED_REASON,
         )
         return updated or lead, []
     elif normalized_action in {"manual-handoff", "pause-ai-reply"}:
@@ -3711,7 +3725,9 @@ class ContadoresMetrics(BaseModel):
     awaiting_video_reply: int = 0
     needs_human: int = 0
     calendly_sent: int = 0
+    meeting_sent: int = 0
     booked: int = 0
+    converted: int = 0
     closed: int = 0
     archived: int = 0
     pipeline_new: int = 0
@@ -3736,9 +3752,13 @@ class ContadoresStrategyStatsItem(BaseModel):
     sent: int = 0
     delivered: int = 0
     reached_calendly: int = 0
+    reached_meeting: int = 0
     booked: int = 0
+    converted: int = 0
     calendly_rate: float = 0.0
+    meeting_rate: float = 0.0
     booked_rate: float = 0.0
+    conversion_rate: float = 0.0
 
 
 class ContadoresStrategyStatsResponse(BaseModel):
@@ -3821,6 +3841,7 @@ class ContadoresLeadSummary(BaseModel):
     attention_state: str
     conversion_type: str | None = None
     calendly_url: str
+    meeting_url: str
     last_classification_label: str | None = None
     last_classification_reason: str | None = None
     opener_sent_at: str | None = None
@@ -3829,7 +3850,9 @@ class ContadoresLeadSummary(BaseModel):
     video_check_sent_at: str | None = None
     classification_completed_at: str | None = None
     calendly_sent_at: str | None = None
+    meeting_sent_at: str | None = None
     booked_at: str | None = None
+    converted_at: str | None = None
     closed_at: str | None = None
     stage_before_closed: str | None = None
     needs_human_notified_at: str | None = None
@@ -4523,10 +4546,19 @@ class ContadoresAlertEmailReplyCommand(BaseModel):
     subject: str | None = None
 
 
-class MarkContadoresBookedCommand(BaseModel):
-    """Manual or webhook booking mark command."""
+class MarkContadoresConvertedCommand(BaseModel):
+    """Manual conversion mark command."""
 
+    converted_at: datetime | None = None
     booked_at: datetime | None = None
+
+    def effective_converted_at(self) -> datetime | None:
+        """Return the canonical conversion time, accepting the old field name."""
+        return self.converted_at or self.booked_at
+
+
+class MarkContadoresBookedCommand(MarkContadoresConvertedCommand):
+    """Legacy booking mark command kept for old internal callers."""
 
 
 class ContadoresCalendlyWebhookCommand(BaseModel):
@@ -4842,6 +4874,7 @@ async def list_contadores_leads(
     strategy_step: str | None = None,
     strategy_id: str | None = None,
     manual_reply_status: Literal["needs_reply", "answered"] | None = None,
+    converted: bool | None = None,
     booked: bool | None = None,
     needs_human: bool | None = None,
     archived: bool | None = None,
@@ -4891,20 +4924,20 @@ async def list_contadores_leads(
         metric_leads.append(lead)
         effective_stage = derive_effective_lead_stage(lead)
         lead_manual_reply_status = derive_manual_reply_status(lead, effective_stage=effective_stage)
-        lead_pipeline_stage = lead.pipeline_stage or derive_lead_pipeline_stage(
+        lead_pipeline_stage = derive_lead_pipeline_stage(
             lead,
             effective_stage=effective_stage,
         )
-        lead_queue_state = lead.queue_state or derive_lead_queue_state(
+        lead_queue_state = derive_lead_queue_state(
             lead,
             effective_stage=effective_stage,
             manual_reply_status=lead_manual_reply_status,
         )
-        lead_terminal_state = lead.terminal_state or derive_lead_terminal_state(
+        lead_terminal_state = derive_lead_terminal_state(
             lead,
             effective_stage=effective_stage,
         )
-        lead_attention_state = lead.attention_state or derive_lead_attention_state(
+        lead_attention_state = derive_lead_attention_state(
             lead,
             effective_stage=effective_stage,
             manual_reply_status=lead_manual_reply_status,
@@ -4922,9 +4955,10 @@ async def list_contadores_leads(
             continue
         if normalized_attention_state is not None and lead_attention_state != normalized_attention_state:
             continue
-        if booked is True and lead.booked_at is None:
+        converted_filter = converted if converted is not None else booked
+        if converted_filter is True and lead_pipeline_stage != "converted":
             continue
-        if booked is False and lead.booked_at is not None:
+        if converted_filter is False and lead_pipeline_stage == "converted":
             continue
         if needs_human is True and effective_stage != ContadoresLeadStage.NEEDS_HUMAN:
             continue
@@ -6113,18 +6147,17 @@ async def handle_contadores_runtime_alert_email_reply(
     }
 
 
-@contadores_router.post("/bookings/mark", response_model=ContadoresLeadSummary)
-async def mark_contadores_booked(
-    command: MarkContadoresBookedCommand,
-    lead_id: str = Query(..., min_length=1),
+def build_mark_converted_response(
+    *,
+    lead_id: str,
+    converted_at: datetime | None = None,
 ) -> ContadoresLeadSummary:
-    """Manually mark one lead as booked."""
-    updated = ContadoresLead.update_flow_state(
+    """Mark one lead converted and return the refreshed summary."""
+    updated = ContadoresLead.mark_converted(
         lead_id,
-        stage=ContadoresLeadStage.BOOKED,
-        booked_at=command.booked_at or now_utc(),
+        converted_at=converted_at,
         automation_paused=True,
-        automation_paused_reason="manual_booked",
+        automation_paused_reason=CONTADORES_LEAD_MANUAL_CONVERTED_REASON,
     )
     if updated is None:
         raise HTTPException(status_code=404, detail="Lead not found")
@@ -6132,20 +6165,43 @@ async def mark_contadores_booked(
     return build_lead_summary(updated, config=config)
 
 
+@contadores_router.post("/conversions/mark", response_model=ContadoresLeadSummary)
+async def mark_contadores_converted(
+    command: MarkContadoresConvertedCommand,
+    lead_id: str = Query(..., min_length=1),
+) -> ContadoresLeadSummary:
+    """Manually mark one lead as converted."""
+    return build_mark_converted_response(
+        lead_id=lead_id,
+        converted_at=command.effective_converted_at(),
+    )
+
+
+@contadores_router.post("/bookings/mark", response_model=ContadoresLeadSummary)
+async def mark_contadores_booked(
+    command: MarkContadoresBookedCommand,
+    lead_id: str = Query(..., min_length=1),
+) -> ContadoresLeadSummary:
+    """Legacy alias for marking one lead converted."""
+    return build_mark_converted_response(
+        lead_id=lead_id,
+        converted_at=command.effective_converted_at(),
+    )
+
+
 @contadores_router.post("/calendly/webhook", response_model=ContadoresLeadSummary)
 async def register_contadores_calendly_event(
     command: ContadoresCalendlyWebhookCommand,
 ) -> ContadoresLeadSummary:
-    """Mark booked from a Calendly webhook token."""
+    """Record a meeting-scheduled conversion from a Calendly webhook token."""
     lead = ContadoresLead.get_by_calendly_tracking_token(command.token)
     if lead is None:
         raise HTTPException(status_code=404, detail="Lead not found for Calendly token")
     config = get_effective_funnel_config(lead.funnel_id)
     if command.event_type.strip().lower() in {"invitee.created", "booking_created", "scheduled"}:
-        updated = ContadoresLead.update_flow_state(
+        updated = ContadoresLead.mark_converted(
             lead.id,
-            stage=ContadoresLeadStage.BOOKED,
-            booked_at=command.occurred_at or now_utc(),
+            converted_at=command.occurred_at,
         )
         return build_lead_summary(updated or lead, config=config)
     return build_lead_summary(lead, config=config)

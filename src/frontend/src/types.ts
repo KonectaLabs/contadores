@@ -437,7 +437,9 @@ export interface ContadoresMetrics {
   awaiting_video_reply: number;
   needs_human: number;
   calendly_sent: number;
+  meeting_sent: number;
   booked: number;
+  converted: number;
   closed: number;
   archived: number;
   pipeline_new: number;
@@ -479,6 +481,7 @@ export interface LeadSummary {
   attention_state: LeadAttentionState;
   conversion_type: LeadConversionType;
   calendly_url: string;
+  meeting_url: string;
   last_classification_label: string | null;
   last_classification_reason: string | null;
   opener_sent_at: string | null;
@@ -487,7 +490,9 @@ export interface LeadSummary {
   video_check_sent_at: string | null;
   classification_completed_at: string | null;
   calendly_sent_at: string | null;
+  meeting_sent_at: string | null;
   booked_at: string | null;
+  converted_at: string | null;
   closed_at: string | null;
   needs_human_notified_at: string | null;
   manual_reply_status: "needs_reply" | "answered" | null;
@@ -577,9 +582,13 @@ export interface StrategyStatsItem {
   sent: number;
   delivered: number;
   reached_calendly: number;
+  reached_meeting: number;
   booked: number;
+  converted: number;
   calendly_rate: number;
+  meeting_rate: number;
   booked_rate: number;
+  conversion_rate: number;
 }
 
 export interface StrategyStatsResponse {
