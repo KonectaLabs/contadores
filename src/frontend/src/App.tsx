@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { ClipboardEvent, DragEvent, FormEvent, ReactNode } from "react";
+import type { ClipboardEvent, DragEvent, FormEvent, KeyboardEvent, ReactNode } from "react";
 import {
   ArrowsClockwise,
   ArrowSquareOut,
@@ -98,6 +98,25 @@ type LoadWorkstationDetailOptions = {
   showLoading?: boolean;
 };
 type DeliveryEditorMode = "edit" | "create";
+type ConfirmDialogTone = "danger" | "warn";
+type ConfirmDialogState = {
+  id: string;
+  tone: ConfirmDialogTone;
+  title: string;
+  message: string;
+  confirmLabel: string;
+  busyLabel: string;
+  busyKey: string;
+  onConfirm: () => void | Promise<void>;
+};
+const CONFIRM_FOCUSABLE_SELECTOR = [
+  "button:not([disabled])",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  "a[href]",
+  "[tabindex]:not([tabindex='-1'])",
+].join(",");
 type ClientLeadSourceDraft = {
   id: string;
   label: string;
@@ -365,6 +384,7 @@ export function App() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [actionBusy, setActionBusy] = useState<string | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
   const [showConfig, setShowConfig] = useState(false);
   const [showFunnelEditor, setShowFunnelEditor] = useState(false);
   const [funnelEditorMode, setFunnelEditorMode] = useState<FunnelEditorMode>("edit");
@@ -1029,26 +1049,54 @@ export function App() {
     }
   }
 
-  async function deleteDeliverySource() {
-    const sourceId = selectedDeliverySource?.id;
-    const label = selectedDeliverySource?.label || sourceId;
-    if (!sourceId || !window.confirm(`Delete Delivery source ${label}?`)) {
+  function closeConfirmDialog() {
+    if (!confirmDialog || actionBusy === confirmDialog.busyKey) {
       return;
     }
-    setActionBusy("delivery-delete");
-    try {
-      await apiFetch(`/api/client-lead-sources/${encodeURIComponent(sourceId)}`, { method: "DELETE" });
-      setSelectedDeliverySourceId(null);
-      deliveryDraftSourceId.current = null;
-      setDeliveryLeads([]);
-      setDeliveryRecipientChat(null);
-      setDeliveryCopyStatus("");
-      await loadDeliverySources();
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not delete Delivery source.");
-    } finally {
-      setActionBusy(null);
+    setConfirmDialog(null);
+  }
+
+  async function submitConfirmDialog(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const currentDialog = confirmDialog;
+    if (!currentDialog || actionBusy === currentDialog.busyKey) {
+      return;
     }
+    await currentDialog.onConfirm();
+    setConfirmDialog((activeDialog) => activeDialog?.id === currentDialog.id ? null : activeDialog);
+  }
+
+  function deleteDeliverySource() {
+    const sourceId = selectedDeliverySource?.id;
+    const label = selectedDeliverySource?.label || sourceId;
+    if (!sourceId) {
+      return;
+    }
+    setConfirmDialog({
+      id: `delivery-source:${sourceId}`,
+      tone: "danger",
+      title: "Delete Delivery source",
+      message: `${label} will stop polling and remove this source from the delivery contact. Existing sent chat history stays in the audit trail.`,
+      confirmLabel: "Delete source",
+      busyLabel: "Deleting...",
+      busyKey: "delivery-delete",
+      onConfirm: async () => {
+        setActionBusy("delivery-delete");
+        try {
+          await apiFetch(`/api/client-lead-sources/${encodeURIComponent(sourceId)}`, { method: "DELETE" });
+          setSelectedDeliverySourceId(null);
+          deliveryDraftSourceId.current = null;
+          setDeliveryLeads([]);
+          setDeliveryRecipientChat(null);
+          setDeliveryCopyStatus("");
+          await loadDeliverySources();
+        } catch (reason) {
+          setError(reason instanceof Error ? reason.message : "Could not delete Delivery source.");
+        } finally {
+          setActionBusy(null);
+        }
+      },
+    });
   }
 
   async function copyClientLeadInfo(lead: ClientLead) {
@@ -1243,24 +1291,37 @@ export function App() {
     await uploadWorkstationMediaFile(fileToUpload, workstationFileTitle);
   }
 
-  async function deleteWorkstationMedia(asset: WorkstationMediaAsset) {
+  function deleteWorkstationMedia(asset: WorkstationMediaAsset) {
     const clientId = workstationDetail?.client.id ?? selectedWorkstationClientId;
-    if (!clientId || !window.confirm(`Delete ${asset.title || asset.original_filename}?`)) {
+    if (!clientId) {
       return;
     }
-    setActionBusy(`delete-media-${asset.id}`);
-    try {
-      const payload = await apiFetch<WorkstationClientDetailResponse>(
-        `/api/workstation/clients/${clientId}/media/${asset.id}`,
-        { method: "DELETE" },
-      );
-      setWorkstationDetail(payload);
-      await loadWorkstation();
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not delete media.");
-    } finally {
-      setActionBusy(null);
-    }
+    const assetTitle = asset.title || asset.original_filename || "this media file";
+    const busyKey = `delete-media-${asset.id}`;
+    setConfirmDialog({
+      id: `workstation-media:${asset.id}`,
+      tone: "danger",
+      title: "Delete media",
+      message: `${assetTitle} will be removed from this Workstation client. Generated artifacts that already reference it are not rewritten.`,
+      confirmLabel: "Delete media",
+      busyLabel: "Deleting...",
+      busyKey,
+      onConfirm: async () => {
+        setActionBusy(busyKey);
+        try {
+          const payload = await apiFetch<WorkstationClientDetailResponse>(
+            `/api/workstation/clients/${clientId}/media/${asset.id}`,
+            { method: "DELETE" },
+          );
+          setWorkstationDetail(payload);
+          await loadWorkstation();
+        } catch (reason) {
+          setError(reason instanceof Error ? reason.message : "Could not delete media.");
+        } finally {
+          setActionBusy(null);
+        }
+      },
+    });
   }
 
   async function updateWorkstationMedia(asset: WorkstationMediaAsset, title: string, originalFilename: string) {
@@ -1401,26 +1462,37 @@ export function App() {
     }
   }
 
-  async function closeWorkstationClient() {
+  function closeWorkstationClient() {
     const clientId = workstationDetail?.client.id ?? selectedWorkstationClientId;
     const clientName = workstationDetail?.client.display_name || "this lead";
-    if (!clientId || !window.confirm(`Close ${clientName}? This stops Workstation and CRM automation for this lead.`)) {
+    if (!clientId) {
       return;
     }
-    setActionBusy("workstation-close");
-    try {
-      const payload = await apiFetch<WorkstationClientDetailResponse>(
-        `/api/workstation/clients/${clientId}/close`,
-        { method: "POST" },
-      );
-      setWorkstationDetail(payload);
-      setWorkstationNotesDraft(payload.notes ?? "");
-      await Promise.all([loadWorkstation(), loadDashboard()]);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not close Workstation lead.");
-    } finally {
-      setActionBusy(null);
-    }
+    setConfirmDialog({
+      id: `workstation-client:${clientId}`,
+      tone: "warn",
+      title: "Close Workstation client",
+      message: `${clientName} will leave the active Build queue. This also stops Workstation and CRM automation for the lead.`,
+      confirmLabel: "Close client",
+      busyLabel: "Closing...",
+      busyKey: "workstation-close",
+      onConfirm: async () => {
+        setActionBusy("workstation-close");
+        try {
+          const payload = await apiFetch<WorkstationClientDetailResponse>(
+            `/api/workstation/clients/${clientId}/close`,
+            { method: "POST" },
+          );
+          setWorkstationDetail(payload);
+          setWorkstationNotesDraft(payload.notes ?? "");
+          await Promise.all([loadWorkstation(), loadDashboard()]);
+        } catch (reason) {
+          setError(reason instanceof Error ? reason.message : "Could not close Workstation lead.");
+        } finally {
+          setActionBusy(null);
+        }
+      },
+    });
   }
 
   function updateProfessionalPhotoEditPrompt(version: string, prompt: string) {
@@ -1691,24 +1763,36 @@ export function App() {
     }
   }
 
-  async function deleteLead() {
+  function deleteLead() {
     const leadId = selectedLead?.id ?? selectedLeadId;
-    if (!leadId || !window.confirm("Delete this chat and its local history?")) {
+    const leadName = selectedLead?.full_name || selectedLead?.phone || "this chat";
+    if (!leadId) {
       return;
     }
-    setActionBusy("delete");
-    try {
-      await apiFetch<{ status: string; lead_id: string }>(`/api/contadores/leads/${leadId}`, {
-        method: "DELETE",
-      });
-      setDetail(null);
-      setSelectedLeadId(null);
-      await loadDashboard();
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not delete the chat.");
-    } finally {
-      setActionBusy(null);
-    }
+    setConfirmDialog({
+      id: `lead:${leadId}`,
+      tone: "danger",
+      title: "Delete chat",
+      message: `${leadName} and its local conversation history will be removed from this CRM. Use this only for duplicates or bad imports.`,
+      confirmLabel: "Delete chat",
+      busyLabel: "Deleting...",
+      busyKey: "delete",
+      onConfirm: async () => {
+        setActionBusy("delete");
+        try {
+          await apiFetch<{ status: string; lead_id: string }>(`/api/contadores/leads/${leadId}`, {
+            method: "DELETE",
+          });
+          setDetail(null);
+          setSelectedLeadId(null);
+          await loadDashboard();
+        } catch (reason) {
+          setError(reason instanceof Error ? reason.message : "Could not delete the chat.");
+        } finally {
+          setActionBusy(null);
+        }
+      },
+    });
   }
 
   async function saveConfig(nextConfig: Partial<ContadoresConfig>) {
@@ -2314,6 +2398,15 @@ export function App() {
           onTagsTextChange={setBulkTagsDraft}
           onClose={() => setShowBulkSendModal(false)}
           onSubmit={submitBulkSendModal}
+        />
+      ) : null}
+
+      {confirmDialog ? (
+        <ConfirmDialog
+          dialog={confirmDialog}
+          busy={actionBusy === confirmDialog.busyKey}
+          onClose={closeConfirmDialog}
+          onSubmit={submitConfirmDialog}
         />
       ) : null}
     </section>
@@ -4696,6 +4789,107 @@ function WorkstationView({
           onSubmit={submitSoloPageSteerModal}
         />
       ) : null}
+    </div>
+  );
+}
+
+function ConfirmDialog({
+  dialog,
+  busy,
+  onClose,
+  onSubmit,
+}: {
+  dialog: ConfirmDialogState;
+  busy: boolean;
+  onClose: () => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  const dialogRef = useRef<HTMLFormElement | null>(null);
+  const cancelButtonRef = useRef<HTMLButtonElement | null>(null);
+  const titleId = `ctConfirmTitle-${dialog.id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+  const messageId = `ctConfirmMessage-${dialog.id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+
+  useEffect(() => {
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    cancelButtonRef.current?.focus();
+
+    return () => {
+      if (previousFocus?.isConnected) {
+        previousFocus.focus();
+      }
+    };
+  }, [dialog.id]);
+
+  const getFocusableControls = useCallback(() => {
+    const panel = dialogRef.current;
+    if (!panel) {
+      return [];
+    }
+    return Array.from(panel.querySelectorAll<HTMLElement>(CONFIRM_FOCUSABLE_SELECTOR)).filter((element) => {
+      const rect = element.getBoundingClientRect();
+      const style = window.getComputedStyle(element);
+      return rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden";
+    });
+  }, []);
+
+  function handleKeyDown(event: KeyboardEvent<HTMLFormElement>) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      onClose();
+      return;
+    }
+    if (event.key !== "Tab") {
+      return;
+    }
+
+    const focusableControls = getFocusableControls();
+    if (!focusableControls.length) {
+      event.preventDefault();
+      return;
+    }
+
+    const currentIndex = focusableControls.findIndex((control) => control === document.activeElement);
+    const nextIndex = event.shiftKey
+      ? (Math.max(currentIndex, 0) - 1 + focusableControls.length) % focusableControls.length
+      : (Math.max(currentIndex, 0) + 1) % focusableControls.length;
+    event.preventDefault();
+    focusableControls[nextIndex].focus();
+  }
+
+  return (
+    <div className="ct-modal open" aria-hidden="false">
+      <button className="ct-modal-overlay" type="button" onClick={onClose} disabled={busy} aria-label="Close confirmation" />
+      <form
+        ref={dialogRef}
+        className="ct-modal-panel ct-confirm-panel"
+        data-tone={dialog.tone}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={messageId}
+        onSubmit={onSubmit}
+        onKeyDown={handleKeyDown}
+      >
+        <header className="ct-modal-head ct-confirm-head">
+          <div className="ct-confirm-icon" aria-hidden="true">
+            <WarningCircle size={22} weight="fill" />
+          </div>
+          <div>
+            <p className="ct-drawer-kicker">{dialog.tone === "danger" ? "Destructive action" : "Confirm action"}</p>
+            <h3 id={titleId}>{dialog.title}</h3>
+          </div>
+        </header>
+        <div className="ct-modal-body ct-confirm-body">
+          <p id={messageId}>{dialog.message}</p>
+        </div>
+        <footer className="ct-modal-foot">
+          <button ref={cancelButtonRef} type="button" className="ct-btn ct-btn-ghost" onClick={onClose} disabled={busy}>Cancel</button>
+          <button type="submit" className={`ct-btn ${dialog.tone === "danger" ? "ct-btn-danger" : "ct-btn-warn"}`} disabled={busy}>
+            {busy ? <SpinnerGap className="workstation-spinner" size={15} weight="bold" /> : <WarningCircle size={15} weight="bold" />}
+            {busy ? dialog.busyLabel : dialog.confirmLabel}
+          </button>
+        </footer>
+      </form>
     </div>
   );
 }

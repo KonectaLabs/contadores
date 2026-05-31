@@ -4916,6 +4916,32 @@ body {
   color: #7a2020;
 }
 
+#contadoresView .ct-btn-danger,
+#contadoresView .ct-btn-warn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid transparent;
+  color: #ffffff;
+}
+
+#contadoresView .ct-btn-danger {
+  background: #9f1239;
+}
+
+#contadoresView .ct-btn-danger:hover:not(:disabled) {
+  background: #881337;
+}
+
+#contadoresView .ct-btn-warn {
+  background: #8a4b12;
+}
+
+#contadoresView .ct-btn-warn:hover:not(:disabled) {
+  background: #733b0d;
+}
+
 #contadoresView .ct-drawer,
 #contadoresView .ct-modal {
   position: fixed;
@@ -5253,6 +5279,38 @@ body {
   gap: 16px;
   overflow-y: auto;
   padding: 18px 20px;
+}
+
+#contadoresView .ct-confirm-panel {
+  width: min(460px, 100%);
+}
+
+#contadoresView .ct-confirm-head {
+  align-items: center;
+}
+
+#contadoresView .ct-confirm-icon {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border: 1px solid rgba(194, 65, 12, 0.22);
+  border-radius: var(--ct-radius);
+  background: var(--ct-warn-bg);
+  color: var(--ct-warn);
+}
+
+#contadoresView .ct-confirm-panel[data-tone="danger"] .ct-confirm-icon {
+  border-color: rgba(190, 18, 60, 0.22);
+  background: #fff1f2;
+  color: #9f1239;
+}
+
+#contadoresView .ct-confirm-body p {
+  margin: 0;
+  color: var(--ct-ink);
+  font: 550 13px/1.5 var(--font-sans);
 }
 
 #contadoresView .ct-modal-warning {
