@@ -2178,11 +2178,11 @@ export function App() {
               })}
             </section>
             {(strategyStats.length || tagOptions.length) ? (
-              <details className="ct-compact-disclosure">
-                <summary>Filters</summary>
-                <div className="ct-filter-strip" role="group" aria-label="Lead filters">
-                  {strategyStats.length ? (
-                    <>
+              <section className="ct-filter-board" aria-label="Lead filters">
+                {strategyStats.length ? (
+                  <div className="ct-filter-row">
+                    <span className="ct-filter-row-label">Strategies</span>
+                    <div className="ct-filter-strip" role="group" aria-label="Strategy filters">
                       <button
                         type="button"
                         className={`ct-strategy-filter-btn ${!strategyFilter.step && !strategyFilter.strategyId ? "active" : ""}`}
@@ -2203,11 +2203,14 @@ export function App() {
                           </button>
                         );
                       })}
-                    </>
-                  ) : null}
+                    </div>
+                  </div>
+                ) : null}
 
-                  {tagOptions.length ? (
-                    <>
+                {tagOptions.length ? (
+                  <div className="ct-filter-row">
+                    <span className="ct-filter-row-label">Tags</span>
+                    <div className="ct-filter-strip" role="group" aria-label="Tag filters">
                       <button
                         type="button"
                         className={`ct-strategy-filter-btn ${!tagFilter ? "active" : ""}`}
@@ -2225,10 +2228,10 @@ export function App() {
                           #{tag}
                         </button>
                       ))}
-                    </>
-                  ) : null}
-                </div>
-              </details>
+                    </div>
+                  </div>
+                ) : null}
+              </section>
             ) : null}
           </div>
         ) : null}
