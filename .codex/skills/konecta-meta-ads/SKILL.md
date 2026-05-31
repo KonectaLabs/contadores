@@ -38,9 +38,13 @@ agent-native flow first:
    persist the ordered campaign, ad-set, creative, and ad operations. Live
    writes stay blocked unless the platform has explicit approval, credentials,
    and budget policy.
-6. When Facundo/operator explicitly approves, run `approve_meta_publish_plan`
+6. If a creative only has a local file path, run `upload_meta_creative_asset`
+   before approval. It uploads media only, stores `image_hash` or `video_id`,
+   and links the staged plan; it does not create Campaign, Ad Set, Creative, or
+   Ad objects.
+7. When Facundo/operator explicitly approves, run `approve_meta_publish_plan`
    with budget caps and the approval note before any future live publish.
-7. Only after approval, credentials, and `META_MARKETING_LIVE_WRITES_ENABLED`,
+8. Only after approval, credentials, and `META_MARKETING_LIVE_WRITES_ENABLED`,
    run `execute_meta_publish_plan` with `live_writes_requested=true`. It stores
    each Meta provider ID so retries skip already-created objects.
 
@@ -189,15 +193,19 @@ Use this order:
    initial `PAUSED` status, and missing fields before live publish.
 5. `sync_meta_inventory` to read available ad accounts, Pages, lead forms,
    pixels, WhatsApp numbers, and existing campaigns before asking for IDs.
-6. `preflight_meta_publish_plan` to build and save the ordered provider
+6. `upload_meta_creative_asset` for each generated image/video that only has a
+   local file path. This writes only to Meta media storage, stores `image_hash`
+   or `video_id`, and links the staged publish plan. It still requires
+   `live_writes_requested=true`, credentials, and live-write enablement.
+7. `preflight_meta_publish_plan` to build and save the ordered provider
    operation graph.
-7. `approve_meta_publish_plan` only after explicit operator approval. It must
+8. `approve_meta_publish_plan` only after explicit operator approval. It must
    pass ready inventory, budget caps, idempotency, and `PAUSED` start checks.
-8. `execute_meta_publish_plan` only after approval and live-write enablement;
+9. `execute_meta_publish_plan` only after approval and live-write enablement;
    it executes the ordered graph and persists returned Meta IDs for retries.
-9. `ask_human_question` when account/page/destination/category/budget details
+10. `ask_human_question` when account/page/destination/category/budget details
    are missing. Do not invent Meta IDs.
-10. `stage_meta_publish_attempt` only for raw payloads, provider responses, or
+11. `stage_meta_publish_attempt` only for raw payloads, provider responses, or
    manual publisher records.
 
 Before any future live publish, the plan must have:

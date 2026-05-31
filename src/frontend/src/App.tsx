@@ -53,6 +53,7 @@ import type {
   ManualAttentionCountsResponse,
   MessageItem,
   PlatformAdCampaignItem,
+  PlatformCreativeAssetItem,
   PlatformHumanQuestionItem,
   PlatformMetaInventorySnapshotItem,
   PlatformMetaPublishAttemptItem,
@@ -2871,6 +2872,8 @@ function PlatformOpsView({
   const openQuestions = questions.filter(isOpenPlatformQuestion);
   const blockedAttempts = metaAttempts.filter(isBlockedPlatformAttempt);
   const updatesWithBlockers = updates.filter((update) => update.blockers.length > 0);
+  const metaReadyCreatives = creatives.filter(isMetaReadyCreative);
+  const uploadBlockedCreatives = creatives.filter((creative) => ["upload_blocked", "upload_failed"].includes(creative.status));
 
   return (
     <div className="ct-surface ops-surface">
@@ -3046,10 +3049,26 @@ function PlatformOpsView({
                 <span>Creatives</span>
               </div>
               <div>
-                <strong>{compactNumber(counts.meta_inventory_snapshots)}</strong>
-                <span>Inventory</span>
+                <strong>{compactNumber(metaReadyCreatives.length)}</strong>
+                <span>Meta-ready</span>
               </div>
             </div>
+            <div className="ops-table-list">
+              {creatives.slice(0, 5).map((creative) => (
+                <div className="ops-table-row" key={creative.id}>
+                  <div>
+                    <strong>{creative.file_path ? truncate(creative.file_path, 42) : formatPlatformRef("creative", creative.id)}</strong>
+                    <span>{metaCreativeDetail(creative)}</span>
+                  </div>
+                  <OpsStatus value={creative.status} />
+                  <time>{relativeTime(creative.updated_at)}</time>
+                </div>
+              ))}
+              {!creatives.length ? <OpsEmpty title="No creatives" value="0" /> : null}
+            </div>
+            {uploadBlockedCreatives.length ? (
+              <p className="ops-panel-note">{compactNumber(uploadBlockedCreatives.length)} creative upload blocker{uploadBlockedCreatives.length === 1 ? "" : "s"}.</p>
+            ) : null}
           </OpsPanel>
         </aside>
       </section>
@@ -3132,18 +3151,38 @@ function campaignBudgetLabel(campaign: PlatformAdCampaignItem): string {
   return "No budget";
 }
 
+function isMetaReadyCreative(creative: PlatformCreativeAssetItem): boolean {
+  return Boolean(creative.meta_creative_id || creative.image_hash || creative.video_id);
+}
+
+function metaCreativeDetail(creative: PlatformCreativeAssetItem): string {
+  if (creative.meta_creative_id) {
+    return `Meta creative ${truncate(creative.meta_creative_id, 24)}`;
+  }
+  if (creative.image_hash) {
+    return `Image hash ${truncate(creative.image_hash, 24)}`;
+  }
+  if (creative.video_id) {
+    return `Video ${truncate(creative.video_id, 24)}`;
+  }
+  if (creative.failure_reason) {
+    return truncate(creative.failure_reason, 72);
+  }
+  return [humanize(creative.asset_type), creative.dimensions || "No dimensions"].filter(Boolean).join(" · ");
+}
+
 function opsStatusTone(value: string): "danger" | "warn" | "ok" | "neutral" {
   const normalized = value.toLowerCase();
-  if (["failed", "error", "blocked", "rejected", "partial_failed"].includes(normalized)) {
+  if (["failed", "error", "blocked", "rejected", "partial_failed", "upload_failed"].includes(normalized)) {
     return "danger";
   }
-  if (["missing_credentials", "partial"].includes(normalized)) {
+  if (["missing_credentials", "partial", "upload_blocked"].includes(normalized)) {
     return "danger";
   }
   if (["pending", "needs_preflight", "not_requested", "draft", "staged"].includes(normalized)) {
     return "warn";
   }
-  if (["answered", "approved", "published", "submitted", "already_submitted", "sent", "delivered", "completed", "ready"].includes(normalized)) {
+  if (["answered", "approved", "published", "submitted", "already_submitted", "sent", "delivered", "completed", "ready", "uploaded", "uploaded_to_meta"].includes(normalized)) {
     return "ok";
   }
   return "neutral";

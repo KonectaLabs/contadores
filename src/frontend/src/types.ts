@@ -279,6 +279,9 @@ export interface PlatformCreativeAssetItem {
   dimensions: string;
   source_refs: unknown[];
   meta_creative_id: string;
+  image_hash: string;
+  video_id: string;
+  meta_upload_response: Record<string, unknown>;
   failure_reason: string;
   created_at: string;
   updated_at: string;

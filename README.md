@@ -108,8 +108,8 @@ formularios:
   transcript en un perfil draft con segmentos, angulos y datos necesarios para
   planificar Meta.
 - `upsert_client_profile`: conocimiento revisado del cliente.
-- `stage_ad_campaign`, `stage_creative_asset`, `stage_meta_publish_plan`,
-  `sync_meta_inventory`, `preflight_meta_publish_plan`,
+- `stage_ad_campaign`, `stage_creative_asset`, `upload_meta_creative_asset`,
+  `stage_meta_publish_plan`, `sync_meta_inventory`, `preflight_meta_publish_plan`,
   `approve_meta_publish_plan`, `execute_meta_publish_plan` y
   `stage_meta_publish_attempt`: ads, inventario y publicacion Meta en modo
   staged/aprobable.
@@ -129,22 +129,29 @@ Flujo Meta agent-native:
 5. `sync_meta_inventory` lee cuentas, Pages, formularios, pixels, numeros de
    WhatsApp y campanas existentes cuando hay credenciales; si faltan, guarda un
    snapshot `missing_credentials` para observabilidad.
-6. Si faltan `ad_account_id`, `page_id`, destino WhatsApp/form, presupuesto,
+6. `upload_meta_creative_asset` sube una imagen/video staged a Meta media
+   storage y guarda `image_hash` o `video_id` en el asset y en los publish plans
+   que lo referencian. Es un write externo acotado: exige
+   `live_writes_requested=true`, `META_MARKETING_LIVE_WRITES_ENABLED=true`,
+   credenciales y archivo local existente, pero no crea Campaign, Ad Set,
+   Creative ni Ad.
+7. Si faltan `ad_account_id`, `page_id`, destino WhatsApp/form, presupuesto,
    targeting o creatividades, el resultado incluye `required_before_live_publish`
    y el agente debe usar `ask_human_question` en vez de inventar datos.
-7. `preflight_meta_publish_plan` convierte el plan staged en operaciones
+8. `preflight_meta_publish_plan` convierte el plan staged en operaciones
    ordenadas `campaign -> ad_set -> creative -> ad`, guarda el resultado en el
    intento y bloquea cualquier live write si faltan credenciales, aprobacion o
    politica.
-8. `approve_meta_publish_plan` aplica el gate de aprobacion: presupuesto dentro
+9. `approve_meta_publish_plan` aplica el gate de aprobacion: presupuesto dentro
    de caps, inventario listo, `idempotency_key`, todo creado en `PAUSED`, y
    aprobacion explicita del operador antes de permitir un candidato live.
-9. `execute_meta_publish_plan` es el unico paso que puede hacer writes Meta:
+10. `execute_meta_publish_plan` es el unico paso que puede crear objetos de
+   campana en Meta:
    requiere `live_writes_requested=true`, `META_MARKETING_LIVE_WRITES_ENABLED`,
    credenciales, approval gate aprobado y creatividades ya subidas a Meta
    (`meta_creative_id`, `image_hash` o `video_id`). Guarda cada provider ID para
    que los retries no dupliquen Campaign, Ad Set, Creative o Ad.
-10. `stage_meta_publish_attempt` queda para payloads crudos, respuestas de Meta
+11. `stage_meta_publish_attempt` queda para payloads crudos, respuestas de Meta
    o registros manuales del publicador aprobado.
 
 Ejemplo de plan Meta staged:
@@ -154,6 +161,15 @@ uv run python -m backend.ai.codex_agent_runtime call \
   --run-id meta-plan-001 \
   --tool stage_meta_publish_plan \
   --arguments-json '{"campaign_id":"campaign-123","client_id":"client-123","funnel_id":"abogados","ad_account_id":"act_123","campaign_name":"Abogados - WhatsApp","objective":"OUTCOME_LEADS","destination":{"destination_type":"whatsapp","page_id":"page_123","whatsapp_phone_number_id":"wa_phone_123"},"ad_sets":[{"name":"Despidos CABA","budget_daily_usd":15,"targeting":{"geo_locations":{"countries":["AR"]}},"ads":[{"name":"Te despidieron","creative":{"creative_asset_id":"asset-123","primary_text":"Si te despidieron, manda tu caso por WhatsApp.","headline":"Te despidieron?"}}]}],"idempotency_key":"meta-plan-client-123-v1"}'
+```
+
+Ejemplo de upload creativo a Meta:
+
+```bash
+uv run python -m backend.ai.codex_agent_runtime call \
+  --run-id meta-upload-001 \
+  --tool upload_meta_creative_asset \
+  --arguments-json '{"asset_id":"ASSET_ID","ad_account_id":"act_123","live_writes_requested":true}'
 ```
 
 Ejemplo de duda agent-native:

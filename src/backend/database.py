@@ -3427,6 +3427,9 @@ class PlatformCreativeAsset(SQLModel, table=True):
     dimensions: str = Field(default="")
     source_refs_json: str = Field(default="[]")
     meta_creative_id: str = Field(default="", index=True)
+    image_hash: str = Field(default="", index=True)
+    video_id: str = Field(default="", index=True)
+    meta_upload_response_json: str = Field(default="{}")
     failure_reason: str = Field(default="")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
@@ -3444,6 +3447,9 @@ class PlatformCreativeAsset(SQLModel, table=True):
         dimensions: str = "",
         source_refs: list[Any] | None = None,
         meta_creative_id: str = "",
+        image_hash: str = "",
+        video_id: str = "",
+        meta_upload_response: dict[str, Any] | None = None,
         failure_reason: str = "",
     ) -> "PlatformCreativeAsset":
         """Create one creative asset record."""
@@ -3459,10 +3465,64 @@ class PlatformCreativeAsset(SQLModel, table=True):
                 dimensions=(dimensions or "").strip(),
                 source_refs_json=_json_dumps(source_refs or []),
                 meta_creative_id=(meta_creative_id or "").strip(),
+                image_hash=(image_hash or "").strip(),
+                video_id=(video_id or "").strip(),
+                meta_upload_response_json=_json_dumps(meta_upload_response or {}),
                 failure_reason=str(failure_reason or "")[:4000],
                 created_at=now,
                 updated_at=now,
             )
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            session.expunge(row)
+            return row
+
+    @classmethod
+    def get_by_id(cls, asset_id: str) -> Optional["PlatformCreativeAsset"]:
+        """Return one creative asset by ID."""
+        clean_id = (asset_id or "").strip()
+        if not clean_id:
+            return None
+        with Session(engine) as session:
+            row = session.get(cls, clean_id)
+            if row is not None:
+                session.expunge(row)
+            return row
+
+    @classmethod
+    def update_meta_refs(
+        cls,
+        asset_id: str,
+        *,
+        status: str | None = None,
+        meta_creative_id: str | None = None,
+        image_hash: str | None = None,
+        video_id: str | None = None,
+        meta_upload_response: dict[str, Any] | None = None,
+        failure_reason: str | None = None,
+    ) -> Optional["PlatformCreativeAsset"]:
+        """Persist provider asset references returned by Meta."""
+        clean_id = (asset_id or "").strip()
+        if not clean_id:
+            return None
+        with Session(engine) as session:
+            row = session.get(cls, clean_id)
+            if row is None:
+                return None
+            if status is not None:
+                row.status = (status or row.status or "draft").strip() or "draft"
+            if meta_creative_id is not None:
+                row.meta_creative_id = (meta_creative_id or "").strip()
+            if image_hash is not None:
+                row.image_hash = (image_hash or "").strip()
+            if video_id is not None:
+                row.video_id = (video_id or "").strip()
+            if meta_upload_response is not None:
+                row.meta_upload_response_json = _json_dumps(meta_upload_response)
+            if failure_reason is not None:
+                row.failure_reason = str(failure_reason or "")[:4000]
+            row.updated_at = datetime.now(timezone.utc)
             session.add(row)
             session.commit()
             session.refresh(row)
@@ -3497,6 +3557,10 @@ class PlatformCreativeAsset(SQLModel, table=True):
     def source_refs(self) -> list[Any]:
         """Return parsed source references."""
         return _json_array(self.source_refs_json)
+
+    def meta_upload_response(self) -> dict[str, Any]:
+        """Return sanitized Meta upload response payload."""
+        return _json_object(self.meta_upload_response_json)
 
 
 class PlatformMetaPublishAttempt(SQLModel, table=True):
@@ -6632,6 +6696,7 @@ def init_db() -> None:
     ensure_workstation_client_automation_columns()
     ensure_workstation_codex_thread_columns()
     ensure_platform_human_question_context_columns()
+    ensure_platform_creative_asset_meta_columns()
     ensure_platform_meta_publish_attempt_idempotency_index()
     ensure_platform_meeting_calendar_columns()
     logger.info(f"Database initialized at {DATABASE_URL}")
@@ -6659,6 +6724,34 @@ def ensure_platform_meta_publish_attempt_idempotency_index() -> None:
             ON platform_meta_publish_attempts (idempotency_key)
             WHERE idempotency_key IS NOT NULL
             """
+        )
+
+
+def ensure_platform_creative_asset_meta_columns() -> None:
+    """Add provider creative upload fields to existing creative asset tables."""
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        if "platform_creative_assets" not in inspector.get_table_names():
+            return
+        columns = {column["name"] for column in inspector.get_columns("platform_creative_assets")}
+        column_sql = {
+            "image_hash": "ALTER TABLE platform_creative_assets ADD COLUMN image_hash TEXT NOT NULL DEFAULT ''",
+            "video_id": "ALTER TABLE platform_creative_assets ADD COLUMN video_id TEXT NOT NULL DEFAULT ''",
+            "meta_upload_response_json": (
+                "ALTER TABLE platform_creative_assets ADD COLUMN meta_upload_response_json TEXT NOT NULL DEFAULT '{}'"
+            ),
+        }
+        for column_name, statement in column_sql.items():
+            if column_name not in columns:
+                connection.exec_driver_sql(statement)
+                logger.info("Added missing platform_creative_assets.%s column.", column_name)
+        connection.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_platform_creative_assets_image_hash "
+            "ON platform_creative_assets (image_hash)"
+        )
+        connection.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_platform_creative_assets_video_id "
+            "ON platform_creative_assets (video_id)"
         )
 
 

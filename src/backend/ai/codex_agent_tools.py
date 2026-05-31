@@ -71,6 +71,7 @@ from backend.meta_ads_publish import (
     approve_meta_publish_attempt,
     execute_meta_publish_attempt,
     preflight_meta_publish_attempt,
+    upload_meta_creative_asset,
 )
 from backend.meta_ads_inventory import MetaInventoryError, sync_meta_inventory
 
@@ -330,7 +331,18 @@ class StageCreativeAssetArgs(BaseModel):
     dimensions: str = ""
     source_refs: list[Any] = Field(default_factory=list)
     meta_creative_id: str = ""
+    image_hash: str = ""
+    video_id: str = ""
+    meta_upload_response: dict[str, Any] = Field(default_factory=dict)
     failure_reason: str = Field(default="", max_length=4000)
+
+
+class UploadMetaCreativeAssetArgs(BaseModel):
+    """Arguments for uploading a staged creative file to Meta media storage."""
+
+    asset_id: str = Field(min_length=1)
+    ad_account_id: str = ""
+    live_writes_requested: bool = False
 
 
 class StageMetaPublishAttemptArgs(BaseModel):
@@ -645,6 +657,11 @@ def tool_specs() -> list[CodexAgentToolSpec]:
             StageCreativeAssetArgs,
         ),
         (
+            "upload_meta_creative_asset",
+            "Upload a staged image/video creative to Meta media storage and persist image_hash or video_id.",
+            UploadMetaCreativeAssetArgs,
+        ),
+        (
             "stage_meta_publish_attempt",
             "Stage a Meta Marketing API publish request without making live external writes.",
             StageMetaPublishAttemptArgs,
@@ -954,6 +971,7 @@ def read_platform_config(arguments: dict[str, Any]) -> dict[str, Any]:
             "upsert_client_profile",
             "stage_ad_campaign",
             "stage_creative_asset",
+            "upload_meta_creative_asset",
             "stage_meta_publish_attempt",
             "stage_meta_publish_plan",
             "preflight_meta_publish_plan",
@@ -976,6 +994,7 @@ def read_platform_config(arguments: dict[str, Any]) -> dict[str, Any]:
             "upsert_client_profile": UpsertClientProfileArgs.model_json_schema(),
             "stage_ad_campaign": StageAdCampaignArgs.model_json_schema(),
             "stage_creative_asset": StageCreativeAssetArgs.model_json_schema(),
+            "upload_meta_creative_asset": UploadMetaCreativeAssetArgs.model_json_schema(),
             "stage_meta_publish_attempt": StageMetaPublishAttemptArgs.model_json_schema(),
             "stage_meta_publish_plan": StageMetaPublishPlanArgs.model_json_schema(),
             "preflight_meta_publish_plan": PreflightMetaPublishPlanArgs.model_json_schema(),
@@ -1307,6 +1326,9 @@ def _creative_asset_payload(row: PlatformCreativeAsset) -> dict[str, Any]:
         "dimensions": row.dimensions,
         "source_refs": row.source_refs(),
         "meta_creative_id": row.meta_creative_id,
+        "image_hash": row.image_hash,
+        "video_id": row.video_id,
+        "meta_upload_response": row.meta_upload_response(),
         "failure_reason": row.failure_reason,
     }
 
@@ -1518,6 +1540,16 @@ def stage_creative_asset(arguments: dict[str, Any]) -> dict[str, Any]:
         payload={"campaign_id": row.campaign_id, "client_id": row.client_id, "asset_type": row.asset_type},
     )
     return {"saved": True, "asset": _creative_asset_payload(row)}
+
+
+def upload_meta_creative_asset_tool(arguments: dict[str, Any]) -> dict[str, Any]:
+    args = UploadMetaCreativeAssetArgs.model_validate(arguments)
+    asset, result = upload_meta_creative_asset(
+        asset_id=args.asset_id,
+        ad_account_id=args.ad_account_id,
+        live_writes_requested=args.live_writes_requested,
+    )
+    return {"asset": _creative_asset_payload(asset), "upload": result.model_dump(mode="json")}
 
 
 def _missing_meta_plan_fields(args: StageMetaPublishPlanArgs) -> list[str]:
@@ -2511,6 +2543,7 @@ TOOL_HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {
     "upsert_client_profile": upsert_client_profile,
     "stage_ad_campaign": stage_ad_campaign,
     "stage_creative_asset": stage_creative_asset,
+    "upload_meta_creative_asset": upload_meta_creative_asset_tool,
     "stage_meta_publish_attempt": stage_meta_publish_attempt,
     "stage_meta_publish_plan": stage_meta_publish_plan,
     "preflight_meta_publish_plan": preflight_meta_publish_plan,
@@ -2577,6 +2610,8 @@ def _audit_target_for_tool(tool_name: str, arguments: dict[str, Any]) -> tuple[s
         return "ad_campaign", str(arguments.get("idempotency_key") or arguments.get("client_id") or "")
     if tool_name == "stage_creative_asset":
         return "creative_asset", str(arguments.get("campaign_id") or arguments.get("client_id") or "")
+    if tool_name == "upload_meta_creative_asset":
+        return "creative_asset", str(arguments.get("asset_id") or "")
     if tool_name == "stage_meta_publish_attempt":
         return "meta_publish_attempt", str(arguments.get("idempotency_key") or arguments.get("campaign_id") or "")
     if tool_name == "stage_meta_publish_plan":

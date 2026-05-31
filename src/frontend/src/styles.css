@@ -2900,6 +2900,12 @@ body {
   text-transform: uppercase;
 }
 
+#contadoresView .ops-panel-note {
+  margin: 8px 0 0;
+  color: #b45309;
+  font: 800 11px/1.35 var(--font-sans);
+}
+
 #contadoresView .ops-event-stream {
   display: grid;
   gap: 0;

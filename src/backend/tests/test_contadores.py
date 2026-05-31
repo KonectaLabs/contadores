@@ -391,6 +391,8 @@ def test_codex_agent_tool_configures_text_offer_funnel_without_ui(monkeypatch, t
     assert "approve_meta_publish_plan" in snapshot["result"]["schemas"]
     assert "execute_meta_publish_plan" in snapshot["result"]["agent_native_tools"]
     assert "execute_meta_publish_plan" in snapshot["result"]["schemas"]
+    assert "upload_meta_creative_asset" in snapshot["result"]["agent_native_tools"]
+    assert "upload_meta_creative_asset" in snapshot["result"]["schemas"]
     assert "schedule_platform_meeting" in snapshot["result"]["agent_native_tools"]
     assert "schedule_platform_meeting" in snapshot["result"]["schemas"]
     assert "sync_meta_inventory" in snapshot["result"]["agent_native_tools"]
@@ -533,6 +535,165 @@ def test_meta_publish_attempt_idempotency_key_has_db_guard(monkeypatch, tmp_path
             raised = True
             session.rollback()
     assert raised is True
+
+
+def test_meta_creative_asset_upload_patches_publish_plan(monkeypatch, tmp_path) -> None:
+    """Generated files should become Meta-ready image hashes before live publish."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    data_dir = tmp_path / "data"
+    creative_file = data_dir / "meta-assets" / "creative.png"
+    creative_file.parent.mkdir(parents=True, exist_ok=True)
+    creative_file.write_bytes(b"png-bytes")
+    monkeypatch.setattr(database_module, "DATA_DIR", data_dir)
+    monkeypatch.setattr(meta_ads_publish_module, "DATA_DIR", data_dir)
+    monkeypatch.setenv("META_MARKETING_API_VERSION", "v25.0")
+    monkeypatch.setenv("META_MARKETING_ACCESS_TOKEN", "test-token")
+    monkeypatch.setenv("META_MARKETING_LIVE_WRITES_ENABLED", "true")
+
+    asset_result = call_tool(
+        run_id="agent-run-meta-creative-upload",
+        tool_name="stage_creative_asset",
+        arguments={
+            "campaign_id": "campaign-upload-1",
+            "client_id": "client-upload-1",
+            "asset_type": "image",
+            "prompt": "Problem-first ad creative.",
+            "file_path": "data/meta-assets/creative.png",
+        },
+    )
+    assert asset_result["ok"] is True
+    asset_id = asset_result["result"]["asset"]["id"]
+
+    plan_result = call_tool(
+        run_id="agent-run-meta-creative-upload",
+        tool_name="stage_meta_publish_plan",
+        arguments={
+            "campaign_id": "campaign-upload-1",
+            "client_id": "client-upload-1",
+            "funnel_id": "abogados",
+            "ad_account_id": "act_upload_1",
+            "campaign_name": "Abogados upload - WhatsApp",
+            "objective": "OUTCOME_LEADS",
+            "destination": {
+                "destination_type": "whatsapp",
+                "page_id": "page_upload_1",
+                "whatsapp_phone_number_id": "wa_phone_upload_1",
+            },
+            "ad_sets": [
+                {
+                    "name": "Despidos",
+                    "budget_daily_usd": 10,
+                    "targeting": {"geo_locations": {"countries": ["AR"]}},
+                    "ads": [
+                        {
+                            "name": "Despido",
+                            "creative": {
+                                "creative_asset_id": asset_id,
+                                "asset_file_path": "data/meta-assets/creative.png",
+                                "primary_text": "Si te despidieron, manda tu caso por WhatsApp.",
+                                "headline": "Te despidieron?",
+                            },
+                        }
+                    ],
+                }
+            ],
+            "idempotency_key": "publish-plan-upload-agent-1",
+        },
+    )
+    assert plan_result["ok"] is True
+    attempt_id = plan_result["result"]["attempt"]["id"]
+
+    live_preflight_before_upload = call_tool(
+        run_id="agent-run-meta-creative-upload",
+        tool_name="preflight_meta_publish_plan",
+        arguments={"attempt_id": attempt_id, "live_writes_requested": True},
+    )
+    assert live_preflight_before_upload["ok"] is True
+    assert "ad_sets[1].ads[1].creative.meta_asset" in live_preflight_before_upload["result"]["preflight"][
+        "blocked_reasons"
+    ]
+
+    upload_calls: list[tuple[str, Path, str, dict]] = []
+
+    def fake_graph_uploader(*, api_version: str, access_token: str, timeout: float = 120):
+        assert api_version == "v25.0"
+        assert access_token == "test-token"
+        assert timeout == 120
+
+        def graph_upload(path: str, file_path: Path, file_field: str, params: dict) -> dict:
+            upload_calls.append((path, file_path, file_field, params))
+            assert file_path.read_bytes() == b"png-bytes"
+            return {"images": {file_path.name: {"hash": "hash_uploaded_1", "access_token": "do-not-store"}}}
+
+        return graph_upload
+
+    monkeypatch.setattr(meta_ads_publish_module, "_default_graph_uploader", fake_graph_uploader)
+    upload_result = call_tool(
+        run_id="agent-run-meta-creative-upload",
+        tool_name="upload_meta_creative_asset",
+        arguments={
+            "asset_id": asset_id,
+            "ad_account_id": "act_upload_1",
+            "live_writes_requested": True,
+        },
+    )
+    assert upload_result["ok"] is True
+    assert upload_result["result"]["upload"]["status"] == "uploaded"
+    assert upload_result["result"]["upload"]["image_hash"] == "hash_uploaded_1"
+    assert upload_result["result"]["upload"]["linked_publish_attempts"] == [attempt_id]
+    assert upload_calls[0][0] == "/act_upload_1/adimages"
+    assert upload_calls[0][2] == "filename"
+
+    uploaded_asset = PlatformCreativeAsset.get_by_id(asset_id)
+    assert uploaded_asset.status == "uploaded_to_meta"
+    assert uploaded_asset.image_hash == "hash_uploaded_1"
+    assert "access_token" not in json.dumps(uploaded_asset.meta_upload_response())
+
+    patched_plan = PlatformMetaPublishAttempt.get_by_id(attempt_id).request_payload()
+    patched_creative = patched_plan["ad_sets"][0]["ads"][0]["creative"]
+    assert patched_creative["image_hash"] == "hash_uploaded_1"
+
+    live_preflight_after_upload = call_tool(
+        run_id="agent-run-meta-creative-upload",
+        tool_name="preflight_meta_publish_plan",
+        arguments={"attempt_id": attempt_id, "live_writes_requested": True},
+    )
+    assert live_preflight_after_upload["ok"] is True
+    assert "ad_sets[1].ads[1].creative.meta_asset" not in live_preflight_after_upload["result"]["preflight"][
+        "blocked_reasons"
+    ]
+
+
+def test_meta_creative_asset_upload_blocks_without_credentials(monkeypatch, tmp_path) -> None:
+    """Agent-native uploads should report exact blockers instead of trying live writes."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.delenv("META_MARKETING_API_VERSION", raising=False)
+    monkeypatch.delenv("META_MARKETING_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("META_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("META_MARKETING_LIVE_WRITES_ENABLED", raising=False)
+
+    asset = PlatformCreativeAsset.add(
+        campaign_id="campaign-upload-blocked-1",
+        client_id="client-upload-blocked-1",
+        asset_type="image",
+        file_path="data/meta-assets/missing.png",
+    )
+    result = call_tool(
+        run_id="agent-run-meta-creative-upload-blocked",
+        tool_name="upload_meta_creative_asset",
+        arguments={
+            "asset_id": asset.id,
+            "ad_account_id": "act_upload_blocked_1",
+            "live_writes_requested": True,
+        },
+    )
+    assert result["ok"] is True
+    blockers = result["result"]["upload"]["blocked_reasons"]
+    assert "META_MARKETING_LIVE_WRITES_ENABLED" in blockers
+    assert "META_MARKETING_ACCESS_TOKEN" in blockers
+    assert "META_MARKETING_API_VERSION" in blockers
+    assert "asset.file_path.exists" in blockers
+    assert PlatformCreativeAsset.get_by_id(asset.id).status == "upload_blocked"
 
 
 def test_meta_publish_approval_gate_requires_inventory_and_budget(monkeypatch, tmp_path) -> None:

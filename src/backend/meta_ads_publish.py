@@ -5,13 +5,15 @@ from __future__ import annotations
 import math
 import os
 import json
+import mimetypes
+from pathlib import Path
 from typing import Any, Literal
 from collections.abc import Callable
 
 import httpx
 from pydantic import BaseModel, Field
 
-from backend.database import PlatformEvent, PlatformMetaInventorySnapshot, PlatformMetaPublishAttempt
+from backend.database import DATA_DIR, PlatformCreativeAsset, PlatformEvent, PlatformMetaInventorySnapshot, PlatformMetaPublishAttempt
 
 
 class MetaAdsPublishError(RuntimeError):
@@ -79,6 +81,27 @@ class MetaPublishExecutionResult(BaseModel):
     operation_results: list[MetaPublishOperationResult] = Field(default_factory=list)
 
 
+class MetaCreativeAssetUploadResult(BaseModel):
+    """Result of uploading one generated asset to Meta's media library."""
+
+    schema_version: str = "konecta.meta_creative_asset_upload.v1"
+    asset_id: str
+    campaign_id: str = ""
+    status: Literal["blocked", "uploaded", "already_uploaded", "failed"]
+    live_writes_requested: bool = False
+    live_write_executed: bool = False
+    ad_account_id: str = ""
+    api_version: str = ""
+    provider_asset_type: Literal["image", "video", "creative"] = "image"
+    image_hash: str = ""
+    video_id: str = ""
+    meta_creative_id: str = ""
+    blocked_reasons: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    linked_publish_attempts: list[str] = Field(default_factory=list)
+    response: dict[str, Any] = Field(default_factory=dict)
+
+
 class MetaPublishBudgetSummary(BaseModel):
     """Budget totals reviewed before a staged Meta plan can be approved."""
 
@@ -119,6 +142,7 @@ def _env_truthy(name: str) -> bool:
 
 
 GraphPoster = Callable[[str, dict[str, Any]], dict[str, Any]]
+GraphUploader = Callable[[str, Path, str, dict[str, Any]], dict[str, Any]]
 
 
 def _sanitize_provider_payload(value: Any) -> Any:
@@ -166,6 +190,139 @@ def _default_graph_poster(*, api_version: str, access_token: str, timeout: float
         return _sanitize_provider_payload(payload if isinstance(payload, dict) else {"data": payload})
 
     return graph_post
+
+
+def _default_graph_uploader(*, api_version: str, access_token: str, timeout: float = 120) -> GraphUploader:
+    base_url = _graph_base_url(api_version)
+
+    def graph_upload(path: str, file_path: Path, file_field: str, params: dict[str, Any]) -> dict[str, Any]:
+        request_params = _encode_graph_params(params)
+        request_params["access_token"] = access_token
+        mime_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+        with file_path.open("rb") as handle:
+            files = {file_field: (file_path.name, handle, mime_type)}
+            response = httpx.post(
+                f"{base_url}/{path.strip('/')}",
+                data=request_params,
+                files=files,
+                timeout=timeout,
+            )
+        response.raise_for_status()
+        payload = response.json()
+        return _sanitize_provider_payload(payload if isinstance(payload, dict) else {"data": payload})
+
+    return graph_upload
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _resolve_creative_file(file_path: str) -> Path | None:
+    """Resolve a staged creative file without allowing path traversal."""
+    clean_path = _clean(file_path)
+    if not clean_path:
+        return None
+    candidate = Path(clean_path).expanduser()
+    if candidate.is_absolute():
+        resolved = candidate.resolve()
+    else:
+        parts = candidate.parts
+        if parts and parts[0] == "data":
+            resolved = DATA_DIR.joinpath(*parts[1:]).expanduser().resolve()
+        else:
+            resolved = (REPO_ROOT / candidate).resolve()
+    allowed_roots = [REPO_ROOT.resolve(), DATA_DIR.expanduser().resolve()]
+    for root in allowed_roots:
+        try:
+            resolved.relative_to(root)
+        except ValueError:
+            continue
+        return resolved
+    return None
+
+
+def _provider_asset_type(asset: PlatformCreativeAsset) -> Literal["image", "video", "creative"]:
+    """Map local asset type to a Meta uploadable asset family."""
+    asset_type = _clean(asset.asset_type).lower()
+    if asset_type == "video":
+        return "video"
+    if asset_type == "creative":
+        return "creative"
+    return "image"
+
+
+def _extract_uploaded_image_hash(response: dict[str, Any]) -> str:
+    """Return an image hash from Meta adimages response variants."""
+    if _clean(response.get("hash")):
+        return _clean(response.get("hash"))
+    images = response.get("images")
+    if isinstance(images, dict):
+        for item in images.values():
+            if isinstance(item, dict) and _clean(item.get("hash")):
+                return _clean(item.get("hash"))
+    return ""
+
+
+def _extract_uploaded_video_id(response: dict[str, Any]) -> str:
+    """Return a video ID from Meta advideos response variants."""
+    return _clean(response.get("id")) or _clean(response.get("video_id"))
+
+
+def _link_uploaded_asset_to_publish_attempts(asset: PlatformCreativeAsset) -> list[str]:
+    """Patch staged Meta plans that reference this asset with provider media IDs."""
+    linked: list[str] = []
+    if not asset.campaign_id:
+        return linked
+    attempts = PlatformMetaPublishAttempt.list_recent(campaign_id=asset.campaign_id, limit=100)
+    for attempt in attempts:
+        plan = attempt.request_payload()
+        if plan.get("schema_version") != "konecta.meta_publish_plan.v1":
+            continue
+        changed = False
+        ad_sets = plan.get("ad_sets") if isinstance(plan.get("ad_sets"), list) else []
+        for ad_set in ad_sets:
+            if not isinstance(ad_set, dict):
+                continue
+            ads = ad_set.get("ads") if isinstance(ad_set.get("ads"), list) else []
+            for ad in ads:
+                if not isinstance(ad, dict):
+                    continue
+                creative = ad.get("creative") if isinstance(ad.get("creative"), dict) else {}
+                creative_asset_id = _clean(creative.get("creative_asset_id"))
+                asset_file_path = _clean(creative.get("asset_file_path"))
+                if creative_asset_id != asset.id and (not asset_file_path or asset_file_path != asset.file_path):
+                    continue
+                if asset.meta_creative_id and not _clean(creative.get("meta_creative_id")):
+                    creative["meta_creative_id"] = asset.meta_creative_id
+                    changed = True
+                if asset.image_hash and not _clean(creative.get("image_hash")):
+                    creative["image_hash"] = asset.image_hash
+                    changed = True
+                if asset.video_id and not _clean(creative.get("video_id")):
+                    creative["video_id"] = asset.video_id
+                    changed = True
+                if changed:
+                    ad["creative"] = creative
+        if changed:
+            remaining_provider_blockers = [
+                blocker
+                for blocker in _provider_creative_blockers(plan)
+                if blocker not in set(plan.get("required_before_live_publish", []))
+            ]
+            if not remaining_provider_blockers and attempt.status == "blocked" and not _plan_blockers(plan):
+                status = "staged"
+                error = ""
+            else:
+                status = attempt.status
+                error = attempt.error
+            PlatformMetaPublishAttempt.update_execution(
+                attempt.id,
+                status=status,
+                request_payload=plan,
+                error=error,
+            )
+            linked.append(attempt.id)
+    return linked
 
 
 def _money_to_minor_units(value: Any) -> int | None:
@@ -577,6 +734,178 @@ def build_meta_publish_operations(plan: dict[str, Any], *, live_write: bool = Fa
             )
             step += 1
     return operations
+
+
+def upload_meta_creative_asset(
+    *,
+    asset_id: str,
+    ad_account_id: str = "",
+    live_writes_requested: bool = False,
+    actor: str = "agent",
+    source: str = "codex_agent_tool",
+    graph_upload: GraphUploader | None = None,
+) -> tuple[PlatformCreativeAsset, MetaCreativeAssetUploadResult]:
+    """Upload one staged asset to Meta media storage and persist provider refs."""
+    asset = PlatformCreativeAsset.get_by_id(asset_id)
+    if asset is None:
+        raise MetaAdsPublishError(f"Creative asset not found: {asset_id}")
+
+    provider_asset_type = _provider_asset_type(asset)
+    if asset.image_hash or asset.video_id or asset.meta_creative_id:
+        result = MetaCreativeAssetUploadResult(
+            asset_id=asset.id,
+            campaign_id=asset.campaign_id,
+            status="already_uploaded",
+            ad_account_id=ad_account_id,
+            provider_asset_type=provider_asset_type,
+            image_hash=asset.image_hash,
+            video_id=asset.video_id,
+            meta_creative_id=asset.meta_creative_id,
+            linked_publish_attempts=_link_uploaded_asset_to_publish_attempts(asset),
+            response=asset.meta_upload_response(),
+        )
+        _emit_creative_upload_event(asset, result, source=source, actor=actor)
+        return asset, result
+
+    api_version = _clean(os.getenv("META_MARKETING_API_VERSION"))
+    access_token = _clean(os.getenv("META_MARKETING_ACCESS_TOKEN")) or _clean(os.getenv("META_ACCESS_TOKEN"))
+    live_writes_enabled = _env_truthy("META_MARKETING_LIVE_WRITES_ENABLED")
+    clean_ad_account_id = _clean(ad_account_id) or _clean(os.getenv("META_AD_ACCOUNT_ID"))
+    file_path = _resolve_creative_file(asset.file_path)
+    blocked: list[str] = []
+    if not live_writes_requested:
+        blocked.append("live_writes_requested=true")
+    if not live_writes_enabled:
+        blocked.append("META_MARKETING_LIVE_WRITES_ENABLED")
+    if not access_token and graph_upload is None:
+        blocked.append("META_MARKETING_ACCESS_TOKEN")
+    if not api_version:
+        blocked.append("META_MARKETING_API_VERSION")
+    if not clean_ad_account_id:
+        blocked.append("ad_account_id")
+    if provider_asset_type not in {"image", "video"}:
+        blocked.append("asset_type=image_or_video")
+    if file_path is None:
+        blocked.append("asset.file_path")
+    elif not file_path.exists():
+        blocked.append("asset.file_path.exists")
+    else:
+        mime_type = mimetypes.guess_type(file_path.name)[0] or ""
+        if provider_asset_type == "image" and not mime_type.startswith("image/"):
+            blocked.append("asset.file_type=image")
+        if provider_asset_type == "video" and not mime_type.startswith("video/"):
+            blocked.append("asset.file_type=video")
+
+    if blocked:
+        result = MetaCreativeAssetUploadResult(
+            asset_id=asset.id,
+            campaign_id=asset.campaign_id,
+            status="blocked",
+            live_writes_requested=live_writes_requested,
+            ad_account_id=clean_ad_account_id,
+            api_version=api_version,
+            provider_asset_type=provider_asset_type,
+            blocked_reasons=list(dict.fromkeys(blocked)),
+        )
+        updated = PlatformCreativeAsset.update_meta_refs(
+            asset.id,
+            status="upload_blocked",
+            failure_reason=", ".join(result.blocked_reasons),
+        )
+        if updated is not None:
+            asset = updated
+        _emit_creative_upload_event(asset, result, source=source, actor=actor)
+        return asset, result
+
+    uploader = graph_upload or _default_graph_uploader(api_version=api_version, access_token=access_token)
+    path = f"/{clean_ad_account_id}/adimages" if provider_asset_type == "image" else f"/{clean_ad_account_id}/advideos"
+    file_field = "filename" if provider_asset_type == "image" else "source"
+    params = {"name": file_path.name} if provider_asset_type == "image" else {"title": file_path.stem or file_path.name}
+    try:
+        response = _sanitize_provider_payload(uploader(path, file_path, file_field, params))
+        image_hash = _extract_uploaded_image_hash(response) if provider_asset_type == "image" else ""
+        video_id = _extract_uploaded_video_id(response) if provider_asset_type == "video" else ""
+        if provider_asset_type == "image" and not image_hash:
+            raise MetaAdsPublishError("Meta adimages response did not include an image hash")
+        if provider_asset_type == "video" and not video_id:
+            raise MetaAdsPublishError("Meta advideos response did not include a video id")
+        updated = PlatformCreativeAsset.update_meta_refs(
+            asset.id,
+            status="uploaded_to_meta",
+            image_hash=image_hash,
+            video_id=video_id,
+            meta_upload_response=response,
+            failure_reason="",
+        )
+        if updated is None:
+            raise MetaAdsPublishError(f"Creative asset disappeared during upload: {asset.id}")
+        asset = updated
+        linked_attempts = _link_uploaded_asset_to_publish_attempts(asset)
+        result = MetaCreativeAssetUploadResult(
+            asset_id=asset.id,
+            campaign_id=asset.campaign_id,
+            status="uploaded",
+            live_writes_requested=live_writes_requested,
+            live_write_executed=True,
+            ad_account_id=clean_ad_account_id,
+            api_version=api_version,
+            provider_asset_type=provider_asset_type,
+            image_hash=asset.image_hash,
+            video_id=asset.video_id,
+            linked_publish_attempts=linked_attempts,
+            response=response,
+        )
+    except Exception as error:
+        result = MetaCreativeAssetUploadResult(
+            asset_id=asset.id,
+            campaign_id=asset.campaign_id,
+            status="failed",
+            live_writes_requested=live_writes_requested,
+            ad_account_id=clean_ad_account_id,
+            api_version=api_version,
+            provider_asset_type=provider_asset_type,
+            blocked_reasons=[str(error)[:12000]],
+        )
+        updated = PlatformCreativeAsset.update_meta_refs(
+            asset.id,
+            status="upload_failed",
+            failure_reason=str(error)[:4000],
+        )
+        if updated is not None:
+            asset = updated
+    _emit_creative_upload_event(asset, result, source=source, actor=actor)
+    return asset, result
+
+
+def _emit_creative_upload_event(
+    asset: PlatformCreativeAsset,
+    result: MetaCreativeAssetUploadResult,
+    *,
+    source: str,
+    actor: str,
+) -> None:
+    """Persist one observability event for Meta creative uploads."""
+    event_type = "meta_creative_asset.uploaded" if result.status == "uploaded" else "meta_creative_asset.upload_checked"
+    PlatformEvent.add(
+        event_type=event_type,
+        lifecycle_stage="meta_publish",
+        target_type="creative_asset",
+        target_id=asset.id,
+        source=source,
+        actor=actor,
+        summary=f"Checked Meta creative upload for {asset.id}.",
+        payload={
+            "campaign_id": asset.campaign_id,
+            "status": result.status,
+            "live_write_executed": result.live_write_executed,
+            "ad_account_id": result.ad_account_id,
+            "provider_asset_type": result.provider_asset_type,
+            "image_hash": result.image_hash,
+            "video_id": result.video_id,
+            "blocked_reasons": result.blocked_reasons,
+            "linked_publish_attempts": result.linked_publish_attempts,
+        },
+    )
 
 
 def preflight_meta_publish_attempt(

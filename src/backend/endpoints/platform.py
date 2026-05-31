@@ -26,6 +26,7 @@ from backend.meta_ads_publish import (
     approve_meta_publish_attempt,
     execute_meta_publish_attempt,
     preflight_meta_publish_attempt,
+    upload_meta_creative_asset,
 )
 from backend.meta_ads_inventory import MetaInventoryError, sync_meta_inventory
 
@@ -256,6 +257,9 @@ class PlatformCreativeAssetCommand(BaseModel):
     dimensions: str = ""
     source_refs: list[Any] = Field(default_factory=list)
     meta_creative_id: str = ""
+    image_hash: str = ""
+    video_id: str = ""
+    meta_upload_response: dict[str, Any] = Field(default_factory=dict)
     failure_reason: str = ""
 
 
@@ -272,6 +276,9 @@ class PlatformCreativeAssetResponse(BaseModel):
     dimensions: str
     source_refs: list[Any]
     meta_creative_id: str
+    image_hash: str
+    video_id: str
+    meta_upload_response: dict[str, Any]
     failure_reason: str
     created_at: datetime
     updated_at: datetime
@@ -281,6 +288,20 @@ class PlatformCreativeAssetListResponse(BaseModel):
     """Creative asset list response."""
 
     assets: list[PlatformCreativeAssetResponse]
+
+
+class PlatformCreativeAssetUploadCommand(BaseModel):
+    """Upload one staged creative asset to Meta media storage."""
+
+    ad_account_id: str = ""
+    live_writes_requested: bool = False
+
+
+class PlatformCreativeAssetUploadResponse(BaseModel):
+    """Meta creative upload response."""
+
+    asset: PlatformCreativeAssetResponse
+    upload: dict[str, Any]
 
 
 class PlatformMetaPublishAttemptCommand(BaseModel):
@@ -629,6 +650,9 @@ def serialize_creative_asset(row: PlatformCreativeAsset) -> PlatformCreativeAsse
         dimensions=row.dimensions,
         source_refs=row.source_refs(),
         meta_creative_id=row.meta_creative_id,
+        image_hash=row.image_hash,
+        video_id=row.video_id,
+        meta_upload_response=row.meta_upload_response(),
         failure_reason=row.failure_reason,
         created_at=row.created_at,
         updated_at=row.updated_at,
@@ -1050,6 +1074,33 @@ async def create_creative_asset(command: PlatformCreativeAssetCommand) -> Platfo
         payload={"campaign_id": row.campaign_id, "client_id": row.client_id, "asset_type": row.asset_type},
     )
     return serialize_creative_asset(row)
+
+
+@platform_router.post(
+    "/creative-assets/{asset_id}/upload-to-meta",
+    response_model=PlatformCreativeAssetUploadResponse,
+)
+async def upload_creative_asset_to_meta(
+    asset_id: str,
+    command: PlatformCreativeAssetUploadCommand,
+) -> PlatformCreativeAssetUploadResponse:
+    """Upload one creative asset to Meta media storage when live writes are allowed."""
+    try:
+        asset, result = upload_meta_creative_asset(
+            asset_id=asset_id,
+            ad_account_id=command.ad_account_id,
+            live_writes_requested=command.live_writes_requested,
+            source="platform_api",
+            actor="operator",
+        )
+    except MetaAdsPublishError as error:
+        message = str(error)
+        status_code = 404 if message.startswith("Creative asset not found") else 400
+        raise HTTPException(status_code=status_code, detail=message) from error
+    return PlatformCreativeAssetUploadResponse(
+        asset=serialize_creative_asset(asset),
+        upload=result.model_dump(mode="json"),
+    )
 
 
 @platform_router.get("/meta-publish-attempts", response_model=PlatformMetaPublishAttemptListResponse)
