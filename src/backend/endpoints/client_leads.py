@@ -28,6 +28,7 @@ from backend.database import (
     ClientLeadSource,
     ContadoresLead,
     ContadoresLeadStage,
+    PlatformEvent,
     normalize_client_lead_context_field_mapping,
     normalize_client_lead_column_mapping,
     normalize_phone,
@@ -186,6 +187,23 @@ class ClientLeadSyncResponse(BaseModel):
     blocked: int = 0
     skipped: int = 0
     queued: int = 0
+
+
+class MetaLeadFormImportCommand(BaseModel):
+    """One retrieved Meta Lead Ads instant-form lead."""
+
+    leadgen_id: str = Field(min_length=1)
+    created_time: str | None = None
+    form_id: str | None = None
+    ad_id: str | None = None
+    ad_name: str | None = None
+    adset_id: str | None = None
+    adset_name: str | None = None
+    campaign_id: str | None = None
+    campaign_name: str | None = None
+    platform: str | None = None
+    field_data: list[dict[str, Any]] = Field(default_factory=list)
+    raw_payload: dict[str, Any] = Field(default_factory=dict)
 
 
 class ClientLeadPendingNotification(BaseModel):
@@ -555,6 +573,60 @@ def build_delivery_notification_text(source: ClientLeadSource, item: ClientLeadD
         wa_link=item.wa_link,
         context_text=build_context_text(source, item),
     )
+
+
+def stringify_meta_field_value(value: Any) -> str:
+    """Return a stable string for one Meta lead field value."""
+    if value is None:
+        return ""
+    if isinstance(value, list):
+        parts = [stringify_meta_field_value(item) for item in value]
+        return ", ".join(part for part in parts if part).strip()
+    if isinstance(value, dict):
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    return " ".join(str(value).split()).strip()
+
+
+def meta_field_data_to_row(command: MetaLeadFormImportCommand) -> dict[str, str]:
+    """Convert Meta Lead Ads field_data into the generic Delivery row shape."""
+    raw_payload = command.raw_payload if isinstance(command.raw_payload, dict) else {}
+    row: dict[str, str] = {
+        "id": command.leadgen_id.strip(),
+        "leadgen_id": command.leadgen_id.strip(),
+    }
+    for key in [
+        "created_time",
+        "form_id",
+        "ad_id",
+        "ad_name",
+        "adset_id",
+        "adset_name",
+        "campaign_id",
+        "campaign_name",
+        "platform",
+    ]:
+        value = stringify_meta_field_value(getattr(command, key, None) or raw_payload.get(key))
+        if value:
+            row[key] = value
+    for item in command.field_data:
+        if not isinstance(item, dict):
+            continue
+        name = " ".join(str(item.get("name") or "").split()).strip()
+        if not name:
+            continue
+        raw_values = item.get("values")
+        if raw_values is None:
+            raw_values = item.get("value")
+        value = stringify_meta_field_value(raw_values)
+        if value:
+            row[name] = value
+    return row
+
+
+def import_meta_lead_form_record(source: ClientLeadSource, command: MetaLeadFormImportCommand) -> ClientLeadSyncResponse:
+    """Import one retrieved Meta Lead Ads record through the Delivery queue."""
+    row = meta_field_data_to_row(command)
+    return import_sheet_records(source, [row])
 
 
 def normalize_delivery_error(command: ClientLeadDeliveryFailureCommand | ClientLeadDeliveryByExternalIdCommand) -> str:
@@ -963,6 +1035,40 @@ async def sync_client_lead_source(source_id: str) -> ClientLeadSyncResponse:
         source = ClientLeadSource.mark_sync(source.id, status="failed", note=str(exc)) or source
         raise HTTPException(status_code=502, detail=f"Could not sync sheet: {exc}") from exc
     return import_sheet_records(source, records)
+
+
+@client_leads_router.post("/{source_id}/meta-lead", response_model=ClientLeadSyncResponse)
+async def import_meta_lead_form_for_source(
+    source_id: str,
+    command: MetaLeadFormImportCommand,
+) -> ClientLeadSyncResponse:
+    """Import one retrieved Meta Lead Ads instant-form lead into Delivery."""
+    source = get_required_source(source_id)
+    if not source.enabled:
+        source = ClientLeadSource.mark_sync(source.id, status="disabled", note="source disabled") or source
+        return ClientLeadSyncResponse(status="disabled", source=build_source_response(source))
+    result = import_meta_lead_form_record(source, command)
+    PlatformEvent.add(
+        event_type="client_lead.meta_form_imported",
+        lifecycle_stage="delivery",
+        target_type="client_lead_source",
+        target_id=source.id,
+        source="meta_lead_ads",
+        actor="agent",
+        summary=f"Imported Meta lead {command.leadgen_id.strip()} into Delivery source {source.id}.",
+        payload={
+            "leadgen_id": command.leadgen_id.strip(),
+            "form_id": command.form_id,
+            "campaign_id": command.campaign_id,
+            "ad_id": command.ad_id,
+            "imported": result.imported,
+            "updated": result.updated,
+            "blocked": result.blocked,
+            "queued": result.queued,
+        },
+        idempotency_key=f"meta_lead:{source.id}:{command.leadgen_id.strip()}",
+    )
+    return result
 
 
 @client_leads_router.get("/{source_id}/leads", response_model=ClientLeadDeliveryListResponse)

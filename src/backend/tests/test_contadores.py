@@ -398,6 +398,8 @@ def test_codex_agent_tool_configures_text_offer_funnel_without_ui(monkeypatch, t
     assert "execute_meta_publish_plan" in snapshot["result"]["schemas"]
     assert "upload_meta_creative_asset" in snapshot["result"]["agent_native_tools"]
     assert "upload_meta_creative_asset" in snapshot["result"]["schemas"]
+    assert "import_meta_lead_form_to_delivery" in snapshot["result"]["agent_native_tools"]
+    assert "import_meta_lead_form_to_delivery" in snapshot["result"]["schemas"]
     assert "schedule_platform_meeting" in snapshot["result"]["agent_native_tools"]
     assert "schedule_platform_meeting" in snapshot["result"]["schemas"]
     assert "sync_meta_inventory" in snapshot["result"]["agent_native_tools"]

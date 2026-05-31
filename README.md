@@ -113,6 +113,8 @@ formularios:
   `approve_meta_publish_plan`, `execute_meta_publish_plan` y
   `stage_meta_publish_attempt`: ads, inventario y publicacion Meta en modo
   staged/aprobable.
+- `import_meta_lead_form_to_delivery`: importa un lead ya recuperado de Meta
+  Lead Ads por `leadgen_id` a la misma cola de Client Lead Delivery.
 - `create_client_update`: actualizaciones de 24 horas para clientes.
 - `ask_human_question` y `answer_human_question`: dudas a Facundo/operador con
   contexto, accion por defecto y memoria reutilizable.
@@ -691,6 +693,13 @@ Client Lead Delivery:
 - Los Meta instant forms staged con `stage_meta_publish_plan` deben declarar
   `destination.client_lead_source_id`; el gate de publish bloquea si la fuente
   no existe, esta deshabilitada o no tiene sheet/destinatario/template listo.
+- Cuando el lead de un instant form ya fue recuperado desde Meta por API o por
+  un futuro webhook verificado, enviarlo a
+  `POST /api/client-lead-sources/{source_id}/meta-lead` o al tool
+  `import_meta_lead_form_to_delivery`. El backend aplana `field_data`, usa
+  `leadgen_id` como clave idempotente por fuente, guarda el raw row en
+  `client_lead_deliveries` y deja la notificacion WhatsApp `pending` igual que
+  un sync de Sheets.
 - Las fuentes tambien se pueden declarar por archivo. El seed versionado es
   `config/default-client-lead-sources.json`; el override editable del server es
   `CLIENT_LEAD_SOURCES_CONFIG_PATH` o `data/client-lead-sources.json`.

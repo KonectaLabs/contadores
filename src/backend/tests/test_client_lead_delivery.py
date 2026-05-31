@@ -9,7 +9,8 @@ from sqlmodel import SQLModel, create_engine
 import backend.client_lead_config as client_lead_config
 import backend.database as database_module
 import backend.endpoints.client_leads as client_leads_endpoints
-from backend.database import ClientLeadDelivery, ClientLeadDeliveryStatus, ContadoresLead
+from backend.ai.codex_agent_tools import call_tool
+from backend.database import ClientLeadDelivery, ClientLeadDeliveryStatus, ContadoresLead, PlatformEvent
 from backend.main import app
 
 
@@ -270,6 +271,143 @@ def test_client_lead_context_template_keeps_six_params_when_values_are_blank(mon
             "https://wa.me/595981111222",
             "-",
         ]
+
+
+def test_meta_lead_form_import_queues_delivery_and_dedupes(monkeypatch, tmp_path) -> None:
+    """Meta instant-form payloads should enter the same Delivery queue as Sheets."""
+    configure_delivery_db(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/client-lead-sources",
+            json=source_payload(
+                id="meta-instant-forms",
+                label="MMB Meta Instant Forms",
+                context_field_mapping={
+                    "Campaña": "campaign_name",
+                    "Servicio": "service",
+                },
+            ),
+        )
+        assert created.status_code == 200
+        source_id = created.json()["id"]
+
+        command = {
+            "leadgen_id": "meta-lead-1",
+            "created_time": "2026-05-30T12:34:56+00:00",
+            "form_id": "form_123",
+            "campaign_id": "campaign_123",
+            "campaign_name": "Abogados laborales",
+            "ad_id": "ad_123",
+            "ad_name": "Consulta laboral",
+            "platform": "fb",
+            "field_data": [
+                {"name": "full_name", "values": ["Ana Perez"]},
+                {"name": "phone_number", "values": ["+5491111111111"]},
+                {"name": "email", "values": ["ana@example.com"]},
+                {"name": "service", "values": ["Despido laboral"]},
+            ],
+        }
+
+        imported = client.post(f"/api/client-lead-sources/{source_id}/meta-lead", json=command)
+        assert imported.status_code == 200
+        payload = imported.json()
+        assert payload["imported"] == 1
+        assert payload["queued"] == 1
+        assert payload["source"]["counts"] == {"pending": 1, "total": 1}
+
+        repeated = client.post(f"/api/client-lead-sources/{source_id}/meta-lead", json=command)
+        assert repeated.status_code == 200
+        assert repeated.json()["imported"] == 0
+        assert repeated.json()["updated"] == 1
+        assert repeated.json()["queued"] == 0
+
+        leads = client.get(f"/api/client-lead-sources/{source_id}/leads").json()["leads"]
+        assert len(leads) == 1
+        assert leads[0]["source_row_key"] == "meta-lead-1"
+        assert leads[0]["raw_row"]["leadgen_id"] == "meta-lead-1"
+        assert leads[0]["raw_row"]["campaign_name"] == "Abogados laborales"
+        assert leads[0]["raw_row"]["service"] == "Despido laboral"
+
+        pending = client.get("/api/client-lead-deliveries/pending").json()["notifications"]
+        assert len(pending) == 1
+        assert pending[0]["template_name"] == "konecta_client_lead_alert_context_es_v1"
+        assert pending[0]["template_body_params"][:5] == [
+            "MMB Meta Instant Forms",
+            "Ana Perez",
+            "5491111111111",
+            "ana@example.com",
+            "https://wa.me/5491111111111",
+        ]
+        assert pending[0]["template_body_params"][5] == (
+            "Campaña = Abogados laborales; Servicio = Despido laboral"
+        )
+
+        events = PlatformEvent.list_recent(target_type="client_lead_source", target_id=source_id)
+        assert [event.event_type for event in events] == ["client_lead.meta_form_imported"]
+        assert events[0].payload_dict()["leadgen_id"] == "meta-lead-1"
+
+
+def test_meta_lead_form_import_blocks_invalid_phone(monkeypatch, tmp_path) -> None:
+    """Meta instant-form leads with unusable phone values should stay visible but blocked."""
+    configure_delivery_db(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        source_id = client.post("/api/client-lead-sources", json=source_payload()).json()["id"]
+
+        imported = client.post(
+            f"/api/client-lead-sources/{source_id}/meta-lead",
+            json={
+                "leadgen_id": "meta-lead-bad-phone",
+                "field_data": [
+                    {"name": "full_name", "values": ["Sin Telefono"]},
+                    {"name": "phone_number", "values": ["no tengo"]},
+                    {"name": "email", "values": ["bad@example.com"]},
+                ],
+            },
+        )
+        assert imported.status_code == 200
+        payload = imported.json()
+        assert payload["imported"] == 1
+        assert payload["blocked"] == 1
+        assert payload["queued"] == 0
+
+        leads = client.get(f"/api/client-lead-sources/{source_id}/leads").json()["leads"]
+        assert leads[0]["source_row_key"] == "meta-lead-bad-phone"
+        assert leads[0]["delivery_status"] == "blocked"
+        assert leads[0]["block_reason"] == "lead_phone_invalid"
+        assert client.get("/api/client-lead-deliveries/pending").json()["notifications"] == []
+
+
+def test_codex_tool_imports_meta_lead_form_to_delivery(monkeypatch, tmp_path) -> None:
+    """Agents should be able to route retrieved Meta form leads without the UI."""
+    configure_delivery_db(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        source_id = client.post("/api/client-lead-sources", json=source_payload()).json()["id"]
+
+    result = call_tool(
+        run_id="agent-run-meta-lead-import",
+        tool_name="import_meta_lead_form_to_delivery",
+        arguments={
+            "source_id": source_id,
+            "leadgen_id": "meta-agent-lead-1",
+            "campaign_name": "Abogados laborales",
+            "field_data": [
+                {"name": "full_name", "values": ["Agente Meta"]},
+                {"name": "phone_number", "values": ["+5491133334444"]},
+                {"name": "email", "values": ["agente@example.com"]},
+            ],
+            "reason": "Webhook retry imported by agent.",
+        },
+    )
+
+    assert result["ok"] is True
+    assert result["result"]["imported"] == 1
+    assert result["result"]["queued"] == 1
+    row = ClientLeadDelivery.list_by_source(source_id)[0]
+    assert row.source_row_key == "meta-agent-lead-1"
+    assert row.delivery_status == ClientLeadDeliveryStatus.PENDING
 
 
 def test_client_lead_clearing_context_fields_resets_template(monkeypatch, tmp_path) -> None:

@@ -220,8 +220,9 @@ audited, approved plan:
    response, error, idempotency key, and operator approval status.
 10. Lead delivery connects the published ad or lead form back into funnel routing:
    Click-to-WhatsApp `referral.source_id` for WhatsApp conversations; Meta lead
-   forms through a configured `client_lead_source_id`, Sheets intake, then
-   Client Lead Delivery to the client's WhatsApp.
+   forms through a configured `client_lead_source_id`, either Sheets intake or
+   the API-native `import_meta_lead_form_to_delivery` path, then Client Lead
+   Delivery to the client's WhatsApp.
 11. Client updates summarize spend/leads/blockers from events, delivery records,
    and Meta publish status.
 
@@ -254,6 +255,11 @@ state pass. It still performs no external writes.
 The lead-routing slice now blocks unsafe instant-form plans, validates existing
 Click-to-WhatsApp source IDs against the target funnel, and updates funnel
 routing after successful live ad creation.
+The first Meta instant-form intake slice now accepts retrieved Lead Ads payloads
+through `POST /api/client-lead-sources/{source_id}/meta-lead` or the audited
+`import_meta_lead_form_to_delivery` tool. It flattens `field_data`, dedupes by
+`leadgen_id` within the selected Delivery source, and queues the same WhatsApp
+client notification used by Google Sheets imports.
 
 ## Milestones
 
@@ -330,6 +336,8 @@ routing after successful live ad creation.
      `client_lead_source_id`; Click-to-WhatsApp source IDs are validated when
      known and returned ad IDs are persisted to funnel routing after live
      execution.
+   - Meta instant-form intake shipped: retrieved `leadgen_id` payloads can be
+     imported into Client Lead Delivery without using the UI.
 
 9. Client updates and delivery loop
    - Generate 24-hour client updates from campaign and delivery events.

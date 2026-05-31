@@ -232,8 +232,11 @@ Published lead flow must be traceable back to the platform. For
 Click-to-WhatsApp ads, keep `referral.source_id` mapped to the funnel; new ads
 created through `execute_meta_publish_plan` should persist returned Meta ad IDs
 as `whatsapp_referral_source_ids`. For lead forms, use
-`destination.client_lead_source_id` so the export/webhook path feeds the same
-Sheets/client-delivery loop instead of creating a side channel.
+`destination.client_lead_source_id` so the export/webhook path feeds Client
+Lead Delivery instead of creating a side channel. When a Lead Ads payload has
+already been retrieved from Meta, call `import_meta_lead_form_to_delivery` with
+the `leadgen_id`, metadata, and `field_data`; it dedupes by `leadgen_id` and
+queues the same WhatsApp delivery used by Sheets imports.
 
 ## Angle Selection
 

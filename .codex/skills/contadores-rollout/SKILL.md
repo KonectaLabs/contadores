@@ -167,12 +167,17 @@ Before enabling a live Delivery source:
    `sheets` are expanded into one DB source per sheet/campaign.
    Meta instant-form publish plans must reference this source with
    `destination.client_lead_source_id` before approval.
-3. Decide whether the first sync should notify historical rows. First sync
+3. If a Meta Lead Ads instant-form lead has already been retrieved by API or a
+   future verified webhook, import it through `import_meta_lead_form_to_delivery`
+   or `POST /api/client-lead-sources/{source_id}/meta-lead`. Do not create a
+   parallel delivery table; the same `client_lead_deliveries` queue handles
+   dedupe, blocking, retry, and WhatsApp notification.
+4. Decide whether the first sync should notify historical rows. First sync
    imports all non-empty rows and queues valid new rows immediately.
-4. If the sheet is private, set `CONTADORES_GOOGLE_SERVICE_ACCOUNT_FILE` or
+5. If the sheet is private, set `CONTADORES_GOOGLE_SERVICE_ACCOUNT_FILE` or
    `GOOGLE_SERVICE_ACCOUNT_FILE` on the server and share the sheet with that
    service account.
-5. Validate the template spec locally:
+6. Validate the template spec locally:
 
 ```bash
 uv run python src/scripts/whatsapp_templates.py create \
@@ -180,7 +185,7 @@ uv run python src/scripts/whatsapp_templates.py create \
   --dry-run
 ```
 
-6. On the server, check that the Meta template exists and is approved:
+7. On the server, check that the Meta template exists and is approved:
 
 ```bash
 uv run python src/scripts/whatsapp_templates.py check \

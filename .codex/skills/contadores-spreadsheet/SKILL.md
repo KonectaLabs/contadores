@@ -89,8 +89,8 @@ campaign sheet operational columns.
 
 Dedicated tables:
 
-- `client_lead_sources`: one sheet source plus recipient/template config.
-- `client_lead_deliveries`: imported sheet rows and WhatsApp notification state.
+- `client_lead_sources`: one sheet/API source plus recipient/template config.
+- `client_lead_deliveries`: imported lead rows and WhatsApp notification state.
 
 Each source can be configured through the API/UI or through file-backed config.
 The file-backed path is preferred when Facu asks Codex to create a new client
@@ -98,6 +98,10 @@ Delivery flow without using the UI.
 Meta instant-form publish plans must reference a ready source with
 `destination.client_lead_source_id`; otherwise the Meta approval/preflight gate
 must stay blocked because the leads would not have a delivery path.
+When a Meta Lead Ads payload has already been retrieved by API/webhook, import
+it through `import_meta_lead_form_to_delivery` or
+`POST /api/client-lead-sources/{source_id}/meta-lead`; do not create a separate
+delivery table.
 
 Config files:
 
@@ -177,6 +181,7 @@ Endpoints:
 - `PUT /api/client-lead-sources/{source_id}`
 - `DELETE /api/client-lead-sources/{source_id}`
 - `POST /api/client-lead-sources/{source_id}/sync`
+- `POST /api/client-lead-sources/{source_id}/meta-lead`
 - `GET /api/client-lead-sources/{source_id}/leads`
 - `GET /api/client-leads/{delivery_id}/copy-all`
 - `POST /api/client-leads/{delivery_id}/retry`

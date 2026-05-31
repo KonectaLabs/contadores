@@ -181,7 +181,21 @@ curl -fsS -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
   http://127.0.0.1:8000/api/client-lead-deliveries/pending
 ```
 
-6. Deploy product code changes through the normal Contadores rollout. For a
+6. For retrieved Meta Lead Ads instant-form payloads, do not create a separate
+   delivery path. Import the retrieved `leadgen_id` and `field_data` into the
+   selected Delivery source:
+
+```bash
+uv run python -m backend.ai.codex_agent_runtime call \
+  --run-id meta-lead-import-001 \
+  --tool import_meta_lead_form_to_delivery \
+  --arguments-json '{"source_id":"{source_id}","leadgen_id":"META_LEAD_ID","field_data":[{"name":"full_name","values":["Ana Perez"]},{"name":"phone_number","values":["+5491111111111"]},{"name":"email","values":["ana@example.com"]}]}'
+```
+
+   The backend uses `leadgen_id` as the idempotency key for that source and
+   queues the same pending WhatsApp notification as a Sheets import.
+
+7. Deploy product code changes through the normal Contadores rollout. For a
    pure data-file flow on an already deployed build, editing the server data
    file plus config reload is enough.
 
