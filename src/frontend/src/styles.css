@@ -3806,12 +3806,12 @@ body {
 
 #contadoresView .ct-lead-view-group {
   display: grid;
-  gap: 7px;
+  gap: 5px;
   min-width: 0;
-  padding: 7px;
-  border: 1px solid var(--ct-line-soft);
-  border-radius: var(--ct-radius);
-  background: rgba(255, 253, 248, 0.66);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 #contadoresView .ct-lead-view-group-head {
@@ -3840,58 +3840,49 @@ body {
 }
 
 #contadoresView .ct-lead-view-group-strip {
-  display: grid;
+  display: flex;
   gap: 6px;
   min-width: 0;
-}
-
-#contadoresView .ct-lead-view-group[data-group="overview"] .ct-lead-view-group-strip {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-#contadoresView .ct-lead-view-group[data-group="pipeline"] .ct-lead-view-group-strip {
-  grid-template-columns: repeat(5, minmax(74px, 1fr));
-}
-
-#contadoresView .ct-lead-view-group[data-group="action"] .ct-lead-view-group-strip,
-#contadoresView .ct-lead-view-group[data-group="system"] .ct-lead-view-group-strip {
-  grid-template-columns: repeat(2, minmax(78px, 1fr));
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: thin;
 }
 
 #contadoresView .ct-lead-view {
   --lead-view-accent: #64748b;
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  flex: 0 0 auto;
+  grid-template-columns: auto auto;
   align-items: center;
-  align-content: center;
-  gap: 6px;
-  min-height: 58px;
-  padding: 9px 10px;
+  justify-content: start;
+  gap: 7px;
+  min-width: 82px;
+  min-height: 34px;
+  padding: 0 10px;
   border: 1px solid var(--ct-line);
-  border-left: 4px solid transparent;
   border-radius: var(--ct-radius);
   background: var(--ct-surface);
   color: var(--ct-ink);
   text-align: left;
-  transition: background 160ms ease, border-color 160ms ease, box-shadow 160ms ease, color 160ms ease;
+  transition: background 160ms ease, border-color 160ms ease, box-shadow 160ms ease, color 160ms ease, transform 160ms ease;
 }
 
 #contadoresView .ct-lead-view:hover:not(.active) {
-  border-left-color: var(--lead-view-accent);
+  border-color: var(--lead-view-accent);
   background: #fffaf1;
+  transform: translateY(-1px);
 }
 
 #contadoresView .ct-lead-view.active {
   border-color: var(--lead-view-accent);
-  border-left-color: var(--lead-view-accent);
   background: var(--lead-view-accent);
   color: #ffffff;
-  box-shadow: 0 12px 24px rgba(32, 35, 31, 0.12);
+  box-shadow: 0 8px 18px rgba(32, 35, 31, 0.1);
 }
 
 #contadoresView .ct-lead-view-count {
   color: var(--lead-view-accent);
-  font: 700 1.15rem/1 var(--font-mono);
+  font: 800 12px/1 var(--font-mono);
 }
 
 #contadoresView .ct-lead-view[data-tone="all"] { --lead-view-accent: #1f2937; }
@@ -3902,9 +3893,9 @@ body {
 
 #contadoresView .ct-lead-view-label {
   color: var(--ct-ink-muted);
-  font: 600 12px/1.15 var(--font-sans);
+  font: 700 11px/1 var(--font-sans);
   overflow-wrap: anywhere;
-  white-space: normal;
+  white-space: nowrap;
 }
 
 #contadoresView .ct-lead-view.active .ct-lead-view-count,
@@ -4062,9 +4053,9 @@ body {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 5px;
   overflow-y: auto;
-  padding: 4px;
+  padding: 6px;
 }
 
 #contadoresView .ct-lead-row {
@@ -4072,22 +4063,25 @@ body {
   display: grid;
   grid-template-columns: 24px minmax(0, 1fr);
   align-items: center;
-  gap: 4px;
-  border: 1px solid rgba(222, 214, 200, 0.76);
+  gap: 6px;
+  border: 1px solid transparent;
+  border-left: 3px solid transparent;
   border-radius: var(--ct-radius);
-  background: rgba(255, 253, 248, 0.7);
-  transition: background 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+  background: rgba(255, 253, 248, 0.58);
+  transition: background 160ms ease, border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
 
 #contadoresView .ct-lead-row:hover {
   border-color: rgba(21, 94, 117, 0.22);
-  background: #fffaf1;
+  border-left-color: rgba(21, 94, 117, 0.48);
+  background: rgba(255, 255, 255, 0.92);
 }
 
 #contadoresView .ct-lead-row.active {
   border-color: rgba(21, 94, 117, 0.42);
-  background: var(--ct-accent-soft);
-  box-shadow: inset 5px 0 0 var(--ct-accent), 0 12px 24px rgba(35, 47, 50, 0.08);
+  border-left-color: var(--ct-accent);
+  background: #ffffff;
+  box-shadow: 0 14px 30px rgba(35, 47, 50, 0.09);
 }
 
 #contadoresView .ct-lead-row.selected {
@@ -4108,10 +4102,10 @@ body {
 
 #contadoresView .ct-lead {
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
-  gap: 10px;
+  grid-template-columns: 32px minmax(0, 1fr);
+  gap: 11px;
   align-items: flex-start;
-  padding: 10px;
+  padding: 11px 12px 11px 8px;
   border: 1px solid transparent;
   border-radius: var(--ct-radius);
   background: transparent;
@@ -4129,10 +4123,10 @@ body {
 }
 
 #contadoresView .ct-lead-avatar {
-  width: 34px;
-  height: 34px;
+  width: 32px;
+  height: 32px;
   background: var(--ct-accent);
-  font-size: 13px;
+  font-size: 12px;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.28);
 }
 
@@ -4143,11 +4137,12 @@ body {
 #contadoresView .ct-lead-body {
   min-width: 0;
   display: grid;
-  gap: 3px;
+  gap: 5px;
 }
 
 #contadoresView .ct-lead-top,
-#contadoresView .ct-lead-meta {
+#contadoresView .ct-lead-meta,
+#contadoresView .ct-lead-status-line {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -4155,28 +4150,23 @@ body {
   min-width: 0;
 }
 
+#contadoresView .ct-lead-status-line {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
 #contadoresView .ct-lead-name {
   min-width: 0;
   margin: 0;
   overflow: hidden;
   color: var(--ct-ink);
-  font: 600 13px/1.25 var(--font-sans);
+  font: 700 13px/1.2 var(--font-sans);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-#contadoresView .ct-lead-tags {
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
 #contadoresView .ct-lead-stage,
-#contadoresView .ct-lead-strategy-tag,
-#contadoresView .ct-lead-tag,
-#contadoresView .ct-lead-converted,
 #contadoresView .ct-lead-turn,
 #contadoresView .ct-lead-delivery-error,
 #contadoresView .ct-strategy-chip,
@@ -4205,33 +4195,10 @@ body {
 #contadoresView .ct-lead-stage {
   min-height: auto;
   border: 0;
-  padding: 2px 8px;
+  padding: 3px 8px;
   font-size: 9px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-}
-
-#contadoresView .ct-lead-strategy-tag {
-  min-height: auto;
-  background: var(--ct-surface-2);
-  color: var(--ct-ink-muted);
-  font-size: 9px;
-}
-
-#contadoresView .ct-lead-tag {
-  min-height: auto;
-  background: #f5f0e6;
-  color: #6f5632;
-  font-size: 9px;
-}
-
-#contadoresView .ct-lead-converted {
-  gap: 3px;
-  min-height: auto;
-  border-color: rgba(22, 101, 52, 0.2);
-  background: var(--ct-success-bg);
-  color: var(--ct-success);
-  font-size: 9px;
 }
 
 #contadoresView .ct-lead-stage[data-tone="warn"],
@@ -4258,7 +4225,7 @@ body {
   gap: 5px;
   overflow: hidden;
   color: var(--ct-ink-muted);
-  font: 500 11px/1.3 var(--font-mono);
+  font: 600 10px/1.3 var(--font-mono);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -4277,22 +4244,30 @@ body {
 #contadoresView .ct-lead-time {
   flex-shrink: 0;
   color: var(--ct-ink-soft);
-  font: 500 10px/1 var(--font-mono);
+  font: 600 10px/1 var(--font-mono);
+}
+
+#contadoresView .ct-lead-context {
+  flex: 0 0 auto;
+  color: var(--ct-ink-soft);
+  font: 600 10px/1 var(--font-sans);
 }
 
 #contadoresView .ct-lead-preview {
   margin: 0;
+  display: -webkit-box;
   overflow: hidden;
   color: var(--ct-ink-muted);
-  font: 400 12px/1.35 var(--font-sans);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font: 500 12px/1.35 var(--font-sans);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 #contadoresView .ct-detail-head {
   flex: 0 0 auto;
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
   gap: 12px;
   padding: 14px 16px;
   border-bottom: 1px solid var(--ct-line-soft);
@@ -4358,7 +4333,7 @@ body {
 #contadoresView .ct-detail-head-actions {
   display: flex;
   flex-wrap: wrap;
-  justify-content: flex-start;
+  justify-content: flex-end;
   gap: 8px;
   min-width: 0;
   max-width: 100%;
@@ -7607,7 +7582,7 @@ body {
   }
 
   #contadoresView .ct-lead-view {
-    min-height: 54px;
+    min-height: 34px;
   }
 
   #contadoresView .ct-filter-row {
@@ -7731,7 +7706,7 @@ body {
 
   #contadoresView .ct-detail-head {
     align-items: stretch;
-    flex-direction: column;
+    grid-template-columns: 1fr;
   }
 
   #contadoresView .ct-detail-head-actions {

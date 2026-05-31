@@ -2196,11 +2196,11 @@ def test_codex_agent_tool_marks_lead_converted_canonically(monkeypatch, tmp_path
 
     assert result["ok"] is True
     assert result["result"]["converted"] is True
-    assert result["result"]["stage"] == "booked"
+    assert result["result"]["stage"] == "awaiting_initial_reply"
     assert result["result"]["pipeline_stage"] == "converted"
     assert result["result"]["converted_at"] == result["result"]["booked_at"]
     assert updated is not None
-    assert updated.stage == ContadoresLeadStage.BOOKED
+    assert updated.stage == ContadoresLeadStage.AWAITING_INITIAL_REPLY
     assert updated.pipeline_stage == "converted"
     assert updated.automation_paused is True
     assert updated.automation_paused_reason == CONTADORES_LEAD_MANUAL_CONVERTED_REASON
@@ -4104,7 +4104,7 @@ def test_manual_outbound_can_queue_multiple_uploaded_files(monkeypatch, tmp_path
     assert outbound_messages[0]["media_url"].startswith("/api/contadores/media/")
 
 
-def test_mark_converted_action_keeps_legacy_booked_storage_without_queueing_template(monkeypatch, tmp_path) -> None:
+def test_mark_converted_action_sets_conversion_without_raw_booked_stage(monkeypatch, tmp_path) -> None:
     """Operators can mark a lead converted without sending WhatsApp."""
     monkeypatch.setenv("FUNNELS_CONFIG_PATH", str(tmp_path / "funnels.json"))
     configure_contadores_db(monkeypatch, tmp_path)
@@ -4127,6 +4127,7 @@ def test_mark_converted_action_keeps_legacy_booked_storage_without_queueing_temp
     assert detail_response.status_code == 200
     lead_payload = detail_response.json()["lead"]
     assert lead_payload["stage"] == "booked"
+    assert lead_payload["raw_stage"] == "awaiting_initial_reply"
     assert lead_payload["pipeline_stage"] == "converted"
     assert lead_payload["booked_at"] is not None
     assert lead_payload["automation_paused"] is True
@@ -4163,6 +4164,7 @@ def test_mark_converted_endpoint_is_canonical_and_bookings_endpoint_is_legacy_al
     assert converted_response.status_code == 200
     converted_payload = converted_response.json()
     assert converted_payload["stage"] == "booked"
+    assert converted_payload["raw_stage"] == "awaiting_initial_reply"
     assert converted_payload["pipeline_stage"] == "converted"
     assert converted_payload["attention_state"] == "converted"
     assert converted_payload["converted_at"] is not None
@@ -4172,6 +4174,7 @@ def test_mark_converted_endpoint_is_canonical_and_bookings_endpoint_is_legacy_al
     assert legacy_response.status_code == 200
     legacy_payload = legacy_response.json()
     assert legacy_payload["stage"] == "booked"
+    assert legacy_payload["raw_stage"] == "booked"
     assert legacy_payload["pipeline_stage"] == "converted"
     assert legacy_payload["converted_at"] is not None
     assert legacy_payload["converted_at"] == legacy_payload["booked_at"]

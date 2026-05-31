@@ -5919,6 +5919,7 @@ function LeadList({
         const strategyTag = strategyTagForLead(lead);
         const checked = selectedLeadIds.includes(lead.id);
         const hasOutboundError = (lead.outbound_error_count || 0) > 0;
+        const hasSecondaryTags = (lead.tags ?? []).length > 0;
         return (
           <div
             className={`ct-lead-row ${lead.id === selectedLeadId ? "active" : ""} ${checked ? "selected" : ""} ${hasOutboundError ? "has-error" : ""}`}
@@ -5940,32 +5941,27 @@ function LeadList({
               <div className="ct-lead-body">
                 <div className="ct-lead-top">
                   <h4 className="ct-lead-name">{lead.full_name || lead.phone || "Lead"}</h4>
-                  <div className="ct-lead-tags">
-                    <span className="ct-lead-stage" data-tone={tone}>{inboxMode ? "Inbox" : formatLeadStatusLabel(lead)}</span>
-                    {lead.workstation_client_id ? (
-                      <span className="ct-lead-converted">
-                        Converted
-                      </span>
-                    ) : null}
-                    {strategyTag ? <span className="ct-lead-strategy-tag">{strategyTag}</span> : null}
-                    {(lead.tags ?? []).slice(0, 3).map((tag) => <span className="ct-lead-tag" key={tag}>#{tag}</span>)}
-                    {turn ? <span className={`ct-lead-turn ${turn}`}>{turn === "needs_reply" ? "Needs reply" : "Answered"}</span> : null}
-                    {hasOutboundError ? (
-                      <span className="ct-lead-delivery-error" title={lead.latest_outbound_error || "WhatsApp delivery failed"}>
-                        <WarningCircle size={13} weight="fill" />
-                        Send failed
-                      </span>
-                    ) : null}
-                  </div>
+                  <span className="ct-lead-time">{relativeTime(lastInteractionAt(lead))}</span>
                 </div>
+                <div className="ct-lead-status-line">
+                  <span className="ct-lead-stage" data-tone={tone}>{inboxMode ? "Inbox" : formatLeadStatusLabel(lead)}</span>
+                  {turn ? <span className={`ct-lead-turn ${turn}`}>{turn === "needs_reply" ? "Needs reply" : "Answered"}</span> : null}
+                  {hasOutboundError ? (
+                    <span className="ct-lead-delivery-error" title={lead.latest_outbound_error || "WhatsApp delivery failed"}>
+                      <WarningCircle size={13} weight="fill" />
+                      Send failed
+                    </span>
+                  ) : null}
+                </div>
+                <p className="ct-lead-preview">{leadPreview(lead)}</p>
                 <div className="ct-lead-meta">
                   <span className="ct-lead-meta-main">
                     <PhoneCountryFlag phone={lead.phone || lead.normalized_phone} />
                     <span>{lead.phone || "-"}</span>
                   </span>
-                  <span className="ct-lead-time">{relativeTime(lastInteractionAt(lead))}</span>
+                  {strategyTag ? <span className="ct-lead-context">{strategyTag}</span> : null}
+                  {hasSecondaryTags ? <span className="ct-lead-context">{lead.tags.length} tag{lead.tags.length === 1 ? "" : "s"}</span> : null}
                 </div>
-                <p className="ct-lead-preview">{leadPreview(lead)}</p>
               </div>
             </button>
           </div>
@@ -6018,6 +6014,10 @@ function LeadDetailHeader({
   const codexEnabled = Boolean(lead?.codex_enabled);
   const canMarkAnswered = lead?.manual_reply_status === "needs_reply" && !closed;
   const hasWorkstationClient = Boolean(lead?.workstation_client_id);
+  const detailContactParts = lead
+    ? [lead.phone || lead.normalized_phone, lead.email].filter(Boolean)
+    : [];
+  const showBuildPrimary = Boolean(lead && (hasWorkstationClient || convertedMilestone));
 
   return (
     <header className="ct-detail-head">
@@ -6030,41 +6030,53 @@ function LeadDetailHeader({
             {lead ? (
               <>
                 <PhoneCountryFlag phone={lead.phone || lead.normalized_phone} />
-                <span>{[lead.phone || "-", lead.email || "-", lead.platform || "-", lead.external_lead_id || "-"].join(" · ")}</span>
+                <span>{detailContactParts.length ? detailContactParts.join(" · ") : "No contact info"}</span>
               </>
             ) : "Pick a lead."}
           </p>
         </div>
       </div>
       <div className="ct-detail-head-actions">
-        <button type="button" className="ct-btn ct-btn-primary" disabled={!lead || crmOutboundBlocked || Boolean(actionBusy)} onClick={onOpenSend}>
-          <PaperPlaneTilt size={15} weight="bold" />
-          Send
-        </button>
-        {hasWorkstationClient && lead?.workstation_client_id ? (
+        {showBuildPrimary && hasWorkstationClient && lead?.workstation_client_id ? (
           <button
             type="button"
-            className="ct-btn ct-btn-ghost"
+            className="ct-btn ct-btn-primary"
             disabled={Boolean(actionBusy)}
             onClick={() => onOpenWorkstation(lead.workstation_client_id || "")}
           >
             <FolderOpen size={15} weight="bold" />
             Build
           </button>
-        ) : (
+        ) : showBuildPrimary ? (
           <button
             type="button"
-            className="ct-btn ct-btn-ghost"
+            className="ct-btn ct-btn-primary"
             disabled={!lead || closed || archived || Boolean(actionBusy)}
             onClick={onConvert}
           >
-            {convertedMilestone ? <Robot size={15} weight="bold" /> : <CurrencyDollar size={15} weight="bold" />}
-            {convertedMilestone ? "Build" : "Convert"}
+            <Robot size={15} weight="bold" />
+            Build
+          </button>
+        ) : (
+          <button type="button" className="ct-btn ct-btn-primary" disabled={!lead || crmOutboundBlocked || Boolean(actionBusy)} onClick={onOpenSend}>
+            <PaperPlaneTilt size={15} weight="bold" />
+            Send
           </button>
         )}
         <details className="ct-action-menu">
           <summary className="ct-btn ct-btn-ghost">More</summary>
           <div className="ct-action-menu-panel">
+            {!showBuildPrimary ? (
+              <button
+                type="button"
+                className="ct-btn ct-btn-ghost"
+                disabled={!lead || closed || archived || Boolean(actionBusy)}
+                onClick={onConvert}
+              >
+                <CurrencyDollar size={15} weight="bold" />
+                Convert
+              </button>
+            ) : null}
             <label className="ct-codex-switch" title={codexEnabled ? "Codex enabled for this lead" : "Codex disabled for this lead"}>
               <input
                 type="checkbox"
