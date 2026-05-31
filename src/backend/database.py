@@ -2679,6 +2679,48 @@ class AgentRun(SQLModel, table=True):
             return row
 
     @classmethod
+    def get_by_id(cls, run_id: str) -> Optional["AgentRun"]:
+        """Return one agent run by ID."""
+        clean_id = (run_id or "").strip()
+        if not clean_id:
+            return None
+        with Session(engine) as session:
+            row = session.get(cls, clean_id)
+            if row is not None:
+                session.expunge(row)
+            return row
+
+    @classmethod
+    def ensure(
+        cls,
+        *,
+        run_id: str,
+        agent_kind: str = "codex_tool",
+        target_type: str = "",
+        target_id: str = "",
+        prompt_version: str = "agent-native-tool-call",
+        context_path: str = "",
+    ) -> Optional["AgentRun"]:
+        """Create the audit parent run when an agent-native tool is called directly."""
+        clean_id = (run_id or "").strip()
+        if not clean_id:
+            return None
+        existing = cls.get_by_id(clean_id)
+        if existing is not None:
+            return existing
+        try:
+            return cls.start(
+                run_id=clean_id,
+                agent_kind=agent_kind,
+                target_type=target_type,
+                target_id=target_id,
+                prompt_version=prompt_version,
+                context_path=context_path,
+            )
+        except IntegrityError:
+            return cls.get_by_id(clean_id)
+
+    @classmethod
     def finish(
         cls,
         run_id: str,

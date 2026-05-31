@@ -35,6 +35,7 @@ from backend.ai.contadores_conversation_bot import ContadoresConversationBotResu
 from backend.ai import codex_agent_runtime
 from backend.contadores_strategies import get_contadores_strategy
 from backend.database import (
+    AgentRun,
     AgentToolCall,
     ClientLeadSource,
     ContadoresConfig,
@@ -398,6 +399,30 @@ def test_codex_agent_tool_configures_text_offer_funnel_without_ui(monkeypatch, t
     assert "extract_client_profile_from_meeting_transcript" in snapshot["result"]["agent_native_tools"]
     assert "extract_client_profile_from_meeting_transcript" in snapshot["result"]["schemas"]
     assert any(item["id"] == "dentistas" for item in snapshot["result"]["funnels"])
+
+
+def test_agent_native_tool_call_creates_missing_audit_run(monkeypatch, tmp_path) -> None:
+    """Direct tool calls should not fail audit writes when no AgentRun exists yet."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    result = call_tool(
+        run_id="direct-tool-run-1",
+        tool_name="ask_human_question",
+        arguments={
+            "workflow": "meta_publish",
+            "target_type": "platform",
+            "target_id": "meta_publish_credentials",
+            "question": "Where are the Meta credentials?",
+            "default_action": "Keep staged mode.",
+        },
+    )
+    assert result["ok"] is True
+    audit_run = AgentRun.get_by_id("direct-tool-run-1")
+    assert audit_run is not None
+    assert audit_run.status == "completed"
+    assert audit_run.finished_at is not None
+    calls = AgentToolCall.list_by_run("direct-tool-run-1")
+    assert len(calls) == 1
+    assert calls[0].tool_name == "ask_human_question"
 
 
 def test_codex_agent_tool_configures_client_lead_delivery_without_ui(monkeypatch, tmp_path) -> None:

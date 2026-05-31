@@ -26,6 +26,7 @@ from backend.client_lead_config import (
     list_file_backed_client_lead_sources,
 )
 from backend.database import (
+    AgentRun,
     AgentToolCall,
     CLIENT_LEAD_DEFAULT_COLUMN_MAPPING,
     CLIENT_LEAD_DEFAULT_TEMPLATE_LANGUAGE,
@@ -2615,6 +2616,12 @@ def call_tool(*, run_id: str, tool_name: str, arguments: dict[str, Any]) -> dict
         target_type = str(arguments.get("target_type") or default_target_type)
         target_id = str(arguments.get("target_id") or default_target_id)
     idempotency_key = str(arguments.get("idempotency_key") or "").strip() or None
+    direct_audit_run = AgentRun.get_by_id(run_id) is None
+    AgentRun.ensure(
+        run_id=run_id,
+        target_type=target_type,
+        target_id=target_id,
+    )
     try:
         if handler is None:
             raise AgentToolError(f"Unknown tool: {clean_tool_name}")
@@ -2654,4 +2661,11 @@ def call_tool(*, run_id: str, tool_name: str, arguments: dict[str, Any]) -> dict
             error=f"{error.__class__.__name__}: {error}",
         )
     write_jsonl(run_context_dir(run_id) / "tool_calls.jsonl", payload | {"arguments": arguments})
+    if direct_audit_run:
+        AgentRun.finish(
+            run_id,
+            status="completed" if payload["ok"] else "failed",
+            final_response=json.dumps(payload, ensure_ascii=True, default=str),
+            error=str(payload.get("error") or ""),
+        )
     return payload
