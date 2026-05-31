@@ -2473,6 +2473,7 @@ function ClientLeadDeliveryView({
   const selectedGroupTone = selectedGroup ? deliveryContactTone(selectedGroup) : selectedSource ? deliverySourceTone(selectedSource) : "muted";
   const selectedGroupStatus = selectedGroup ? deliveryContactStatusLabel(selectedGroup) : selectedSource?.enabled ? humanize(selectedSource.last_sync_status || "active") : "Paused";
   const visibleLeads = activeSheetFilter === "all" ? leads : leads.filter((lead) => lead.source_id === activeSheetFilter);
+  const nextActionLeads = visibleLeads.filter(isRetryableClientLead);
   const visibleSheetSections = buildDeliverySheetLeadSections(selectedSources, visibleLeads, activeSheetFilter);
   const totalLeads = sources.reduce((total, source) => total + deliverySourceCount(source, "total"), 0);
   const failedLeads = contactGroups.reduce((total, group) => total + group.issues, 0);
@@ -2641,6 +2642,16 @@ function ClientLeadDeliveryView({
                   <span>{selectedIssueSources.map((source) => `${deliverySheetLabel(source)}: ${deliverySourceIssueText(source)}`).join(" · ")}</span>
                 </div>
               </div>
+            ) : null}
+
+            {isExisting && nextActionLeads.length ? (
+              <DeliveryNextActions
+                leads={nextActionLeads}
+                actionBusy={actionBusy}
+                onCopyLead={onCopyLead}
+                onCopyLeadAll={onCopyLeadAll}
+                onRetryLead={onRetryLead}
+              />
             ) : null}
 
             {configOpen ? (
@@ -2825,7 +2836,7 @@ function ClientLeadDeliveryView({
               </section>
             ) : null}
 
-            <details className="delivery-lead-panel delivery-rows-disclosure" open={selectedBlockedLeads + selectedFailedLeads > 0}>
+            <details className="delivery-lead-panel delivery-rows-disclosure">
               <summary className="workstation-panel-head">
                 <div>
                   <span>Rows</span>
@@ -2934,15 +2945,17 @@ function ClientLeadDeliveryView({
                                   >
                                     {actionBusy === `delivery-copy-${lead.id}` ? "Copying..." : "Copy all"}
                                   </button>
-                                  <button
-                                    type="button"
-                                    className="ct-btn ct-btn-ghost"
-                                    disabled={!retryable || actionBusy === `delivery-retry-${lead.id}`}
-                                    onClick={() => onRetryLead(lead)}
-                                  >
-                                    <ArrowsClockwise size={14} weight="bold" />
-                                    {actionBusy === `delivery-retry-${lead.id}` ? "Retrying..." : "Retry"}
-                                  </button>
+                                  {retryable ? (
+                                    <button
+                                      type="button"
+                                      className="ct-btn ct-btn-ghost"
+                                      disabled={actionBusy === `delivery-retry-${lead.id}`}
+                                      onClick={() => onRetryLead(lead)}
+                                    >
+                                      <ArrowsClockwise size={14} weight="bold" />
+                                      {actionBusy === `delivery-retry-${lead.id}` ? "Retrying..." : "Retry"}
+                                    </button>
+                                  ) : null}
                                 </div>
                               </div>
                             </article>
@@ -2960,6 +2973,76 @@ function ClientLeadDeliveryView({
         </section>
       </div>
     </div>
+  );
+}
+
+function DeliveryNextActions({
+  leads,
+  actionBusy,
+  onCopyLead,
+  onCopyLeadAll,
+  onRetryLead,
+}: {
+  leads: ClientLead[];
+  actionBusy: string | null;
+  onCopyLead: (lead: ClientLead) => void | Promise<void>;
+  onCopyLeadAll: (lead: ClientLead) => void | Promise<void>;
+  onRetryLead: (lead: ClientLead) => void | Promise<void>;
+}) {
+  return (
+    <section className="delivery-next-actions" aria-label="Delivery next actions">
+      <header className="delivery-next-head">
+        <div>
+          <span>Next actions</span>
+          <strong>{leads.length === 1 ? "1 lead needs delivery" : `${leads.length} leads need delivery`}</strong>
+        </div>
+      </header>
+      <div className="delivery-next-list">
+        {leads.map((lead) => {
+          const busy = actionBusy === `delivery-retry-${lead.id}`;
+          const copyBusy = actionBusy === `delivery-copy-${lead.id}`;
+          const waLink = lead.wa_link || buildWaLink(lead.phone_number);
+          return (
+            <article className="delivery-next-card" data-tone={clientLeadDeliveryTone(lead)} key={lead.id}>
+              <div className="delivery-next-copy">
+                <span>Row {lead.row_number} · {humanize(lead.delivery_status || "blocked")}</span>
+                <strong>{deliveryLeadTitle(lead)}</strong>
+                <small>{lead.last_delivery_error || lead.block_reason || deliveryLeadSubtitle(lead)}</small>
+              </div>
+              <div className="delivery-next-actions-row">
+                <button
+                  type="button"
+                  className="ct-btn ct-btn-primary"
+                  disabled={busy}
+                  onClick={() => onRetryLead(lead)}
+                >
+                  <ArrowsClockwise size={14} weight="bold" />
+                  {busy ? "Retrying..." : "Retry"}
+                </button>
+                <details className="ct-action-menu">
+                  <summary className="ct-btn ct-btn-ghost">More</summary>
+                  <div className="ct-action-menu-panel">
+                    {waLink ? (
+                      <a className="ct-btn ct-btn-ghost delivery-action-link" href={waLink} target="_blank" rel="noreferrer">
+                        <ArrowSquareOut size={14} weight="bold" />
+                        Chat
+                      </a>
+                    ) : null}
+                    <button type="button" className="ct-btn ct-btn-ghost" onClick={() => onCopyLead(lead)}>
+                      <Copy size={14} weight="bold" />
+                      Copy
+                    </button>
+                    <button type="button" className="ct-btn ct-btn-ghost" disabled={copyBusy} onClick={() => onCopyLeadAll(lead)}>
+                      {copyBusy ? "Copying..." : "Copy all"}
+                    </button>
+                  </div>
+                </details>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
