@@ -6356,9 +6356,13 @@ def test_contadores_overview_and_alerts_use_effective_stage(monkeypatch, tmp_pat
 
     assert booked_response.status_code == 200
     assert booked_response.json()["metrics"]["booked"] == 1
+    assert booked_response.json()["metrics"]["pipeline_converted"] == 1
     assert [item["id"] for item in booked_response.json()["leads"]] == [lead.id]
     assert booked_response.json()["leads"][0]["stage"] == "booked"
     assert booked_response.json()["leads"][0]["raw_stage"] == "needs_human"
+    assert booked_response.json()["leads"][0]["pipeline_stage"] == "converted"
+    assert booked_response.json()["leads"][0]["terminal_state"] == "open"
+    assert booked_response.json()["leads"][0]["attention_state"] == "converted"
 
     assert needs_human_response.status_code == 200
     assert needs_human_response.json()["metrics"]["needs_human"] == 0
@@ -6392,9 +6396,14 @@ def test_contadores_calendly_bucket_includes_manual_post_calendly_leads(monkeypa
 
     assert calendly_response.status_code == 200
     assert calendly_response.json()["metrics"]["calendly_sent"] == 1
+    assert calendly_response.json()["metrics"]["pipeline_meeting_sent"] == 1
+    assert calendly_response.json()["metrics"]["attention_needs_reply"] == 1
     assert [item["id"] for item in calendly_response.json()["leads"]] == [lead.id]
     assert calendly_response.json()["leads"][0]["stage"] == "needs_human"
     assert calendly_response.json()["leads"][0]["raw_stage"] == "needs_human"
+    assert calendly_response.json()["leads"][0]["pipeline_stage"] == "meeting_sent"
+    assert calendly_response.json()["leads"][0]["queue_state"] == "operator"
+    assert calendly_response.json()["leads"][0]["attention_state"] == "needs_reply"
 
     assert manual_response.status_code == 200
     assert manual_response.json()["metrics"]["needs_human"] == 1
@@ -6436,6 +6445,7 @@ def test_contadores_stage_filter_does_not_recalculate_pipeline_metrics(monkeypat
 
     with TestClient(app) as client:
         response = client.get("/api/contadores/leads?stage=calendly_sent")
+        pipeline_response = client.get("/api/contadores/leads?pipeline_stage=meeting_sent")
 
     assert response.status_code == 200
     payload = response.json()
@@ -6444,6 +6454,13 @@ def test_contadores_stage_filter_does_not_recalculate_pipeline_metrics(monkeypat
     assert payload["metrics"]["awaiting_initial_reply"] == 1
     assert payload["metrics"]["awaiting_video_reply"] == 1
     assert payload["metrics"]["calendly_sent"] == 1
+    assert payload["metrics"]["pipeline_new"] == 1
+    assert payload["metrics"]["pipeline_offer_sent"] == 1
+    assert payload["metrics"]["pipeline_meeting_sent"] == 1
+
+    assert pipeline_response.status_code == 200
+    assert [item["id"] for item in pipeline_response.json()["leads"]] == [calendly_lead.id]
+    assert pipeline_response.json()["leads"][0]["pipeline_stage"] == "meeting_sent"
 
 
 def test_contadores_leads_sort_by_latest_interaction(monkeypatch, tmp_path) -> None:

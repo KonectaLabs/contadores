@@ -62,7 +62,7 @@ Also read these skills when relevant:
 - Exclude Workstation clients completely. As of the 2026-05-02 wave, this means
   the paid clients Guido Roberto Carrion Alvarado and Rodrigo Javier Monges
   Luces, plus any lead present in `workstation_clients`.
-- Exclude closed, booked, and archived leads.
+- Exclude closed, converted/legacy booked, and archived leads.
 - Exclude any lead with `codex_enabled=false` or `codex_disabled` in
   `exclusion_reasons`. Do not send messages, mutate state, schedule follow-ups,
   or try to route around that switch.
@@ -140,7 +140,8 @@ POST http://149.50.136.121/api/contadores/followup/leads/{lead_id}/actions
 
 Allowed action values are the existing quick actions, including
 `send-manual-ping`, `send-opener`, `send-loom`, `send-video-check`,
-`send-calendly`, `send-calendly-link`, `mark-booked`, `mark-answered`, `close`,
+`send-calendly`, `send-calendly-link`, `mark-booked` (legacy alias for marking
+`Converted`), `mark-answered`, `close`,
 `reopen`, `archive`, and `unarchive`.
 
 Update one lead's classification/stage:
@@ -230,8 +231,8 @@ Final summary must include:
 - Proactive follow-up candidates reviewed, sent, and skipped, with the exact
   reason for each skip.
 - Leads closest to converting and the exact next human action.
-- Urgent booking handoffs: lead, requested day/time, email status, whether
-  Meeting was booked, and whether Facu was alerted.
+- Urgent booking handoffs: lead, requested day/time, email status, whether the
+  lead converted/meeting was scheduled, and whether Facu was alerted.
 - New replies that arrived and what happened next.
 - Delivery failures grouped by Meta code.
 - System errors found/fixed.

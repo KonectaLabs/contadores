@@ -204,9 +204,10 @@ Manual ping requests must include backend confirmation and batch audit metadata.
 Closed leads cannot receive outbound WhatsApp messages. Reopen the lead first,
 then send the message or template.
 
-Marking a lead as `booked` must not send any WhatsApp message. The legacy
-`send-manual-booked` action name is kept as a compatibility alias, but it only
-marks the lead as `booked` and pauses automation.
+The UI-facing conversion state is `Converted`. Storage/API still keep legacy
+`stage=booked` and the `send-manual-booked` action as compatibility aliases.
+Marking a lead converted must not send any WhatsApp message; it only sets the
+legacy booked milestone and pauses automation.
 
 ## Manual meeting actions
 
@@ -250,9 +251,10 @@ deterministic fast path before normal scheduling:
   `start_workstation_solo_page`. The backend creates or reuses one
   `WorkstationClient` with `work_type=solo_pagina`, `status=pending_payment`,
   `automation_status=intake`, and the fixed promo price in `offer_price_usd`.
-- Once Workstation starts, the CRM lead is `booked`, automation is paused with
-  `automation_paused_reason=workstation_solo_page_started`, and future replies
-  are handled by `/api/workstation/automation/tick`.
+- Once Workstation starts, the CRM lead is visible as `Converted`, automation is
+  paused with `automation_paused_reason=workstation_solo_page_started`, and
+  future replies are handled by `/api/workstation/automation/tick`. Legacy
+  storage may still expose `stage=booked`/`booked_at`.
 - If an operator manually starts the same promo path from the CRM `Solo page`
   action, the backend creates `solo_pagina/pending_payment/intake`; Workstation
   may skip the first intake prompt only when the existing chat already includes
@@ -300,7 +302,7 @@ The low-ticket page promo uses the approved Meta template
 
 The one-off script is `src/scripts/contadores_promo_web_20260505.py`. Its
 default mode is dry-run. It writes a preview CSV and an alias review CSV under
-`data/`, excludes converted/Workstation/booked/closed/archived/marketing opt-out
+`data/`, excludes converted/Workstation/legacy booked/closed/archived/marketing opt-out
 leads, and skips latest provider failures unless
 `--include-provider-failures` is explicitly passed. Real execution queues
 template-backed `contadores_messages` rows with stored template params. Replies

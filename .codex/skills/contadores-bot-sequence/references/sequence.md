@@ -126,9 +126,9 @@ Template name: `contadores_manual_ping_es_v1`
 This ping is for reopening the WhatsApp 24-hour window from the CRM. It must not
 be sent by automation ticks and must not replace the 24-hour opener follow-up.
 
-Marking a lead as `booked` must not send any WhatsApp message. The legacy
-`send-manual-booked` action name is kept as a compatibility alias, but it only
-marks the lead as `booked`.
+The UI-facing conversion state is `Converted`. Storage/API still keep legacy
+`stage=booked` and `send-manual-booked` as compatibility aliases. Marking a
+lead converted must not send any WhatsApp message.
 
 ## Scheduling handoff
 

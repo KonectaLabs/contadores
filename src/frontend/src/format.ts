@@ -1,11 +1,11 @@
 import type { LeadStage } from "./types";
 
 const stageLabels: Record<LeadStage, string> = {
-  awaiting_initial_reply: "First message",
-  awaiting_video_reply: "Offer sent",
-  needs_human: "Manual",
-  calendly_sent: "Meeting sent",
-  booked: "Booked",
+  awaiting_initial_reply: "New",
+  awaiting_video_reply: "Offer",
+  needs_human: "Operator queue",
+  calendly_sent: "Meeting",
+  booked: "Converted",
   closed: "Closed",
   archived: "Archived",
 };
@@ -13,13 +13,14 @@ const stageLabels: Record<LeadStage, string> = {
 const readableLabels: Record<string, string> = {
   answered: "Answered",
   automation_paused: "Automation paused",
-  booked: "Booked",
+  booked: "Converted",
   calendly: "Meeting",
   calendly_intro: "Meeting intro",
   calendly_link: "Meeting link",
-  calendly_sent: "Meeting sent",
+  calendly_sent: "Meeting",
   calendly_url: "Meeting link",
   closed: "Closed",
+  converted: "Converted",
   delivered: "Delivered",
   failed: "Failed",
   form: "Form",
@@ -29,7 +30,7 @@ const readableLabels: Record<string, string> = {
   loom_intro: "Loom intro",
   loom_mp4: "WhatsApp video",
   loom_video: "Loom video",
-  manual_booked: "Marked booked manually",
+  manual_booked: "Marked converted manually",
   manual_calendly_send: "Manual meeting send",
   manual_message: "Manual message",
   manual_pause: "Paused manually",

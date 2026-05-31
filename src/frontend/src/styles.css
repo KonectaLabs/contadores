@@ -1322,7 +1322,6 @@ button:disabled {
   .toolbar,
   .detail-head {
     align-items: stretch;
-    flex-direction: column;
   }
 
   .topbar-actions {
@@ -1917,23 +1916,30 @@ body {
 }
 
 #contadoresView {
-  --ct-bg: #f7f8fa;
+  --ct-bg: #f6f7f4;
   --ct-surface: #ffffff;
-  --ct-surface-2: #fafaf8;
-  --ct-accent: #0f766e;
-  --ct-accent-strong: #115e59;
-  --ct-accent-soft: #e7f5f2;
-  --ct-accent-ring: rgba(15, 118, 110, 0.18);
-  --ct-ink: #202124;
-  --ct-ink-muted: #5f6368;
-  --ct-ink-soft: #8b9097;
-  --ct-line: #dde1e6;
-  --ct-line-soft: #eceff2;
-  --ct-warn: #b45309;
-  --ct-warn-bg: #fff7e8;
-  --ct-success: #166534;
-  --ct-success-bg: #eaf7ee;
-  --ct-danger: #b23d3d;
+  --ct-surface-2: #f9faf7;
+  --ct-surface-3: #f1f4ef;
+  --ct-accent: #0f6f61;
+  --ct-accent-strong: #064e3b;
+  --ct-accent-soft: #e7f3ee;
+  --ct-accent-ring: rgba(15, 111, 97, 0.18);
+  --ct-ink: #1f2421;
+  --ct-ink-muted: #626c66;
+  --ct-ink-soft: #8b938e;
+  --ct-line: #dfe5dd;
+  --ct-line-soft: #edf1eb;
+  --ct-warn: #9a5b16;
+  --ct-warn-bg: #fff6e7;
+  --ct-success: #22643a;
+  --ct-success-bg: #eaf6ee;
+  --ct-danger: #a33a3a;
+  --ct-danger-bg: #fff0f0;
+  --ct-danger-ink: #8f2323;
+  --ct-info: #2f6587;
+  --ct-info-bg: #edf5f8;
+  --ct-shadow-soft: 0 10px 28px rgba(36, 45, 39, 0.06);
+  --ct-shadow-popover: 0 18px 44px rgba(36, 45, 39, 0.14);
   --ct-radius: 8px;
   --ct-radius-sm: 6px;
 
@@ -1943,7 +1949,9 @@ body {
   height: 100dvh;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  background: var(--ct-bg);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.74), rgba(246, 247, 244, 0.96) 220px),
+    var(--ct-bg);
   color: var(--ct-ink);
   font-family: var(--font-sans);
 }
@@ -2341,7 +2349,7 @@ body {
 }
 
 #contadoresView .ct-setup-check.ready {
-  color: var(--ct-accent-dark);
+  color: var(--ct-accent-strong);
 }
 
 #contadoresView .ct-setup-check.blocked {
@@ -3614,7 +3622,7 @@ body {
 
 #contadoresView .ct-pipeline {
   display: grid;
-  grid-template-columns: repeat(8, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
   overflow: hidden;
   border: 1px solid var(--ct-line);
   border-radius: var(--ct-radius);
@@ -3700,12 +3708,12 @@ body {
   z-index: 40;
   top: calc(100% + 8px);
   left: 0;
-  width: min(780px, calc(100vw - 42px));
+  width: min(960px, calc(100vw - 42px));
   padding: 8px;
   border: 1px solid var(--ct-line);
   border-radius: var(--ct-radius);
   background: var(--ct-surface);
-  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.14);
+  box-shadow: var(--ct-shadow-popover);
 }
 
 #contadoresView .ct-compact-disclosure > .ct-filter-strip {
@@ -3716,9 +3724,9 @@ body {
 
 #contadoresView .ct-stage {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
-  gap: 10px;
+  gap: 5px;
   min-height: 52px;
   padding: 10px 14px;
   border: 0;
@@ -3749,7 +3757,6 @@ body {
 }
 
 #contadoresView .ct-stage-count {
-  min-width: 2.4ch;
   color: var(--ct-ink);
   font: 700 1.15rem/1 var(--font-mono);
 }
@@ -3760,11 +3767,10 @@ body {
 #contadoresView .ct-stage[data-tone="muted"] .ct-stage-count { color: var(--ct-ink-soft); }
 
 #contadoresView .ct-stage-label {
-  overflow: hidden;
   color: var(--ct-ink-muted);
-  font: 600 12px/1.1 var(--font-sans);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font: 600 12px/1.15 var(--font-sans);
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 #contadoresView .ct-secondary {
@@ -4235,7 +4241,7 @@ body {
   border: 1px solid var(--ct-line);
   border-radius: var(--ct-radius);
   background: var(--ct-surface);
-  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.16);
+  box-shadow: var(--ct-shadow-popover);
 }
 
 #contadoresView .ct-action-menu-panel .ct-btn,
@@ -7418,6 +7424,54 @@ body {
 }
 
 @media (max-width: 520px) {
+  #contadoresView .ct-topbar-nav {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(78px, 1fr));
+    overflow: visible;
+  }
+
+  #contadoresView .ct-topbar-nav .ct-nav-btn {
+    min-width: 0;
+    padding-inline: 6px;
+    font-size: 10px;
+    letter-spacing: 0;
+  }
+
+  #contadoresView .ct-topbar-nav .ct-nav-btn span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  #contadoresView .ct-queue-bar {
+    position: relative;
+  }
+
+  #contadoresView .ct-compact-disclosure {
+    position: static;
+  }
+
+  #contadoresView .ct-compact-disclosure > .ct-pipeline,
+  #contadoresView .ct-compact-disclosure > .ct-filter-strip {
+    left: 0;
+    width: 100%;
+  }
+
+  #contadoresView .ct-detail-head-actions {
+    position: relative;
+  }
+
+  #contadoresView .ct-action-menu {
+    position: static;
+  }
+
+  #contadoresView .ct-action-menu-panel {
+    left: 0;
+    right: 0;
+    width: 100%;
+  }
+
   #contadoresView .ct-pipeline {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

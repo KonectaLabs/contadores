@@ -7,6 +7,20 @@ export type LeadStage =
   | "closed"
   | "archived";
 
+export type LeadPipelineStage =
+  | "new"
+  | "contacted"
+  | "offer_sent"
+  | "meeting_sent"
+  | "converted"
+  | "closed"
+  | "archived";
+
+export type LeadQueueState = "automation" | "operator" | "workstation" | "paused" | "none";
+export type LeadTerminalState = "open" | "closed" | "archived";
+export type LeadAttentionState = "clear" | "needs_reply" | "answered" | "paused" | "converted" | "closed" | "archived";
+export type LeadConversionType = "meeting" | "workstation" | "manual" | null;
+
 export type FunnelKind = "campaign" | "inbox";
 export type OfferPaymentModel = "monthly" | "one_time" | "custom";
 export type FunnelStrategyDelivery = "link" | "video" | "text";
@@ -426,6 +440,15 @@ export interface ContadoresMetrics {
   booked: number;
   closed: number;
   archived: number;
+  pipeline_new: number;
+  pipeline_contacted: number;
+  pipeline_offer_sent: number;
+  pipeline_meeting_sent: number;
+  pipeline_converted: number;
+  queue_operator: number;
+  queue_paused: number;
+  attention_needs_reply: number;
+  terminal_closed: number;
 }
 
 export interface StrategyAssignment {
@@ -450,6 +473,11 @@ export interface LeadSummary {
   sheet_created_time: string | null;
   stage: LeadStage;
   raw_stage: LeadStage;
+  pipeline_stage: LeadPipelineStage;
+  queue_state: LeadQueueState;
+  terminal_state: LeadTerminalState;
+  attention_state: LeadAttentionState;
+  conversion_type: LeadConversionType;
   calendly_url: string;
   last_classification_label: string | null;
   last_classification_reason: string | null;

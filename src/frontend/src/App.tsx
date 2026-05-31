@@ -81,7 +81,17 @@ const DASHBOARD_FUNNEL_STORAGE_KEY = "contadores.dashboard.selectedFunnelId";
 const DASHBOARD_STAGE_STORAGE_KEY = "contadores.dashboard.stageFilter";
 const DASHBOARD_SECTION_STORAGE_KEY = "contadores.dashboard.activeSection";
 
-type StageFilterValue = LeadStage | "all" | "manual_attention";
+type StageFilterValue =
+  | "all"
+  | "pipeline:new"
+  | "pipeline:contacted"
+  | "pipeline:offer_sent"
+  | "pipeline:meeting_sent"
+  | "pipeline:converted"
+  | "attention:needs_reply"
+  | "queue:operator"
+  | "queue:paused"
+  | "terminal:closed";
 type ActiveSection = "crm" | "sell" | "workstation" | "delivery" | "ops";
 type LoadWorkstationDetailOptions = {
   syncNotes?: boolean;
@@ -126,16 +136,26 @@ const stageFilters: Array<{
   tone: "all" | "neutral" | "accent" | "success" | "warn" | "muted";
 }> = [
   { value: "all", label: "All", metric: "total", tone: "all" },
-  { value: "awaiting_initial_reply", label: "Opener sent", metric: "awaiting_initial_reply", tone: "neutral" },
-  { value: "awaiting_video_reply", label: "Offer sent", metric: "awaiting_video_reply", tone: "neutral" },
-  { value: "calendly_sent", label: "Meeting sent", metric: "calendly_sent", tone: "accent" },
-  { value: "booked", label: "Booked", metric: "booked", tone: "success" },
-  { value: "needs_human", label: "Manual", metric: "needs_human", tone: "warn" },
-  { value: "manual_attention", label: "Needs answer", tone: "warn" },
-  { value: "closed", label: "Closed", metric: "closed", tone: "muted" },
+  { value: "pipeline:new", label: "New", metric: "pipeline_new", tone: "neutral" },
+  { value: "pipeline:contacted", label: "Contacted", metric: "pipeline_contacted", tone: "neutral" },
+  { value: "pipeline:offer_sent", label: "Offer", metric: "pipeline_offer_sent", tone: "neutral" },
+  { value: "pipeline:meeting_sent", label: "Meeting", metric: "pipeline_meeting_sent", tone: "accent" },
+  { value: "pipeline:converted", label: "Converted", metric: "pipeline_converted", tone: "success" },
+  { value: "attention:needs_reply", label: "Needs reply", metric: "attention_needs_reply", tone: "warn" },
+  { value: "queue:paused", label: "Paused", metric: "queue_paused", tone: "warn" },
+  { value: "terminal:closed", label: "Closed", metric: "terminal_closed", tone: "muted" },
 ];
 
 const validStageFilterValues = new Set<StageFilterValue>(stageFilters.map((filter) => filter.value));
+const legacyStageFilterValues: Record<string, StageFilterValue> = {
+  awaiting_initial_reply: "pipeline:new",
+  awaiting_video_reply: "pipeline:offer_sent",
+  calendly_sent: "pipeline:meeting_sent",
+  booked: "pipeline:converted",
+  needs_human: "queue:operator",
+  manual_attention: "attention:needs_reply",
+  closed: "terminal:closed",
+};
 
 function readStoredValue(storageKey: string): string | null {
   try {
@@ -159,7 +179,29 @@ function readStoredFunnelId(): string {
 
 function readStoredStageFilter(): StageFilterValue {
   const value = readStoredValue(DASHBOARD_STAGE_STORAGE_KEY);
-  return validStageFilterValues.has(value as StageFilterValue) ? value as StageFilterValue : "all";
+  if (validStageFilterValues.has(value as StageFilterValue)) {
+    return value as StageFilterValue;
+  }
+  return legacyStageFilterValues[value || ""] ?? "all";
+}
+
+function applyLeadViewFilter(params: URLSearchParams, filter: StageFilterValue) {
+  if (filter === "all") {
+    return;
+  }
+  const [scope, value] = filter.split(":");
+  if (!scope || !value) {
+    return;
+  }
+  if (scope === "pipeline") {
+    params.set("pipeline_stage", value);
+  } else if (scope === "queue") {
+    params.set("queue_state", value);
+  } else if (scope === "terminal") {
+    params.set("terminal_state", value);
+  } else if (scope === "attention") {
+    params.set("attention_state", value);
+  }
 }
 
 function readStoredActiveSection(): ActiveSection {
@@ -206,12 +248,10 @@ const operations: Array<{
 ];
 
 const moveStageOptions: Array<{ value: LeadStage; label: string }> = [
-  { value: "needs_human", label: "Manual" },
-  { value: "awaiting_initial_reply", label: "Opener sent" },
-  { value: "awaiting_video_reply", label: "Offer sent" },
-  { value: "calendly_sent", label: "Meeting sent" },
-  { value: "booked", label: "Booked" },
-  { value: "closed", label: "Closed" },
+  { value: "needs_human", label: "Operator queue" },
+  { value: "awaiting_initial_reply", label: "New" },
+  { value: "awaiting_video_reply", label: "Offer" },
+  { value: "calendly_sent", label: "Meeting" },
 ];
 
 const sendOptions = [
@@ -312,7 +352,6 @@ export function App() {
   const [funnelConfigErrors, setFunnelConfigErrors] = useState<string[]>([]);
   const [selectedFunnelId, setSelectedFunnelId] = useState(readStoredFunnelId);
   const [leadList, setLeadList] = useState<LeadListResponse | null>(null);
-  const [manualAttentionList, setManualAttentionList] = useState<LeadSummary[]>([]);
   const [manualAttentionCounts, setManualAttentionCounts] = useState<Record<string, number>>({});
   const [strategyStats, setStrategyStats] = useState<StrategyStatsItem[]>([]);
   const [detail, setDetail] = useState<LeadDetailResponse | null>(null);
@@ -404,7 +443,7 @@ export function App() {
   );
   const selectedLeadCustomBlockReason = customMessageBlockReason(selectedLead);
   const bulkCustomBlockedCount = selectedVisibleLeads.filter((lead) => customMessageBlockReason(lead)).length;
-  const bulkClosedCount = selectedVisibleLeads.filter((lead) => lead.stage === "closed").length;
+  const bulkClosedCount = selectedVisibleLeads.filter((lead) => lead.terminal_state === "closed" || lead.stage === "closed").length;
   const workstationClients = workstationList?.clients ?? [];
   const selectedDeliverySource = deliveryEditorMode === "edit"
     ? deliverySources.find((source) => source.id === selectedDeliverySourceId) ?? null
@@ -437,12 +476,8 @@ export function App() {
     const activeFunnelId = activeFunnel?.id ?? "contadores";
     const activeIsInbox = activeFunnel?.kind === "inbox";
     const params = new URLSearchParams({ limit: "500", archived: "false", funnel_id: activeFunnelId });
-    if (!activeIsInbox && stageFilter === "manual_attention") {
-      params.set("stage", "needs_human");
-      params.set("manual_reply_status", "needs_reply");
-      params.set("needs_human", "true");
-    } else if (!activeIsInbox && stageFilter !== "all") {
-      params.set("stage", stageFilter);
+    if (!activeIsInbox) {
+      applyLeadViewFilter(params, stageFilter);
     }
     if (!activeIsInbox && strategyFilter.step) {
       params.set("strategy_step", strategyFilter.step);
@@ -457,29 +492,12 @@ export function App() {
       params.set("query", debouncedQuery.trim());
     }
 
-    const manualAttentionParams = new URLSearchParams({
-      limit: "200",
-      archived: "false",
-      funnel_id: activeFunnelId,
-      stage: "needs_human",
-      manual_reply_status: "needs_reply",
-      needs_human: "true",
-    });
-    if (debouncedQuery.trim()) {
-      manualAttentionParams.set("query", debouncedQuery.trim());
-    }
-    if (tagFilter) {
-      manualAttentionParams.set("tag", tagFilter);
-    }
-
-    const [leadsPayload, manualAttentionPayload, strategyPayload] = await Promise.all([
+    const [leadsPayload, strategyPayload] = await Promise.all([
       apiFetch<LeadListResponse>(`/api/contadores/leads?${params.toString()}`),
-      apiFetch<LeadListResponse>(`/api/contadores/leads?${manualAttentionParams.toString()}`),
       apiFetch<StrategyStatsResponse>(`/api/contadores/strategy-stats?funnel_id=${encodeURIComponent(activeFunnelId)}`),
     ]);
 
     setLeadList(leadsPayload);
-    setManualAttentionList(manualAttentionPayload.leads ?? []);
     setStrategyStats(strategyPayload.items ?? []);
 
     setSelectedLeadId((current) => {
@@ -1501,7 +1519,7 @@ export function App() {
 
     setActionBusy("send-modal");
     try {
-      if (selectedLead?.stage === "closed") {
+      if (selectedLead?.terminal_state === "closed" || selectedLead?.stage === "closed") {
         setError("This lead is closed. Reopen it before sending WhatsApp messages.");
         return;
       }
@@ -1825,9 +1843,9 @@ export function App() {
                 onClick={() => {
                   setActiveSection(operation.section);
                   if (operation.section === "crm") {
-                    setStageFilter("manual_attention");
+                    setStageFilter("attention:needs_reply");
                   }
-                  if (operation.section === "sell" && stageFilter === "manual_attention") {
+                  if (operation.section === "sell" && stageFilter === "attention:needs_reply") {
                     setStageFilter("all");
                   }
                 }}
@@ -2039,9 +2057,7 @@ export function App() {
               <summary>Views</summary>
               <section className="ct-pipeline" aria-label="Lead stages">
                 {stageFilters.map((filter) => {
-                  const count = filter.value === "manual_attention"
-                    ? manualAttentionList.length
-                    : Number(metrics?.[filter.metric ?? "total"] ?? 0);
+                  const count = Number(metrics?.[filter.metric ?? "total"] ?? 0);
 
                   return (
                     <button
@@ -2167,7 +2183,7 @@ export function App() {
               onPauseAutomation={() => runAction("pause-automation")}
               onManualHandoff={() => runAction("manual-handoff")}
               onMarkAnswered={() => runAction("mark-answered")}
-              onToggleClosed={() => runAction(selectedLead?.stage === "closed" ? "reopen" : "close")}
+              onToggleClosed={() => runAction(selectedLead?.terminal_state === "closed" || selectedLead?.stage === "closed" ? "reopen" : "close")}
               onDelete={deleteLead}
               onConvert={convertLeadToWorkstation}
               onStartSoloPage={startSoloPageWorkstation}
@@ -5355,7 +5371,7 @@ function LeadList({
                 <div className="ct-lead-top">
                   <h4 className="ct-lead-name">{lead.full_name || lead.phone || "Lead"}</h4>
                   <div className="ct-lead-tags">
-                    <span className="ct-lead-stage" data-tone={tone}>{inboxMode ? "Inbox" : formatStageLabel(lead.stage)}</span>
+                    <span className="ct-lead-stage" data-tone={tone}>{inboxMode ? "Inbox" : formatLeadStatusLabel(lead)}</span>
                     {lead.workstation_client_id ? (
                       <span className="ct-lead-converted">
                         Converted
@@ -5424,8 +5440,8 @@ function LeadDetailHeader({
   onOpenWorkstation: (clientId: string) => void | Promise<void>;
   copyStatus: string;
 }) {
-  const closed = lead?.stage === "closed";
-  const booked = lead?.stage === "booked";
+  const closed = lead?.terminal_state === "closed" || lead?.stage === "closed";
+  const convertedMilestone = lead?.pipeline_stage === "converted" || lead?.stage === "booked";
   const paused = Boolean(lead?.automation_paused);
   const codexEnabled = Boolean(lead?.codex_enabled);
   const canMarkAnswered = lead?.manual_reply_status === "needs_reply" && !closed;
@@ -5436,7 +5452,7 @@ function LeadDetailHeader({
       <div className="ct-detail-head-main">
         <div className="ct-detail-avatar">{lead ? monogram(lead.full_name || lead.phone || "CT") : "CT"}</div>
         <div className="ct-detail-head-copy">
-          <p className="ct-detail-kicker">{lead ? (inboxMode ? "Inbox" : formatStageLabel(lead.stage)) : "Select a lead"}</p>
+          <p className="ct-detail-kicker">{lead ? (inboxMode ? "Inbox" : formatLeadStatusLabel(lead)) : "Select a lead"}</p>
           <h3>{lead?.full_name || lead?.phone || "No lead selected"}</h3>
           <p className="ct-detail-meta">
             {lead ? (
@@ -5502,9 +5518,9 @@ function LeadDetailHeader({
               </button>
             ) : null}
             {!inboxMode ? (
-              <button type="button" className="ct-btn ct-btn-ghost" disabled={!lead || closed || booked || Boolean(actionBusy)} onClick={onManualBooked}>
+              <button type="button" className="ct-btn ct-btn-ghost" disabled={!lead || closed || convertedMilestone || Boolean(actionBusy)} onClick={onManualBooked}>
                 <CheckCircle size={15} weight="bold" />
-                Booked
+                Mark converted
               </button>
             ) : null}
             {!inboxMode ? (
@@ -5540,7 +5556,7 @@ function LeadDetailHeader({
 function PausedBanner({ lead }: {
   lead: LeadSummary | null;
 }) {
-  const closed = lead?.stage === "closed";
+  const closed = lead?.terminal_state === "closed" || lead?.stage === "closed";
   const paused = Boolean(lead?.automation_paused);
   if (!lead || (!closed && !paused)) {
     return null;
@@ -6136,7 +6152,7 @@ function StrategyStatsPanel({
             <div className="ct-strategy-metrics">
               <span>{item.assigned} assigned</span>
               <span>{formatRate(item.calendly_rate)} meeting</span>
-              <span>{formatRate(item.booked_rate)} booked</span>
+              <span>{formatRate(item.booked_rate)} converted</span>
             </div>
           </article>
         ))}
@@ -6980,17 +6996,36 @@ function slugifyClient(value: string): string {
   return normalized || "nuevo-funnel";
 }
 
-function formatStageLabel(stage: LeadStage | string | null | undefined): string {
+function formatPipelineStageLabel(stage: string | null | undefined): string {
   const labels: Record<string, string> = {
-    awaiting_initial_reply: "Opener sent",
-    awaiting_video_reply: "Offer sent",
-    calendly_sent: "Meeting sent",
-    needs_human: "Manual",
-    booked: "Booked",
+    new: "New",
+    contacted: "Contacted",
+    offer_sent: "Offer",
+    meeting_sent: "Meeting",
+    converted: "Converted",
     closed: "Closed",
     archived: "Archived",
   };
   return labels[String(stage || "")] ?? humanize(stage || "Lead");
+}
+
+function formatConversionType(type: LeadSummary["conversion_type"]): string {
+  const labels: Record<string, string> = {
+    manual: "manual mark",
+    meeting: "meeting link",
+    workstation: "Workstation",
+  };
+  return type ? labels[type] ?? humanize(type) : "conversion";
+}
+
+function formatLeadStatusLabel(lead: LeadSummary): string {
+  if (lead.terminal_state === "closed" || lead.stage === "closed") {
+    return "Closed";
+  }
+  if (lead.terminal_state === "archived" || lead.stage === "archived") {
+    return "Archived";
+  }
+  return formatPipelineStageLabel(lead.pipeline_stage || lead.stage);
 }
 
 function formatStrategyLabel(value: string | null | undefined): string {
@@ -7025,20 +7060,23 @@ function formatRate(value: number): string {
 }
 
 function leadTone(lead: LeadSummary): "accent" | "warn" | "success" | "muted" {
-  if (lead.stage === "needs_human") {
+  if (lead.terminal_state === "closed" || lead.terminal_state === "archived" || lead.stage === "closed" || lead.stage === "archived") {
+    return "muted";
+  }
+  if (lead.attention_state === "needs_reply" || lead.queue_state === "operator" || lead.stage === "needs_human") {
     return "warn";
   }
-  if (lead.stage === "booked" || lead.stage === "calendly_sent") {
+  if (lead.pipeline_stage === "converted" || lead.stage === "booked") {
     return "success";
   }
-  if (lead.stage === "closed" || lead.stage === "archived") {
-    return "muted";
+  if (lead.pipeline_stage === "meeting_sent" || lead.stage === "calendly_sent") {
+    return "success";
   }
   return "accent";
 }
 
 function manualTurn(lead: LeadSummary): "" | "needs_reply" | "answered" {
-  if (lead.stage !== "needs_human") {
+  if (lead.queue_state !== "operator" && lead.stage !== "needs_human") {
     return "";
   }
   if (lead.manual_reply_status === "needs_reply" || lead.manual_reply_status === "answered") {
@@ -7054,14 +7092,14 @@ function strategyTagForLead(lead: LeadSummary): string {
 }
 
 function leadPreview(lead: LeadSummary): string {
-  if (lead.stage === "closed") {
+  if (lead.terminal_state === "closed" || lead.stage === "closed") {
     return "Lead marked as closed.";
+  }
+  if (lead.pipeline_stage === "converted" || lead.stage === "booked") {
+    return `Converted by ${formatConversionType(lead.conversion_type)}.`;
   }
   if (lead.last_classification_reason) {
     return truncate(lead.last_classification_reason, 120);
-  }
-  if (lead.booked_at) {
-    return "Booked through meeting link or manually marked.";
   }
   return truncate(`${lead.platform || "-"} · ${lead.email || lead.phone || "-"}`, 120);
 }
@@ -7081,7 +7119,7 @@ function buildLeadContextText({
   const whatsappWindow = customMessageBlockReason(lead) || "Custom WhatsApp window is open.";
   const latestMessages = messages.slice(-5).map(formatLeadContextMessage);
   const funnelLabel = funnel ? `${funnel.label} (${funnel.id})` : lead.funnel_id;
-  const status = inboxMode ? "Inbox" : formatStageLabel(lead.stage);
+  const status = inboxMode ? "Inbox" : formatLeadStatusLabel(lead);
 
   const lines = [
     `Lead: ${lead.full_name || lead.phone || lead.external_lead_id || lead.id}`,
@@ -7186,7 +7224,7 @@ function customMessageBlockReason(lead: LeadSummary | null): string | null {
   if (!lead) {
     return null;
   }
-  if (lead.stage === "closed") {
+  if (lead.terminal_state === "closed" || lead.stage === "closed") {
     return "This lead is closed. Reopen it before sending WhatsApp messages.";
   }
   if (!lead.last_inbound_at) {

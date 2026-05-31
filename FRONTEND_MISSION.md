@@ -1,11 +1,11 @@
 # Frontend Mission
 
-## Codex goal prompt: 10-hour elegant CRM/platform redesign
+## Codex goal prompt: completion-based elegant CRM/platform redesign
 
 Copy this into Codex Goal mode when you want the frontend sprint to run:
 
 ```text
-/goal Work for a 10-hour frontend/UI mission on Contadores and make the platform elegant, calm, uncluttered, and easier to operate. The goal is not "more UI"; it is fewer visible main operations, each done very well: CRM/triage, selling conversations, Workstation/build, Delivery, and Ops/Runner observability. First research how excellent CRM and productivity products are designed, then apply that research to the platform. Keep working until the 10-hour horizon is reached, then finish the current coding slice cleanly, verify it, and stop only from a stable state with a clear report of what shipped and what remains.
+/goal Work on the Contadores frontend/UI until the new frontend concept has been applied end-to-end across the platform. Make it elegant, calm, uncluttered, and easier to operate. The goal is not "more UI"; it is fewer visible main operations, each done very well: CRM/triage, selling conversations, Workstation/build, Delivery, and Ops/Runner observability. First research how excellent CRM and productivity products are designed, then define the Contadores frontend concept and apply it to every visible surface and reusable component. This is completion-based, not time-boxed: keep working until the app shell, navigation, primary views, setup/config surfaces, repeated component patterns, states, logs, drawers, modals, tables, forms, mobile layouts, and all five operations have received a deliberate pass under the new concept. Stop only after the app is stable, verified, and reported with a clear component coverage ledger.
 ```
 
 ## Non-negotiable direction
@@ -30,6 +30,29 @@ Design around five main operations maximum:
 5. `Observe`: Ops, Runner, blockers, agents, Meta readiness, human-readable logs.
 
 The current code may still use `crm`, `workstation`, `delivery`, `ops`, and `runner`, but the UI should feel like these five understandable operations.
+
+## Completion boundary
+
+This mission is not done because a timer expired. It is done only when the new frontend concept has been carried through the whole product.
+
+Before broad edits, define the concept in plain terms:
+
+- operating model: what the five operations are and how an operator moves through them
+- visual system: type, spacing, color roles, icons, density, surface rules, and motion rules
+- component language: how buttons, tabs, pills, tables, panels, drawers, modals, forms, logs, empty states, loading states, and error states should look and behave
+- mobile model: how the same concept reflows without horizontal overflow, clipped controls, or hidden primary actions
+
+Then apply that concept across all current frontend surfaces:
+
+- app shell, navigation, section headers, command/action areas, and global error/status presentation
+- Triage and Sell: lead queues, lead cards/rows, chat timeline, message states, conversion controls, Workstation handoff, and sequence/follow-up context
+- Build: Workstation client list, client detail, assets/media, notes, generated artifacts, Codex actions, professional photo flow, solo-page/photo modals, drawers, and CRM/Delivery links
+- Deliver: delivery contact groups, source editor, sheet lead tables, delivery status pills, copy controls, retry/audit context, and recipient chat context
+- Observe: action queue, Runner panel, Meta readiness, blockers, campaigns, inventory, agent activity, meetings, client updates, assets, event stream, and raw log disclosure
+- setup/config and send surfaces: setup view/banner, funnel editor drawer, runtime config drawer, send modal, and bulk send modal
+- reusable patterns and states: buttons, icon buttons, forms, filters, tabs, tables, timelines, panels, status pills, empty/loading/error/selected/disabled/focus/hover/active states
+
+Keep a component coverage ledger while working. Every row should say what changed, what was intentionally left alone, what was verified, and what still carries risk.
 
 ## Research requirement
 
@@ -199,14 +222,15 @@ Raw logs, markdown history, payloads, traces, and full error bodies should be be
 
 1. Research first and write the research ledger.
 2. Inspect the current frontend live and in code.
-3. Capture baseline screenshots for CRM, Workstation, Delivery, Ops, Runner, and mobile.
+3. Capture baseline screenshots for Triage, Sell, Build, Deliver, Observe, setup/config drawers, send/bulk send modals, Workstation modals, and mobile.
 4. Audit clutter: too many visible controls, duplicated actions, weak hierarchy, noisy copy, raw logs, unhelpful metrics, card overuse, text clipping, mobile overflow.
 5. Define the design system before broad edits: type, spacing, color roles, icon rules, buttons, status, tables, drawers, modals, empty states, log rows.
 6. Improve the app shell and top-level operation model first.
-7. Improve the five operations in priority order: Triage/Sell, Build, Deliver, Observe.
-8. After each slice, run the app, inspect in Browser, click the relevant flow, capture evidence, and fix visible issues before moving on.
+7. Improve the five operations in priority order: Triage/Sell, Build, Deliver, Observe, then setup/config and send surfaces.
+8. After each covered surface, run the app, inspect in Browser, click the relevant flow, capture evidence, and fix visible issues before moving on.
 9. Keep a progress ledger: focus, source inspiration, change shipped, screenshot/command evidence, remaining risk.
-10. At the 10-hour mark, finish the current logical coding slice, verify it, leave no broken intermediate state, and then report.
+10. Keep iterating until the component coverage ledger shows that every current frontend surface and reusable pattern received a deliberate pass under the new concept.
+11. Finish only from a stable state: build passes, changed flows are verified in Browser, desktop/mobile layouts are checked, console health is reviewed, and the final report explains what changed and what remains risky.
 
 ## Success criteria
 
@@ -216,12 +240,14 @@ Raw logs, markdown history, payloads, traces, and full error bodies should be be
 - Important information is visible; secondary information is expandable.
 - Logs are readable in human language by default.
 - Raw logs and technical details are still available but hidden behind disclosure.
-- CRM, Workstation, Delivery, Ops, and Runner share one visual system.
+- Triage, Sell, Build, Deliver, Observe, shared shell, drawers, modals, tables, timelines, forms, and responsive layouts share one visual system.
+- App shell, navigation, primary views, repeated component patterns, and UI states share the same frontend concept.
+- Every current frontend surface has a component coverage ledger entry.
 - Text is shorter and more operational.
 - Icons, color, shape, and spacing communicate more of the UI.
 - No visible overlap, clipped controls, awkward wrapping, or mobile horizontal overflow.
-- Changed surfaces have loading, empty, error, selected, disabled, focus, hover, and active states.
-- Browser QA covers desktop and mobile for changed primary surfaces.
+- All covered surfaces have loading, empty, error, selected, disabled, focus, hover, and active states where applicable.
+- Browser QA covers desktop and mobile for every covered primary surface.
 - Console has no relevant unexplained errors.
 - `cd src/frontend && npm run build` passes.
 - If this becomes a product change, commit on `main`, push, deploy, and verify the real server according to repo policy.
@@ -261,6 +287,8 @@ Otherwise make a reasonable assumption, write it down, and keep moving.
 The final report must include:
 
 - research sources used and what was copied/adapted
+- the frontend concept that guided the pass
+- the component coverage ledger for every primary surface and reusable pattern
 - what changed for each primary operation
 - what was removed, hidden, or simplified
 - how logs became more human-readable

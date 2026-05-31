@@ -10,7 +10,7 @@ Do not send to:
   `0414...`, `0416...`, `0424...`, `0426...`.
 - Any lead present in `workstation_clients`.
 - Guido Roberto Carrion Alvarado and Rodrigo Javier Monges Luces.
-- Closed, booked, or archived leads.
+- Closed, converted/legacy booked, or archived leads.
 - Leads with explicit opt-out, rejection, or Meta `131050`.
 - Leads whose latest possible action would duplicate a message already sent
   recently.
@@ -99,7 +99,7 @@ specific implementation thought can make the offer clearer.
 Eligibility:
 
 - latest outbound is `sent` or `delivered`, not failed;
-- lead is not closed/booked/archived, Venezuelan, Workstation, opt-out, or
+- lead is not closed/converted/legacy booked/archived, Venezuelan, Workstation, opt-out, or
   provider-blocked;
 - no similar value follow-up or video-demo follow-up was sent recently;
 - lead previously showed intent, asked for info/price, watched/accepted video,

@@ -44,7 +44,8 @@ For operator-taught answers to previously unknown runtime questions, read
 - Never print `INTERNAL_API_TOKEN`.
 - Do not send custom/free-text WhatsApp messages outside the 24-hour customer
   service window. Use allowed templates or report that the window is closed.
-- Do not message closed, booked, archived, excluded, Venezuelan, or Workstation
+- Do not message closed, converted/legacy booked, archived, excluded,
+  Venezuelan, or Workstation
   client leads unless the user explicitly asks to override and the system allows it.
 - If the latest inbound is audio/media only and there is no transcript, do not
   guess the content. The runtime should transcribe audio first when `media_path`

@@ -671,7 +671,22 @@ Template manual de ping:
 - Las acciones masivas del CRM no deben preseleccionar `Manual ping`; el operador tiene que elegir ese template explicitamente.
 - `Manual ping` en bulk requiere confirmacion explicita en el payload/UI y queda auditado como batch.
 - No se puede mandar ningun WhatsApp outbound a un lead `closed`; primero hay que reabrirlo.
-- Marcar un lead como `booked` no envia WhatsApp. El alias legacy `send-manual-booked` queda soportado, pero solo marca `booked`.
+- El storage/API legacy conserva `stage=booked` y el alias `send-manual-booked`
+  por compatibilidad. En la UI nueva eso se muestra como `Converted`; marcar un
+  lead convertido no envia WhatsApp y solo pausa la automatizacion.
+
+Modelo de estado para UI/API:
+
+- `stage` y `raw_stage` siguen siendo el contrato legacy persistido.
+- `pipeline_stage` separa el hito comercial: `new`, `contacted`,
+  `offer_sent`, `meeting_sent`, `converted`, `closed`, `archived`.
+- `queue_state` separa quien tiene la proxima accion: `automation`, `operator`,
+  `workstation`, `paused`, `none`.
+- `terminal_state` separa cierre/archivo: `open`, `closed`, `archived`.
+- `attention_state` separa urgencias operativas: `clear`, `needs_reply`,
+  `answered`, `paused`, `converted`, `closed`, `archived`.
+- `conversion_type` explica el origen de `converted`: `meeting`, `manual` o
+  `workstation`.
 
 Entrada Click-to-WhatsApp:
 
@@ -968,7 +983,7 @@ Bot conversacional post-offer y post-meeting:
   el audio reproducible y recien ahi pasa como media sin transcript.
 - El bot no inventa audio/media sin transcript. Imagen, video, documento,
   sticker o audio fallido sin texto pasan a humano.
-- Cerrados, booked, archivados, excluidos, Venezuela y Workstation siguen
+- Cerrados, convertidos/legacy booked, archivados, excluidos, Venezuela y Workstation siguen
   bloqueados por los guards existentes.
 
 Acciones manuales de Meeting:
@@ -1057,7 +1072,8 @@ muestra `Open Workstation` y conserva el link al chat original del CRM.
 Al convertir:
 
 - se crea un registro en `workstation_clients`;
-- se marca el lead como `booked` si todavia no lo estaba;
+- se marca el lead como `converted` en la proyeccion de UI, manteniendo el
+  milestone legacy `booked_at/stage=booked` cuando corresponde;
 - se pausa la automatizacion del lead;
 - se registra el evento `workstation_client_created`;
 - la media subida en Workstation se puede renombrar desde la UI sin cambiar el
@@ -1132,7 +1148,7 @@ uv run python src/scripts/contadores_promo_web_20260505.py --execute
 
 El modo default es dry-run: genera `data/reports/promo-web-profesional-2026-05-05-preview.csv`
 y `data/contadores/promo-web-profesional-2026-05-05-aliases.csv`.
-El script excluye convertidos, Workstation, booked, closed, archived, opt-outs
+El script excluye convertidos, Workstation, legacy booked, closed, archived, opt-outs
 de marketing y, salvo que se pase `--include-provider-failures`, leads cuyo
 ultimo outbound ya fallo en Meta. Los precios `19/29/49/99` se eligen de forma
 deterministica por lead y pais, con mayor peso a precios bajos en Venezuela,
