@@ -6387,6 +6387,42 @@ body {
   background: var(--ct-surface);
 }
 
+#contadoresView .workstation-client-summary {
+  align-items: flex-start;
+}
+
+#contadoresView .workstation-client-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+#contadoresView .workstation-client-facts span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  min-height: 26px;
+  padding: 0 8px;
+  overflow: hidden;
+  border: 1px solid var(--ct-line-soft);
+  border-radius: var(--ct-radius-sm);
+  background: var(--ct-surface-2);
+  color: var(--ct-ink-muted);
+  font: 700 11px/1.2 var(--font-sans);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#contadoresView .workstation-client-facts span:first-child {
+  color: var(--ct-accent-strong);
+}
+
+#contadoresView .workstation-primary-actions {
+  justify-content: flex-end;
+}
+
 #contadoresView .workstation-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.6fr) minmax(260px, 0.8fr);
@@ -6642,7 +6678,7 @@ body {
 #contadoresView .workstation-action-popover {
   position: absolute;
   top: calc(100% + 6px);
-  left: 0;
+  right: 0;
   z-index: 30;
   width: min(260px, calc(100vw - 48px));
   padding: 6px;
@@ -6652,7 +6688,9 @@ body {
   box-shadow: 0 16px 34px rgba(32, 33, 36, 0.14);
 }
 
-#contadoresView .workstation-action-popover button {
+#contadoresView .workstation-action-popover button,
+#contadoresView .workstation-action-popover .workstation-menu-link,
+#contadoresView .workstation-action-popover .workstation-menu-switch {
   width: 100%;
   display: flex;
   align-items: center;
@@ -6666,23 +6704,33 @@ body {
   cursor: pointer;
   font: 700 12px/1.2 var(--font-sans);
   text-align: left;
+  text-decoration: none;
 }
 
-#contadoresView .workstation-action-popover button:hover:not(:disabled) {
+#contadoresView .workstation-action-popover .workstation-menu-switch {
+  justify-content: flex-start;
+}
+
+#contadoresView .workstation-action-popover button:hover:not(:disabled),
+#contadoresView .workstation-action-popover .workstation-menu-link:hover,
+#contadoresView .workstation-action-popover .workstation-menu-switch:hover:has(input:not(:disabled)) {
   background: var(--ct-surface-2);
   color: var(--ct-accent-strong);
 }
 
-#contadoresView .workstation-action-popover button.danger {
+#contadoresView .workstation-action-popover button.danger,
+#contadoresView .workstation-action-popover .workstation-menu-link.danger {
   color: var(--ct-danger);
 }
 
-#contadoresView .workstation-action-popover button.danger:hover:not(:disabled) {
+#contadoresView .workstation-action-popover button.danger:hover:not(:disabled),
+#contadoresView .workstation-action-popover .workstation-menu-link.danger:hover {
   background: color-mix(in srgb, var(--ct-danger) 10%, transparent);
   color: var(--ct-danger);
 }
 
-#contadoresView .workstation-action-popover button:disabled {
+#contadoresView .workstation-action-popover button:disabled,
+#contadoresView .workstation-action-popover .workstation-menu-switch:has(input:disabled) {
   opacity: 0.45;
   cursor: not-allowed;
 }
@@ -7383,6 +7431,7 @@ body {
   #contadoresView .ct-detail-head-actions {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    position: relative;
     width: 100%;
   }
 
@@ -7396,6 +7445,16 @@ body {
     width: 100%;
     min-width: 0;
     justify-content: center;
+  }
+
+  #contadoresView .workstation-action-menu {
+    position: static;
+  }
+
+  #contadoresView .workstation-action-popover {
+    left: 0;
+    right: 0;
+    width: 100%;
   }
 
   #contadoresView .ct-lead-copy-status {

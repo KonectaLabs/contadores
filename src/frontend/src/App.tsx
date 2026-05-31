@@ -4170,8 +4170,9 @@ function WorkstationView({
   const latestRuntimeAlert = openRuntimeAlerts[0] ?? null;
   const workstationFailed = activeClient?.automation_status === "failed";
   const workstationClosed = activeClient?.status === "closed";
-  const imageAssets = (detail?.media ?? []).filter((asset) => asset.content_type?.startsWith("image/"));
-  const professionalPhotos = detail?.professional_photos ?? [];
+  const detailMedia = detailClient ? detail?.media ?? [] : [];
+  const imageAssets = detailMedia.filter((asset) => asset.content_type?.startsWith("image/"));
+  const professionalPhotos = detailClient ? detail?.professional_photos ?? [] : [];
   const [mediaDropActive, setMediaDropActive] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
   const [editingMediaId, setEditingMediaId] = useState<string | null>(null);
@@ -4197,7 +4198,7 @@ function WorkstationView({
       ? `${clients.length} ${clients.length === 1 ? "client" : "clients"} in ${funnelLabel}`
       : `No converted clients in ${funnelLabel} yet`;
   const workstationStateIsReady = (automationState?.label ?? "").toLowerCase().includes("ready");
-  const workstationHasMissingLiveProcess = activeClient?.automation_status === "drafting" || activeClient?.automation_status === "revision_requested"
+  const workstationHasMissingLiveProcess = automationState && (activeClient?.automation_status === "drafting" || activeClient?.automation_status === "revision_requested")
     ? !automationState?.is_live_working && !automationState?.is_stale
     : false;
   const workstationStatePillLabel = automationState?.is_live_working
@@ -4214,6 +4215,12 @@ function WorkstationView({
             ? "Ready"
             : "Idle";
   const activeOffer = formatWorkstationOffer(activeClient);
+  const workstationClientStateLabel = formatWorkstationClientState(activeClient, automationState);
+  const workstationContactLine = selectedLead
+    ? [selectedLead.phone, selectedLead.email].filter(Boolean).join(" · ") || selectedLead.external_lead_id || "No contact info"
+    : activeClient?.folder_name || "No contact info";
+  const workstationMediaCount = detailClient ? detailMedia.length : activeClient?.media_count ?? 0;
+  const workstationRunDetailsId = activeClient ? `workstation-run-details-${activeClient.id}` : "workstation-run-details";
   const automationTone = workstationFailed
     ? "failed"
     : automationState?.is_stale
@@ -4225,6 +4232,35 @@ function WorkstationView({
       : automationState?.is_waiting_backoff
         ? "waiting"
         : "idle";
+  const workstationAttention = workstationFailed
+    ? {
+        title: "Automation failed",
+        detail: latestRuntimeAlert?.error || "No runtime alert details were attached. Review this client manually.",
+        note: latestRuntimeAlert?.notified_at ? `Email alert sent ${shortDate(latestRuntimeAlert.notified_at)}` : "Email alert pending",
+      }
+    : automationState?.is_stale
+      ? {
+          title: "Run is stale",
+          detail: automationState.live_detail || automationState.detail || "The visible run has not reported recent progress.",
+          note: automationState.progress_updated_at ? `Last update ${shortDate(automationState.progress_updated_at)}` : "No recent progress update",
+        }
+      : workstationHasMissingLiveProcess
+        ? {
+            title: "No live process",
+            detail: automationState?.detail || "This client is marked as active, but no live Codex process is attached.",
+            note: "Needs operator review",
+          }
+        : latestRuntimeAlert
+          ? {
+              title: humanize(latestRuntimeAlert.alert_type || "runtime alert"),
+              detail: latestRuntimeAlert.error || "No runtime alert details were attached. Review this client manually.",
+              note: latestRuntimeAlert.resolved_at
+                ? `Resolved ${shortDate(latestRuntimeAlert.resolved_at)}`
+                : latestRuntimeAlert.notified_at
+                  ? `Email alert sent ${shortDate(latestRuntimeAlert.notified_at)}`
+                  : "Email alert pending",
+            }
+          : null;
 
   useEffect(() => {
     setNotesOpen(false);
@@ -4396,10 +4432,7 @@ function WorkstationView({
                     {client.automation_status === "failed" ? <span className="danger">Failed</span> : formatWorkstationOffer(client) ? <span>{formatWorkstationOffer(client)}</span> : null}
                   </div>
                   <p>{client.lead?.phone || client.folder_name}</p>
-                  <small>
-                    {humanize(client.work_type)} · {humanize(client.status)} · {humanize(client.automation_status)}
-                  </small>
-                  <small>{client.media_count} media · {client.folder_path}</small>
+                  <small>{formatWorkstationClientState(client)} · {client.media_count} media</small>
                 </div>
               </button>
             )) : clientListLoading ? (
@@ -4418,47 +4451,81 @@ function WorkstationView({
           ) : (
             <>
               <header className="ct-detail-head workstation-head">
-                <div className="ct-detail-head-main">
+                <div className="ct-detail-head-main workstation-client-summary">
                   <div className="ct-detail-avatar">{monogram(activeClient.display_name || "CL")}</div>
                   <div className="ct-detail-head-copy">
-                    <p className="ct-detail-kicker">{activeClient.funnel_id}</p>
+                    <p className="ct-detail-kicker">Build client</p>
                     <h3>{activeClient.display_name}</h3>
-                    <p className="ct-detail-meta">
-                      {selectedLead
-                        ? [selectedLead.phone || "-", selectedLead.email || "-", selectedLead.external_lead_id].join(" · ")
-                        : activeClient.folder_path}
-                    </p>
-                    <p className="ct-detail-meta">
-                      {humanize(activeClient.work_type)} · {humanize(activeClient.status)} · {humanize(activeClient.automation_status)}
-                    </p>
-                    {activeOffer ? (
-                      <p className="ct-detail-meta">Oferta fija: {activeOffer}</p>
-                    ) : null}
+                    <p className="ct-detail-meta">{workstationContactLine}</p>
+                    <div className="workstation-client-facts" aria-label="Client status">
+                      <span>
+                        <CheckCircle size={14} weight="bold" />
+                        {workstationClientStateLabel}
+                      </span>
+                      {activeOffer ? <span>{activeOffer}</span> : null}
+                      <span>{workstationMediaCount} media</span>
+                    </div>
                   </div>
                 </div>
-                <div className="ct-detail-head-actions">
-                  <label className="ct-codex-switch" title={codexEnabled ? "Codex enabled for this lead" : "Codex disabled for this lead"}>
-                    <input
-                      type="checkbox"
-                      checked={codexEnabled}
-                      disabled={!selectedLead || Boolean(actionBusy)}
-                      onChange={(event) => onToggleLeadCodex(selectedLead, event.target.checked)}
-                    />
-                    <span>Codex</span>
-                  </label>
+                <div className="ct-detail-head-actions workstation-primary-actions">
+                  {canStartSoloPageWork ? (
+                    <button type="button" className="ct-btn ct-btn-primary" onClick={openSoloPagePromptModal}>
+                      <Robot size={15} weight="bold" />
+                      Start Codex
+                    </button>
+                  ) : canStopSoloPageWork ? (
+                    <button
+                      type="button"
+                      className="ct-btn ct-btn-primary"
+                      onClick={openSoloPageSteerModal}
+                      disabled={!codexEnabled || actionBusy === "solo-page-steer"}
+                    >
+                      <PaperPlaneTilt size={15} weight="bold" />
+                      Steer Codex
+                    </button>
+                  ) : publicPage ? (
+                    <a className="ct-btn ct-btn-primary" href={publicPage.public_url} target="_blank" rel="noreferrer">
+                      <ArrowSquareOut size={15} weight="bold" />
+                      Open page
+                    </a>
+                  ) : (
+                    <button
+                      type="button"
+                      className="ct-btn ct-btn-primary"
+                      onClick={() => setNotesOpen(true)}
+                      aria-controls="workstation-notes-panel"
+                    >
+                      <NotePencil size={15} weight="bold" />
+                      Add notes
+                    </button>
+                  )}
                   <div className="workstation-action-menu">
                     <button
                       type="button"
-                      className={`ct-btn ct-btn-primary ${actionsOpen ? "active" : ""}`}
+                      className={`ct-btn ct-btn-ghost ${actionsOpen ? "active" : ""}`}
                       onClick={() => setActionsOpen((current) => !current)}
                       aria-expanded={actionsOpen}
                       aria-haspopup="menu"
                     >
-                      Actions
+                      More
                       <CaretDown size={14} weight="bold" />
                     </button>
                     {actionsOpen ? (
                       <div className="workstation-action-popover" role="menu">
+                        <label
+                          className="ct-codex-switch workstation-menu-switch"
+                          role="menuitemcheckbox"
+                          aria-checked={codexEnabled}
+                          title={codexEnabled ? "Codex enabled for this lead" : "Codex disabled for this lead"}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={codexEnabled}
+                            disabled={!selectedLead || Boolean(actionBusy)}
+                            onChange={(event) => onToggleLeadCodex(selectedLead, event.target.checked)}
+                          />
+                          <span>Codex</span>
+                        </label>
                         <button
                           type="button"
                           role="menuitem"
@@ -4466,7 +4533,7 @@ function WorkstationView({
                           disabled={!canStartSoloPageWork}
                         >
                           <Robot size={16} weight="bold" />
-                          <span>Poner Codex a trabajar</span>
+                          <span>Start Codex</span>
                         </button>
                         <button
                           type="button"
@@ -4496,8 +4563,65 @@ function WorkstationView({
                           disabled={!codexEnabled || workstationClosed || !imageAssets.length || professionalPhotoJobBusy || actionBusy === "professional-photo-start"}
                         >
                           <Camera size={16} weight="bold" />
-                          <span>Hacer foto profesional</span>
+                          <span>Professional photo</span>
                         </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            setNotesOpen((current) => !current);
+                            setActionsOpen(false);
+                          }}
+                          aria-expanded={notesOpen}
+                          aria-controls="workstation-notes-panel"
+                        >
+                          <NotePencil size={16} weight="bold" />
+                          <span>Notes</span>
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            setActionsOpen(false);
+                            onOpenCrmLead(selectedLead);
+                          }}
+                        >
+                          <ArrowSquareOut size={16} weight="bold" />
+                          <span>Open CRM chat</span>
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            setActionsOpen(false);
+                            onCopyAll();
+                          }}
+                        >
+                          <Copy size={16} weight="bold" />
+                          <span>Copy all</span>
+                        </button>
+                        {publicPage ? (
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                              setActionsOpen(false);
+                              copyTextToClipboard(publicPage.public_url).catch(() => undefined);
+                            }}
+                          >
+                            <Copy size={16} weight="bold" />
+                            <span>Copy public URL</span>
+                          </button>
+                        ) : null}
+                        <a
+                          role="menuitem"
+                          className="workstation-menu-link"
+                          href={`/api/workstation/clients/${activeClient.id}/zip`}
+                          onClick={() => setActionsOpen(false)}
+                        >
+                          <DownloadSimple size={16} weight="bold" />
+                          <span>Download ZIP</span>
+                        </a>
                         <button
                           type="button"
                           role="menuitem"
@@ -4514,46 +4638,6 @@ function WorkstationView({
                       </div>
                     ) : null}
                   </div>
-                  <button
-                    type="button"
-                    className={`ct-btn ct-btn-ghost notes-toggle ${notesOpen ? "active" : ""}`}
-                    onClick={() => setNotesOpen((current) => !current)}
-                    aria-expanded={notesOpen}
-                    aria-controls="workstation-notes-panel"
-                  >
-                    <NotePencil size={15} weight="bold" />
-                    Notes
-                  </button>
-                  <button type="button" className="ct-btn ct-btn-ghost" onClick={() => onOpenCrmLead(selectedLead)}>
-                    <ArrowSquareOut size={15} weight="bold" />
-                    Open CRM chat
-                  </button>
-                  <button type="button" className="ct-btn ct-btn-ghost" onClick={onCopyAll}>
-                    <Copy size={15} weight="bold" />
-                    Copy all
-                  </button>
-                  {publicPage ? (
-                    <>
-                      <a className="ct-btn ct-btn-ghost" href={publicPage.public_url} target="_blank" rel="noreferrer">
-                        <ArrowSquareOut size={15} weight="bold" />
-                        Open public page
-                      </a>
-                      <button
-                        type="button"
-                        className="ct-btn ct-btn-ghost"
-                        onClick={() => {
-                          copyTextToClipboard(publicPage.public_url).catch(() => undefined);
-                        }}
-                      >
-                        <Copy size={15} weight="bold" />
-                        Copy public URL
-                      </button>
-                    </>
-                  ) : null}
-                  <a className="ct-btn ct-btn-primary" href={`/api/workstation/clients/${activeClient.id}/zip`}>
-                    <DownloadSimple size={15} weight="bold" />
-                    Download ZIP
-                  </a>
                 </div>
               </header>
 
@@ -4588,28 +4672,25 @@ function WorkstationView({
                 </section>
               ) : null}
 
-              {workstationFailed || latestRuntimeAlert ? (
+              {workstationAttention ? (
                 <section className="workstation-failure-alert" role="alert">
                   <WarningCircle size={22} weight="bold" />
                   <div>
                     <span>Workstation alert</span>
-                    <strong>{workstationFailed ? "Automation failed" : humanize(latestRuntimeAlert?.alert_type || "runtime alert")}</strong>
-                    <p>{latestRuntimeAlert?.error || "No runtime alert details were attached. Review this client manually."}</p>
-                    <small>
-                      {latestRuntimeAlert?.resolved_at
-                        ? `Resolved ${shortDate(latestRuntimeAlert.resolved_at)}`
-                        : latestRuntimeAlert?.notified_at
-                          ? `Email alert sent ${shortDate(latestRuntimeAlert.notified_at)}`
-                          : "Email alert pending"}
-                    </small>
+                    <strong>{workstationAttention.title}</strong>
+                    <p>{workstationAttention.detail}</p>
+                    <small>{workstationAttention.note}</small>
                   </div>
                 </section>
               ) : null}
 
-              <section className={`workstation-panel workstation-automation-panel ${automationTone}`}>
-                <div className="workstation-panel-head">
+              <details
+                className={`workstation-panel workstation-automation-panel ${automationTone}`}
+                id={workstationRunDetailsId}
+              >
+                <summary className="workstation-panel-head">
                   <div>
-                    <span>Automation state</span>
+                    <span>Run details</span>
                     <strong>{automationState?.label ?? humanize(activeClient.automation_status)}</strong>
                   </div>
                   <span className="workstation-state-pill">
@@ -4628,7 +4709,7 @@ function WorkstationView({
                     )}
                     {workstationStatePillLabel}
                   </span>
-                </div>
+                </summary>
                 <p className="workstation-automation-detail">
                   {automationState?.detail ?? "No automation state loaded yet."}
                 </p>
@@ -4654,7 +4735,7 @@ function WorkstationView({
                     <p>No progress has been written for this client yet.</p>
                   )}
                 </div>
-              </section>
+              </details>
 
               <details
                 className={`workstation-panel workstation-media-panel ${mediaDropActive ? "drag-active" : ""}`}
@@ -4668,7 +4749,7 @@ function WorkstationView({
                 <summary className="workstation-panel-head">
                   <div>
                     <span>Media</span>
-                    <strong>{detail?.media?.length ? `${detail.media.length} files` : "Files"}</strong>
+                    <strong>{detailMedia.length ? `${detailMedia.length} files` : "Files"}</strong>
                   </div>
                 </summary>
                 <form className="workstation-upload" onSubmit={onUploadMedia}>
@@ -4686,7 +4767,7 @@ function WorkstationView({
                   </button>
                 </form>
                 <div className="workstation-media-grid">
-                  {(detail?.media ?? []).length ? (detail?.media ?? []).map((asset) => (
+                  {detailMedia.length ? detailMedia.map((asset) => (
                     <article className="workstation-media-card" key={asset.id}>
                       <div className="workstation-media-preview">
                         {asset.content_type?.startsWith("image/") ? (
@@ -7398,6 +7479,40 @@ function formatWorkstationOffer(client: WorkstationClientSummary | null | undefi
     return "";
   }
   return `${client.offer_price_usd} ${client.offer_currency || "USD"}`;
+}
+
+function formatWorkstationClientState(
+  client: WorkstationClientSummary | null | undefined,
+  automationState?: WorkstationClientDetailResponse["automation_state"] | null,
+): string {
+  if (!client) {
+    return "No client selected";
+  }
+  if (client.status === "closed") {
+    return "Closed";
+  }
+  if (client.automation_status === "failed") {
+    return "Needs review";
+  }
+  if (automationState?.is_live_working) {
+    return "Codex working";
+  }
+  if (automationState?.is_stale) {
+    return "Stale run";
+  }
+  if (automationState?.is_waiting_backoff) {
+    return "Waiting";
+  }
+  const labels: Record<string, string> = {
+    intake: "Collecting inputs",
+    needs_human: "Needs direction",
+    drafting: "Building",
+    awaiting_review: "Ready to review",
+    revision_requested: "Revising",
+    approved: "Approved",
+    handoff_sent: "Delivered",
+  };
+  return labels[client.automation_status] ?? humanize(client.automation_status || client.status);
 }
 
 function formatRate(value: number): string {
