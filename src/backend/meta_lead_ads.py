@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from typing import Any, Callable
 
 import httpx
@@ -52,6 +53,14 @@ def _clean_graph_payload(value: Any) -> Any:
     return value
 
 
+def _redact_graph_error(value: Any) -> str:
+    """Remove bearer/query tokens from provider error strings before reporting."""
+    text = str(value)
+    text = re.sub(r"(?i)(access_token=)[^&\s'\"<>]+", r"\1[redacted]", text)
+    text = re.sub(r"(?i)(access_token%3D)[^&\s'\"<>]+", r"\1[redacted]", text)
+    return text
+
+
 def _default_graph_getter(*, api_version: str, access_token: str, timeout: float = 20) -> GraphGetter:
     base_url = _graph_base_url(api_version)
 
@@ -94,9 +103,9 @@ def fetch_meta_lead_payload(
         payload = getter(clean_leadgen_id, {"fields": fields or DEFAULT_META_LEAD_FIELDS})
     except httpx.HTTPStatusError as error:
         detail = error.response.text[:500] if error.response is not None else str(error)
-        raise MetaLeadAdsError(f"Meta lead fetch failed: {detail}") from error
+        raise MetaLeadAdsError(f"Meta lead fetch failed: {_redact_graph_error(detail)}") from error
     except httpx.HTTPError as error:
-        raise MetaLeadAdsError(f"Meta lead fetch failed: {error}") from error
+        raise MetaLeadAdsError(f"Meta lead fetch failed: {_redact_graph_error(error)}") from error
     if not isinstance(payload, dict):
         raise MetaLeadAdsError("Meta lead fetch returned a non-object payload")
     return _clean_graph_payload(payload)

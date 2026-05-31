@@ -663,6 +663,45 @@ def test_meta_inventory_sync_persists_read_only_inventory(monkeypatch, tmp_path)
     assert PlatformEvent.list_recent(target_type="meta_inventory", target_id=snapshot.id)[0].event_type == "meta_inventory.synced"
 
 
+def test_meta_inventory_sync_redacts_access_token_from_errors(monkeypatch, tmp_path) -> None:
+    """Meta inventory errors must not persist provider URLs with raw tokens."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("META_MARKETING_API_VERSION", "v25.0")
+    monkeypatch.delenv("META_MARKETING_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("META_ACCESS_TOKEN", raising=False)
+
+    def fake_graph_get(path: str, params: dict | None = None) -> dict:
+        del params
+        if path == "me/adaccounts":
+            return {"data": [{"id": "act_123", "name": "Agency account"}]}
+        if path == "act_123":
+            return {"id": "act_123", "name": "Agency account"}
+        if path == "act_123/campaigns":
+            return {"data": []}
+        if path == "act_123/adspixels":
+            return {"data": []}
+        if path == "me/accounts":
+            return {"data": [{"id": "page_1", "name": "Client Page"}]}
+        if path == "page_1/leadgen_forms":
+            raise RuntimeError("403 for https://graph.facebook.com/v25.0/page_1/leadgen_forms?access_token=secret-token&limit=50")
+        if path == "business_1/owned_whatsapp_business_accounts":
+            return {"data": []}
+        raise AssertionError(path)
+
+    snapshot, result = sync_meta_inventory(
+        ad_account_id="act_123",
+        business_id="business_1",
+        source="test",
+        actor="tester",
+        graph_get=fake_graph_get,
+    )
+
+    error_text = json.dumps(result.errors + snapshot.errors())
+    assert result.status == "partial"
+    assert "secret-token" not in error_text
+    assert "access_token=[redacted]" in error_text
+
+
 def test_meta_publish_attempt_idempotency_key_has_db_guard(monkeypatch, tmp_path) -> None:
     """Meta publish idempotency should be enforced below the application lookup."""
     configure_contadores_db(monkeypatch, tmp_path)

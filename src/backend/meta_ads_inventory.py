@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from typing import Any, Callable
 
 import httpx
@@ -48,6 +49,14 @@ def _clean_graph_payload(value: Any) -> Any:
     return value
 
 
+def _redact_graph_error(value: Any) -> str:
+    """Remove bearer/query tokens from provider error strings before persistence."""
+    text = str(value)
+    text = re.sub(r"(?i)(access_token=)[^&\s'\"<>]+", r"\1[redacted]", text)
+    text = re.sub(r"(?i)(access_token%3D)[^&\s'\"<>]+", r"\1[redacted]", text)
+    return text
+
+
 def _graph_base_url(api_version: str) -> str:
     version = _clean(api_version).strip("/")
     if not version:
@@ -84,7 +93,7 @@ def _try_read(
     try:
         return _clean_graph_payload(graph_get(path, params))
     except Exception as error:
-        errors.append(f"{path}: {error.__class__.__name__}: {error}")
+        errors.append(f"{path}: {error.__class__.__name__}: {_redact_graph_error(error)}")
         return {}
 
 

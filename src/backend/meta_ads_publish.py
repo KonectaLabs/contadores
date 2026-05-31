@@ -6,6 +6,7 @@ import math
 import os
 import json
 import mimetypes
+import re
 from pathlib import Path
 from typing import Any, Literal
 from collections.abc import Callable
@@ -170,6 +171,14 @@ def _sanitize_provider_payload(value: Any) -> Any:
     if isinstance(value, list):
         return [_sanitize_provider_payload(item) for item in value]
     return value
+
+
+def _redact_graph_error(value: Any) -> str:
+    """Remove bearer/query tokens from provider error strings before persistence."""
+    text = str(value)
+    text = re.sub(r"(?i)(access_token=)[^&\s'\"<>]+", r"\1[redacted]", text)
+    text = re.sub(r"(?i)(access_token%3D)[^&\s'\"<>]+", r"\1[redacted]", text)
+    return text
 
 
 def _graph_base_url(api_version: str) -> str:
@@ -977,6 +986,7 @@ def upload_meta_creative_asset(
             response=response,
         )
     except Exception as error:
+        error_text = _redact_graph_error(error)
         result = MetaCreativeAssetUploadResult(
             asset_id=asset.id,
             campaign_id=asset.campaign_id,
@@ -985,12 +995,12 @@ def upload_meta_creative_asset(
             ad_account_id=clean_ad_account_id,
             api_version=api_version,
             provider_asset_type=provider_asset_type,
-            blocked_reasons=[str(error)[:12000]],
+            blocked_reasons=[error_text[:12000]],
         )
         updated = PlatformCreativeAsset.update_meta_refs(
             asset.id,
             status="upload_failed",
-            failure_reason=str(error)[:4000],
+            failure_reason=error_text[:4000],
         )
         if updated is not None:
             asset = updated
@@ -1310,6 +1320,7 @@ def execute_meta_publish_attempt(
                 )
             )
         except Exception as error:
+            error_text = _redact_graph_error(error)
             operation_results.append(
                 MetaPublishOperationResult(
                     step=operation.step,
@@ -1318,7 +1329,7 @@ def execute_meta_publish_attempt(
                     path=operation.path,
                     status="failed",
                     request_params=request_params,
-                    error=str(error)[:12000],
+                    error=error_text[:12000],
                 )
             )
             break
