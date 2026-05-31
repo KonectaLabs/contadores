@@ -3718,8 +3718,12 @@ body {
 
 #contadoresView .ct-pipeline {
   display: grid;
-  grid-template-columns: repeat(10, minmax(82px, 1fr));
-  gap: 7px;
+  grid-template-columns:
+    minmax(104px, 0.72fr)
+    minmax(360px, 2.3fr)
+    minmax(190px, 1fr)
+    minmax(190px, 1fr);
+  gap: 8px;
   min-width: 0;
   overflow: visible;
 }
@@ -3800,6 +3804,60 @@ body {
   display: none;
 }
 
+#contadoresView .ct-stage-group {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding: 7px;
+  border: 1px solid var(--ct-line-soft);
+  border-radius: var(--ct-radius);
+  background: rgba(255, 253, 248, 0.66);
+}
+
+#contadoresView .ct-stage-group-head {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 2px;
+}
+
+#contadoresView .ct-stage-group-head span {
+  color: var(--ct-ink-muted);
+  font: 850 10px/1 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+#contadoresView .ct-stage-group-head em {
+  min-width: 0;
+  color: rgba(69, 75, 67, 0.62);
+  font: 700 10px/1 var(--font-sans);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#contadoresView .ct-stage-group-strip {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+#contadoresView .ct-stage-group[data-group="overview"] .ct-stage-group-strip {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+#contadoresView .ct-stage-group[data-group="pipeline"] .ct-stage-group-strip {
+  grid-template-columns: repeat(5, minmax(74px, 1fr));
+}
+
+#contadoresView .ct-stage-group[data-group="action"] .ct-stage-group-strip,
+#contadoresView .ct-stage-group[data-group="system"] .ct-stage-group-strip {
+  grid-template-columns: repeat(2, minmax(78px, 1fr));
+}
+
 #contadoresView .ct-stage {
   --stage-accent: #64748b;
   display: grid;
@@ -3807,8 +3865,8 @@ body {
   align-items: center;
   align-content: center;
   gap: 6px;
-  min-height: 64px;
-  padding: 10px 12px;
+  min-height: 58px;
+  padding: 9px 10px;
   border: 1px solid var(--ct-line);
   border-left: 4px solid transparent;
   border-radius: var(--ct-radius);
@@ -7339,7 +7397,14 @@ body {
   }
 
   #contadoresView .ct-pipeline {
-    grid-template-columns: repeat(5, minmax(82px, 1fr));
+    grid-template-columns: 1fr;
+  }
+
+  #contadoresView .ct-stage-group-strip,
+  #contadoresView .ct-stage-group[data-group="pipeline"] .ct-stage-group-strip,
+  #contadoresView .ct-stage-group[data-group="action"] .ct-stage-group-strip,
+  #contadoresView .ct-stage-group[data-group="system"] .ct-stage-group-strip {
+    grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
   }
 
   #contadoresView .ct-queue-bar {
@@ -7536,13 +7601,13 @@ body {
   }
 
   #contadoresView .ct-pipeline {
-    display: flex;
-    overflow-x: auto;
-    scrollbar-width: thin;
+    display: grid;
+    grid-template-columns: 1fr;
+    overflow: visible;
   }
 
   #contadoresView .ct-stage {
-    flex: 0 0 108px;
+    min-height: 54px;
   }
 
   #contadoresView .ct-filter-row {
@@ -7661,7 +7726,7 @@ body {
   }
 
   #contadoresView .ct-pipeline {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: 1fr;
   }
 
   #contadoresView .ct-detail-head {
@@ -7895,7 +7960,7 @@ body {
   }
 
   #contadoresView .ct-pipeline {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: 1fr;
   }
 
   #contadoresView .ct-funnel-grid,

@@ -92,6 +92,14 @@ type StageFilterValue =
   | "queue:operator"
   | "queue:paused"
   | "terminal:closed";
+type StageFilterGroupId = "overview" | "pipeline" | "action" | "system";
+type StageFilterOption = {
+  value: StageFilterValue;
+  label: string;
+  metric?: keyof ContadoresMetrics;
+  tone: "all" | "neutral" | "accent" | "success" | "warn" | "muted";
+  group: StageFilterGroupId;
+};
 type ActiveSection = "crm" | "sell" | "workstation" | "delivery" | "ops";
 type LoadWorkstationDetailOptions = {
   syncNotes?: boolean;
@@ -148,22 +156,28 @@ type ClientLeadSourceMutationPayload = {
   context_field_mapping: Record<string, string>;
 };
 
-const stageFilters: Array<{
-  value: StageFilterValue;
+const stageFilterGroups: Array<{
+  id: StageFilterGroupId;
   label: string;
-  metric?: keyof ContadoresMetrics;
-  tone: "all" | "neutral" | "accent" | "success" | "warn" | "muted";
+  help: string;
 }> = [
-  { value: "all", label: "All", metric: "total", tone: "all" },
-  { value: "pipeline:new", label: "New", metric: "pipeline_new", tone: "neutral" },
-  { value: "pipeline:contacted", label: "Contacted", metric: "pipeline_contacted", tone: "neutral" },
-  { value: "pipeline:offer_sent", label: "Offer", metric: "pipeline_offer_sent", tone: "neutral" },
-  { value: "pipeline:meeting_sent", label: "Meeting", metric: "pipeline_meeting_sent", tone: "accent" },
-  { value: "pipeline:converted", label: "Converted", metric: "pipeline_converted", tone: "success" },
-  { value: "queue:operator", label: "Operator", metric: "queue_operator", tone: "warn" },
-  { value: "attention:needs_reply", label: "Needs reply", metric: "attention_needs_reply", tone: "warn" },
-  { value: "queue:paused", label: "Paused", metric: "queue_paused", tone: "warn" },
-  { value: "terminal:closed", label: "Closed", metric: "terminal_closed", tone: "muted" },
+  { id: "overview", label: "Overview", help: "All visible leads" },
+  { id: "pipeline", label: "Progress", help: "Commercial milestone" },
+  { id: "action", label: "Action", help: "Human ownership" },
+  { id: "system", label: "System", help: "Automation and terminal" },
+];
+
+const stageFilters: StageFilterOption[] = [
+  { value: "all", label: "All", metric: "total", tone: "all", group: "overview" },
+  { value: "pipeline:new", label: "New", metric: "pipeline_new", tone: "neutral", group: "pipeline" },
+  { value: "pipeline:contacted", label: "Contacted", metric: "pipeline_contacted", tone: "neutral", group: "pipeline" },
+  { value: "pipeline:offer_sent", label: "Offer", metric: "pipeline_offer_sent", tone: "neutral", group: "pipeline" },
+  { value: "pipeline:meeting_sent", label: "Meeting", metric: "pipeline_meeting_sent", tone: "accent", group: "pipeline" },
+  { value: "pipeline:converted", label: "Converted", metric: "pipeline_converted", tone: "success", group: "pipeline" },
+  { value: "queue:operator", label: "Operator", metric: "queue_operator", tone: "warn", group: "action" },
+  { value: "attention:needs_reply", label: "Needs reply", metric: "attention_needs_reply", tone: "warn", group: "action" },
+  { value: "queue:paused", label: "Paused", metric: "queue_paused", tone: "warn", group: "system" },
+  { value: "terminal:closed", label: "Closed", metric: "terminal_closed", tone: "muted", group: "system" },
 ];
 
 const validStageFilterValues = new Set<StageFilterValue>(stageFilters.map((filter) => filter.value));
@@ -2156,22 +2170,36 @@ export function App() {
               <strong>{crmModeLabel}</strong>
               <span>{totalCount ? `${visibleCount}/${totalCount}` : "0"}</span>
             </div>
-            <section className="ct-pipeline" aria-label="Lead stages">
-              {stageFilters.map((filter) => {
-                const count = Number(metrics?.[filter.metric ?? "total"] ?? 0);
+            <section className="ct-pipeline" aria-label="Lead views">
+              {stageFilterGroups.map((group) => {
+                const filters = stageFilters.filter((filter) => filter.group === group.id);
 
                 return (
-                  <button
-                    key={filter.value}
-                    type="button"
-                    className={`ct-stage ${stageFilter === filter.value ? "active" : ""}`}
-                    data-tone={filter.tone}
-                    aria-pressed={stageFilter === filter.value}
-                    onClick={() => setStageFilter(filter.value)}
-                  >
-                    <span className="ct-stage-count">{compactNumber(count)}</span>
-                    <span className="ct-stage-label">{filter.label}</span>
-                  </button>
+                  <div className="ct-stage-group" data-group={group.id} key={group.id}>
+                    <div className="ct-stage-group-head">
+                      <span>{group.label}</span>
+                      <em>{group.help}</em>
+                    </div>
+                    <div className="ct-stage-group-strip" role="group" aria-label={`${group.label} lead views`}>
+                      {filters.map((filter) => {
+                        const count = Number(metrics?.[filter.metric ?? "total"] ?? 0);
+
+                        return (
+                          <button
+                            key={filter.value}
+                            type="button"
+                            className={`ct-stage ${stageFilter === filter.value ? "active" : ""}`}
+                            data-tone={filter.tone}
+                            aria-pressed={stageFilter === filter.value}
+                            onClick={() => setStageFilter(filter.value)}
+                          >
+                            <span className="ct-stage-count">{compactNumber(count)}</span>
+                            <span className="ct-stage-label">{filter.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 );
               })}
             </section>
