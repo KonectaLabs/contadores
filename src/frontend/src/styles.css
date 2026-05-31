@@ -3120,8 +3120,7 @@ body {
 
 #contadoresView .ops-item-topline,
 #contadoresView .ops-item-meta,
-#contadoresView .ops-table-row,
-#contadoresView .ops-event-row {
+#contadoresView .ops-table-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -3130,8 +3129,7 @@ body {
 }
 
 #contadoresView .ops-item strong,
-#contadoresView .ops-table-row strong,
-#contadoresView .ops-event-row strong {
+#contadoresView .ops-table-row strong {
   min-width: 0;
   color: var(--ct-ink);
   font: 800 14px/1.2 var(--font-sans);
@@ -3151,12 +3149,10 @@ body {
 }
 
 #contadoresView .ops-item-meta span,
+#contadoresView .ops-item-topline span,
 #contadoresView .ops-table-row span,
-#contadoresView .ops-event-row span,
-#contadoresView .ops-event-row em,
 #contadoresView .ops-item time,
-#contadoresView .ops-table-row time,
-#contadoresView .ops-event-row time {
+#contadoresView .ops-table-row time {
   color: var(--ct-ink-muted);
   font: 700 10px/1.25 var(--font-mono);
   font-style: normal;
@@ -3176,6 +3172,34 @@ body {
   min-width: 0;
   display: grid;
   gap: 4px;
+}
+
+#contadoresView .ops-debug-details {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  margin-top: 3px;
+}
+
+#contadoresView .ops-debug-details summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--ct-ink-muted);
+  font: 800 10px/1.2 var(--font-mono);
+  text-transform: uppercase;
+}
+
+#contadoresView .ops-debug-details span,
+#contadoresView .ops-debug-details code {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  padding: 6px 8px;
+  border-radius: var(--ct-radius-sm);
+  background: rgba(15, 23, 42, 0.05);
+  color: var(--ct-ink-muted);
+  font: 700 10px/1.35 var(--font-mono);
+  overflow-wrap: anywhere;
 }
 
 #contadoresView .ops-status {
@@ -3263,18 +3287,11 @@ body {
 
 #contadoresView .ops-event-stream {
   display: grid;
-  gap: 0;
+  gap: 8px;
 }
 
-#contadoresView .ops-event-row {
-  display: grid;
-  grid-template-columns: 120px minmax(0, 1fr) minmax(120px, 0.35fr) 90px;
-  padding: 10px 0;
-  border-bottom: 1px solid var(--ct-line-soft);
-}
-
-#contadoresView .ops-event-row:last-child {
-  border-bottom: 0;
+#contadoresView .ops-event-card {
+  gap: 7px;
 }
 
 #contadoresView .runner-event-stack,
@@ -7701,11 +7718,6 @@ body {
 
   #contadoresView .runner-signal strong {
     font-size: 34px;
-  }
-
-  #contadoresView .ops-event-row {
-    grid-template-columns: 1fr;
-    gap: 5px;
   }
 
   #contadoresView .ops-table-row,

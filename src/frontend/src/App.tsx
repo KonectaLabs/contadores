@@ -54,6 +54,9 @@ import type {
   MessageItem,
   PlatformAdCampaignItem,
   PlatformCreativeAssetItem,
+  PlatformAgentRunItem,
+  PlatformAgentToolCallItem,
+  PlatformEventItem,
   PlatformHumanQuestionItem,
   PlatformMetaInventorySnapshotItem,
   PlatformMetaPublishAttemptItem,
@@ -3623,9 +3626,17 @@ function PlatformOpsView({
                 return (
                   <div className="ops-table-row" key={run.id}>
                     <div>
-                      <strong>{run.agent_kind || "agent"}</strong>
-                      <span>{formatPlatformRef(run.target_type, run.target_id)} · {run.prompt_version || "-"}</span>
-                      {runDetail ? <span>{truncate(runDetail, 120)}</span> : null}
+                      <strong>{formatAgentRunTitle(run)}</strong>
+                      <span>{formatAgentRunContext(run)}</span>
+                      {runDetail || run.prompt_version || run.context_path ? (
+                        <details className="ops-debug-details">
+                          <summary>Technical details</summary>
+                          <span>{runDetail ? truncate(runDetail, 180) : "No preview"}</span>
+                          <code>{formatPlatformRef(run.target_type, run.target_id)}</code>
+                          {run.prompt_version ? <code>Prompt {run.prompt_version}</code> : null}
+                          {run.context_path ? <code>{truncate(run.context_path, 90)}</code> : null}
+                        </details>
+                      ) : null}
                     </div>
                     <OpsStatus value={run.status} />
                     <time>{relativeTime(run.finished_at || run.started_at)}</time>
@@ -3643,9 +3654,17 @@ function PlatformOpsView({
                 return (
                   <div className="ops-table-row" key={call.id}>
                     <div>
-                      <strong>{call.tool_name}</strong>
-                      <span>{formatPlatformRef(call.target_type, call.target_id)} · {truncate(call.run_id, 20)}</span>
-                      {callDetail ? <span>{truncate(callDetail, 120)}</span> : null}
+                      <strong>{humanize(call.tool_name || "tool call")}</strong>
+                      <span>{formatAgentToolContext(call)}</span>
+                      {callDetail || call.idempotency_key ? (
+                        <details className="ops-debug-details">
+                          <summary>Technical details</summary>
+                          <span>{callDetail ? truncate(callDetail, 180) : "No preview"}</span>
+                          <code>{formatPlatformRef(call.target_type, call.target_id)}</code>
+                          <code>Run {truncate(call.run_id, 28)}</code>
+                          {call.idempotency_key ? <code>{truncate(call.idempotency_key, 80)}</code> : null}
+                        </details>
+                      ) : null}
                     </div>
                     <OpsStatus value={call.status} />
                     <time>{relativeTime(call.created_at)}</time>
@@ -3733,12 +3752,22 @@ function PlatformOpsView({
           <OpsPanel eyebrow={<Pulse size={18} weight="fill" />} title="Event stream" meta={`${events.length}`}>
             <div className="ops-event-stream">
               {events.slice(0, 14).map((event) => (
-                <div className="ops-event-row" key={event.id}>
-                  <span>{humanize(event.lifecycle_stage)}</span>
-                  <strong>{event.summary || humanize(event.event_type)}</strong>
-                  <em>{formatPlatformRef(event.target_type, event.target_id)}</em>
-                  <time>{relativeTime(event.created_at)}</time>
-                </div>
+                <article className="ops-item ops-event-card" data-tone={opsEventTone(event)} key={event.id}>
+                  <div className="ops-item-topline">
+                    <span>{formatOpsEventStage(event)}</span>
+                    <time>{relativeTime(event.created_at)}</time>
+                  </div>
+                  <strong>{formatOpsEventTitle(event)}</strong>
+                  <p>{formatOpsEventDetail(event)}</p>
+                  <details className="ops-debug-details">
+                    <summary>Technical details</summary>
+                    <code>{formatPlatformRef(event.target_type, event.target_id)}</code>
+                    <code>{event.event_type}</code>
+                    {event.source ? <code>Source {humanize(event.source)}</code> : null}
+                    {event.actor ? <code>Actor {humanize(event.actor)}</code> : null}
+                    {event.correlation_id ? <code>{truncate(event.correlation_id, 80)}</code> : null}
+                  </details>
+                </article>
               ))}
               {!events.length ? <OpsEmpty title="No events" value="0" /> : null}
             </div>
@@ -4000,6 +4029,88 @@ function formatPlatformRef(type: string, id: string): string {
     return humanize(type || "item");
   }
   return `${humanize(type)} · ${truncate(id, 18)}`;
+}
+
+function formatPlatformTargetLabel(type: string, id: string): string {
+  const label = platformTargetLabel(type);
+  return id ? `${label} record` : label;
+}
+
+function platformTargetLabel(type: string): string {
+  const normalized = type.toLowerCase();
+  const labels: Record<string, string> = {
+    ad_campaign: "Campaign",
+    agent_run: "Agent run",
+    client: "Client",
+    client_lead_source: "Delivery source",
+    creative: "Creative",
+    creative_asset: "Creative",
+    funnel: "Funnel",
+    human_question: "Operator question",
+    lead: "Lead",
+    meeting: "Meeting",
+    meta_inventory: "Meta inventory",
+    meta_publish_attempt: "Meta publish",
+    recipient: "Recipient",
+    workstation_client: "Workstation client",
+  };
+  return labels[normalized] || humanize(type || "Item");
+}
+
+function formatAgentRunTitle(run: PlatformAgentRunItem): string {
+  return `${humanize(run.agent_kind || "agent")} run`;
+}
+
+function formatAgentRunContext(run: PlatformAgentRunItem): string {
+  return `${formatPlatformTargetLabel(run.target_type, run.target_id)} · ${agentOutcomeLabel(run.status)}`;
+}
+
+function formatAgentToolContext(call: PlatformAgentToolCallItem): string {
+  return `${formatPlatformTargetLabel(call.target_type, call.target_id)} · ${agentOutcomeLabel(call.status)}`;
+}
+
+function agentOutcomeLabel(status: string): string {
+  const normalized = status.toLowerCase();
+  if (["failed", "error", "blocked"].includes(normalized)) {
+    return "Needs review";
+  }
+  if (["running", "queued", "pending"].includes(normalized)) {
+    return "In progress";
+  }
+  if (["completed", "complete", "success", "succeeded"].includes(normalized)) {
+    return "Completed";
+  }
+  return humanize(status || "status pending");
+}
+
+function formatOpsEventStage(event: PlatformEventItem): string {
+  return humanize(event.lifecycle_stage || event.severity || "event");
+}
+
+function formatOpsEventTitle(event: PlatformEventItem): string {
+  return event.summary || `${humanize(event.event_type || event.lifecycle_stage || "platform event")} update`;
+}
+
+function formatOpsEventDetail(event: PlatformEventItem): string {
+  const parts = [formatPlatformTargetLabel(event.target_type, event.target_id)];
+  if (event.actor && event.actor !== event.source) {
+    parts.push(`by ${humanize(event.actor)}`);
+  }
+  if (event.source) {
+    parts.push(`from ${humanize(event.source)}`);
+  }
+  return parts.join(" · ");
+}
+
+function opsEventTone(event: PlatformEventItem): "danger" | "warn" | undefined {
+  const signal = `${event.severity} ${event.lifecycle_stage} ${event.event_type}`.toLowerCase();
+  if (/(failed|failure|error|blocked|critical|danger)/.test(signal)) {
+    return "danger";
+  }
+  if (/(warn|warning|missing|pending|partial)/.test(signal)) {
+    return "warn";
+  }
+  return undefined;
 }
 
 function formatUnknownList(items: unknown[]): string {
