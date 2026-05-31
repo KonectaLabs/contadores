@@ -1703,7 +1703,7 @@ class ContadoresLead(SQLModel, table=True):
         funnel_id: str,
         stage: ContadoresLeadStage | str,
     ) -> Optional["ContadoresLead"]:
-        """Move one lead to another funnel and operator-selected stage."""
+        """Route one lead to another funnel and operator-selected handoff point."""
         with Session(engine) as session:
             item = session.get(cls, lead_id)
             if item is None:

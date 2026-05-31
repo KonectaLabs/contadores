@@ -283,11 +283,11 @@ const operations: Array<{
   },
 ];
 
-const moveStageOptions: Array<{ value: LeadStage; label: string }> = [
-  { value: "needs_human", label: "Operator queue" },
-  { value: "awaiting_initial_reply", label: "New" },
-  { value: "awaiting_video_reply", label: "Offer" },
-  { value: "calendly_sent", label: "Meeting" },
+const campaignRouteOptions: Array<{ value: LeadStage; label: string }> = [
+  { value: "needs_human", label: "Operator follow-up" },
+  { value: "awaiting_initial_reply", label: "Start sequence" },
+  { value: "awaiting_video_reply", label: "Offer follow-up" },
+  { value: "calendly_sent", label: "Meeting follow-up" },
 ];
 
 const sendOptions = [
@@ -1777,23 +1777,23 @@ export function App() {
     }
   }
 
-  async function moveLeadToFunnel(targetFunnelId: string, targetStage: LeadStage) {
+  async function routeLeadToCampaign(targetCampaignId: string, handoffPoint: LeadStage) {
     const leadId = selectedLead?.id ?? selectedLeadId;
     if (!leadId) {
       return;
     }
-    setActionBusy("move-lead");
+    setActionBusy("route-lead");
     try {
       const moved = await apiFetch<LeadSummary>(`/api/contadores/leads/${leadId}/move`, {
         method: "POST",
-        body: JSON.stringify({ funnel_id: targetFunnelId, stage: targetStage }),
+        body: JSON.stringify({ funnel_id: targetCampaignId, stage: handoffPoint }),
       });
       setSelectedFunnelId(moved.funnel_id);
       setSelectedLeadId(moved.id);
       await loadDashboard();
       await loadDetail(moved.id);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not move the lead.");
+      setError(reason instanceof Error ? reason.message : "Could not route this chat.");
     } finally {
       setActionBusy(null);
     }
@@ -2331,11 +2331,11 @@ export function App() {
               <PausedBanner lead={selectedLead} />
             ) : null}
             {isInboxFunnel ? (
-              <MoveLeadPanel
+              <CampaignRoutingPanel
                 lead={selectedLead}
                 funnels={funnels}
-                busy={actionBusy === "move-lead"}
-                onMove={moveLeadToFunnel}
+                busy={actionBusy === "route-lead"}
+                onRoute={routeLeadToCampaign}
               />
             ) : null}
 
@@ -6150,23 +6150,23 @@ function PausedBanner({ lead }: {
   );
 }
 
-function MoveLeadPanel({
+function CampaignRoutingPanel({
   lead,
   funnels,
   busy,
-  onMove,
+  onRoute,
 }: {
   lead: LeadSummary | null;
   funnels: FunnelDefinition[];
   busy: boolean;
-  onMove: (funnelId: string, stage: LeadStage) => Promise<void>;
+  onRoute: (campaignId: string, handoffPoint: LeadStage) => Promise<void>;
 }) {
   const campaignFunnels = funnels.filter((funnel) => funnel.kind !== "inbox");
-  const [funnelId, setFunnelId] = useState(campaignFunnels[0]?.id ?? "contadores");
-  const [stage, setStage] = useState<LeadStage>("needs_human");
+  const [targetCampaignId, setTargetCampaignId] = useState(campaignFunnels[0]?.id ?? "contadores");
+  const [handoffPoint, setHandoffPoint] = useState<LeadStage>("needs_human");
 
   useEffect(() => {
-    setFunnelId((current) => (
+    setTargetCampaignId((current) => (
       campaignFunnels.some((funnel) => funnel.id === current)
         ? current
         : campaignFunnels[0]?.id ?? "contadores"
@@ -6179,33 +6179,33 @@ function MoveLeadPanel({
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    await onMove(funnelId, stage);
+    await onRoute(targetCampaignId, handoffPoint);
   }
 
   return (
-    <form className="ct-move-panel" onSubmit={submit}>
+    <form className="ct-route-panel" onSubmit={submit}>
       <div>
-        <strong>Move to campaign</strong>
-        <span>Pick the funnel and the phase where this chat should continue.</span>
+        <strong>Route to campaign</strong>
+        <span>Choose the destination and where the operator should pick up.</span>
       </div>
       <label className="ct-field">
         <span>Campaign</span>
-        <select value={funnelId} onChange={(event) => setFunnelId(event.target.value)}>
+        <select value={targetCampaignId} onChange={(event) => setTargetCampaignId(event.target.value)}>
           {campaignFunnels.map((funnel) => (
             <option value={funnel.id} key={funnel.id}>{funnel.label}</option>
           ))}
         </select>
       </label>
       <label className="ct-field">
-        <span>Phase</span>
-        <select value={stage} onChange={(event) => setStage(event.target.value as LeadStage)}>
-          {moveStageOptions.map((option) => (
+        <span>Handoff point</span>
+        <select value={handoffPoint} onChange={(event) => setHandoffPoint(event.target.value as LeadStage)}>
+          {campaignRouteOptions.map((option) => (
             <option value={option.value} key={option.value}>{option.label}</option>
           ))}
         </select>
       </label>
       <button type="submit" className="ct-btn ct-btn-primary" disabled={busy || !campaignFunnels.length}>
-        {busy ? "Moving..." : "Move chat"}
+        {busy ? "Routing..." : "Route chat"}
       </button>
     </form>
   );

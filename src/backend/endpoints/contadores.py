@@ -4148,7 +4148,7 @@ class UpdateContadoresLeadTagsCommand(BaseModel):
 
 
 class MoveContadoresLeadCommand(BaseModel):
-    """Move one lead into another funnel and stage."""
+    """Route one inbox lead into a campaign with a legacy handoff point."""
 
     funnel_id: str = Field(min_length=1)
     stage: str = Field(default=ContadoresLeadStage.NEEDS_HUMAN.value)
@@ -5167,7 +5167,7 @@ async def move_contadores_lead(
     lead_id: str,
     command: MoveContadoresLeadCommand,
 ) -> ContadoresLeadSummary:
-    """Move one lead to an existing campaign funnel and selected stage."""
+    """Route one lead to an existing campaign funnel and selected handoff point."""
     target_funnel = get_funnel(command.funnel_id)
     if target_funnel is None:
         raise HTTPException(status_code=404, detail="Target funnel not found")

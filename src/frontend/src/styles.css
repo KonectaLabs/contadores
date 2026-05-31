@@ -4495,7 +4495,7 @@ body {
   font: 500 12px/1.35 var(--font-sans);
 }
 
-#contadoresView .ct-move-panel {
+#contadoresView .ct-route-panel {
   flex: 0 0 auto;
   display: grid;
   gap: 10px;
@@ -4506,18 +4506,18 @@ body {
   background: var(--ct-surface-2);
 }
 
-#contadoresView .ct-move-panel {
+#contadoresView .ct-route-panel {
   grid-template-columns: minmax(0, 1.2fr) minmax(120px, 0.7fr) minmax(120px, 0.7fr) auto;
   align-items: end;
 }
 
-#contadoresView .ct-move-panel strong {
+#contadoresView .ct-route-panel strong {
   display: block;
   color: var(--ct-ink);
   font: 700 13px/1.2 var(--font-sans);
 }
 
-#contadoresView .ct-move-panel span {
+#contadoresView .ct-route-panel span {
   display: block;
   margin-top: 4px;
   color: var(--ct-ink-muted);
@@ -7813,7 +7813,7 @@ body {
     max-width: 100%;
   }
 
-  #contadoresView .ct-move-panel {
+  #contadoresView .ct-route-panel {
     grid-template-columns: 1fr;
   }
 
