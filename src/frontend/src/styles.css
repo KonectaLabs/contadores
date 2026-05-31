@@ -5633,6 +5633,22 @@ body {
   background: var(--ct-accent-soft);
 }
 
+#contadoresView .ct-send-option:has(input:disabled) {
+  cursor: not-allowed;
+  border-color: var(--ct-line-soft);
+  background: rgba(245, 247, 244, 0.72);
+}
+
+#contadoresView .ct-send-option:has(input:disabled):hover {
+  border-color: var(--ct-line-soft);
+  background: rgba(245, 247, 244, 0.72);
+}
+
+#contadoresView .ct-send-option:has(input:disabled) strong,
+#contadoresView .ct-send-option:has(input:disabled) span {
+  color: var(--ct-ink-muted);
+}
+
 #contadoresView .ct-send-option input {
   margin-top: 3px;
   accent-color: var(--ct-accent);

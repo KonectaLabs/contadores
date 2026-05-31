@@ -489,6 +489,7 @@ export function App() {
     () => (leadList?.leads ?? []).filter((lead) => selectedLeadIds.includes(lead.id)),
     [leadList, selectedLeadIds],
   );
+  const selectedVisibleLeadIds = useMemo(() => selectedVisibleLeads.map((lead) => lead.id), [selectedVisibleLeads]);
   const selectedLeadCustomBlockReason = customMessageBlockReason(selectedLead);
   const bulkCustomBlockedCount = selectedVisibleLeads.filter((lead) => customMessageBlockReason(lead)).length;
   const bulkClosedCount = selectedVisibleLeads.filter(isLeadClosed).length;
@@ -504,7 +505,8 @@ export function App() {
   const deliveryContactGroups = useMemo(() => buildDeliveryContactGroups(deliverySources), [deliverySources]);
   const deliveryLeadTotal = deliverySources.reduce((total, source) => total + deliverySourceCount(source, "total"), 0);
   const deliverySourceIssueCount = deliveryContactGroups.reduce((total, group) => total + group.issues, 0);
-  const selectedVisibleCount = selectedLeadIds.filter((leadId) => visibleLeadIds.includes(leadId)).length;
+  const selectedVisibleCount = selectedVisibleLeadIds.length;
+  const selectedHiddenCount = Math.max(0, selectedLeadIds.length - selectedVisibleCount);
   const allVisibleSelected = visibleLeadIds.length > 0 && selectedVisibleCount === visibleLeadIds.length;
 
   const loadDashboard = useCallback(async () => {
@@ -1627,6 +1629,7 @@ export function App() {
     event.preventDefault();
     const leadId = selectedLead?.id ?? selectedLeadId;
     if (!leadId) {
+      setError("Select a chat before sending a message.");
       return;
     }
 
@@ -1639,6 +1642,7 @@ export function App() {
       if (sendKind === "custom") {
         const text = manualText.trim();
         if (!text) {
+          setError("Write a message before sending.");
           return;
         }
         if (selectedLeadCustomBlockReason) {
@@ -1663,8 +1667,9 @@ export function App() {
 
   async function submitBulkSendModal(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const leadIds = selectedLeadIds.filter((leadId) => visibleLeadIds.includes(leadId));
+    const leadIds = selectedVisibleLeadIds;
     if (!leadIds.length) {
+      setError("Select chats in the current list before applying a bulk action.");
       return;
     }
 
@@ -2307,7 +2312,7 @@ export function App() {
               <button
                 type="button"
                 className="ct-btn ct-btn-ghost"
-                disabled={!selectedLeadIds.length || Boolean(actionBusy)}
+                disabled={!selectedVisibleCount || Boolean(actionBusy)}
                 onClick={() => {
                   setBulkSendKind("custom");
                   setBulkManualPingConfirmed(false);
@@ -2457,7 +2462,8 @@ export function App() {
           text={manualText}
           tagsText={bulkTagsDraft}
           funnel={selectedFunnel}
-          selectedCount={selectedLeadIds.length}
+          selectedCount={selectedVisibleCount}
+          hiddenSelectedCount={selectedHiddenCount}
           customBlockedCount={bulkCustomBlockedCount}
           closedCount={bulkClosedCount}
           convertedCount={bulkConvertedCount}
@@ -4471,6 +4477,9 @@ function WorkstationView({
   const canStopSoloPageWork = activeClient?.work_type === "solo_pagina" && Boolean(automationState?.is_live_working);
   const codexEnabled = Boolean(selectedLead?.codex_enabled);
   const canStartSoloPageWork = activeClient?.work_type === "solo_pagina" && codexEnabled && !soloPageBusy && !workstationClosed;
+  const showStartCodexPrimary = canStartSoloPageWork;
+  const showSteerCodexPrimary = !showStartCodexPrimary && canStopSoloPageWork;
+  const showNotesPrimary = !showStartCodexPrimary && !showSteerCodexPrimary && !publicPage;
   const clientListLoading = loading && clients.length === 0;
   const clientSummaryText = clientListLoading
     ? `Loading converted clients in ${funnelLabel}`
@@ -4748,12 +4757,12 @@ function WorkstationView({
                   </div>
                 </div>
                 <div className="ct-detail-head-actions workstation-primary-actions">
-                  {canStartSoloPageWork ? (
+                  {showStartCodexPrimary ? (
                     <button type="button" className="ct-btn ct-btn-primary" onClick={openSoloPagePromptModal}>
                       <Robot size={15} weight="bold" />
                       Start Codex
                     </button>
-                  ) : canStopSoloPageWork ? (
+                  ) : showSteerCodexPrimary ? (
                     <button
                       type="button"
                       className="ct-btn ct-btn-primary"
@@ -4806,15 +4815,17 @@ function WorkstationView({
                           />
                           <span>Codex</span>
                         </label>
-                        <button
-                          type="button"
-                          role="menuitem"
-                          onClick={openSoloPagePromptModal}
-                          disabled={!canStartSoloPageWork}
-                        >
-                          <Robot size={16} weight="bold" />
-                          <span>Start Codex</span>
-                        </button>
+                        {!showStartCodexPrimary ? (
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={openSoloPagePromptModal}
+                            disabled={!canStartSoloPageWork}
+                          >
+                            <Robot size={16} weight="bold" />
+                            <span>Start Codex</span>
+                          </button>
+                        ) : null}
                         <button
                           type="button"
                           role="menuitem"
@@ -4827,15 +4838,17 @@ function WorkstationView({
                           <X size={16} weight="bold" />
                           <span>Stop Codex</span>
                         </button>
-                        <button
-                          type="button"
-                          role="menuitem"
-                          onClick={openSoloPageSteerModal}
-                          disabled={!codexEnabled || !canStopSoloPageWork || actionBusy === "solo-page-steer"}
-                        >
-                          <PaperPlaneTilt size={16} weight="bold" />
-                          <span>Steer Codex</span>
-                        </button>
+                        {!showSteerCodexPrimary ? (
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={openSoloPageSteerModal}
+                            disabled={!codexEnabled || !canStopSoloPageWork || actionBusy === "solo-page-steer"}
+                          >
+                            <PaperPlaneTilt size={16} weight="bold" />
+                            <span>Steer Codex</span>
+                          </button>
+                        ) : null}
                         <button
                           type="button"
                           role="menuitem"
@@ -4845,19 +4858,21 @@ function WorkstationView({
                           <Camera size={16} weight="bold" />
                           <span>Professional photo</span>
                         </button>
-                        <button
-                          type="button"
-                          role="menuitem"
-                          onClick={() => {
-                            setNotesOpen((current) => !current);
-                            setActionsOpen(false);
-                          }}
-                          aria-expanded={notesOpen}
-                          aria-controls="workstation-notes-panel"
-                        >
-                          <NotePencil size={16} weight="bold" />
-                          <span>Notes</span>
-                        </button>
+                        {!showNotesPrimary ? (
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                              setNotesOpen((current) => !current);
+                              setActionsOpen(false);
+                            }}
+                            aria-expanded={notesOpen}
+                            aria-controls="workstation-notes-panel"
+                          >
+                            <NotePencil size={16} weight="bold" />
+                            <span>Notes</span>
+                          </button>
+                        ) : null}
                         <button
                           type="button"
                           role="menuitem"
@@ -7025,6 +7040,7 @@ function BulkSendModal({
   tagsText,
   funnel,
   selectedCount,
+  hiddenSelectedCount,
   customBlockedCount,
   closedCount,
   convertedCount,
@@ -7043,6 +7059,7 @@ function BulkSendModal({
   tagsText: string;
   funnel: FunnelDefinition | null;
   selectedCount: number;
+  hiddenSelectedCount: number;
   customBlockedCount: number;
   closedCount: number;
   convertedCount: number;
@@ -7093,7 +7110,10 @@ function BulkSendModal({
         <header className="ct-modal-head">
           <div>
             <h3 id="ctBulkSendModalTitle">Bulk action</h3>
-            <p className="ct-modal-subtitle">{selectedCount} selected chats</p>
+            <p className="ct-modal-subtitle">
+              {selectedCount} selected in this list
+              {hiddenSelectedCount ? ` · ${hiddenSelectedCount} outside this view ignored` : ""}
+            </p>
           </div>
           <button type="button" className="ct-icon-btn" onClick={onClose}>Close</button>
         </header>
