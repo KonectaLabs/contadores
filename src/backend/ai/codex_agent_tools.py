@@ -63,7 +63,6 @@ from backend.funnel_config import (
     slugify_funnel_id,
     upsert_funnel,
 )
-from backend.endpoints.client_leads import MetaLeadFormImportCommand, import_meta_lead_form_record
 from backend.platform_profile_extraction import (
     PlatformProfileExtractionError,
     extract_client_profile_from_meeting as save_client_profile_from_meeting,
@@ -1262,6 +1261,8 @@ def upsert_client_lead_delivery_source(arguments: dict[str, Any]) -> dict[str, A
 
 def import_meta_lead_form_to_delivery(arguments: dict[str, Any]) -> dict[str, Any]:
     """Import one Meta Lead Ads form lead through the audited Delivery queue."""
+    from backend.endpoints.client_leads import MetaLeadFormImportCommand, import_meta_lead_form_record
+
     args = ImportMetaLeadFormToDeliveryArgs.model_validate(arguments)
     source = ClientLeadSource.get_by_id(args.source_id.strip())
     if source is None:
