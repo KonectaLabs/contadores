@@ -13,7 +13,21 @@ from collections.abc import Callable
 import httpx
 from pydantic import BaseModel, Field
 
-from backend.database import DATA_DIR, PlatformCreativeAsset, PlatformEvent, PlatformMetaInventorySnapshot, PlatformMetaPublishAttempt
+from backend.database import (
+    DATA_DIR,
+    ClientLeadSource,
+    PlatformCreativeAsset,
+    PlatformEvent,
+    PlatformMetaInventorySnapshot,
+    PlatformMetaPublishAttempt,
+)
+from backend.funnel_config import (
+    FunnelDefinition,
+    get_funnel,
+    list_funnels_by_whatsapp_referral_source_id,
+    slugify_funnel_id,
+    upsert_funnel,
+)
 
 
 class MetaAdsPublishError(RuntimeError):
@@ -353,6 +367,42 @@ def _require(condition: bool, field: str, blocked: list[str]) -> None:
         blocked.append(field)
 
 
+def _whatsapp_referral_source_maps_to_funnel(*, funnel_id: str, source_id: str) -> bool:
+    """Return whether one Click-to-WhatsApp source id is configured for a funnel."""
+    clean_funnel_id = slugify_funnel_id(funnel_id) if _clean(funnel_id) else ""
+    clean_source_id = _clean(source_id)
+    if not clean_funnel_id or not clean_source_id:
+        return False
+    return any(
+        funnel.id == clean_funnel_id
+        for funnel in list_funnels_by_whatsapp_referral_source_id(clean_source_id)
+    )
+
+
+def _client_lead_source_blockers(source_id: str) -> list[str]:
+    """Return blockers that stop Meta lead forms from feeding Client Lead Delivery."""
+    clean_source_id = _clean(source_id)
+    if not clean_source_id:
+        return ["destination.client_lead_source_id"]
+    source = ClientLeadSource.get_by_id(clean_source_id)
+    if source is None:
+        return ["destination.client_lead_source_id.not_found"]
+    blocked: list[str] = []
+    if not source.enabled:
+        blocked.append("destination.client_lead_source_id.enabled")
+    if not _clean(source.sheet_url):
+        blocked.append("destination.client_lead_source_id.sheet_url")
+    if not source.sheet_gid and not source.sheet_tab_name:
+        blocked.append("destination.client_lead_source_id.sheet_gid_or_tab_name")
+    if not _clean(source.recipient_phone):
+        blocked.append("destination.client_lead_source_id.recipient_phone")
+    if not _clean(source.normalized_recipient_phone):
+        blocked.append("destination.client_lead_source_id.normalized_recipient_phone")
+    if not _clean(source.template_name):
+        blocked.append("destination.client_lead_source_id.template_name")
+    return blocked
+
+
 def _plan_blockers(plan: dict[str, Any]) -> list[str]:
     """Return missing fields that make a staged plan impossible to execute."""
     blocked: list[str] = []
@@ -369,9 +419,17 @@ def _plan_blockers(plan: dict[str, Any]) -> list[str]:
     if destination_type == "whatsapp":
         _require(bool(_clean(destination.get("page_id"))), "destination.page_id", blocked)
         _require(bool(_clean(destination.get("whatsapp_phone_number_id"))), "destination.whatsapp_phone_number_id", blocked)
+        _require(bool(_clean(plan.get("funnel_id"))), "funnel_id", blocked)
+        whatsapp_referral_source_id = _clean(destination.get("whatsapp_referral_source_id"))
+        if whatsapp_referral_source_id and not _whatsapp_referral_source_maps_to_funnel(
+            funnel_id=_clean(plan.get("funnel_id")),
+            source_id=whatsapp_referral_source_id,
+        ):
+            blocked.append("destination.whatsapp_referral_source_id.funnel_mapping")
     elif destination_type == "instant_form":
         _require(bool(_clean(destination.get("page_id"))), "destination.page_id", blocked)
         _require(bool(_clean(destination.get("lead_form_id"))), "destination.lead_form_id", blocked)
+        blocked.extend(_client_lead_source_blockers(_clean(destination.get("client_lead_source_id"))))
     elif destination_type == "landing_page":
         _require(bool(_clean(destination.get("landing_page_url"))), "destination.landing_page_url", blocked)
     else:
@@ -734,6 +792,69 @@ def build_meta_publish_operations(plan: dict[str, Any], *, live_write: bool = Fa
             )
             step += 1
     return operations
+
+
+def _created_whatsapp_ad_source_ids(plan: dict[str, Any], results: list[MetaPublishOperationResult]) -> list[str]:
+    """Return source ids that should route Click-to-WhatsApp leads to this funnel."""
+    destination = plan.get("destination") if isinstance(plan.get("destination"), dict) else {}
+    if (_clean(destination.get("destination_type")) or "whatsapp") != "whatsapp":
+        return []
+    source_ids: list[str] = []
+    existing_source_id = _clean(destination.get("whatsapp_referral_source_id"))
+    if existing_source_id:
+        source_ids.append(existing_source_id)
+    for result in results:
+        if result.object_type == "ad" and result.status in {"executed", "skipped"} and result.provider_id:
+            source_ids.append(result.provider_id)
+    return list(dict.fromkeys(source_ids))
+
+
+def _map_whatsapp_ad_source_ids_to_funnel(
+    plan: dict[str, Any],
+    results: list[MetaPublishOperationResult],
+    *,
+    source: str,
+    actor: str,
+    attempt_id: str,
+) -> tuple[list[str], list[str]]:
+    """Persist returned Meta ad ids as funnel referral sources after live publish."""
+    source_ids = _created_whatsapp_ad_source_ids(plan, results)
+    if not source_ids:
+        return [], []
+
+    clean_funnel_id = _clean(plan.get("funnel_id"))
+    funnel = get_funnel(clean_funnel_id) if clean_funnel_id else None
+    if funnel is None:
+        return [], ["funnel_id"]
+
+    existing = list(funnel.whatsapp_referral_source_ids)
+    additions = [source_id for source_id in source_ids if source_id not in existing]
+    if not additions:
+        return [], []
+
+    try:
+        payload = funnel.model_dump(mode="json")
+        payload["whatsapp_referral_source_ids"] = [*existing, *additions]
+        saved = upsert_funnel(FunnelDefinition.model_validate(payload))
+    except Exception as error:
+        return [], [f"whatsapp_referral_source_ids.persist: {str(error)[:500]}"]
+
+    PlatformEvent.add(
+        event_type="meta_publish.lead_routing_mapped",
+        lifecycle_stage="meta_publish",
+        target_type="funnel",
+        target_id=saved.id,
+        funnel_id=saved.id,
+        source=source,
+        actor=actor,
+        summary=f"Mapped Meta ad ids to funnel {saved.id}.",
+        payload={
+            "attempt_id": attempt_id,
+            "mapped_source_ids": additions,
+            "whatsapp_referral_source_ids": saved.whatsapp_referral_source_ids,
+        },
+    )
+    return additions, []
 
 
 def upload_meta_creative_asset(
@@ -1203,10 +1324,20 @@ def execute_meta_publish_attempt(
             break
 
     failed = any(item.status == "failed" for item in operation_results)
+    routing_source_ids: list[str] = []
+    routing_blockers: list[str] = []
+    if not failed:
+        routing_source_ids, routing_blockers = _map_whatsapp_ad_source_ids_to_funnel(
+            plan,
+            operation_results,
+            source=source,
+            actor=actor,
+            attempt_id=attempt.id,
+        )
     executed = any(item.status == "executed" for item in operation_results)
     all_skipped = operation_results and all(item.status == "skipped" for item in operation_results)
     status: Literal["blocked", "submitted", "partial_failed", "already_submitted"]
-    if failed:
+    if failed or routing_blockers:
         status = "partial_failed"
     elif all_skipped:
         status = "already_submitted"
@@ -1219,16 +1350,23 @@ def execute_meta_publish_attempt(
         live_writes_requested=live_writes_requested,
         live_write_executed=executed,
         api_version=api_version,
+        warnings=[f"lead_routing.{item}" for item in routing_blockers],
         operation_results=operation_results,
     )
     updated_plan = dict(plan)
+    if routing_source_ids or routing_blockers:
+        lead_routing = updated_plan.get("lead_routing") if isinstance(updated_plan.get("lead_routing"), dict) else {}
+        lead_routing = dict(lead_routing)
+        lead_routing["mapped_source_ids"] = list(dict.fromkeys([*lead_routing.get("mapped_source_ids", []), *routing_source_ids]))
+        lead_routing["routing_blockers"] = routing_blockers
+        updated_plan["lead_routing"] = lead_routing
     updated_plan["live_execution_state"] = result.model_dump(mode="json")
     updated = PlatformMetaPublishAttempt.update_execution(
         attempt.id,
         status=status,
         request_payload=updated_plan,
         response_payload=result.model_dump(mode="json"),
-        error=", ".join(item.error for item in operation_results if item.error),
+        error=", ".join([*[item.error for item in operation_results if item.error], *routing_blockers]),
     )
     if updated is None:
         raise MetaAdsPublishError(f"Meta publish attempt disappeared during execution: {attempt.id}")

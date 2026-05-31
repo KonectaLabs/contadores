@@ -190,7 +190,10 @@ Use this order:
 3. `stage_creative_asset` for every generated or approved asset.
 4. `stage_meta_publish_plan` for the typed Meta plan:
    `Campaign -> Ad Set -> Ad/Creative`, destination, budget, targeting,
-   initial `PAUSED` status, and missing fields before live publish.
+   initial `PAUSED` status, lead-routing contract, and missing fields before
+   live publish. For Click-to-WhatsApp, include the funnel and any existing
+   `destination.whatsapp_referral_source_id`; for instant forms, include
+   `destination.client_lead_source_id`.
 5. `sync_meta_inventory` to read available ad accounts, Pages, lead forms,
    pixels, WhatsApp numbers, and existing campaigns before asking for IDs.
 6. `upload_meta_creative_asset` for each generated image/video that only has a
@@ -212,6 +215,11 @@ Before any future live publish, the plan must have:
 
 - ad account ID and account currency;
 - Page ID plus WhatsApp phone number ID, lead form ID, or landing page URL;
+- for Click-to-WhatsApp, either an existing `whatsapp_referral_source_id` mapped
+  to the same funnel or a new-ad execution plan that will persist returned Meta
+  ad IDs into the funnel after live publish;
+- for instant forms, a ready `client_lead_source_id` whose Sheet, recipient,
+  template, and polling config feed Client Lead Delivery;
 - special ad category decision when applicable;
 - one or more ad sets with budget, targeting, placement/start-stop policy, and
   at least one ad;
@@ -221,9 +229,11 @@ Before any future live publish, the plan must have:
 - operator approval, idempotency key, and rollback/disable order.
 
 Published lead flow must be traceable back to the platform. For
-Click-to-WhatsApp ads, keep `referral.source_id` mapped to the funnel. For lead
-forms, make sure the export/webhook path feeds the same Sheets/client-delivery
-loop instead of creating a side channel.
+Click-to-WhatsApp ads, keep `referral.source_id` mapped to the funnel; new ads
+created through `execute_meta_publish_plan` should persist returned Meta ad IDs
+as `whatsapp_referral_source_ids`. For lead forms, use
+`destination.client_lead_source_id` so the export/webhook path feeds the same
+Sheets/client-delivery loop instead of creating a side channel.
 
 ## Angle Selection
 

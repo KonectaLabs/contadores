@@ -2956,6 +2956,12 @@ def _meta_publish_idempotency_payload(value: dict[str, Any] | None) -> dict[str,
         payload.pop("live_execution_state", None)
         payload.pop("live_writes_allowed", None)
         payload.pop("publish_mode", None)
+        lead_routing = payload.get("lead_routing")
+        if isinstance(lead_routing, dict):
+            normalized_routing = dict(lead_routing)
+            normalized_routing.pop("mapped_source_ids", None)
+            normalized_routing.pop("routing_blockers", None)
+            payload["lead_routing"] = normalized_routing
     return payload
 
 

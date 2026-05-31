@@ -70,7 +70,8 @@ Platform lifecycle tools:
 - `stage_ad_campaign`: stage the ad campaign plan and budget before approval.
 - `stage_creative_asset`: record generated or staged creative assets.
 - `stage_meta_publish_plan`: stage the typed Meta Campaign -> Ad Set ->
-  Ad/Creative plan, missing fields, and rollback policy before approval.
+  Ad/Creative plan, lead-routing contract, missing fields, and rollback policy
+  before approval.
 - `sync_meta_inventory`: read Meta ad accounts, Pages, lead forms, pixels,
   WhatsApp numbers, and existing campaigns when credentials exist; otherwise
   persist the missing-credentials blocker.
@@ -176,6 +177,11 @@ step from that persisted state.
   caps, and approval note. Use `execute_meta_publish_plan` only after the
   approval gate has passed and live writes are intentionally enabled. Use
   `stage_meta_publish_attempt` only for raw provider payloads or manual records.
+- For Meta lead routing, Click-to-WhatsApp plans must carry `funnel_id`; if the
+  ad already exists, pass `destination.whatsapp_referral_source_id` and it must
+  map to that funnel. New ads created by `execute_meta_publish_plan` persist the
+  returned Meta ad IDs into the funnel. Instant-form plans must pass
+  `destination.client_lead_source_id` for a ready Client Lead Delivery source.
 - Use `ask_human_question` only for real uncertainty. Include context, what you
   are trying to do, options when known, and the safe default action.
 - Do not wait forever for answers. Use the timeout/default action when safe.

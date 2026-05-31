@@ -385,6 +385,11 @@ def test_codex_agent_tool_configures_text_offer_funnel_without_ui(monkeypatch, t
     assert "funnel" in snapshot["result"]["schemas"]
     assert "stage_meta_publish_plan" in snapshot["result"]["agent_native_tools"]
     assert "stage_meta_publish_plan" in snapshot["result"]["schemas"]
+    destination_schema = snapshot["result"]["schemas"]["stage_meta_publish_plan"]["$defs"]["MetaLeadDestinationPlan"][
+        "properties"
+    ]
+    assert "whatsapp_referral_source_id" in destination_schema
+    assert "client_lead_source_id" in destination_schema
     assert "preflight_meta_publish_plan" in snapshot["result"]["agent_native_tools"]
     assert "preflight_meta_publish_plan" in snapshot["result"]["schemas"]
     assert "approve_meta_publish_plan" in snapshot["result"]["agent_native_tools"]
@@ -458,6 +463,156 @@ def test_codex_agent_tool_configures_client_lead_delivery_without_ui(monkeypatch
     assert calls[0].target_id == "mmb-contable-leads"
     events = PlatformEvent.list_recent(target_type="client_lead_source", target_id="mmb-contable-leads")
     assert events[0].event_type == "platform.client_lead_source_upserted"
+
+
+def test_meta_publish_plan_requires_instant_form_delivery_source(monkeypatch, tmp_path) -> None:
+    """Instant-form plans should prove how leads enter Client Lead Delivery."""
+    configure_contadores_db(monkeypatch, tmp_path)
+
+    blocked_result = call_tool(
+        run_id="agent-run-meta-routing",
+        tool_name="stage_meta_publish_plan",
+        arguments={
+            "campaign_id": "campaign-routing-form-1",
+            "client_id": "client-routing-1",
+            "funnel_id": "abogados",
+            "ad_account_id": "act_routing_1",
+            "campaign_name": "Abogados instant form",
+            "objective": "OUTCOME_LEADS",
+            "destination": {
+                "destination_type": "instant_form",
+                "page_id": "page_routing_1",
+                "lead_form_id": "lead_form_routing_1",
+            },
+            "ad_sets": [
+                {
+                    "name": "Despidos",
+                    "budget_daily_usd": 10,
+                    "targeting": {"geo_locations": {"countries": ["AR"]}},
+                    "ads": [
+                        {
+                            "name": "Despido",
+                            "creative": {
+                                "creative_asset_id": "creative-routing-1",
+                                "image_hash": "hash_routing_1",
+                                "primary_text": "Si te despidieron, completa tus datos.",
+                                "headline": "Te despidieron?",
+                            },
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+    assert blocked_result["ok"] is True
+    assert "destination.client_lead_source_id" in blocked_result["result"]["required_before_live_publish"]
+
+    ClientLeadSource.upsert(
+        source_id="abogados-meta-form-leads",
+        label="Abogados Meta form leads",
+        enabled=True,
+        sheet_url="https://docs.google.com/spreadsheets/d/client/export?format=csv&gid=0",
+        sheet_gid="0",
+        recipient_name="Alan",
+        recipient_phone="+5491111111111",
+    )
+
+    ready_result = call_tool(
+        run_id="agent-run-meta-routing",
+        tool_name="stage_meta_publish_plan",
+        arguments={
+            "campaign_id": "campaign-routing-form-2",
+            "client_id": "client-routing-1",
+            "funnel_id": "abogados",
+            "ad_account_id": "act_routing_1",
+            "campaign_name": "Abogados instant form ready",
+            "objective": "OUTCOME_LEADS",
+            "destination": {
+                "destination_type": "instant_form",
+                "page_id": "page_routing_1",
+                "lead_form_id": "lead_form_routing_1",
+                "client_lead_source_id": "abogados-meta-form-leads",
+            },
+            "ad_sets": [
+                {
+                    "name": "Despidos",
+                    "budget_daily_usd": 10,
+                    "targeting": {"geo_locations": {"countries": ["AR"]}},
+                    "ads": [
+                        {
+                            "name": "Despido",
+                            "creative": {
+                                "creative_asset_id": "creative-routing-2",
+                                "image_hash": "hash_routing_2",
+                                "primary_text": "Si te despidieron, completa tus datos.",
+                                "headline": "Te despidieron?",
+                            },
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+    assert ready_result["ok"] is True
+    assert ready_result["result"]["required_before_live_publish"] == []
+    payload = ready_result["result"]["attempt"]["request_payload"]
+    assert payload["lead_routing"]["route_type"] == "client_lead_delivery_source"
+    assert payload["lead_routing"]["client_lead_source_id"] == "abogados-meta-form-leads"
+
+
+def test_meta_publish_plan_blocks_wrong_whatsapp_source_mapping(monkeypatch, tmp_path) -> None:
+    """A provided CTWA source id must map to the same funnel before live publish."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    write_funnels_config(
+        tmp_path,
+        build_abogados_test_funnel(referral_ids=["ctwa-good-source"]),
+        build_contadores_test_funnel(),
+    )
+
+    result = call_tool(
+        run_id="agent-run-meta-routing",
+        tool_name="stage_meta_publish_plan",
+        arguments={
+            "campaign_id": "campaign-routing-wa-1",
+            "client_id": "client-routing-1",
+            "funnel_id": "abogados",
+            "ad_account_id": "act_routing_1",
+            "campaign_name": "Abogados WhatsApp",
+            "objective": "OUTCOME_LEADS",
+            "destination": {
+                "destination_type": "whatsapp",
+                "page_id": "page_routing_1",
+                "whatsapp_phone_number_id": "wa_phone_routing_1",
+                "whatsapp_referral_source_id": "ctwa-wrong-source",
+            },
+            "ad_sets": [
+                {
+                    "name": "Despidos",
+                    "budget_daily_usd": 10,
+                    "targeting": {"geo_locations": {"countries": ["AR"]}},
+                    "ads": [
+                        {
+                            "name": "Despido",
+                            "creative": {
+                                "creative_asset_id": "creative-routing-wa-1",
+                                "image_hash": "hash_routing_wa_1",
+                                "primary_text": "Si te despidieron, manda tu caso por WhatsApp.",
+                                "headline": "Te despidieron?",
+                            },
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+
+    assert result["ok"] is True
+    assert "destination.whatsapp_referral_source_id.funnel_mapping" in result["result"][
+        "required_before_live_publish"
+    ]
+    payload = result["result"]["attempt"]["request_payload"]
+    assert payload["lead_routing"]["whatsapp_referral_source_id"] == "ctwa-wrong-source"
+    assert payload["lead_routing"]["mapped_funnel_ids"] == []
 
 
 def test_meta_inventory_sync_persists_read_only_inventory(monkeypatch, tmp_path) -> None:
@@ -976,6 +1131,15 @@ def test_meta_publish_approval_gate_requires_inventory_and_budget(monkeypatch, t
     assert execute_payload["schema_version"] == "konecta.meta_publish_execution.v1"
     assert execute_payload["operation_results"][0]["provider_id"] == "meta_1"
     assert "access_token" not in execute_payload["operation_results"][0]["response"]
+    updated_plan = PlatformMetaPublishAttempt.get_by_id(attempt_id).request_payload()
+    assert updated_plan["lead_routing"]["mapped_source_ids"] == ["meta_4"]
+    assert "meta_4" in get_funnel("abogados").whatsapp_referral_source_ids
+    routing_events = [
+        event
+        for event in PlatformEvent.list_recent(target_type="funnel", target_id="abogados")
+        if event.event_type == "meta_publish.lead_routing_mapped"
+    ]
+    assert routing_events[0].payload_dict()["mapped_source_ids"] == ["meta_4"]
 
     retry_execute = call_tool(
         run_id="agent-run-meta-approval",

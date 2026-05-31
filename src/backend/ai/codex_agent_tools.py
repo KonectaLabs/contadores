@@ -58,6 +58,7 @@ from backend.funnel_config import (
     get_funnel,
     get_funnels_config_path,
     get_funnels_seed_config_path,
+    list_funnels_by_whatsapp_referral_source_id,
     list_funnels_with_config_errors,
     slugify_funnel_id,
     upsert_funnel,
@@ -364,7 +365,9 @@ class MetaLeadDestinationPlan(BaseModel):
     page_id: str = ""
     instagram_actor_id: str = ""
     whatsapp_phone_number_id: str = ""
+    whatsapp_referral_source_id: str = ""
     lead_form_id: str = ""
+    client_lead_source_id: str = ""
     landing_page_url: str = ""
 
 
@@ -1552,6 +1555,41 @@ def upload_meta_creative_asset_tool(arguments: dict[str, Any]) -> dict[str, Any]
     return {"asset": _creative_asset_payload(asset), "upload": result.model_dump(mode="json")}
 
 
+def _whatsapp_referral_source_maps_to_funnel(*, funnel_id: str, source_id: str) -> bool:
+    """Return whether one Meta Click-to-WhatsApp source id routes to a funnel."""
+    clean_funnel_id = slugify_funnel_id(funnel_id) if funnel_id.strip() else ""
+    if not clean_funnel_id or not source_id.strip():
+        return False
+    return any(
+        funnel.id == clean_funnel_id
+        for funnel in list_funnels_by_whatsapp_referral_source_id(source_id)
+    )
+
+
+def _client_lead_source_live_publish_gaps(source_id: str) -> list[str]:
+    """Return delivery-source gaps for a Meta instant-form lead route."""
+    clean_source_id = source_id.strip()
+    if not clean_source_id:
+        return ["destination.client_lead_source_id"]
+    source = ClientLeadSource.get_by_id(clean_source_id)
+    if source is None:
+        return ["destination.client_lead_source_id.not_found"]
+    gaps: list[str] = []
+    if not source.enabled:
+        gaps.append("destination.client_lead_source_id.enabled")
+    if not source.sheet_url.strip():
+        gaps.append("destination.client_lead_source_id.sheet_url")
+    if not source.sheet_gid and not source.sheet_tab_name:
+        gaps.append("destination.client_lead_source_id.sheet_gid_or_tab_name")
+    if not source.recipient_phone.strip():
+        gaps.append("destination.client_lead_source_id.recipient_phone")
+    if not source.normalized_recipient_phone.strip():
+        gaps.append("destination.client_lead_source_id.normalized_recipient_phone")
+    if not source.template_name.strip():
+        gaps.append("destination.client_lead_source_id.template_name")
+    return gaps
+
+
 def _missing_meta_plan_fields(args: StageMetaPublishPlanArgs) -> list[str]:
     """Return gaps that must be resolved before live Meta API writes."""
     missing: list[str] = []
@@ -1570,11 +1608,19 @@ def _missing_meta_plan_fields(args: StageMetaPublishPlanArgs) -> list[str]:
             missing.append("destination.page_id")
         if not destination.whatsapp_phone_number_id.strip():
             missing.append("destination.whatsapp_phone_number_id")
+        if not args.funnel_id.strip():
+            missing.append("funnel_id")
+        if destination.whatsapp_referral_source_id.strip() and not _whatsapp_referral_source_maps_to_funnel(
+            funnel_id=args.funnel_id,
+            source_id=destination.whatsapp_referral_source_id,
+        ):
+            missing.append("destination.whatsapp_referral_source_id.funnel_mapping")
     if destination.destination_type == "instant_form":
         if not destination.page_id.strip():
             missing.append("destination.page_id")
         if not destination.lead_form_id.strip():
             missing.append("destination.lead_form_id")
+        missing.extend(_client_lead_source_live_publish_gaps(destination.client_lead_source_id))
     if destination.destination_type == "landing_page" and not destination.landing_page_url.strip():
         missing.append("destination.landing_page_url")
 
@@ -1616,6 +1662,36 @@ def _missing_meta_plan_fields(args: StageMetaPublishPlanArgs) -> list[str]:
     return missing
 
 
+def _meta_lead_routing_payload(args: StageMetaPublishPlanArgs) -> dict[str, Any]:
+    """Describe how generated Meta leads should re-enter the platform."""
+    destination = args.destination
+    if destination.destination_type == "whatsapp":
+        source_id = destination.whatsapp_referral_source_id.strip()
+        mapped_funnel_ids = [
+            funnel.id
+            for funnel in list_funnels_by_whatsapp_referral_source_id(source_id)
+        ] if source_id else []
+        return {
+            "route_type": "whatsapp_referral",
+            "funnel_id": args.funnel_id,
+            "whatsapp_referral_source_id": source_id,
+            "mapped_funnel_ids": mapped_funnel_ids,
+            "created_ad_ids_will_be_mapped_to_funnel": bool(args.funnel_id.strip()),
+        }
+    if destination.destination_type == "instant_form":
+        return {
+            "route_type": "client_lead_delivery_source",
+            "funnel_id": args.funnel_id,
+            "lead_form_id": destination.lead_form_id,
+            "client_lead_source_id": destination.client_lead_source_id,
+        }
+    return {
+        "route_type": "landing_page",
+        "funnel_id": args.funnel_id,
+        "landing_page_url": destination.landing_page_url,
+    }
+
+
 def _meta_publish_plan_payload(args: StageMetaPublishPlanArgs, missing_fields: list[str]) -> dict[str, Any]:
     """Build the canonical staged payload that a future publisher executes."""
     return {
@@ -1636,6 +1712,7 @@ def _meta_publish_plan_payload(args: StageMetaPublishPlanArgs, missing_fields: l
             "create_status": "PAUSED",
         },
         "destination": args.destination.model_dump(mode="json"),
+        "lead_routing": _meta_lead_routing_payload(args),
         "ad_sets": [ad_set.model_dump(mode="json") for ad_set in args.ad_sets],
         "required_before_live_publish": missing_fields,
         "live_execution_policy": {

@@ -23,7 +23,9 @@ across deploys. Legacy `contadores` env vars are only backwards-compatible for
 older scripts.
 Click-to-WhatsApp routing also belongs there through
 `whatsapp_referral_source_ids`; keep Contadores empty when it has no real
-campaign source.
+campaign source. Live Meta Click-to-WhatsApp publishes can append returned Meta
+ad IDs to this list, so server verification should confirm the override file is
+still writable and preserved in the data volume.
 The approved Abogados prefilled proposal text can route to `abogados` when no
 reply/referral route is usable. Other unmatched WhatsApp inbounds are saved in
 the built-in `general` inbox. Inbox funnels do not run automation or sheet sync.
@@ -163,6 +165,8 @@ Before enabling a live Delivery source:
    context field mapping, template name, and template language. Multiple
    `recipients` are expanded into one DB source per recipient. Multiple
    `sheets` are expanded into one DB source per sheet/campaign.
+   Meta instant-form publish plans must reference this source with
+   `destination.client_lead_source_id` before approval.
 3. Decide whether the first sync should notify historical rows. First sync
    imports all non-empty rows and queues valid new rows immediately.
 4. If the sheet is private, set `CONTADORES_GOOGLE_SERVICE_ACCOUNT_FILE` or

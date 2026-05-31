@@ -11,6 +11,9 @@ This sheet is the operational source of truth for Meta lead-form intake.
 Click-to-WhatsApp intake can bypass the sheet: the webhook `referral.source_id`
 is matched against the funnel config and creates/reuses a `whatsapp_ctwa` lead.
 Those matched funnel leads receive the `whatsapp_funnel` tag.
+When a new Click-to-WhatsApp ad is published through
+`execute_meta_publish_plan`, the returned Meta ad ID is persisted into the
+funnel's `whatsapp_referral_source_ids` so the webhook route is ready.
 The approved Abogados prefilled proposal text also creates/reuses a funnel lead
 when no reply/referral route is usable. Other unmatched inbound WhatsApp
 messages are not discarded; they are saved in the built-in `general` inbox with
@@ -92,6 +95,9 @@ Dedicated tables:
 Each source can be configured through the API/UI or through file-backed config.
 The file-backed path is preferred when Facu asks Codex to create a new client
 Delivery flow without using the UI.
+Meta instant-form publish plans must reference a ready source with
+`destination.client_lead_source_id`; otherwise the Meta approval/preflight gate
+must stay blocked because the leads would not have a delivery path.
 
 Config files:
 

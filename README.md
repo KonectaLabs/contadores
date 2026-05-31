@@ -125,7 +125,10 @@ Flujo Meta agent-native:
    preferentemente usando el `ClientProfile.knowledge.meta_planning` generado.
 3. `stage_creative_asset` guarda prompts, archivos y referencias de imagen/video.
 4. `stage_meta_publish_plan` arma el plan tipado `Campaign -> Ad Set ->
-   Ad/Creative`, siempre en modo `PAUSED` y sin writes externos.
+   Ad/Creative`, siempre en modo `PAUSED` y sin writes externos. El destino
+   tambien declara el ruteo: Click-to-WhatsApp usa el funnel y, si ya existe,
+   `whatsapp_referral_source_id`; instant forms usan `client_lead_source_id`
+   para entrar a Client Lead Delivery.
 5. `sync_meta_inventory` lee cuentas, Pages, formularios, pixels, numeros de
    WhatsApp y campanas existentes cuando hay credenciales; si faltan, guarda un
    snapshot `missing_credentials` para observabilidad.
@@ -135,9 +138,10 @@ Flujo Meta agent-native:
    `live_writes_requested=true`, `META_MARKETING_LIVE_WRITES_ENABLED=true`,
    credenciales y archivo local existente, pero no crea Campaign, Ad Set,
    Creative ni Ad.
-7. Si faltan `ad_account_id`, `page_id`, destino WhatsApp/form, presupuesto,
-   targeting o creatividades, el resultado incluye `required_before_live_publish`
-   y el agente debe usar `ask_human_question` en vez de inventar datos.
+7. Si faltan `ad_account_id`, `page_id`, destino WhatsApp/form, ruteo de leads,
+   presupuesto, targeting o creatividades, el resultado incluye
+   `required_before_live_publish` y el agente debe usar `ask_human_question` en
+   vez de inventar datos.
 8. `preflight_meta_publish_plan` convierte el plan staged en operaciones
    ordenadas `campaign -> ad_set -> creative -> ad`, guarda el resultado en el
    intento y bloquea cualquier live write si faltan credenciales, aprobacion o
@@ -150,7 +154,10 @@ Flujo Meta agent-native:
    requiere `live_writes_requested=true`, `META_MARKETING_LIVE_WRITES_ENABLED`,
    credenciales, approval gate aprobado y creatividades ya subidas a Meta
    (`meta_creative_id`, `image_hash` o `video_id`). Guarda cada provider ID para
-   que los retries no dupliquen Campaign, Ad Set, Creative o Ad.
+   que los retries no dupliquen Campaign, Ad Set, Creative o Ad. Para
+   Click-to-WhatsApp, tambien persiste los IDs de anuncios creados como
+   `whatsapp_referral_source_ids` del funnel, para que los webhooks entrantes
+   vuelvan al mismo flujo.
 11. `stage_meta_publish_attempt` queda para payloads crudos, respuestas de Meta
    o registros manuales del publicador aprobado.
 
@@ -658,6 +665,10 @@ Entrada Click-to-WhatsApp:
 - Cada funnel puede declarar `whatsapp_referral_source_ids` en el seed o en
   `data/funnels.json`.
 - Contadores no debe tener IDs cargados si no tiene campaña real. Hoy el source_id real queda en `abogados`.
+- Cuando `execute_meta_publish_plan` crea anuncios Click-to-WhatsApp, el backend
+  agrega los IDs de anuncios devueltos por Meta a `whatsapp_referral_source_ids`
+  del funnel. Si se stagea un anuncio ya existente, `destination.whatsapp_referral_source_id`
+  debe estar mapeado al mismo funnel antes de live publish.
 - Cuando Meta envia un webhook con `referral.source_id` configurado, el backend crea o reutiliza un lead `whatsapp_ctwa`.
 - Si el webhook trae el nombre de perfil de WhatsApp, se guarda como `full_name` para leads nuevos de WhatsApp y para leads existentes que todavia no tenian nombre.
 - Ese lead queda como si ya hubiese respondido al opener: no se encola el template inicial y el tick automatico pasa al offer despues de `initial_reply_quiet_seconds`.
@@ -677,6 +688,9 @@ Client Lead Delivery:
   se generan para clientes de Konecta.
 - Cada fuente guarda URL/GID del Google Sheet, intervalo de polling, destinatario
   WhatsApp, mapping de columnas, campos de contexto y template Meta.
+- Los Meta instant forms staged con `stage_meta_publish_plan` deben declarar
+  `destination.client_lead_source_id`; el gate de publish bloquea si la fuente
+  no existe, esta deshabilitada o no tiene sheet/destinatario/template listo.
 - Las fuentes tambien se pueden declarar por archivo. El seed versionado es
   `config/default-client-lead-sources.json`; el override editable del server es
   `CLIENT_LEAD_SOURCES_CONFIG_PATH` o `data/client-lead-sources.json`.
