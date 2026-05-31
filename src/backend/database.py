@@ -785,6 +785,15 @@ CONTADORES_LEAD_TERMINAL_STATES = {"open", "closed", "archived"}
 CONTADORES_LEAD_ATTENTION_STATES = {"clear", "needs_reply", "answered", "paused", "converted", "closed", "archived"}
 CONTADORES_LEAD_MANUAL_CONVERTED_REASON = "manual_converted"
 CONTADORES_LEAD_LEGACY_MANUAL_BOOKED_REASON = "manual_booked"
+CONTADORES_CLOSED_LEAD_DELIVERY_SEQUENCE_STEPS = {"ai_rejection_survey"}
+CONTADORES_CONVERTED_LEAD_DELIVERY_SEQUENCE_STEPS = {
+    "workstation_intake",
+    "workstation_preview_video",
+    "workstation_revision_video",
+    "workstation_public_page_link",
+    "workstation_codex_heartbeat",
+    "workstation_handoff",
+}
 WORKSTATION_OPERATOR_HANDOFF_REASONS = {
     "workstation_agent_handoff",
     "workstation_no_response_handoff",
@@ -2155,15 +2164,6 @@ class ContadoresMessage(SQLModel, table=True):
     def list_pending_delivery(cls, *, limit: int = 100) -> list["ContadoresMessage"]:
         """List every pending outbound step that is due for dispatch."""
         now_utc = datetime.now(timezone.utc)
-        closed_lead_delivery_steps = ("ai_rejection_survey",)
-        converted_lead_delivery_steps = (
-            "workstation_intake",
-            "workstation_preview_video",
-            "workstation_revision_video",
-            "workstation_public_page_link",
-            "workstation_codex_heartbeat",
-            "workstation_handoff",
-        )
         with Session(engine) as session:
             statement = (
                 select(cls)
@@ -2173,18 +2173,19 @@ class ContadoresMessage(SQLModel, table=True):
                     cls.delivery_status == MessageDeliveryStatus.UNDELIVERED,
                     cls.dispatch_after <= now_utc,
                     ContadoresLead.stage != ContadoresLeadStage.ARCHIVED,
+                    ContadoresLead.archived_at.is_(None),
                     (
                         (
                             (ContadoresLead.stage != ContadoresLeadStage.BOOKED)
                             & ContadoresLead.booked_at.is_(None)
                         )
-                        | cls.sequence_step.in_(converted_lead_delivery_steps)
+                        | cls.sequence_step.in_(CONTADORES_CONVERTED_LEAD_DELIVERY_SEQUENCE_STEPS)
                     ),
                     (
                         (ContadoresLead.stage != ContadoresLeadStage.CLOSED)
                         & ContadoresLead.closed_at.is_(None)
                     )
-                    | cls.sequence_step.in_(closed_lead_delivery_steps),
+                    | cls.sequence_step.in_(CONTADORES_CLOSED_LEAD_DELIVERY_SEQUENCE_STEPS),
                 )
                 .order_by(cls.dispatch_after, cls.id)
                 .limit(limit)

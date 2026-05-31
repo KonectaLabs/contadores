@@ -4312,6 +4312,97 @@ def test_converted_leads_with_legacy_stage_do_not_expose_pending_delivery(monkey
     assert lead_payload["pipeline_stage"] == "converted"
 
 
+def test_converted_leads_reject_new_crm_outbound_before_queueing(monkeypatch, tmp_path) -> None:
+    """Converted leads should not accumulate CRM follow-up messages that dispatch later suppresses."""
+    monkeypatch.setenv("FUNNELS_CONFIG_PATH", str(tmp_path / "funnels.json"))
+    configure_contadores_db(monkeypatch, tmp_path)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-converted-no-crm-outbound",
+        phone="+5491888888875",
+        full_name="Converted No CRM Outbound",
+    )
+    add_recent_inbound(lead.id)
+    ContadoresLead.mark_converted(lead.id, automation_paused=True, automation_paused_reason="manual_converted")
+
+    with TestClient(app) as client:
+        manual_message_response = client.post(
+            f"/api/contadores/leads/{lead.id}/messages/manual",
+            json={"text": "Te escribo de vuelta"},
+        )
+        manual_ping_response = client.post(f"/api/contadores/leads/{lead.id}/actions/send-manual-ping")
+        pending_response = client.get("/api/contadores/messages/pending-delivery")
+
+    assert manual_message_response.status_code == 400
+    assert manual_message_response.json()["detail"] == (
+        "Lead is converted. Use Workstation delivery instead of CRM follow-up messages."
+    )
+    assert manual_ping_response.status_code == 400
+    assert manual_ping_response.json()["detail"] == (
+        "Lead is converted. Use Workstation delivery instead of CRM follow-up messages."
+    )
+    assert pending_response.json()["messages"] == []
+    assert [message for message in ContadoresMessage.list_by_lead(lead.id) if message.from_me] == []
+
+
+def test_converted_leads_still_allow_workstation_delivery_steps(monkeypatch, tmp_path) -> None:
+    """Converted clients can still receive Workstation deliverables through explicit delivery steps."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-converted-workstation-outbound",
+        phone="+5491888888874",
+        full_name="Converted Workstation Outbound",
+    )
+    add_recent_inbound(lead.id)
+    converted = ContadoresLead.mark_converted(
+        lead.id,
+        automation_paused=True,
+        automation_paused_reason="workstation_solo_page_started",
+    )
+    assert converted is not None
+
+    row = contadores_endpoints.enqueue_lead_outbound(
+        lead=converted,
+        text="Le dejo la vista previa.",
+        sequence_step="workstation_preview_video",
+    )
+
+    assert row.id is not None
+    assert row.sequence_step == "workstation_preview_video"
+
+
+def test_archived_overlay_rejects_new_outbound_and_suppresses_existing_pending(monkeypatch, tmp_path) -> None:
+    """Archived overlays should behave as terminal even if the raw stage has not been rewritten."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-archived-overlay-outbound",
+        phone="+5491888888873",
+        full_name="Archived Overlay Outbound",
+    )
+    add_recent_inbound(lead.id)
+    pending = ContadoresMessage.add(
+        lead_id=lead.id,
+        from_me=True,
+        text="Mensaje viejo",
+        delivery_status=MessageDeliveryStatus.UNDELIVERED,
+        sequence_step="manual",
+    )
+    assert pending.id is not None
+    ContadoresLead.update_flow_state(lead.id, archived_at=now_utc())
+
+    with TestClient(app) as client:
+        manual_message_response = client.post(
+            f"/api/contadores/leads/{lead.id}/messages/manual",
+            json={"text": "Nuevo mensaje"},
+        )
+        pending_response = client.get("/api/contadores/messages/pending-delivery")
+
+    assert manual_message_response.status_code == 400
+    assert manual_message_response.json()["detail"] == (
+        "Lead is archived. Unarchive the lead before sending WhatsApp messages."
+    )
+    assert pending_response.json()["messages"] == []
+
+
 def test_bulk_manual_ping_queues_selected_leads(monkeypatch, tmp_path) -> None:
     """Operators can apply the manual ping template to selected chats in one request."""
     monkeypatch.setenv("FUNNELS_CONFIG_PATH", str(tmp_path / "funnels.json"))

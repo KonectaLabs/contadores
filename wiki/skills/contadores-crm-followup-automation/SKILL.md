@@ -62,7 +62,9 @@ Also read these skills when relevant:
 - Exclude Workstation clients completely. As of the 2026-05-02 wave, this means
   the paid clients Guido Roberto Carrion Alvarado and Rodrigo Javier Monges
   Luces, plus any lead present in `workstation_clients`.
-- Exclude closed, converted/legacy booked, and archived leads.
+- Exclude closed, converted/legacy booked, and archived leads. The backend
+  enqueue guard rejects CRM outbound for these states; do not try to requeue or
+  bypass it with direct message inserts.
 - Exclude any lead with `codex_enabled=false` or `codex_disabled` in
   `exclusion_reasons`. Do not send messages, mutate state, schedule follow-ups,
   or try to route around that switch.

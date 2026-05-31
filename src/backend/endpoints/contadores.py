@@ -46,6 +46,8 @@ from backend.contadores_strategies import (
     list_funnel_strategies,
 )
 from backend.database import (
+    CONTADORES_CLOSED_LEAD_DELIVERY_SEQUENCE_STEPS,
+    CONTADORES_CONVERTED_LEAD_DELIVERY_SEQUENCE_STEPS,
     CONTADORES_LEAD_ATTENTION_STATES,
     CONTADORES_LEAD_LEGACY_MANUAL_BOOKED_REASON,
     CONTADORES_LEAD_MANUAL_CONVERTED_REASON,
@@ -416,19 +418,55 @@ def is_whatsapp_custom_window_open(lead: ContadoresLead, *, now: datetime | None
     return (now or now_utc()) < last_inbound_at + WHATSAPP_CUSTOM_MESSAGE_WINDOW
 
 
-def assert_lead_open_for_outbound(lead: ContadoresLead) -> None:
-    """Reject any outbound WhatsApp send for a closed lead."""
-    if derive_effective_lead_stage(lead) != ContadoresLeadStage.CLOSED:
+def sequence_step_allows_converted_lead_delivery(sequence_step: str | None) -> bool:
+    """Return True when a converted client can still receive this Workstation delivery."""
+    return (sequence_step or "").strip() in CONTADORES_CONVERTED_LEAD_DELIVERY_SEQUENCE_STEPS
+
+
+def sequence_step_allows_closed_lead_delivery(sequence_step: str | None) -> bool:
+    """Return True when a closed lead can still receive this final system message."""
+    return (sequence_step or "").strip() in CONTADORES_CLOSED_LEAD_DELIVERY_SEQUENCE_STEPS
+
+
+def build_lead_outbound_state_block_reason(
+    lead: ContadoresLead,
+    *,
+    sequence_step: str | None = None,
+) -> str | None:
+    """Return why this lead cannot receive a normal outbound message."""
+    effective_stage = derive_effective_lead_stage(lead)
+    if effective_stage == ContadoresLeadStage.ARCHIVED:
+        return "archived"
+    if effective_stage == ContadoresLeadStage.CLOSED and not sequence_step_allows_closed_lead_delivery(sequence_step):
+        return "closed"
+    if (
+        (effective_stage == ContadoresLeadStage.BOOKED or lead.booked_at is not None)
+        and not sequence_step_allows_converted_lead_delivery(sequence_step)
+    ):
+        return "converted"
+    return None
+
+
+def assert_lead_open_for_outbound(lead: ContadoresLead, *, sequence_step: str | None = None) -> None:
+    """Reject outbound WhatsApp sends that conflict with the lead lifecycle."""
+    reason = build_lead_outbound_state_block_reason(lead, sequence_step=sequence_step)
+    if reason is None:
         return
+    if reason == "archived":
+        detail = "Lead is archived. Unarchive the lead before sending WhatsApp messages."
+    elif reason == "converted":
+        detail = "Lead is converted. Use Workstation delivery instead of CRM follow-up messages."
+    else:
+        detail = "Lead is closed. Reopen the lead before sending WhatsApp messages."
     raise HTTPException(
         status_code=400,
-        detail="Lead is closed. Reopen the lead before sending WhatsApp messages.",
+        detail=detail,
     )
 
 
 def assert_whatsapp_custom_window_open(lead: ContadoresLead, *, sequence_step: str | None) -> None:
     """Reject non-template outbound messages outside WhatsApp's 24-hour window."""
-    assert_lead_open_for_outbound(lead)
+    assert_lead_open_for_outbound(lead, sequence_step=sequence_step)
     if resolve_contadores_template_name(sequence_step, funnel_id=lead.funnel_id):
         return
     if is_whatsapp_custom_window_open(lead):
@@ -1690,12 +1728,8 @@ def build_followup_exclusion_reasons(
         reasons.append("workstation_client")
     if include_codex_disabled and not lead.codex_enabled:
         reasons.append("codex_disabled")
-    if derive_effective_lead_stage(lead) in {
-        ContadoresLeadStage.CLOSED,
-        ContadoresLeadStage.BOOKED,
-        ContadoresLeadStage.ARCHIVED,
-    }:
-        reasons.append("closed_booked_or_archived")
+    if build_lead_outbound_state_block_reason(lead) is not None:
+        reasons.append("closed_converted_or_archived")
     if latest_outbound and parse_delivery_error_code(latest_outbound.last_delivery_error) == 131050:
         reasons.append("marketing_opt_out")
     return reasons
@@ -1713,12 +1747,8 @@ def build_active_offer_exclusion_reasons(
         reasons.append("workstation_client")
     if not lead.codex_enabled:
         reasons.append("codex_disabled")
-    if derive_effective_lead_stage(lead) in {
-        ContadoresLeadStage.CLOSED,
-        ContadoresLeadStage.BOOKED,
-        ContadoresLeadStage.ARCHIVED,
-    }:
-        reasons.append("closed_booked_or_archived")
+    if build_lead_outbound_state_block_reason(lead) is not None:
+        reasons.append("closed_converted_or_archived")
     if latest_outbound and parse_delivery_error_code(latest_outbound.last_delivery_error) == 131050:
         reasons.append("marketing_opt_out")
     return reasons
@@ -2492,7 +2522,7 @@ def enqueue_lead_outbound(
 ) -> ContadoresMessage:
     """Create one pending outbound message."""
     if (whatsapp_template_name or "").strip():
-        assert_lead_open_for_outbound(lead)
+        assert_lead_open_for_outbound(lead, sequence_step=sequence_step)
     else:
         assert_whatsapp_custom_window_open(lead, sequence_step=sequence_step)
     row = ContadoresMessage.add(

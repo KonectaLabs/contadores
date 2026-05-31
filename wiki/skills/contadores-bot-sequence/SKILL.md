@@ -204,6 +204,11 @@ Manual ping requests must include backend confirmation and batch audit metadata.
 Closed leads cannot receive outbound WhatsApp messages. Reopen the lead first,
 then send the message or template.
 
+Archived and converted leads cannot receive normal CRM follow-up outbound
+messages either. Converted clients may still receive explicit Workstation
+delivery steps such as preview videos, public page links, intake, and handoff
+messages.
+
 The UI-facing conversion state is `Converted`. Use `mark-converted` or
 `/api/contadores/conversions/mark` as the canonical manual conversion path.
 Storage/API still keep legacy `stage=booked`, `booked_at`, `mark-booked`, and

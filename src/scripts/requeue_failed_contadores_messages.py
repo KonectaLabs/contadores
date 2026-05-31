@@ -28,6 +28,9 @@ def list_failed_message_ids(*, opener_only: bool) -> list[int]:
                 ContadoresLead.stage != ContadoresLeadStage.ARCHIVED,
                 ContadoresLead.stage != ContadoresLeadStage.CLOSED,
                 ContadoresLead.stage != ContadoresLeadStage.BOOKED,
+                ContadoresLead.archived_at.is_(None),
+                ContadoresLead.closed_at.is_(None),
+                ContadoresLead.booked_at.is_(None),
             )
             .order_by(ContadoresMessage.created_at, ContadoresMessage.id)
         )

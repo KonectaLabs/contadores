@@ -5960,7 +5960,9 @@ function LeadDetailHeader({
   copyStatus: string;
 }) {
   const closed = lead?.terminal_state === "closed" || lead?.stage === "closed";
+  const archived = lead?.terminal_state === "archived" || lead?.stage === "archived";
   const convertedMilestone = lead?.pipeline_stage === "converted" || lead?.stage === "booked";
+  const crmOutboundBlocked = closed || archived || convertedMilestone;
   const paused = Boolean(lead?.automation_paused);
   const codexEnabled = Boolean(lead?.codex_enabled);
   const canMarkAnswered = lead?.manual_reply_status === "needs_reply" && !closed;
@@ -5984,7 +5986,7 @@ function LeadDetailHeader({
         </div>
       </div>
       <div className="ct-detail-head-actions">
-        <button type="button" className="ct-btn ct-btn-primary" disabled={!lead || closed || Boolean(actionBusy)} onClick={onOpenSend}>
+        <button type="button" className="ct-btn ct-btn-primary" disabled={!lead || crmOutboundBlocked || Boolean(actionBusy)} onClick={onOpenSend}>
           <PaperPlaneTilt size={15} weight="bold" />
           Send
         </button>
@@ -6002,11 +6004,11 @@ function LeadDetailHeader({
           <button
             type="button"
             className="ct-btn ct-btn-ghost"
-            disabled={!lead || Boolean(actionBusy)}
+            disabled={!lead || closed || archived || Boolean(actionBusy)}
             onClick={onConvert}
           >
-            <CurrencyDollar size={15} weight="bold" />
-            Convert
+            {convertedMilestone ? <Robot size={15} weight="bold" /> : <CurrencyDollar size={15} weight="bold" />}
+            {convertedMilestone ? "Build" : "Convert"}
           </button>
         )}
         <details className="ct-action-menu">

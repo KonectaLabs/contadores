@@ -62,11 +62,18 @@ def list_failed_followup_lead_ids() -> list[str]:
         )
         statement = (
             select(ContadoresMessage.lead_id)
+            .join(ContadoresLead, ContadoresLead.id == ContadoresMessage.lead_id)
             .where(
                 ContadoresMessage.from_me.is_(True),
                 ContadoresMessage.sequence_step == OPENER_FOLLOWUP_SEQUENCE_STEP,
                 ContadoresMessage.delivery_status == MessageDeliveryStatus.FAILED,
                 ContadoresMessage.lead_id.not_in(already_retried),
+                ContadoresLead.stage != ContadoresLeadStage.ARCHIVED,
+                ContadoresLead.stage != ContadoresLeadStage.CLOSED,
+                ContadoresLead.stage != ContadoresLeadStage.BOOKED,
+                ContadoresLead.archived_at.is_(None),
+                ContadoresLead.closed_at.is_(None),
+                ContadoresLead.booked_at.is_(None),
             )
             .distinct()
             .order_by(ContadoresMessage.lead_id)
@@ -93,6 +100,11 @@ def list_loom_link_lead_ids() -> list[str]:
                 ContadoresLead.calendly_sent_at.is_(None),
                 ContadoresLead.stage != ContadoresLeadStage.CALENDLY_SENT,
                 ContadoresLead.stage != ContadoresLeadStage.BOOKED,
+                ContadoresLead.stage != ContadoresLeadStage.CLOSED,
+                ContadoresLead.stage != ContadoresLeadStage.ARCHIVED,
+                ContadoresLead.booked_at.is_(None),
+                ContadoresLead.closed_at.is_(None),
+                ContadoresLead.archived_at.is_(None),
                 ContadoresLead.id.not_in(already_queued),
             )
             .distinct()
