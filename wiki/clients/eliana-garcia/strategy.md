@@ -73,3 +73,16 @@ Saved under `media/ads/eliana-garcia/ads/v1/`:
 - `03-familia-proceso-mensual.png`
 
 The images follow the buyer-side trigger pattern used in the strongest prior ads: show the problem artifact, make the next WhatsApp action clear, and avoid institutional lawyer branding.
+
+## Creative Benchmark
+
+Current best internal benchmark: `media/ads/eliana-garcia/ads/v3/`.
+
+- Strongest reference: `01-abogada-te-ayudo-a-cobrar.png`.
+- Why it works: rear-hit car damage dominates the frame, a stressed person is
+  visible, the headline is huge, and the legal/WhatsApp cues are present but
+  secondary.
+- Operating rule for future campaigns: create three concrete problem concepts
+  and ten image variants per concept. Do not choose a single winner manually
+  before Meta has data; publish approved variants as separate Meta ads and let
+  delivery optimize toward the winners.

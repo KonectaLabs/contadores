@@ -127,7 +127,11 @@ Flujo Meta agent-native:
    `extract_client_profile_from_meeting_transcript` crea el brief base para ads.
 2. `stage_ad_campaign` guarda el objetivo comercial, presupuesto y angulos,
    preferentemente usando el `ClientProfile.knowledge.meta_planning` generado.
-3. `stage_creative_asset` guarda prompts, archivos y referencias de imagen/video.
+   Tambien guarda `creative_benchmark` y `creative_testing`: por defecto el
+   benchmark creativo es Eliana v3 y el test es 3 conceptos x 10 variantes por
+   concepto para que Meta elija ganadoras por delivery.
+3. `stage_creative_asset` guarda prompts, archivos y referencias de imagen/video
+   para cada variante generada.
 4. `stage_meta_publish_plan` arma el plan tipado `Campaign -> Ad Set ->
    Ad/Creative`, siempre en modo `PAUSED` y sin writes externos. El destino
    tambien declara el ruteo: Click-to-WhatsApp usa el funnel y, si ya existe,

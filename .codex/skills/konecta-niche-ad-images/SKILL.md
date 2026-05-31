@@ -1,6 +1,6 @@
 ---
 name: konecta-niche-ad-images
-description: Generate three high-conversion GPT Image / GPT Image 2.0 ad prompts for a Konecta niche funnel after market research is available.
+description: Generate high-conversion GPT Image / GPT Image 2.0 Meta ad concept batches for a Konecta niche funnel after market research is available.
 ---
 
 # Konecta Niche Ad Images
@@ -24,7 +24,8 @@ If the task is about the offer angle, ad concept, or video-selling strategy, als
 
 ## Strategy
 
-Create three distinct Meta ad image prompts:
+Create three distinct Meta ad concepts, then write 10 variant prompts per
+concept by default so Meta can test real creative diversity.
 
 1. **Specific profitable opportunity**
    - Show one exact case/opportunity the buyer wants.
@@ -64,15 +65,15 @@ Avoid provider-first branding by default:
 
 ## Output Shape
 
-For each variant:
+For each concept:
 
 - `Angle`
-- `Prompt`
+- `10 variant prompts`
 - `On-image text`
 - `Why this tests something different`
 
 End with:
 
 ```text
-Next user action: genera estas 3 imagenes en GPT Image / GPT Image 2.0, subilas a Meta Ads y manteneme al tanto de cual queres usar para el funnel.
+Next user action: genera 10 variantes por concepto en GPT Image / GPT Image 2.0, subilas a Meta Ads como ads separados dentro del mismo test, y deja que Meta encuentre las ganadoras.
 ```

@@ -261,6 +261,8 @@ export interface PlatformAdCampaignItem {
   budget_currency: string;
   target_segments: unknown[];
   angles: unknown[];
+  creative_benchmark: Record<string, unknown>;
+  creative_testing: Record<string, unknown>;
   meta_campaign_id: string;
   approval_status: string;
   idempotency_key: string | null;

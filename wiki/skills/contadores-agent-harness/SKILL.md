@@ -170,6 +170,11 @@ step from that persisted state.
   plans. Use the saved `ClientProfile.knowledge.meta_planning` and
   `knowledge.ad_angles` as the brief, then ask Facundo only for missing live
   publish data.
+- When staging ads, include the creative test policy in `stage_ad_campaign`:
+  use the Eliana v3 benchmark assets as `creative_benchmark` unless there is a
+  newer winner, default to 3 concepts x 10 variants per concept in
+  `creative_testing`, and stage every accepted image variant as its own
+  `CreativeAsset`.
 - Do not publish to Meta from these tools; stage the request and wait for the
   approval/publish mechanism.
 - Before asking for Meta IDs or running preflight, use `sync_meta_inventory` to

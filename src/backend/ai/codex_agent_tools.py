@@ -345,6 +345,8 @@ class StageAdCampaignArgs(BaseModel):
     budget_currency: str = "USD"
     target_segments: list[Any] = Field(default_factory=list)
     angles: list[Any] = Field(default_factory=list)
+    creative_benchmark: dict[str, Any] = Field(default_factory=dict)
+    creative_testing: dict[str, Any] = Field(default_factory=dict)
     approval_status: str = "not_requested"
     idempotency_key: str | None = None
 
@@ -1456,6 +1458,8 @@ def _ad_campaign_payload(row: PlatformAdCampaign) -> dict[str, Any]:
         "budget_currency": row.budget_currency,
         "target_segments": row.target_segments(),
         "angles": row.angles(),
+        "creative_benchmark": row.creative_benchmark(),
+        "creative_testing": row.creative_testing(),
         "approval_status": row.approval_status,
     }
 
@@ -1669,7 +1673,11 @@ def stage_ad_campaign(arguments: dict[str, Any]) -> dict[str, Any]:
         target_id=row.id,
         funnel_id=row.funnel_id,
         summary=f"Agent staged ad campaign {row.id}.",
-        payload={"client_id": row.client_id, "budget_daily_usd": row.budget_daily_usd},
+        payload={
+            "client_id": row.client_id,
+            "budget_daily_usd": row.budget_daily_usd,
+            "creative_testing": row.creative_testing(),
+        },
     )
     return {"saved": True, "campaign": _ad_campaign_payload(row)}
 

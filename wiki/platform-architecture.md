@@ -193,7 +193,8 @@ audited, approved plan:
    transcript into a draft `ClientProfile` with client facts, offer, exclusions,
    market, objections, geography, proof, ad angles, and Meta planning gaps.
 2. `PlatformAdCampaign` holds the campaign objective, budget guardrails,
-   segments, angles, approval state, and eventually the Meta campaign ID.
+   segments, angles, creative benchmark, creative testing policy, approval
+   state, and eventually the Meta campaign ID.
 3. `PlatformCreativeAsset` holds each generated image/video, prompt, source
    refs, approval state, and eventually the Meta creative ID or asset hash.
 4. `sync_meta_inventory` stores read-only ad account, Page, lead form, pixel,
@@ -321,6 +322,10 @@ because it performs no campaign writes.
    - Add ad angles, copy variants, image prompts, generated assets, and approval
      states.
    - Use Codex SDK for asset workflows and OpenAI image APIs for images.
+   - Default creative plan is 3 problem-first concepts x 10 image variants per
+     concept, benchmarked against Eliana v3, especially the rear-hit car crash
+     ad. Meta should receive the approved variants as separate ads and optimize
+     delivery toward winners.
 
 8. Meta Ads publishing
    - Add read-only Meta inventory first: ad accounts, pages, forms, pixels,

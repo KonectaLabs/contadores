@@ -1718,12 +1718,30 @@ def test_codex_agent_lifecycle_tools_work_without_ui(monkeypatch, tmp_path) -> N
             "objective": "Conseguir consultas laborales por WhatsApp.",
             "budget_daily_usd": 15,
             "angles": [{"hook": "Te despidieron?"}],
+            "creative_benchmark": {
+                "name": "eliana_v3",
+                "reference_assets": [
+                    "media/ads/eliana-garcia/ads/v3/01-abogada-te-ayudo-a-cobrar.png",
+                    "media/ads/eliana-garcia/ads/v3/02-abogada-art-reclamar.png",
+                    "media/ads/eliana-garcia/ads/v3/03-abogada-ordena-proceso.png",
+                ],
+                "strongest_reference": "rear-end crashed car with a stressed person and dominant problem headline",
+            },
+            "creative_testing": {
+                "concept_count": 3,
+                "variations_per_concept": 10,
+                "selection_strategy": "publish all variants in Meta and let delivery optimize to winners",
+            },
             "idempotency_key": "campaign-agent-1",
         },
     )
     assert campaign_result["ok"] is True
     campaign_id = campaign_result["result"]["campaign"]["id"]
-    assert PlatformAdCampaign.list_recent(client_id="client-agent-1")[0].id == campaign_id
+    campaign = PlatformAdCampaign.list_recent(client_id="client-agent-1")[0]
+    assert campaign.id == campaign_id
+    assert campaign.creative_benchmark()["name"] == "eliana_v3"
+    assert campaign.creative_testing()["variations_per_concept"] == 10
+    assert campaign_result["result"]["campaign"]["creative_testing"]["selection_strategy"].startswith("publish all")
 
     asset_result = call_tool(
         run_id="agent-run-lifecycle",

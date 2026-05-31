@@ -252,6 +252,8 @@ class PlatformAdCampaignCommand(BaseModel):
     budget_currency: str = "USD"
     target_segments: list[Any] = Field(default_factory=list)
     angles: list[Any] = Field(default_factory=list)
+    creative_benchmark: dict[str, Any] = Field(default_factory=dict)
+    creative_testing: dict[str, Any] = Field(default_factory=dict)
     approval_status: str = "not_requested"
     idempotency_key: str | None = None
 
@@ -269,6 +271,8 @@ class PlatformAdCampaignResponse(BaseModel):
     budget_currency: str
     target_segments: list[Any]
     angles: list[Any]
+    creative_benchmark: dict[str, Any]
+    creative_testing: dict[str, Any]
     meta_campaign_id: str
     approval_status: str
     idempotency_key: str | None
@@ -717,6 +721,8 @@ def serialize_ad_campaign(row: PlatformAdCampaign) -> PlatformAdCampaignResponse
         budget_currency=row.budget_currency,
         target_segments=row.target_segments(),
         angles=row.angles(),
+        creative_benchmark=row.creative_benchmark(),
+        creative_testing=row.creative_testing(),
         meta_campaign_id=row.meta_campaign_id,
         approval_status=row.approval_status,
         idempotency_key=row.idempotency_key,
@@ -1136,6 +1142,7 @@ async def create_ad_campaign(command: PlatformAdCampaignCommand) -> PlatformAdCa
         payload={
             "client_id": row.client_id,
             "budget_daily_usd": row.budget_daily_usd,
+            "creative_testing": row.creative_testing(),
             "approval_status": row.approval_status,
         },
     )

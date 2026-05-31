@@ -3359,6 +3359,8 @@ class PlatformAdCampaign(SQLModel, table=True):
     budget_currency: str = Field(default="USD")
     target_segments_json: str = Field(default="[]")
     angles_json: str = Field(default="[]")
+    creative_benchmark_json: str = Field(default="{}")
+    creative_testing_json: str = Field(default="{}")
     meta_campaign_id: str = Field(default="", index=True)
     approval_status: str = Field(default="not_requested", index=True)
     idempotency_key: str | None = Field(default=None, index=True)
@@ -3378,6 +3380,8 @@ class PlatformAdCampaign(SQLModel, table=True):
         budget_currency: str = "USD",
         target_segments: list[Any] | None = None,
         angles: list[Any] | None = None,
+        creative_benchmark: dict[str, Any] | None = None,
+        creative_testing: dict[str, Any] | None = None,
         approval_status: str = "not_requested",
         idempotency_key: str | None = None,
     ) -> "PlatformAdCampaign":
@@ -3399,6 +3403,8 @@ class PlatformAdCampaign(SQLModel, table=True):
                 budget_currency=(budget_currency or "USD").strip() or "USD",
                 target_segments_json=_json_dumps(target_segments or []),
                 angles_json=_json_dumps(angles or []),
+                creative_benchmark_json=_json_dumps(creative_benchmark or {}),
+                creative_testing_json=_json_dumps(creative_testing or {}),
                 approval_status=(approval_status or "not_requested").strip() or "not_requested",
                 idempotency_key=clean_key,
                 created_at=now,
@@ -3460,6 +3466,14 @@ class PlatformAdCampaign(SQLModel, table=True):
     def angles(self) -> list[Any]:
         """Return parsed ad angles."""
         return _json_array(self.angles_json)
+
+    def creative_benchmark(self) -> dict[str, Any]:
+        """Return parsed creative benchmark instructions."""
+        return _json_object(self.creative_benchmark_json)
+
+    def creative_testing(self) -> dict[str, Any]:
+        """Return parsed creative testing policy."""
+        return _json_object(self.creative_testing_json)
 
 
 class PlatformCreativeAsset(SQLModel, table=True):
@@ -6746,6 +6760,7 @@ def init_db() -> None:
     ensure_workstation_client_automation_columns()
     ensure_workstation_codex_thread_columns()
     ensure_platform_human_question_context_columns()
+    ensure_platform_ad_campaign_creative_columns()
     ensure_platform_creative_asset_meta_columns()
     ensure_platform_meta_publish_attempt_idempotency_index()
     ensure_platform_meeting_calendar_columns()
@@ -6803,6 +6818,27 @@ def ensure_platform_creative_asset_meta_columns() -> None:
             "CREATE INDEX IF NOT EXISTS ix_platform_creative_assets_video_id "
             "ON platform_creative_assets (video_id)"
         )
+
+
+def ensure_platform_ad_campaign_creative_columns() -> None:
+    """Add creative benchmark/testing fields to existing ad campaign tables."""
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        if "platform_ad_campaigns" not in inspector.get_table_names():
+            return
+        columns = {column["name"] for column in inspector.get_columns("platform_ad_campaigns")}
+        column_sql = {
+            "creative_benchmark_json": (
+                "ALTER TABLE platform_ad_campaigns ADD COLUMN creative_benchmark_json TEXT NOT NULL DEFAULT '{}'"
+            ),
+            "creative_testing_json": (
+                "ALTER TABLE platform_ad_campaigns ADD COLUMN creative_testing_json TEXT NOT NULL DEFAULT '{}'"
+            ),
+        }
+        for column_name, statement in column_sql.items():
+            if column_name not in columns:
+                connection.exec_driver_sql(statement)
+                logger.info("Added missing platform_ad_campaigns.%s column.", column_name)
 
 
 def ensure_platform_meeting_calendar_columns() -> None:

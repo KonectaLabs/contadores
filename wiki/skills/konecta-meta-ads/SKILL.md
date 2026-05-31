@@ -59,6 +59,12 @@ Use the Eliana v3 pattern:
 - tiny action cue;
 - no name/logo/footer taking over the creative.
 
+Facundo's current benchmark is the Eliana v3 batch, especially
+`media/ads/eliana-garcia/ads/v3/01-abogada-te-ayudo-a-cobrar.png`: a damaged
+car shot from behind, a stressed person in the scene, a huge buyer-problem
+headline, and small legal/WhatsApp cues. Future autonomous ad work should treat
+that as the reference shape unless Facundo gives a newer winner.
+
 Examples:
 
 - car crash image + `TE CHOCARON?` + `Abogada: te ayudo a cobrar` + WhatsApp;
@@ -172,10 +178,32 @@ Before choosing angles:
 3. If transcript is missing, use Workstation notes, landing page copy, CRM/WhatsApp evidence, prior campaign notes, and current page assets.
 4. Extract the valuable case types, buyer language, geography, and cases to avoid.
 5. Pick three distinct problem-first tests.
-6. Save under `media/ads/<client-slug>/ads/<batch>/`.
-7. Preserve prior batches. Never overwrite v1/v2/v3 unless asked.
-8. Write `campaign-notes.md` explaining what changed and why.
-9. If sending to Alan, send a short label by client and then images.
+6. Generate a testing batch, not a single final: default to 3 concepts x 10
+   image variants per concept unless budget, policy, or user instruction says
+   otherwise.
+7. Save under `media/ads/<client-slug>/ads/<batch>/`.
+8. Preserve prior batches. Never overwrite v1/v2/v3 unless asked.
+9. Write `campaign-notes.md` explaining what changed and why.
+10. If sending to Alan, send a short label by client and then images.
+
+## Creative Volume Rule
+
+The platform should not try to guess one perfect image. It should create enough
+strong variations for Meta delivery to find winners:
+
+- 3 core concepts from the client profile or transcript;
+- 10 variants per concept by default;
+- one complete image-generation prompt per variant;
+- one staged `CreativeAsset` per generated image;
+- one Meta ad per approved creative variant when publishing;
+- keep variants in the same simple campaign/ad-set structure when targeting and
+  destination are the same, so Meta can optimize delivery instead of splitting
+  learning across tiny fragmented tests.
+
+Variation should change the visual proof and composition more than the strategy:
+rear angle vs side angle of a crash, person closer/farther, document visible or
+not, color emphasis, headline placement, and WhatsApp cue placement. Do not make
+10 copies that only change one adjective.
 
 ## Platform Publish Flow
 
@@ -187,6 +215,9 @@ Use this order:
 1. `extract_client_profile_from_meeting_transcript` when the transcript exists
    and no current `ClientProfile` has been saved.
 2. `stage_ad_campaign` for objective, segments, angles, and budget guardrails.
+   Include `creative_benchmark` with the Eliana v3 reference assets and
+   `creative_testing` with `variations_per_concept=10` unless there is a reason
+   to override.
 3. `stage_creative_asset` for every generated or approved asset.
 4. `stage_meta_publish_plan` for the typed Meta plan:
    `Campaign -> Ad Set -> Ad/Creative`, destination, budget, targeting,

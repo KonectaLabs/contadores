@@ -112,7 +112,10 @@ Avoid generic concepts:
 
 ## Image Strategy
 
-Create three distinct 1:1 Meta ad directions:
+Create three distinct 1:1 Meta ad concepts, then generate a real testing batch
+with 10 variants per concept by default. Facundo's current benchmark is the
+Eliana v3 batch, especially the traffic accident ad with the car hit from
+behind, a person in distress, and huge problem-first text.
 
 1. **Specific urgent problem**
    - Show the painful event already happening.
@@ -184,19 +187,28 @@ If the user asks for a stronger promise, make the fast deliverable the promise, 
    - segmentation;
    - transcript evidence;
    - risk guardrails.
-2. Generate one image per angle with `imagegen`.
+2. Stage the campaign with:
+   - `creative_benchmark.name = "eliana_v3"` unless a newer winner exists;
+   - Eliana v3 reference asset paths;
+   - `creative_testing.concept_count = 3`;
+   - `creative_testing.variations_per_concept = 10`;
+   - `creative_testing.selection_strategy = "publish variants in Meta and let delivery optimize to winners"`.
+3. Generate 10 images per angle with `imagegen`.
    - The imagegen prompt must describe the complete final ad: scene, subject,
      headline text, text placement, colors, hierarchy, and composition.
    - Do not generate a background and then add headline text, badges, CTA, or
      layout programmatically with PIL, ImageMagick, SVG, canvas, HTML, or CSS.
-3. Inspect whether the result follows the idea:
+4. Inspect whether each result follows the idea:
    - problem is visible;
    - artifact is recognizable;
    - text is readable;
    - no forbidden logos/official impersonation;
    - outcome is clear.
-4. If the first batch is too institutional, create a new batch and keep the old one.
-5. Do not delete prior usable versions unless the user explicitly asks.
+5. Stage every accepted generated image as a `CreativeAsset`.
+6. Publish approved variants as separate ads inside the simplest matching Meta
+   ad-set structure so Meta delivery can allocate spend to the winners.
+7. If the first batch is too institutional, create a new batch and keep the old one.
+8. Do not delete prior usable versions unless the user explicitly asks.
 
 ## Folder Convention
 
