@@ -1898,23 +1898,23 @@ body {
 }
 
 #contadoresView {
-  --ct-bg: #f3efe6;
-  --ct-surface: #fffdf8;
-  --ct-surface-2: #f7f2e9;
-  --ct-surface-3: #ebe3d5;
-  --ct-accent: #155e75;
-  --ct-accent-strong: #0e4a5a;
-  --ct-accent-soft: #e2f1f4;
-  --ct-accent-ring: rgba(21, 94, 117, 0.18);
+  --ct-bg: #eef3f1;
+  --ct-surface: #fcfcfa;
+  --ct-surface-2: #f3f7f5;
+  --ct-surface-3: #e4ece7;
+  --ct-accent: #0f6f87;
+  --ct-accent-strong: #0a4f61;
+  --ct-accent-soft: #dceff2;
+  --ct-accent-ring: rgba(15, 111, 135, 0.2);
   --ct-ink: #20231f;
   --ct-ink-muted: #665f55;
   --ct-ink-soft: #938a7d;
-  --ct-line: #ded6c8;
-  --ct-line-soft: #eee7dc;
-  --ct-warn: #ad6116;
-  --ct-warn-bg: #fff2dc;
-  --ct-success: #25634d;
-  --ct-success-bg: #e5f3eb;
+  --ct-line: #d4ded9;
+  --ct-line-soft: #e7efeb;
+  --ct-warn: #b85c38;
+  --ct-warn-bg: #fff0e8;
+  --ct-success: #287a57;
+  --ct-success-bg: #e5f4ec;
   --ct-danger: #a33a3a;
   --ct-danger-bg: #fff0f0;
   --ct-danger-ink: #8f2323;
@@ -1932,7 +1932,7 @@ body {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   background:
-    linear-gradient(180deg, rgba(255, 253, 248, 0.78), rgba(243, 239, 230, 0.96) 220px),
+    linear-gradient(180deg, rgba(252, 252, 250, 0.82), rgba(238, 243, 241, 0.98) 220px),
     var(--ct-bg);
   color: var(--ct-ink);
   font-family: var(--font-sans);
@@ -3719,11 +3719,11 @@ body {
 #contadoresView .ct-pipeline {
   display: grid;
   grid-template-columns:
-    minmax(104px, 0.72fr)
-    minmax(360px, 2.3fr)
-    minmax(190px, 1fr)
-    minmax(190px, 1fr);
-  gap: 8px;
+    minmax(104px, 0.56fr)
+    minmax(460px, 2.5fr)
+    minmax(180px, 0.9fr)
+    minmax(180px, 0.9fr);
+  gap: 10px;
   min-width: 0;
   overflow: visible;
 }
@@ -3733,23 +3733,24 @@ body {
   grid-template-columns: minmax(150px, 0.18fr) minmax(0, 1fr);
   align-items: stretch;
   gap: 10px;
-  padding: 12px;
-  border: 1px solid var(--ct-line);
+  padding: 10px;
+  border: 1px solid rgba(15, 111, 135, 0.18);
   border-radius: calc(var(--ct-radius) + 2px);
-  background: rgba(255, 253, 248, 0.86);
-  box-shadow: 0 12px 28px rgba(58, 50, 40, 0.06);
+  background: rgba(248, 251, 250, 0.94);
+  box-shadow: none;
 }
 
 #contadoresView .ct-queue-bar > div:first-child {
   display: grid;
   align-content: center;
   gap: 7px;
-  min-height: 64px;
-  padding: 12px 14px;
-  border: 1px solid rgba(32, 35, 31, 0.16);
+  min-height: 58px;
+  padding: 11px 13px;
+  border: 1px solid var(--ct-line);
+  border-left: 4px solid var(--ct-accent);
   border-radius: var(--ct-radius);
-  background: #20231f;
-  color: #fffdf8;
+  background: var(--ct-surface);
+  color: var(--ct-ink);
 }
 
 #contadoresView .ct-queue-bar > div:first-child strong {
@@ -3758,7 +3759,7 @@ body {
 }
 
 #contadoresView .ct-queue-bar > div:first-child span {
-  color: rgba(255, 253, 248, 0.68);
+  color: var(--ct-ink-muted);
   font: 800 12px/1 var(--font-mono);
 }
 
@@ -3766,8 +3767,10 @@ body {
   grid-column: 1 / -1;
   display: grid;
   gap: 8px;
-  padding-top: 10px;
-  border-top: 1px solid var(--ct-line-soft);
+  padding: 9px 10px;
+  border: 1px solid var(--ct-line-soft);
+  border-radius: var(--ct-radius);
+  background: var(--ct-surface);
 }
 
 #contadoresView .ct-filter-row {
@@ -3806,7 +3809,7 @@ body {
 
 #contadoresView .ct-lead-view-group {
   display: grid;
-  gap: 5px;
+  gap: 6px;
   min-width: 0;
   padding: 0;
   border: 0;
@@ -3840,25 +3843,34 @@ body {
 }
 
 #contadoresView .ct-lead-view-group-strip {
-  display: flex;
+  display: grid;
   gap: 6px;
   min-width: 0;
-  overflow-x: auto;
-  padding-bottom: 2px;
-  scrollbar-width: thin;
+  overflow: visible;
+}
+
+#contadoresView .ct-lead-view-group[data-group="overview"] .ct-lead-view-group-strip {
+  grid-template-columns: 1fr;
+}
+
+#contadoresView .ct-lead-view-group[data-group="pipeline"] .ct-lead-view-group-strip {
+  grid-template-columns: repeat(5, minmax(72px, 1fr));
+}
+
+#contadoresView .ct-lead-view-group[data-group="action"] .ct-lead-view-group-strip,
+#contadoresView .ct-lead-view-group[data-group="system"] .ct-lead-view-group-strip {
+  grid-template-columns: repeat(2, minmax(74px, 1fr));
 }
 
 #contadoresView .ct-lead-view {
   --lead-view-accent: #64748b;
   display: grid;
-  flex: 0 0 auto;
-  grid-template-columns: auto auto;
-  align-items: center;
-  justify-content: start;
-  gap: 7px;
-  min-width: 82px;
-  min-height: 34px;
-  padding: 0 10px;
+  grid-template-columns: 1fr;
+  align-content: center;
+  gap: 5px;
+  min-width: 0;
+  min-height: 50px;
+  padding: 8px 10px;
   border: 1px solid var(--ct-line);
   border-radius: var(--ct-radius);
   background: var(--ct-surface);
@@ -3869,33 +3881,33 @@ body {
 
 #contadoresView .ct-lead-view:hover:not(.active) {
   border-color: var(--lead-view-accent);
-  background: #fffaf1;
+  background: color-mix(in srgb, var(--lead-view-accent) 6%, var(--ct-surface));
   transform: translateY(-1px);
 }
 
 #contadoresView .ct-lead-view.active {
   border-color: var(--lead-view-accent);
-  background: var(--lead-view-accent);
+  background: linear-gradient(180deg, var(--lead-view-accent), color-mix(in srgb, var(--lead-view-accent) 82%, #1a202c));
   color: #ffffff;
-  box-shadow: 0 8px 18px rgba(32, 35, 31, 0.1);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2);
 }
 
 #contadoresView .ct-lead-view-count {
   color: var(--lead-view-accent);
-  font: 800 12px/1 var(--font-mono);
+  font: 850 16px/1 var(--font-mono);
 }
 
-#contadoresView .ct-lead-view[data-tone="all"] { --lead-view-accent: #1f2937; }
-#contadoresView .ct-lead-view[data-tone="warn"] { --lead-view-accent: #b45309; }
-#contadoresView .ct-lead-view[data-tone="accent"] { --lead-view-accent: #2563eb; }
-#contadoresView .ct-lead-view[data-tone="success"] { --lead-view-accent: #059669; }
-#contadoresView .ct-lead-view[data-tone="muted"] { --lead-view-accent: #64748b; }
+#contadoresView .ct-lead-view[data-tone="all"] { --lead-view-accent: #0f6f87; }
+#contadoresView .ct-lead-view[data-tone="warn"] { --lead-view-accent: #b85c38; }
+#contadoresView .ct-lead-view[data-tone="accent"] { --lead-view-accent: #0f6f87; }
+#contadoresView .ct-lead-view[data-tone="success"] { --lead-view-accent: #287a57; }
+#contadoresView .ct-lead-view[data-tone="muted"] { --lead-view-accent: #6b7280; }
 
 #contadoresView .ct-lead-view-label {
   color: var(--ct-ink-muted);
-  font: 700 11px/1 var(--font-sans);
+  font: 750 11px/1.1 var(--font-sans);
   overflow-wrap: anywhere;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 #contadoresView .ct-lead-view.active .ct-lead-view-count,
@@ -3953,7 +3965,7 @@ body {
   padding: 0 10px;
   border: 1px solid var(--ct-line);
   border-radius: var(--ct-radius);
-  background: #fffaf1;
+  background: var(--ct-surface);
   color: var(--ct-ink-muted);
   font: 600 11px/1 var(--font-mono);
 }
@@ -3992,7 +4004,7 @@ body {
 
 #contadoresView .ct-detail {
   background:
-    linear-gradient(180deg, rgba(255, 253, 248, 0.96), rgba(247, 242, 233, 0.96)),
+    linear-gradient(180deg, rgba(252, 252, 250, 0.98), rgba(243, 247, 245, 0.98)),
     var(--ct-surface-2);
 }
 
@@ -4053,9 +4065,10 @@ body {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 4px;
   overflow-y: auto;
-  padding: 6px;
+  padding: 7px;
+  background: rgba(243, 247, 245, 0.7);
 }
 
 #contadoresView .ct-lead-row {
@@ -4067,21 +4080,21 @@ body {
   border: 1px solid transparent;
   border-left: 3px solid transparent;
   border-radius: var(--ct-radius);
-  background: rgba(255, 253, 248, 0.58);
+  background: rgba(252, 252, 250, 0.74);
   transition: background 160ms ease, border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
 
 #contadoresView .ct-lead-row:hover {
   border-color: rgba(21, 94, 117, 0.22);
   border-left-color: rgba(21, 94, 117, 0.48);
-  background: rgba(255, 255, 255, 0.92);
+  background: rgba(255, 255, 255, 0.96);
 }
 
 #contadoresView .ct-lead-row.active {
   border-color: rgba(21, 94, 117, 0.42);
   border-left-color: var(--ct-accent);
   background: #ffffff;
-  box-shadow: 0 14px 30px rgba(35, 47, 50, 0.09);
+  box-shadow: 0 10px 22px rgba(35, 47, 50, 0.08);
 }
 
 #contadoresView .ct-lead-row.selected {
@@ -4508,7 +4521,7 @@ body {
   padding: 4px;
   border: 1px solid var(--ct-line);
   border-radius: var(--ct-radius);
-  background: #fffaf1;
+  background: var(--ct-surface);
 }
 
 #contadoresView .ct-tab {
@@ -4516,8 +4529,8 @@ body {
 }
 
 #contadoresView .ct-tab.active {
-  background: #20231f;
-  color: #fffdf8;
+  background: var(--ct-accent);
+  color: #ffffff;
 }
 
 #contadoresView .ct-panes {
@@ -4528,7 +4541,7 @@ body {
   overflow: hidden;
   padding: 10px 16px 0;
   background:
-    linear-gradient(90deg, rgba(21, 94, 117, 0.04), transparent 18%, transparent 82%, rgba(173, 97, 22, 0.04)),
+    linear-gradient(180deg, rgba(247, 250, 249, 0.98), rgba(237, 244, 241, 0.98)),
     var(--ct-surface-2);
 }
 
@@ -4552,8 +4565,8 @@ body {
 }
 
 #contadoresView .ct-timeline {
-  gap: 13px;
-  padding: 8px 6px 18px;
+  gap: 14px;
+  padding: 10px 6px 18px;
 }
 
 #contadoresView .crm-message-shell {
@@ -4588,16 +4601,16 @@ body {
 }
 
 #contadoresView .crm-message-dot {
-  width: 10px;
-  height: 10px;
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
-  background: #2563eb;
-  box-shadow: 0 0 0 5px rgba(37, 99, 235, 0.12);
+  background: var(--ct-accent);
+  box-shadow: 0 0 0 4px rgba(15, 111, 135, 0.13);
 }
 
 #contadoresView .crm-message-dot.inbound {
-  background: #d97706;
-  box-shadow: 0 0 0 4px rgba(217, 119, 6, 0.12);
+  background: var(--ct-warn);
+  box-shadow: 0 0 0 4px rgba(184, 92, 56, 0.12);
 }
 
 #contadoresView .crm-message-dot.failed {
@@ -4617,25 +4630,25 @@ body {
 #contadoresView .ct-lead-strategy-card {
   padding: 12px 14px;
   border: 1px solid var(--ct-line);
-  border-radius: 14px;
+  border-radius: var(--ct-radius);
   background: var(--ct-surface-2);
 }
 
 #contadoresView .crm-message-card {
-  width: min(780px, 100%);
-  box-shadow: 0 12px 24px rgba(35, 47, 50, 0.07);
+  width: min(740px, 100%);
+  box-shadow: 0 8px 18px rgba(35, 47, 50, 0.05);
 }
 
 #contadoresView .crm-message-card.outbound {
-  border-color: #aac8ef;
-  border-right: 5px solid #2563eb;
-  background: #eaf3ff;
+  border-color: rgba(15, 111, 135, 0.24);
+  border-right: 5px solid var(--ct-accent);
+  background: linear-gradient(90deg, #ffffff, #edf7f8);
 }
 
 #contadoresView .crm-message-card.inbound {
-  border-color: rgba(197, 111, 34, 0.34);
-  border-left: 5px solid #c56f22;
-  background: #fff3df;
+  border-color: rgba(184, 92, 56, 0.24);
+  border-left: 5px solid var(--ct-warn);
+  background: linear-gradient(90deg, #fff8f4, #ffffff);
 }
 
 #contadoresView .crm-message-card.failed {
@@ -4686,12 +4699,12 @@ body {
 }
 
 #contadoresView .crm-message-author.outbound {
-  background: #1d4ed8;
+  background: var(--ct-accent);
   color: #ffffff;
 }
 
 #contadoresView .crm-message-author.inbound {
-  background: #b45309;
+  background: #8f4a30;
   color: #ffffff;
 }
 
@@ -4768,7 +4781,7 @@ body {
 #contadoresView .crm-message-body {
   margin: 0;
   color: var(--ct-ink);
-  font: 400 13px/1.5 var(--font-sans);
+  font: 420 13px/1.55 var(--font-sans);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -7533,7 +7546,8 @@ body {
     justify-content: stretch;
     min-width: 0;
     max-width: calc(100vw - 32px);
-    overflow: hidden;
+    overflow-x: auto;
+    scrollbar-width: thin;
   }
 
   #contadoresView .ct-topbar-tools {
@@ -7541,8 +7555,8 @@ body {
   }
 
   #contadoresView .ct-section-switch button {
-    flex: 1 1 0;
-    min-width: 0;
+    flex: 0 0 auto;
+    min-width: 72px;
     padding-inline: 8px;
     letter-spacing: 0;
   }
@@ -7579,6 +7593,7 @@ body {
     display: grid;
     grid-template-columns: 1fr;
     overflow: visible;
+    gap: 10px;
   }
 
   #contadoresView .ct-lead-view {
