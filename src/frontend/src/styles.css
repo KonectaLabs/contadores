@@ -5304,6 +5304,20 @@ body {
   font: 500 13px/1 var(--font-sans);
 }
 
+#contadoresView .ct-field[data-invalid="true"] input,
+#contadoresView .ct-field[data-invalid="true"] select,
+#contadoresView .ct-field[data-invalid="true"] textarea {
+  border-color: rgba(163, 58, 58, 0.58);
+  background: color-mix(in srgb, var(--ct-danger-bg) 55%, var(--ct-surface));
+}
+
+#contadoresView .ct-field-error {
+  margin: 0;
+  color: var(--ct-danger-ink);
+  font: 650 11px/1.35 var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
 #contadoresView .ct-field input,
 #contadoresView .ct-field select {
   height: 36px;
@@ -6115,7 +6129,6 @@ body {
   display: grid;
   align-content: start;
   gap: 12px;
-  overflow-y: auto;
   padding: 16px;
 }
 
@@ -6133,6 +6146,35 @@ body {
 #contadoresView .delivery-drawer-section:last-child {
   padding-bottom: 0;
   border-bottom: 0;
+}
+
+#contadoresView .delivery-drawer-feedback {
+  display: grid;
+  gap: 8px;
+  padding: 11px 12px;
+  border: 1px solid rgba(163, 58, 58, 0.24);
+  border-left: 4px solid var(--ct-danger);
+  border-radius: var(--ct-radius);
+  background: color-mix(in srgb, var(--ct-danger-bg) 64%, var(--ct-surface));
+  color: var(--ct-danger-ink);
+}
+
+#contadoresView .delivery-drawer-feedback strong {
+  color: currentColor;
+  font: 800 12px/1 var(--font-sans);
+}
+
+#contadoresView .delivery-drawer-feedback ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+#contadoresView .delivery-drawer-feedback li {
+  color: currentColor;
+  font: 600 11px/1.35 var(--font-mono);
+  overflow-wrap: anywhere;
 }
 
 #contadoresView .delivery-source-drawer .btn-destructive {

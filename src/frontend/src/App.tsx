@@ -141,6 +141,13 @@ type ClientLeadSourceDraft = {
   column_mapping_text: string;
   context_field_mapping_text: string;
 };
+type ClientLeadSourceDraftField = keyof ClientLeadSourceDraft;
+type ClientLeadSourceDraftValidation = {
+  canSave: boolean;
+  fields: Partial<Record<ClientLeadSourceDraftField, string>>;
+  messages: string[];
+  summary: string;
+};
 type ClientLeadSourceMutationPayload = {
   id: string;
   label: string;
@@ -431,6 +438,7 @@ export function App() {
   const [selectedDeliverySourceId, setSelectedDeliverySourceId] = useState<string | null>(null);
   const [deliveryEditorMode, setDeliveryEditorMode] = useState<DeliveryEditorMode>("edit");
   const [deliverySourceDraft, setDeliverySourceDraft] = useState<ClientLeadSourceDraft>(buildBlankClientLeadSourceDraft);
+  const [deliverySourceEditorError, setDeliverySourceEditorError] = useState("");
   const [deliveryLoading, setDeliveryLoading] = useState(false);
   const [deliveryLeadsLoading, setDeliveryLeadsLoading] = useState(false);
   const [deliveryRecipientChat, setDeliveryRecipientChat] = useState<ClientLeadRecipientChatResponse | null>(null);
@@ -1039,11 +1047,19 @@ export function App() {
     setDeliveryLeads([]);
     setDeliveryRecipientChat(null);
     setDeliveryCopyStatus("");
+    setDeliverySourceEditorError("");
     setDeliverySourceDraft(buildBlankClientLeadSourceDraft());
   }
 
   async function saveDeliverySource(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const validation = validateClientLeadSourceDraft(deliverySourceDraft);
+    if (!validation.canSave) {
+      setDeliverySourceEditorError(validation.summary);
+      return;
+    }
+
+    setDeliverySourceEditorError("");
     setActionBusy("delivery-save");
     try {
       const payload = clientLeadSourcePayloadFromDraft(deliverySourceDraft);
@@ -1065,7 +1081,7 @@ export function App() {
       await loadDeliveryLeadsForSources(sourceIds);
       await loadDeliveryRecipientChat(saved.id || payload.id);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not save Delivery source.");
+      setDeliverySourceEditorError(reason instanceof Error ? reason.message : "Could not save Delivery source.");
     } finally {
       setActionBusy(null);
     }
@@ -2139,12 +2155,17 @@ export function App() {
           recipientChatLoading={deliveryRecipientChatLoading}
           actionBusy={actionBusy}
           copyStatus={deliveryCopyStatus}
+          sourceEditorError={deliverySourceEditorError}
           onSelectSource={(sourceId) => {
+            setDeliverySourceEditorError("");
             setDeliveryEditorMode("edit");
             setSelectedDeliverySourceId(sourceId);
           }}
           onNewSource={startNewDeliverySource}
-          onDraftChange={setDeliverySourceDraft}
+          onDraftChange={(nextDraft) => {
+            setDeliverySourceEditorError("");
+            setDeliverySourceDraft(nextDraft);
+          }}
           onSaveSource={saveDeliverySource}
           onDeleteSource={deleteDeliverySource}
           onCopyLead={copyClientLeadInfo}
@@ -2478,6 +2499,7 @@ function ClientLeadDeliveryView({
   recipientChatLoading,
   actionBusy,
   copyStatus,
+  sourceEditorError,
   onSelectSource,
   onNewSource,
   onDraftChange,
@@ -2501,10 +2523,11 @@ function ClientLeadDeliveryView({
   recipientChatLoading: boolean;
   actionBusy: string | null;
   copyStatus: string;
+  sourceEditorError: string;
   onSelectSource: (sourceId: string) => void;
   onNewSource: () => void;
   onDraftChange: (draft: ClientLeadSourceDraft) => void;
-  onSaveSource: (event: FormEvent<HTMLFormElement>) => void;
+  onSaveSource: (event: FormEvent<HTMLFormElement>) => void | Promise<void>;
   onDeleteSource: () => void;
   onCopyLead: (lead: ClientLead) => void | Promise<void>;
   onCopyLeadAll: (lead: ClientLead) => void | Promise<void>;
@@ -2906,6 +2929,7 @@ function ClientLeadDeliveryView({
           draft={draft}
           editorMode={editorMode}
           isExisting={isExisting}
+          sourceEditorError={sourceEditorError}
           onClose={() => setConfigOpen(false)}
           onDeleteSource={onDeleteSource}
           onDraftChange={onDraftChange}
@@ -2921,6 +2945,7 @@ function DeliverySourceEditorDrawer({
   draft,
   editorMode,
   isExisting,
+  sourceEditorError,
   onClose,
   onDeleteSource,
   onDraftChange,
@@ -2930,11 +2955,25 @@ function DeliverySourceEditorDrawer({
   draft: ClientLeadSourceDraft;
   editorMode: DeliveryEditorMode;
   isExisting: boolean;
+  sourceEditorError: string;
   onClose: () => void;
   onDeleteSource: () => void;
   onDraftChange: (draft: ClientLeadSourceDraft) => void;
-  onSaveSource: (event: FormEvent<HTMLFormElement>) => void;
+  onSaveSource: (event: FormEvent<HTMLFormElement>) => void | Promise<void>;
 }) {
+  const validation = validateClientLeadSourceDraft(draft);
+  const drawerMessages = sourceEditorError
+    ? [sourceEditorError]
+    : validation.messages;
+
+  function submitSource(event: FormEvent<HTMLFormElement>) {
+    if (!validation.canSave) {
+      event.preventDefault();
+      return;
+    }
+    void onSaveSource(event);
+  }
+
   function updateDraft<K extends keyof ClientLeadSourceDraft>(key: K, value: ClientLeadSourceDraft[K]) {
     onDraftChange({ ...draft, [key]: value });
   }
@@ -2942,7 +2981,7 @@ function DeliverySourceEditorDrawer({
   return (
     <aside className="ct-drawer open delivery-source-drawer" aria-hidden="false" aria-label="Delivery source editor">
       <button className="ct-drawer-overlay" type="button" onClick={onClose} aria-label="Close Delivery source editor" />
-      <form className="ct-drawer-panel wide delivery-source-drawer-panel" role="dialog" aria-modal="false" aria-labelledby="deliverySourceDrawerTitle" onSubmit={onSaveSource}>
+      <form className="ct-drawer-panel wide delivery-source-drawer-panel" role="dialog" aria-modal="false" aria-labelledby="deliverySourceDrawerTitle" onSubmit={submitSource}>
         <header className="ct-drawer-head">
           <div>
             <p className="ct-drawer-kicker">Delivery source</p>
@@ -2955,6 +2994,17 @@ function DeliverySourceEditorDrawer({
         </header>
 
         <div className="ct-drawer-body delivery-source-form">
+          {drawerMessages.length ? (
+            <div className="delivery-drawer-feedback" role="alert">
+              <strong>{sourceEditorError ? "Save blocked" : "Complete before saving"}</strong>
+              <ul>
+                {drawerMessages.map((message) => (
+                  <li key={message}>{message}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
           <section className="delivery-drawer-section">
             <div className="workstation-panel-head">
               <div>
@@ -2963,7 +3013,7 @@ function DeliverySourceEditorDrawer({
               </div>
             </div>
             <div className="ct-field-grid">
-              <label className="ct-field">
+              <label className="ct-field" data-invalid={validation.fields.id ? "true" : undefined}>
                 <span>Source ID</span>
                 <input
                   value={draft.id}
@@ -2971,18 +3021,22 @@ function DeliverySourceEditorDrawer({
                   onChange={(event) => updateDraft("id", slugifyClient(event.target.value))}
                   placeholder="client-name"
                 />
+                {validation.fields.id ? <p className="ct-field-error">{validation.fields.id}</p> : null}
               </label>
-              <label className="ct-field">
+              <label className="ct-field" data-invalid={validation.fields.label ? "true" : undefined}>
                 <span>Label</span>
                 <input value={draft.label} onChange={(event) => updateDraft("label", event.target.value)} placeholder="Cliente · Sheet delivery" />
+                {validation.fields.label ? <p className="ct-field-error">{validation.fields.label}</p> : null}
               </label>
-              <label className="ct-field">
+              <label className="ct-field" data-invalid={validation.fields.recipient_name ? "true" : undefined}>
                 <span>Recipient name</span>
                 <input value={draft.recipient_name} onChange={(event) => updateDraft("recipient_name", event.target.value)} placeholder="Client operator" />
+                {validation.fields.recipient_name ? <p className="ct-field-error">{validation.fields.recipient_name}</p> : null}
               </label>
-              <label className="ct-field">
+              <label className="ct-field" data-invalid={validation.fields.recipient_phone ? "true" : undefined}>
                 <span>Recipient phone</span>
                 <input value={draft.recipient_phone} onChange={(event) => updateDraft("recipient_phone", event.target.value)} placeholder="+54..." />
+                {validation.fields.recipient_phone ? <p className="ct-field-error">{validation.fields.recipient_phone}</p> : null}
               </label>
             </div>
             <label className="ct-field ct-field-toggle">
@@ -3001,9 +3055,10 @@ function DeliverySourceEditorDrawer({
                 <strong>Source and polling</strong>
               </div>
             </div>
-            <label className="ct-field">
+            <label className="ct-field" data-invalid={validation.fields.sheet_url ? "true" : undefined}>
               <span>Sheet URL</span>
               <input value={draft.sheet_url} onChange={(event) => updateDraft("sheet_url", event.target.value)} placeholder="https://docs.google.com/spreadsheets/..." />
+              {validation.fields.sheet_url ? <p className="ct-field-error">{validation.fields.sheet_url}</p> : null}
             </label>
             <div className="ct-field-grid">
               <label className="ct-field">
@@ -3014,7 +3069,7 @@ function DeliverySourceEditorDrawer({
                 <span>Tab name</span>
                 <input value={draft.sheet_tab_name} onChange={(event) => updateDraft("sheet_tab_name", event.target.value)} placeholder="deuda" />
               </label>
-              <label className="ct-field">
+              <label className="ct-field" data-invalid={validation.fields.sheet_poll_seconds ? "true" : undefined}>
                 <span>Poll seconds</span>
                 <input
                   type="number"
@@ -3022,6 +3077,7 @@ function DeliverySourceEditorDrawer({
                   value={draft.sheet_poll_seconds}
                   onChange={(event) => updateDraft("sheet_poll_seconds", Number(event.target.value) || 10)}
                 />
+                {validation.fields.sheet_poll_seconds ? <p className="ct-field-error">{validation.fields.sheet_poll_seconds}</p> : null}
               </label>
             </div>
           </section>
@@ -3043,7 +3099,7 @@ function DeliverySourceEditorDrawer({
                 <input value={draft.template_language} onChange={(event) => updateDraft("template_language", event.target.value)} placeholder="es" />
               </label>
             </div>
-            <label className="ct-field">
+            <label className="ct-field" data-invalid={validation.fields.context_field_mapping_text ? "true" : undefined}>
               <span>Context fields</span>
               <textarea
                 value={draft.context_field_mapping_text}
@@ -3052,8 +3108,9 @@ function DeliverySourceEditorDrawer({
                 spellCheck={false}
                 placeholder={'{\n  "Tipo de deuda": "¿qué_tipo_de_deuda_tiene_pendiente?",\n  "Caso": "breve_descripción_de_su_caso"\n}'}
               />
+              {validation.fields.context_field_mapping_text ? <p className="ct-field-error">{validation.fields.context_field_mapping_text}</p> : null}
             </label>
-            <label className="ct-field">
+            <label className="ct-field" data-invalid={validation.fields.column_mapping_text ? "true" : undefined}>
               <span>Column mapping</span>
               <textarea
                 value={draft.column_mapping_text}
@@ -3061,6 +3118,7 @@ function DeliverySourceEditorDrawer({
                 rows={5}
                 spellCheck={false}
               />
+              {validation.fields.column_mapping_text ? <p className="ct-field-error">{validation.fields.column_mapping_text}</p> : null}
             </label>
           </section>
         </div>
@@ -3077,7 +3135,7 @@ function DeliverySourceEditorDrawer({
               {actionBusy === "delivery-delete" ? "Deleting..." : "Delete"}
             </button>
           ) : null}
-          <button type="submit" className="ct-btn ct-btn-primary" disabled={actionBusy === "delivery-save" || !draft.label.trim()}>
+          <button type="submit" className="ct-btn ct-btn-primary" disabled={actionBusy === "delivery-save" || !validation.canSave}>
             <Check size={15} weight="bold" />
             {actionBusy === "delivery-save" ? "Saving..." : editorMode === "create" ? "Create contact" : "Save source"}
           </button>
@@ -7068,6 +7126,75 @@ function clientLeadSourcePayloadFromDraft(draft: ClientLeadSourceDraft): ClientL
     column_mapping: parseClientLeadColumnMapping(draft.column_mapping_text),
     context_field_mapping: parseClientLeadColumnMapping(draft.context_field_mapping_text),
   };
+}
+
+function validateClientLeadSourceDraft(draft: ClientLeadSourceDraft): ClientLeadSourceDraftValidation {
+  const fields: Partial<Record<ClientLeadSourceDraftField, string>> = {};
+  const messages: string[] = [];
+
+  function add(field: ClientLeadSourceDraftField, message: string) {
+    fields[field] = message;
+    messages.push(message);
+  }
+
+  const id = slugifyClient(draft.id || draft.label);
+  if (!id) {
+    add("id", "Source ID is required.");
+  }
+  if (!draft.label.trim()) {
+    add("label", "Label is required.");
+  }
+  if (!draft.recipient_name.trim()) {
+    add("recipient_name", "Recipient name is required.");
+  }
+
+  const recipientDigits = draft.recipient_phone.replace(/\D/g, "");
+  if (!recipientDigits || recipientDigits.length < 6) {
+    add("recipient_phone", "Recipient phone needs at least 6 digits.");
+  }
+
+  const sheetUrl = draft.sheet_url.trim();
+  if (!sheetUrl) {
+    add("sheet_url", "Paste the Google Sheet URL.");
+  } else if (!/^https?:\/\//i.test(sheetUrl)) {
+    add("sheet_url", "Use a valid http(s) sheet URL.");
+  }
+
+  if ((Number(draft.sheet_poll_seconds) || 0) < 5) {
+    add("sheet_poll_seconds", "Poll interval must be 5 seconds or more.");
+  }
+
+  const contextFieldsError = validateJsonObjectText(draft.context_field_mapping_text, "Context fields");
+  if (contextFieldsError) {
+    add("context_field_mapping_text", contextFieldsError);
+  }
+
+  const columnMappingError = validateJsonObjectText(draft.column_mapping_text, "Column mapping");
+  if (columnMappingError) {
+    add("column_mapping_text", columnMappingError);
+  }
+
+  return {
+    canSave: messages.length === 0,
+    fields,
+    messages,
+    summary: messages[0] ?? "Ready to save.",
+  };
+}
+
+function validateJsonObjectText(value: string, label: string): string | null {
+  if (!value.trim()) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return `${label} must be a JSON object.`;
+    }
+    return null;
+  } catch {
+    return `${label} must be valid JSON.`;
+  }
 }
 
 function parseClientLeadColumnMapping(value: string): Record<string, string> {
