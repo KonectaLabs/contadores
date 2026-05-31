@@ -82,7 +82,7 @@ const DASHBOARD_STAGE_STORAGE_KEY = "contadores.dashboard.stageFilter";
 const DASHBOARD_SECTION_STORAGE_KEY = "contadores.dashboard.activeSection";
 
 type StageFilterValue = LeadStage | "all" | "manual_attention";
-type ActiveSection = "crm" | "workstation" | "delivery" | "runner" | "ops";
+type ActiveSection = "crm" | "sell" | "workstation" | "delivery" | "ops";
 type LoadWorkstationDetailOptions = {
   syncNotes?: boolean;
   showLoading?: boolean;
@@ -164,8 +164,46 @@ function readStoredStageFilter(): StageFilterValue {
 
 function readStoredActiveSection(): ActiveSection {
   const value = readStoredValue(DASHBOARD_SECTION_STORAGE_KEY);
-  return value === "workstation" || value === "delivery" || value === "runner" || value === "ops" ? value : "crm";
+  if (value === "runner") {
+    return "ops";
+  }
+  if (value === "sell" || value === "workstation" || value === "delivery" || value === "ops") {
+    return value;
+  }
+  return "crm";
 }
+
+const operations: Array<{
+  section: ActiveSection;
+  label: string;
+  icon: ReactNode;
+}> = [
+  {
+    section: "crm",
+    label: "Triage",
+    icon: <ListChecks size={16} weight="bold" />,
+  },
+  {
+    section: "sell",
+    label: "Sell",
+    icon: <ChatCircleText size={16} weight="bold" />,
+  },
+  {
+    section: "workstation",
+    label: "Build",
+    icon: <Robot size={16} weight="bold" />,
+  },
+  {
+    section: "delivery",
+    label: "Deliver",
+    icon: <PaperPlaneTilt size={16} weight="bold" />,
+  },
+  {
+    section: "ops",
+    label: "Observe",
+    icon: <Pulse size={16} weight="bold" />,
+  },
+];
 
 const moveStageOptions: Array<{ value: LeadStage; label: string }> = [
   { value: "needs_human", label: "Manual" },
@@ -339,6 +377,12 @@ export function App() {
   const config = leadList?.config ?? detail?.config ?? null;
   const selectedFunnel = funnels.find((funnel) => funnel.id === selectedFunnelId) ?? funnels[0] ?? null;
   const selectedFunnelSetupIssues = buildFunnelSetupIssues(selectedFunnel);
+  const isCrmWorkspace = activeSection === "crm" || activeSection === "sell";
+  const crmModeLabel = activeSection === "sell" ? "Sell" : "Triage";
+  const crmLeadListTitle = activeSection === "sell" ? "Selling conversations" : "Needs attention";
+  const crmLeadListSummary = activeSection === "sell"
+    ? "Move the active conversation forward"
+    : "Reply, unblock, or route";
   const isContadoresFunnel = true;
   const isInboxFunnel = selectedFunnel?.kind === "inbox";
   const canEditLegacyRuntimeConfig = selectedFunnel?.id === "contadores";
@@ -614,11 +658,9 @@ export function App() {
             loaders.push(loadDeliveryRecipientChat(selectedDeliverySourceId));
           }
         }
-        if (activeSection === "runner") {
-          loaders.push(loadRunnerStatus());
-        }
         if (activeSection === "ops") {
           loaders.push(loadPlatformOverview());
+          loaders.push(loadRunnerStatus());
         }
         Promise.all(loaders).catch((reason) => {
           setError(reason instanceof Error ? reason.message : "Automatic refresh failed.");
@@ -723,48 +765,28 @@ export function App() {
   }, [activeSection, deliveryEditorMode, deliverySources, loadDeliveryLeadsForSources, loadDeliveryRecipientChat, selectedDeliverySourceId]);
 
   useEffect(() => {
-    if (activeSection !== "runner") {
+    if (activeSection !== "ops") {
       return;
     }
     let cancelled = false;
+    setPlatformLoading(true);
     setRunnerLoading(true);
-    loadRunnerStatus()
+    Promise.all([loadPlatformOverview(), loadRunnerStatus()])
       .catch((reason) => {
         if (!cancelled) {
-          setError(reason instanceof Error ? reason.message : "Could not load the runner.");
+          setError(reason instanceof Error ? reason.message : "Could not load observability.");
         }
       })
       .finally(() => {
         if (!cancelled) {
+          setPlatformLoading(false);
           setRunnerLoading(false);
         }
       });
     return () => {
       cancelled = true;
     };
-  }, [activeSection, loadRunnerStatus]);
-
-  useEffect(() => {
-    if (activeSection !== "ops") {
-      return;
-    }
-    let cancelled = false;
-    setPlatformLoading(true);
-    loadPlatformOverview()
-      .catch((reason) => {
-        if (!cancelled) {
-          setError(reason instanceof Error ? reason.message : "Could not load platform ops.");
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setPlatformLoading(false);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [activeSection, loadPlatformOverview]);
+  }, [activeSection, loadPlatformOverview, loadRunnerStatus]);
 
   useEffect(() => {
     if (!selectedWorkstationClientId) {
@@ -1731,36 +1753,32 @@ export function App() {
   const visibleCount = leadList?.leads.length ?? 0;
   const totalCount = metrics?.total ?? 0;
   const selectedFunnelNeedsSetup = Boolean(
-    activeSection === "crm"
+    isCrmWorkspace
       && selectedFunnel
       && selectedFunnel.kind === "campaign"
       && selectedFunnelSetupIssues.length
       && totalCount === 0,
   );
   const totalManualAttentionCount = Object.values(manualAttentionCounts).reduce((total, count) => total + count, 0);
-  const showGlobalCrmAttentionBadge = activeSection !== "crm" && totalManualAttentionCount > 0;
+  const showGlobalCrmAttentionBadge = !isCrmWorkspace && totalManualAttentionCount > 0;
   const workstationTitle = selectedFunnel
-    ? `Workstation · ${selectedFunnel.label}`
-    : "Workstation";
+    ? `Build · ${selectedFunnel.label}`
+    : "Build";
   const activeTitle = activeSection === "ops"
-    ? "Ops"
-    : activeSection === "runner"
-    ? "Runner"
+    ? "Observe"
     : activeSection === "workstation"
       ? workstationTitle
       : activeSection === "delivery"
-        ? "Delivery"
-        : selectedFunnel?.label || "Funnels";
+        ? "Deliver"
+        : activeSection === "sell"
+          ? "Sell"
+          : "Triage";
   const syncStatus = activeSection === "ops"
     ? platformOverview
       ? `${compactNumber(platformOverview.counts.active_blockers)} blockers · ${relativeTime(platformOverview.generated_at)}`
-      : "Ops loading"
-    : activeSection === "runner"
-    ? runnerStatus?.running
-      ? `Running${runnerStatus.pid ? ` · pid ${runnerStatus.pid}` : ""}`
-      : runnerStatus?.latest_summary_updated_at
-        ? `Idle · ${relativeTime(runnerStatus.latest_summary_updated_at)}`
-        : "Runner idle"
+      : runnerStatus?.running
+        ? `Runner running${runnerStatus.pid ? ` · pid ${runnerStatus.pid}` : ""}`
+        : "Observe loading"
     : activeSection === "workstation"
     ? `${workstationClients.length} converted ${workstationClients.length === 1 ? "client" : "clients"}`
     : activeSection === "delivery"
@@ -1789,53 +1807,45 @@ export function App() {
           </div>
         </div>
 
-        <nav className="ct-section-switch" aria-label="Primary workspace">
-          <button
-            type="button"
-            className={activeSection === "crm" ? "active" : ""}
-            aria-label={showGlobalCrmAttentionBadge ? `CRM, ${totalManualAttentionCount} needs answer` : "CRM"}
-            onClick={() => setActiveSection("crm")}
-          >
-            CRM
-            {showGlobalCrmAttentionBadge ? (
-              <span className="ct-section-badge">{compactNumber(totalManualAttentionCount)}</span>
-            ) : null}
-          </button>
-          <button
-            type="button"
-            className={activeSection === "workstation" ? "active" : ""}
-            onClick={() => setActiveSection("workstation")}
-          >
-            Workstation
-          </button>
-          <button
-            type="button"
-            className={activeSection === "delivery" ? "active" : ""}
-            onClick={() => setActiveSection("delivery")}
-          >
-            Delivery
-          </button>
-          <button
-            type="button"
-            className={activeSection === "ops" ? "active" : ""}
-            onClick={() => setActiveSection("ops")}
-          >
-            Ops
-            {platformOverview && platformOverview.counts.active_blockers > 0 ? (
-              <span className="ct-section-badge">{compactNumber(platformOverview.counts.active_blockers)}</span>
-            ) : null}
-          </button>
-          <button
-            type="button"
-            className={activeSection === "runner" ? "active" : ""}
-            onClick={() => setActiveSection("runner")}
-          >
-            Runner
-          </button>
+        <nav className="ct-section-switch" aria-label="Primary operation">
+          {operations.map((operation) => {
+            const isActive = activeSection === operation.section;
+            const badge = operation.section === "crm" && showGlobalCrmAttentionBadge
+              ? totalManualAttentionCount
+              : operation.section === "ops" && platformOverview && platformOverview.counts.active_blockers > 0
+                ? platformOverview.counts.active_blockers
+                : 0;
+
+            return (
+              <button
+                type="button"
+                className={isActive ? "active" : ""}
+                aria-label={badge ? `${operation.label}, ${badge} needs attention` : operation.label}
+                key={operation.section}
+                onClick={() => {
+                  setActiveSection(operation.section);
+                  if (operation.section === "crm") {
+                    setStageFilter("manual_attention");
+                  }
+                  if (operation.section === "sell" && stageFilter === "manual_attention") {
+                    setStageFilter("all");
+                  }
+                }}
+              >
+                <span className="ct-operation-icon" aria-hidden="true">{operation.icon}</span>
+                <span className="ct-operation-copy">
+                  <strong>{operation.label}</strong>
+                </span>
+                {badge ? (
+                  <span className="ct-section-badge">{compactNumber(badge)}</span>
+                ) : null}
+              </button>
+            );
+          })}
         </nav>
 
-        {activeSection === "crm" || activeSection === "workstation" ? (
-          <nav className="ct-topbar-nav" aria-label={activeSection === "workstation" ? "Workstation funnels" : "Backoffice sections"}>
+        {isCrmWorkspace || activeSection === "workstation" ? (
+          <nav className="ct-topbar-nav" aria-label={activeSection === "workstation" ? "Build funnels" : "Funnel views"}>
             {funnels.map((funnel) => {
               const attentionCount = manualAttentionCounts[funnel.id] ?? 0;
 
@@ -1847,7 +1857,7 @@ export function App() {
                   onClick={() => setSelectedFunnelId(funnel.id)}
                 >
                   <span>{funnel.label}</span>
-                  {activeSection === "crm" && attentionCount > 0 ? (
+                  {isCrmWorkspace && attentionCount > 0 ? (
                     <span className="ct-nav-badge" aria-label={`${attentionCount} needs answer`}>
                       {compactNumber(attentionCount)}
                     </span>
@@ -1855,14 +1865,14 @@ export function App() {
                 </button>
               );
             })}
-            {activeSection === "crm" ? (
+            {isCrmWorkspace ? (
               <button type="button" className="ct-nav-btn ct-nav-add" onClick={openCreateFunnel}>+ Funnel</button>
             ) : null}
           </nav>
         ) : null}
 
         <div className="ct-topbar-tools">
-          {activeSection === "crm" ? (
+          {isCrmWorkspace ? (
           <label className="ct-search" hidden={!isContadoresFunnel}>
             <span className="ct-search-icon" aria-hidden="true" />
             <input
@@ -1885,10 +1895,10 @@ export function App() {
             />
           </label>
           ) : null}
-          {activeSection === "crm" || activeSection === "workstation" ? (
+          {isCrmWorkspace || activeSection === "workstation" ? (
             <button type="button" className="ct-icon-btn" onClick={openEditFunnel} disabled={!selectedFunnel}>Funnel</button>
           ) : null}
-          {activeSection === "crm" && canEditLegacyRuntimeConfig ? (
+          {isCrmWorkspace && canEditLegacyRuntimeConfig ? (
             <button type="button" className="ct-icon-btn" onClick={() => setShowConfig(true)}>Runtime</button>
           ) : null}
           <button type="button" className="ct-icon-btn" onClick={refreshAll} disabled={loading || deliveryLoading || platformLoading}>Refresh</button>
@@ -1913,23 +1923,17 @@ export function App() {
         <PlatformOpsView
           overview={platformOverview}
           loading={platformLoading}
-          onOpenSection={setActiveSection}
+          runnerStatus={runnerStatus}
+          runnerLoading={runnerLoading}
           onRefresh={() => {
             setPlatformLoading(true);
-            loadPlatformOverview()
-              .catch((reason) => setError(reason instanceof Error ? reason.message : "Could not refresh platform ops."))
-              .finally(() => setPlatformLoading(false));
-          }}
-        />
-        ) : activeSection === "runner" ? (
-        <RunnerStatusView
-          status={runnerStatus}
-          loading={runnerLoading}
-          onRefresh={() => {
             setRunnerLoading(true);
-            loadRunnerStatus()
-              .catch((reason) => setError(reason instanceof Error ? reason.message : "Could not refresh the runner."))
-              .finally(() => setRunnerLoading(false));
+            Promise.all([loadPlatformOverview(), loadRunnerStatus()])
+              .catch((reason) => setError(reason instanceof Error ? reason.message : "Could not refresh platform ops."))
+              .finally(() => {
+                setPlatformLoading(false);
+                setRunnerLoading(false);
+              });
           }}
         />
         ) : activeSection === "workstation" ? (
@@ -2018,7 +2022,7 @@ export function App() {
           onEdit={openEditFunnel}
         />
         ) : (
-      <div className="ct-surface">
+        <div className="ct-surface" data-crm-mode={activeSection === "sell" ? "sell" : "triage"}>
         {selectedFunnel && selectedFunnel.kind === "campaign" && selectedFunnelSetupIssues.length ? (
           <FunnelSetupBanner
             setupIssues={selectedFunnelSetupIssues}
@@ -2026,89 +2030,96 @@ export function App() {
           />
         ) : null}
         {!isInboxFunnel ? (
-          <section className="ct-pipeline" aria-label="Lead stages">
-            {stageFilters.map((filter) => {
-              const count = filter.value === "manual_attention"
-                ? manualAttentionList.length
-                : Number(metrics?.[filter.metric ?? "total"] ?? 0);
+          <div className="ct-queue-bar">
+            <div>
+              <strong>{crmModeLabel}</strong>
+              <span>{totalCount ? `${visibleCount}/${totalCount}` : "0"}</span>
+            </div>
+            <details className="ct-compact-disclosure">
+              <summary>Views</summary>
+              <section className="ct-pipeline" aria-label="Lead stages">
+                {stageFilters.map((filter) => {
+                  const count = filter.value === "manual_attention"
+                    ? manualAttentionList.length
+                    : Number(metrics?.[filter.metric ?? "total"] ?? 0);
 
-              return (
-                <button
-                  key={filter.value}
-                  type="button"
-                  className={`ct-stage ${stageFilter === filter.value ? "active" : ""}`}
-                  data-tone={filter.tone}
-                  aria-pressed={stageFilter === filter.value}
-                  onClick={() => setStageFilter(filter.value)}
-                >
-                  <span className="ct-stage-count">{compactNumber(count)}</span>
-                  <span className="ct-stage-label">{filter.label}</span>
-                </button>
-              );
-            })}
-          </section>
-        ) : null}
-
-        <div className="ct-secondary">
-          <div className="ct-filter-strip" role="group" aria-label="Lead filters">
-            {!isInboxFunnel && strategyStats.length ? (
-              <>
-                <button
-                  type="button"
-                  className={`ct-strategy-filter-btn ${!strategyFilter.step && !strategyFilter.strategyId ? "active" : ""}`}
-                  onClick={() => setStrategyFilter({ step: "", strategyId: "" })}
-                >
-                  All strategies
-                </button>
-                {strategyStats.map((item) => {
-                  const active = item.step === strategyFilter.step && item.strategy_id === strategyFilter.strategyId;
                   return (
                     <button
+                      key={filter.value}
                       type="button"
-                      className={`ct-strategy-filter-btn ${active ? "active" : ""}`}
-                      key={`${item.step}:${item.strategy_id}`}
-                      onClick={() => setStrategyFilter({ step: item.step, strategyId: item.strategy_id })}
+                      className={`ct-stage ${stageFilter === filter.value ? "active" : ""}`}
+                      data-tone={filter.tone}
+                      aria-pressed={stageFilter === filter.value}
+                      onClick={() => setStageFilter(filter.value)}
                     >
-                      {formatStrategyLabel(item.step)}: {item.strategy_label || formatStrategyLabel(item.strategy_id)}
+                      <span className="ct-stage-count">{compactNumber(count)}</span>
+                      <span className="ct-stage-label">{filter.label}</span>
                     </button>
                   );
                 })}
-              </>
-            ) : null}
+              </section>
+            </details>
+            {(strategyStats.length || tagOptions.length) ? (
+              <details className="ct-compact-disclosure">
+                <summary>Filters</summary>
+                <div className="ct-filter-strip" role="group" aria-label="Lead filters">
+                  {strategyStats.length ? (
+                    <>
+                      <button
+                        type="button"
+                        className={`ct-strategy-filter-btn ${!strategyFilter.step && !strategyFilter.strategyId ? "active" : ""}`}
+                        onClick={() => setStrategyFilter({ step: "", strategyId: "" })}
+                      >
+                        All strategies
+                      </button>
+                      {strategyStats.map((item) => {
+                        const active = item.step === strategyFilter.step && item.strategy_id === strategyFilter.strategyId;
+                        return (
+                          <button
+                            type="button"
+                            className={`ct-strategy-filter-btn ${active ? "active" : ""}`}
+                            key={`${item.step}:${item.strategy_id}`}
+                            onClick={() => setStrategyFilter({ step: item.step, strategyId: item.strategy_id })}
+                          >
+                            {formatStrategyLabel(item.step)}: {item.strategy_label || formatStrategyLabel(item.strategy_id)}
+                          </button>
+                        );
+                      })}
+                    </>
+                  ) : null}
 
-            {tagOptions.length ? (
-              <>
-                <button
-                  type="button"
-                  className={`ct-strategy-filter-btn ${!tagFilter ? "active" : ""}`}
-                  onClick={() => setTagFilter("")}
-                >
-                  All tags
-                </button>
-                {tagOptions.map((tag) => (
-                  <button
-                    type="button"
-                    className={`ct-strategy-filter-btn ${tagFilter === tag ? "active" : ""}`}
-                    key={tag}
-                    onClick={() => setTagFilter(tag)}
-                  >
-                    #{tag}
-                  </button>
-                ))}
-              </>
+                  {tagOptions.length ? (
+                    <>
+                      <button
+                        type="button"
+                        className={`ct-strategy-filter-btn ${!tagFilter ? "active" : ""}`}
+                        onClick={() => setTagFilter("")}
+                      >
+                        All tags
+                      </button>
+                      {tagOptions.map((tag) => (
+                        <button
+                          type="button"
+                          className={`ct-strategy-filter-btn ${tagFilter === tag ? "active" : ""}`}
+                          key={tag}
+                          onClick={() => setTagFilter(tag)}
+                        >
+                          #{tag}
+                        </button>
+                      ))}
+                    </>
+                  ) : null}
+                </div>
+              </details>
             ) : null}
           </div>
-
-          <p className="ct-secondary-note">
-            {totalCount ? `${visibleCount} of ${totalCount} ${totalCount === 1 ? "lead" : "leads"}` : "No leads yet"}
-          </p>
-        </div>
+        ) : null}
 
         <div className="ct-workspace">
           <aside className="ct-leads">
             <div className="ct-leads-head">
-              <h3>Leads</h3>
-              <p className="ct-leads-summary">{visibleCount ? `${visibleCount} ${visibleCount === 1 ? "lead" : "leads"}` : "No matches"}</p>
+              <h3>{crmLeadListTitle}</h3>
+              <p className="ct-leads-summary">{visibleCount ? `${visibleCount}` : crmLeadListSummary}</p>
             </div>
             <div className="ct-bulk-toolbar">
               <label className="ct-bulk-check">
@@ -2214,15 +2225,18 @@ export function App() {
               ) : null}
             </div>
 
-            <ManualDock
-              disabled={!selectedLead || Boolean(actionBusy)}
-              blockReason={selectedLeadCustomBlockReason}
-              value={manualText}
-              files={manualFiles}
-              onChange={setManualText}
-              onFilesChange={setManualFiles}
-              onSubmit={submitManualDock}
-            />
+            <details className="ct-manual-disclosure" open={Boolean(manualText.trim() || manualFiles.length)}>
+              <summary>Manual</summary>
+              <ManualDock
+                disabled={!selectedLead || Boolean(actionBusy)}
+                blockReason={selectedLeadCustomBlockReason}
+                value={manualText}
+                files={manualFiles}
+                onChange={setManualText}
+                onFilesChange={setManualFiles}
+                onSubmit={submitManualDock}
+              />
+            </details>
           </section>
         </div>
       </div>
@@ -2338,7 +2352,7 @@ function ClientLeadDeliveryView({
   onOpenCrmLead: (lead: ClientLeadRecipientCrmLead) => void;
 }) {
   const [configOpen, setConfigOpen] = useState(editorMode === "create");
-  const [sentChatOpen, setSentChatOpen] = useState(true);
+  const [sentChatOpen, setSentChatOpen] = useState(false);
   const [activeSheetFilter, setActiveSheetFilter] = useState("all");
   const isExisting = editorMode === "edit" && Boolean(selectedSource);
   const selectedGroup = isExisting
@@ -2373,7 +2387,7 @@ function ClientLeadDeliveryView({
   useEffect(() => {
     if (editorMode === "edit" && selectedGroupKey) {
       setConfigOpen(false);
-      setSentChatOpen(true);
+      setSentChatOpen(false);
       setActiveSheetFilter("all");
     }
   }, [editorMode, selectedGroupKey]);
@@ -2702,11 +2716,11 @@ function ClientLeadDeliveryView({
               </section>
             ) : null}
 
-            <section className="delivery-lead-panel">
-              <div className="workstation-panel-head">
+            <details className="delivery-lead-panel delivery-rows-disclosure" open={selectedBlockedLeads + selectedFailedLeads > 0}>
+              <summary className="workstation-panel-head">
                 <div>
-                  <span>Leads from sheet</span>
-                  <strong>{isExisting ? `${visibleLeads.length} visible` : "Select or create a contact"}</strong>
+                  <span>Rows</span>
+                  <strong>{isExisting ? compactNumber(visibleLeads.length) : "-"}</strong>
                 </div>
                 <div className="delivery-sheet-metrics">
                   <span>{compactNumber(selectedTotalLeads)} total</span>
@@ -2714,7 +2728,7 @@ function ClientLeadDeliveryView({
                   <span>{compactNumber(selectedBlockedLeads)} blocked</span>
                   <span>{compactNumber(selectedFailedLeads)} failed</span>
                 </div>
-              </div>
+              </summary>
 
               {!isExisting ? (
                 <p className="ct-empty">Pick a Delivery contact to inspect the sheet leads.</p>
@@ -2830,7 +2844,7 @@ function ClientLeadDeliveryView({
               ) : (
                 <p className="ct-empty">No leads loaded for this contact yet.</p>
               )}
-            </section>
+            </details>
           </div>
         </section>
       </div>
@@ -2859,12 +2873,14 @@ type OpsReadinessItem = {
 function PlatformOpsView({
   overview,
   loading,
-  onOpenSection,
+  runnerStatus,
+  runnerLoading,
   onRefresh,
 }: {
   overview: PlatformOverviewResponse | null;
   loading: boolean;
-  onOpenSection: (section: ActiveSection) => void;
+  runnerStatus: RunnerStatusResponse | null;
+  runnerLoading: boolean;
   onRefresh: () => void;
 }) {
   const defaultCounts = {
@@ -2913,8 +2929,8 @@ function PlatformOpsView({
     tone: "warn",
     area: "Setup",
     title: "Meta credentials not connected",
-    detail: "Inventory has not been synced yet, so live Meta publish and lead fetch stay blocked.",
-    action: "Get Alan to provide the Marketing API token, ad account ID, and live-write confirmation.",
+    detail: "Meta access is missing.",
+    action: "Add token, ad account, and live-write approval.",
     status: "missing",
     updatedAt: overview?.generated_at ?? null,
   }] : [];
@@ -3000,20 +3016,20 @@ function PlatformOpsView({
       : "clean";
   const opsHero = opsMode === "blocked"
     ? {
-      label: "Next best action",
-      title: primaryAction?.title || "Resolve blockers first",
-      detail: primaryAction?.action || "Start with Meta, agent, or delivery blockers before normal lead review.",
+      label: "Next",
+      title: primaryAction ? truncate(primaryAction.title, 64) : "Resolve blockers first",
+      detail: primaryAction ? truncate(primaryAction.action, 72) : "Clear the blocked queue.",
     }
     : opsMode === "review"
       ? {
-        label: "Next best action",
-        title: primaryAction?.title || "Review pending work",
-        detail: primaryAction?.action || "Clear the open queue before publishing or sending client updates.",
+        label: "Next",
+        title: primaryAction ? truncate(primaryAction.title, 64) : "Review pending work",
+        detail: primaryAction ? truncate(primaryAction.action, 72) : "Clear the open queue.",
       }
       : {
-        label: "System state",
-        title: "Clean operating window",
-        detail: "No active platform blockers in the lifecycle cockpit.",
+        label: "State",
+        title: "Clean",
+        detail: "No active platform blockers.",
       };
   const metaReadiness: OpsReadinessItem[] = [
     {
@@ -3042,6 +3058,13 @@ function PlatformOpsView({
       detail: "Needs explicit approval before live writes",
     },
   ];
+  const runnerNeedsAction = runnerStatus?.delta?.metrics.needs_action ?? 0;
+  const runnerReplies = runnerStatus?.delta?.metrics.new_replies ?? 0;
+  const runnerTone = runnerStatus?.running
+    ? "blue"
+    : runnerNeedsAction > 0
+      ? "danger"
+      : "ok";
 
   return (
     <div className="ct-surface ops-surface">
@@ -3052,13 +3075,6 @@ function PlatformOpsView({
           <small>{opsHero.detail}</small>
         </div>
         <div className="ops-toolbar-side">
-          <div className="ops-route" aria-label="Daily operator route">
-            <button type="button" onClick={() => onOpenSection("ops")}>Ops</button>
-            <button type="button" onClick={() => onOpenSection("crm")}>CRM</button>
-            <button type="button" onClick={() => onOpenSection("delivery")}>Delivery</button>
-            <button type="button" onClick={() => onOpenSection("workstation")}>Workstation</button>
-            <button type="button" onClick={() => onOpenSection("runner")}>Runner</button>
-          </div>
           <button type="button" className="ct-btn ct-btn-ghost" onClick={onRefresh} disabled={loading}>
             {loading ? <SpinnerGap size={16} weight="bold" /> : <ArrowsClockwise size={16} weight="bold" />}
             Refresh
@@ -3069,10 +3085,8 @@ function PlatformOpsView({
       <section className="runner-command-center ops-signal-grid" aria-label="Platform signals">
         <RunnerSignal icon={<WarningCircle size={30} weight="fill" />} label="Blockers" value={counts.active_blockers} tone={counts.active_blockers > 0 ? "danger" : "ok"} />
         <RunnerSignal icon={<ChatCircleText size={30} weight="fill" />} label="Questions" value={counts.open_human_questions} tone={counts.open_human_questions > 0 ? "warn" : "neutral"} />
-        <RunnerSignal icon={<TrendUp size={30} weight="fill" />} label="Campaigns" value={counts.campaigns} tone={counts.pending_campaigns > 0 ? "violet" : "neutral"} />
+        <RunnerSignal icon={<Pulse size={30} weight="fill" />} label="Runner" value={runnerNeedsAction} tone={runnerTone} />
         <RunnerSignal icon={<PaperPlaneTilt size={30} weight="fill" />} label="Meta" value={counts.blocked_meta_attempts + counts.blocked_meta_inventory} tone={counts.blocked_meta_attempts + counts.blocked_meta_inventory > 0 ? "danger" : "neutral"} />
-        <RunnerSignal icon={<GearSix size={30} weight="fill" />} label="Agents" value={counts.failed_agent_runs + counts.failed_agent_tool_calls} tone={counts.failed_agent_runs + counts.failed_agent_tool_calls > 0 ? "danger" : "neutral"} />
-        <RunnerSignal icon={<Pulse size={30} weight="fill" />} label="Events" value={counts.recent_events} tone={counts.recent_events > 0 ? "blue" : "neutral"} />
       </section>
 
       <section className="ops-layout">
@@ -3080,7 +3094,7 @@ function PlatformOpsView({
           <OpsPanel eyebrow={<ListChecks size={18} weight="fill" />} title="Action queue" meta={`${operatorActions.length}`}>
             {operatorActions.length ? (
               <div className="ops-action-queue">
-                {operatorActions.slice(0, 7).map((item) => (
+                {operatorActions.slice(0, 5).map((item) => (
                   <OpsActionCard item={item} key={item.id} />
                 ))}
               </div>
@@ -3088,7 +3102,24 @@ function PlatformOpsView({
               <OpsEmpty title="No open actions" value="0" />
             )}
           </OpsPanel>
+        </div>
 
+        <aside className="ops-side-column">
+          <ObserveRunnerPanel
+            status={runnerStatus}
+            loading={runnerLoading}
+            needsAction={runnerNeedsAction}
+            replies={runnerReplies}
+          />
+        </aside>
+      </section>
+
+      <details className="ops-deep-details">
+        <summary>
+          <span>Details</span>
+          <em>{compactNumber(counts.recent_events)} events</em>
+        </summary>
+        <div className="ops-deep-grid">
           <OpsPanel eyebrow={<PaperPlaneTilt size={18} weight="fill" />} title="Meta readiness" meta={`${metaReadyCreatives.length} ready creatives`}>
             <div className="ops-readiness-lane">
               {metaReadiness.map((step) => (
@@ -3236,9 +3267,7 @@ function PlatformOpsView({
               <p className="ops-panel-note">{compactNumber(failedAgentToolCalls.length)} failed tool call{failedAgentToolCalls.length === 1 ? "" : "s"}.</p>
             ) : null}
           </OpsPanel>
-        </div>
 
-        <aside className="ops-side-column">
           <OpsPanel eyebrow={<ClockCountdown size={18} weight="fill" />} title="Meetings" meta={`${meetings.length}`}>
             <div className="ops-list compact">
               {meetings.slice(0, 6).map((meeting) => (
@@ -3310,23 +3339,105 @@ function PlatformOpsView({
               <p className="ops-panel-note">{compactNumber(uploadBlockedCreatives.length)} creative upload blocker{uploadBlockedCreatives.length === 1 ? "" : "s"}.</p>
             ) : null}
           </OpsPanel>
-        </aside>
-      </section>
 
-      <OpsPanel eyebrow={<Pulse size={18} weight="fill" />} title="Event stream" meta={`${events.length}`}>
-        <div className="ops-event-stream">
-          {events.slice(0, 14).map((event) => (
-            <div className="ops-event-row" key={event.id}>
-              <span>{humanize(event.lifecycle_stage)}</span>
-              <strong>{event.summary || humanize(event.event_type)}</strong>
-              <em>{formatPlatformRef(event.target_type, event.target_id)}</em>
-              <time>{relativeTime(event.created_at)}</time>
+          <OpsPanel eyebrow={<Pulse size={18} weight="fill" />} title="Event stream" meta={`${events.length}`}>
+            <div className="ops-event-stream">
+              {events.slice(0, 14).map((event) => (
+                <div className="ops-event-row" key={event.id}>
+                  <span>{humanize(event.lifecycle_stage)}</span>
+                  <strong>{event.summary || humanize(event.event_type)}</strong>
+                  <em>{formatPlatformRef(event.target_type, event.target_id)}</em>
+                  <time>{relativeTime(event.created_at)}</time>
+                </div>
+              ))}
+              {!events.length ? <OpsEmpty title="No events" value="0" /> : null}
             </div>
-          ))}
-          {!events.length ? <OpsEmpty title="No events" value="0" /> : null}
+          </OpsPanel>
         </div>
-      </OpsPanel>
+      </details>
     </div>
+  );
+}
+
+function ObserveRunnerPanel({
+  status,
+  loading,
+  needsAction,
+  replies,
+}: {
+  status: RunnerStatusResponse | null;
+  loading: boolean;
+  needsAction: number;
+  replies: number;
+}) {
+  const delta = status?.delta ?? null;
+  const attentionEvents = delta?.attention_events ?? [];
+  const mode = loading
+    ? "loading"
+    : status?.running
+      ? "running"
+      : needsAction > 0
+        ? "review"
+        : "clean";
+  const title = mode === "loading" ? "Loading" : mode === "running" ? "Running" : mode === "review" ? "Review" : "Clean";
+  const updated = status?.latest_summary_updated_at ? relativeTime(status.latest_summary_updated_at) : "No run";
+
+  return (
+    <OpsPanel eyebrow={<Pulse size={18} weight="fill" />} title="Runner" meta={updated}>
+      <div className="observe-runner" data-mode={mode}>
+        <div className="observe-runner-main">
+          <div className="observe-runner-icon" aria-hidden="true">
+            {mode === "running" || mode === "loading" ? (
+              <Pulse size={24} weight="fill" />
+            ) : mode === "review" ? (
+              <WarningCircle size={24} weight="fill" />
+            ) : (
+              <CheckCircle size={24} weight="fill" />
+            )}
+          </div>
+          <div>
+            <strong>{title}</strong>
+            <span>{compactNumber(needsAction)} action · {compactNumber(replies)} replies</span>
+          </div>
+        </div>
+
+        {attentionEvents.length ? (
+          <div className="observe-runner-list">
+            {attentionEvents.slice(0, 3).map((event) => (
+              <RunnerCompactEvent event={event} key={`${event.kind}:${event.lead_id}:${event.occurred_at || ""}`} />
+            ))}
+          </div>
+        ) : (
+          <OpsEmpty title="No runner actions" value="0" />
+        )}
+
+        <details className="runner-history-details">
+          <summary>Runner details</summary>
+          <div className="runner-disclosure-row">
+            <details className="runner-history-details">
+              <summary>Last run</summary>
+              <MarkdownBlock markdown={status?.latest_summary || "No run summary has been written yet."} className="runner-last-markdown" />
+            </details>
+            <details className="runner-history-details">
+              <summary>Counts</summary>
+              <RunnerDeltaTable
+                bucketDeltas={delta?.bucket_deltas ?? []}
+                failureDeltas={delta?.failure_deltas ?? []}
+                exclusionDeltas={delta?.exclusion_deltas ?? []}
+              />
+            </details>
+            <details className="runner-technical">
+              <summary>Tech</summary>
+              <div className="runner-tail-grid" aria-label="Runner log tails">
+                <RunnerTail title="Latest run tail" text={status?.latest_log_tail || ""} />
+                <RunnerTail title="LaunchAgent stdout" text={status?.launchd_out_tail || ""} />
+                <RunnerTail title="LaunchAgent stderr" text={status?.launchd_err_tail || ""} />
+              </div>
+            </details>
+          </div>
+        </details>
+      </div>
+    </OpsPanel>
   );
 }
 
@@ -3366,9 +3477,9 @@ function OpsActionCard({ item }: { item: OpsActionItem }) {
           <span>{item.area}</span>
           <time>{relativeTime(item.updatedAt)}</time>
         </div>
-        <strong>{item.title}</strong>
-        <p>{item.detail}</p>
-        <em>{item.action}</em>
+        <strong>{truncate(item.title, 72)}</strong>
+        <p>{truncate(item.detail, 90)}</p>
+        <em>{truncate(item.action, 90)}</em>
       </div>
       <OpsStatus value={item.status} />
     </article>
@@ -3574,210 +3685,6 @@ function metaInventoryCounts(snapshot: PlatformMetaInventorySnapshotItem): strin
   return parts.join(" · ");
 }
 
-function RunnerStatusView({
-  status,
-  loading,
-  onRefresh,
-}: {
-  status: RunnerStatusResponse | null;
-  loading: boolean;
-  onRefresh: () => void;
-}) {
-  const logs = status?.logs ?? [];
-  const [codexRequest, setCodexRequest] = useState("");
-  const [copyStatus, setCopyStatus] = useState("Arma un prompt nuevo con el delta, el ultimo run y el historial.");
-  const delta = status?.delta ?? null;
-  const attentionEvents = delta?.attention_events ?? [];
-  const allEvents = delta?.events ?? [];
-  const deltaMetrics = delta?.metrics ?? {
-    total_leads: 0,
-    new_replies: 0,
-    needs_action: 0,
-    new_outbound: 0,
-    delivery_changes: 0,
-    state_changes: 0,
-    due_next_steps: 0,
-    new_exclusions: 0,
-  };
-  const hasBaseline = Boolean(delta?.baseline_available);
-  const latestSummaryUpdated = status?.latest_summary_updated_at ? relativeTime(status.latest_summary_updated_at) : "No run yet";
-  const latestSummaryMarkdown = status?.latest_summary || "No run summary has been written yet.";
-  const historyMarkdown = status?.history_markdown || latestSummaryMarkdown;
-  const deltaMarkdown = delta?.markdown || "No structured delta has been written yet. The next run will create one.";
-  const runnerMode = status?.running
-    ? "running"
-    : deltaMetrics.needs_action > 0
-      ? "danger"
-      : deltaMetrics.new_replies + deltaMetrics.delivery_changes + deltaMetrics.due_next_steps > 0
-        ? "watch"
-        : "clean";
-  const runnerModeLabel = runnerMode === "running" ? "Running" : runnerMode === "danger" ? "Review" : runnerMode === "watch" ? "Watch" : "Clean";
-  const visibleEvents = allEvents.slice(0, 12);
-  const codexPrompt = buildRunnerCodexPrompt({
-    request: codexRequest,
-    deltaMarkdown,
-    latestSummary: latestSummaryMarkdown,
-    historyMarkdown,
-  });
-
-  async function copyRunnerText(value: string, label: string) {
-    await copyTextToClipboard(value);
-    setCopyStatus(`${label} copiado.`);
-  }
-
-  return (
-    <div className="ct-surface runner-surface" data-runner-mode={runnerMode}>
-      <section className="runner-hero" aria-label="Runner status">
-        <div className="runner-status-symbol" aria-hidden="true">
-          {runnerMode === "running" ? (
-            <Pulse size={42} weight="fill" />
-          ) : runnerMode === "danger" ? (
-            <WarningCircle size={42} weight="fill" />
-          ) : runnerMode === "watch" ? (
-            <BellRinging size={42} weight="fill" />
-          ) : (
-            <CheckCircle size={42} weight="fill" />
-          )}
-        </div>
-        <div className="runner-status-copy">
-          <span>{latestSummaryUpdated}</span>
-          <strong>{runnerModeLabel}</strong>
-          <small>
-            {hasBaseline ? `${shortRunnerTime(delta?.previous_generated_at)} -> ${shortRunnerTime(delta?.current_generated_at)}` : "baseline"}
-          </small>
-        </div>
-        <div className="runner-status-sparks" aria-label="Recent run timeline">
-          {logs.slice(0, 8).map((log, index) => (
-            <span
-              key={log.path}
-              className="runner-spark"
-              data-hot={index === 0}
-              title={`${log.modified_at ? relativeTime(log.modified_at) : "-"} · ${formatBytes(log.size_bytes)}`}
-            />
-          ))}
-          {!logs.length ? <span className="runner-spark" /> : null}
-        </div>
-        <button type="button" className="runner-refresh-button" onClick={onRefresh} disabled={loading} aria-label="Refresh runner">
-          {loading ? <SpinnerGap size={18} weight="bold" /> : <ArrowsClockwise size={18} weight="bold" />}
-        </button>
-      </section>
-
-      <section className="runner-command-center" aria-label="Runner command center">
-        <RunnerSignal icon={<WarningCircle size={30} weight="fill" />} label="Action" value={deltaMetrics.needs_action} tone={deltaMetrics.needs_action > 0 ? "danger" : "ok"} />
-        <RunnerSignal icon={<ChatCircleText size={30} weight="fill" />} label="Replies" value={deltaMetrics.new_replies} tone={deltaMetrics.new_replies > 0 ? "blue" : "neutral"} />
-        <RunnerSignal icon={<ClockCountdown size={30} weight="fill" />} label="Due" value={deltaMetrics.due_next_steps} tone={deltaMetrics.due_next_steps > 0 ? "warn" : "neutral"} />
-        <RunnerSignal icon={<PaperPlaneTilt size={30} weight="fill" />} label="Sent" value={deltaMetrics.new_outbound} tone={deltaMetrics.new_outbound > 0 ? "green" : "neutral"} />
-        <RunnerSignal icon={<Pulse size={30} weight="fill" />} label="Delivery" value={deltaMetrics.delivery_changes} tone={deltaMetrics.delivery_changes > 0 ? "violet" : "neutral"} />
-      </section>
-
-      <section className="runner-layout">
-        <div className="runner-priority-column">
-          <RunnerPanel eyebrow={<ListChecks size={18} weight="fill" />} title="Action queue" meta={`${attentionEvents.length}`}>
-            {attentionEvents.length ? (
-              <div className="runner-event-stack">
-                {attentionEvents.slice(0, 8).map((event) => (
-                  <RunnerEventCard event={event} key={`${event.kind}:${event.lead_id}:${event.occurred_at || ""}`} />
-                ))}
-              </div>
-            ) : (
-              <RunnerEmpty
-                tone="clean"
-                icon={<CheckCircle size={44} weight="fill" />}
-                title={hasBaseline ? "Clean" : "Baseline"}
-                text={hasBaseline ? "0" : "1"}
-              />
-            )}
-          </RunnerPanel>
-
-          <RunnerPanel eyebrow={<TrendUp size={18} weight="fill" />} title="Delta stream" meta={`${visibleEvents.length}`}>
-            <div className="runner-visual-feed">
-              {visibleEvents.length ? visibleEvents.map((event) => (
-                <RunnerCompactEvent event={event} key={`${event.kind}:${event.lead_id}:${event.occurred_at || ""}`} />
-              )) : (
-                <RunnerEmpty tone="quiet" icon={<Pulse size={38} weight="fill" />} title="Stable" text="0" />
-              )}
-            </div>
-          </RunnerPanel>
-        </div>
-
-        <aside className="runner-side-column">
-          <RunnerPanel eyebrow={<Robot size={18} weight="fill" />} title="Codex" meta="">
-            <textarea
-              className="runner-question"
-              value={codexRequest}
-              onChange={(event) => setCodexRequest(event.target.value)}
-              placeholder="Que hago con Daniel?"
-            />
-            <div className="runner-actions">
-              <button
-                type="button"
-                className="ct-btn ct-btn-primary"
-                onClick={() => copyRunnerText(codexPrompt, "Prompt").catch(() => setCopyStatus("No pude copiar el prompt automaticamente."))}
-              >
-                Prompt
-              </button>
-              <button
-                type="button"
-                className="ct-btn ct-btn-ghost"
-                onClick={() => copyRunnerText(buildRunnerCodexCommand(codexPrompt), "Comando").catch(() => setCopyStatus("No pude copiar el comando automaticamente."))}
-              >
-                Exec
-              </button>
-            </div>
-            <p className="runner-copy-status">{copyStatus}</p>
-          </RunnerPanel>
-
-          <RunnerPanel eyebrow={<ClockCountdown size={18} weight="fill" />} title="Runs" meta={`${logs.length}`}>
-            <ol className="runner-timeline">
-              {logs.length ? logs.slice(0, 8).map((log, index) => (
-                <li key={log.path} data-current={index === 0}>
-                  <span className="runner-timeline-dot" />
-                  <div>
-                    <strong>{log.modified_at ? relativeTime(log.modified_at) : "-"}</strong>
-                    <span>{formatBytes(log.size_bytes)}</span>
-                  </div>
-                </li>
-              )) : (
-                <li><span className="runner-timeline-dot" /><div><strong>-</strong><span>0</span></div></li>
-              )}
-            </ol>
-          </RunnerPanel>
-        </aside>
-      </section>
-
-      <div className="runner-disclosure-row">
-        <details className="runner-history-details">
-          <summary>Last run</summary>
-          <MarkdownBlock markdown={latestSummaryMarkdown} className="runner-last-markdown" />
-        </details>
-
-        <details className="runner-history-details">
-          <summary>Counts</summary>
-          <RunnerDeltaTable
-            bucketDeltas={delta?.bucket_deltas ?? []}
-            failureDeltas={delta?.failure_deltas ?? []}
-            exclusionDeltas={delta?.exclusion_deltas ?? []}
-          />
-        </details>
-
-        <details className="runner-history-details">
-          <summary>History</summary>
-          <MarkdownBlock markdown={historyMarkdown} className="runner-history-markdown" />
-        </details>
-
-        <details className="runner-technical">
-          <summary>Tech</summary>
-          <div className="runner-tail-grid" aria-label="Runner log tails">
-            <RunnerTail title="Latest run tail" text={status?.latest_log_tail || ""} />
-            <RunnerTail title="LaunchAgent stdout" text={status?.launchd_out_tail || ""} />
-            <RunnerTail title="LaunchAgent stderr" text={status?.launchd_err_tail || ""} />
-          </div>
-        </details>
-      </div>
-    </div>
-  );
-}
-
 function RunnerSignal({
   icon,
   label,
@@ -3795,45 +3702,6 @@ function RunnerSignal({
       <span>{label}</span>
       <strong>{compactNumber(value)}</strong>
     </div>
-  );
-}
-
-function RunnerPanel({
-  eyebrow,
-  title,
-  meta,
-  children,
-}: {
-  eyebrow: ReactNode;
-  title: string;
-  meta: string;
-  children: ReactNode;
-}) {
-  return (
-    <section className="runner-panel">
-      <div className="runner-panel-head">
-        <div>
-          <span>{eyebrow}</span>
-          <strong>{title}</strong>
-        </div>
-        {meta ? <em>{meta}</em> : null}
-      </div>
-      {children}
-    </section>
-  );
-}
-
-function RunnerEventCard({ event }: { event: RunnerDeltaEvent }) {
-  return (
-    <article className="runner-event-card" data-severity={event.severity}>
-      <div className="runner-event-icon" aria-hidden="true">{runnerKindIcon(event.kind)}</div>
-      <div className="runner-event-topline">
-        <span>{formatRunnerKind(event.kind)}</span>
-        <time>{event.occurred_at ? relativeTime(event.occurred_at) : "changed"}</time>
-      </div>
-      <h3>{event.full_name || event.phone || "Unknown lead"}</h3>
-      <div className="runner-event-action">{event.suggested_action}</div>
-    </article>
   );
 }
 
@@ -3929,20 +3797,6 @@ function runnerKindIcon(value: string): ReactNode {
   return <TrendUp size={18} weight="fill" />;
 }
 
-function shortRunnerTime(value: string | null | undefined): string {
-  if (!value) {
-    return "-";
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return new Intl.DateTimeFormat("en", {
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
-}
-
 function MarkdownBlock({ markdown, className = "" }: { markdown: string; className?: string }) {
   const html = useMemo(() => {
     const escapedMarkdown = escapeMarkdownHtml(neutralizeMarkdownImages(markdown || ""));
@@ -3987,40 +3841,6 @@ async function copyTextToClipboard(value: string): Promise<void> {
   if (!copied) {
     throw new Error("clipboard unavailable");
   }
-}
-
-function buildRunnerCodexPrompt({
-  request,
-  deltaMarkdown,
-  latestSummary,
-  historyMarkdown,
-}: {
-  request: string;
-  deltaMarkdown: string;
-  latestSummary: string;
-  historyMarkdown: string;
-}): string {
-  return [
-    "In /Users/fgoiriz/private/repos/contadores, read .codex/skills/contadores-crm-followup-automation/SKILL.md first.",
-    "Use the CRM follow-up run context below and answer or act on my request.",
-    "Do not send live messages unless my request explicitly asks you to and the skill allows it.",
-    "",
-    "## My request",
-    request.trim() || "(write the request here)",
-    "",
-    "## Delta since previous run",
-    deltaMarkdown,
-    "",
-    "## Latest run",
-    latestSummary,
-    "",
-    "## Accumulated run notes",
-    historyMarkdown,
-  ].join("\n");
-}
-
-function buildRunnerCodexCommand(prompt: string): string {
-  return `cat <<'CODEX_PROMPT' | codex exec -C /Users/fgoiriz/private/repos/contadores -m gpt-5.5 --dangerously-bypass-approvals-and-sandbox -\n${prompt}\nCODEX_PROMPT`;
 }
 
 function RunnerTail({ title, text }: { title: string; text: string }) {
@@ -4608,7 +4428,7 @@ function WorkstationView({
                 </div>
               </section>
 
-              <section
+              <details
                 className={`workstation-panel workstation-media-panel ${mediaDropActive ? "drag-active" : ""}`}
                 onDragOver={handleMediaDragOver}
                 onDragLeave={handleMediaDragLeave}
@@ -4617,12 +4437,12 @@ function WorkstationView({
                 tabIndex={0}
                 aria-label="Workstation media"
               >
-                <div className="workstation-panel-head">
+                <summary className="workstation-panel-head">
                   <div>
                     <span>Media</span>
-                    <strong>Client files</strong>
+                    <strong>{detail?.media?.length ? `${detail.media.length} files` : "Files"}</strong>
                   </div>
-                </div>
+                </summary>
                 <form className="workstation-upload" onSubmit={onUploadMedia}>
                   <label className="ct-field">
                     <span>Title</span>
@@ -4699,15 +4519,15 @@ function WorkstationView({
                     <p className="empty-note">No media uploaded for this client yet.</p>
                   )}
                 </div>
-              </section>
+              </details>
 
-              <section className="workstation-panel">
-                <div className="workstation-panel-head">
+              <details className="workstation-panel">
+                <summary className="workstation-panel-head">
                   <div>
-                    <span>Professional photo</span>
-                    <strong>Generated client portrait</strong>
+                    <span>Photo</span>
+                    <strong>{professionalPhotos.length ? `${professionalPhotos.length} versions` : "Portrait"}</strong>
                   </div>
-                </div>
+                </summary>
                 {currentProfessionalPhotoJob ? (
                   <div className={`workstation-photo-job ${currentProfessionalPhotoJob.status}`}>
                     {professionalPhotoJobBusy ? <SpinnerGap className="workstation-spinner" size={18} weight="bold" /> : null}
@@ -4765,17 +4585,19 @@ function WorkstationView({
                     </p>
                   )}
                 </div>
-              </section>
+              </details>
 
-              <section className="workstation-panel workstation-chat-panel">
-                <div className="workstation-panel-head">
+              <details className="workstation-panel workstation-chat-panel">
+                <summary className="workstation-panel-head">
                   <div>
                     <span>Conversation</span>
-                    <strong>WhatsApp chat</strong>
+                    <strong>{workstationMessages.length ? `${workstationMessages.length} messages` : "WhatsApp"}</strong>
                   </div>
+                </summary>
+                <div className="workstation-chat-actions">
                   <button type="button" className="ct-btn ct-btn-ghost workstation-crm-link" onClick={() => onOpenCrmLead(selectedLead)}>
                     <ArrowSquareOut size={15} weight="bold" />
-                    Open CRM chat
+                    Open
                   </button>
                 </div>
                 <div className="workstation-chat-thread">
@@ -4787,7 +4609,7 @@ function WorkstationView({
                     onAcknowledgeDeliveryError={onAcknowledgeDeliveryError}
                   />
                 </div>
-              </section>
+              </details>
             </>
           )}
         </section>
@@ -5622,27 +5444,14 @@ function LeadDetailHeader({
                 <PhoneCountryFlag phone={lead.phone || lead.normalized_phone} />
                 <span>{[lead.phone || "-", lead.email || "-", lead.platform || "-", lead.external_lead_id || "-"].join(" · ")}</span>
               </>
-            ) : "Open a lead to inspect messages, strategy history, and manual controls."}
+            ) : "Pick a lead."}
           </p>
         </div>
       </div>
       <div className="ct-detail-head-actions">
-        <label className="ct-codex-switch" title={codexEnabled ? "Codex enabled for this lead" : "Codex disabled for this lead"}>
-          <input
-            type="checkbox"
-            checked={codexEnabled}
-            disabled={!lead || Boolean(actionBusy)}
-            onChange={(event) => onToggleCodex(event.target.checked)}
-          />
-          <span>Codex</span>
-        </label>
         <button type="button" className="ct-btn ct-btn-primary" disabled={!lead || closed || Boolean(actionBusy)} onClick={onOpenSend}>
           <PaperPlaneTilt size={15} weight="bold" />
           Send
-        </button>
-        <button type="button" className="ct-btn ct-btn-ghost" disabled={!lead} onClick={onCopyContext} title="Copy context">
-          <Copy size={15} weight="bold" />
-          Copy
         </button>
         {converted && lead?.workstation_client_id ? (
           <button
@@ -5652,58 +5461,76 @@ function LeadDetailHeader({
             onClick={() => onOpenWorkstation(lead.workstation_client_id || "")}
           >
             <FolderOpen size={15} weight="bold" />
-            Open Workstation
+            Build
           </button>
         ) : (
-          <>
-            <button
-              type="button"
-              className="ct-btn ct-btn-ghost"
-              disabled={!lead || Boolean(actionBusy)}
-              onClick={onStartSoloPage}
-            >
-              <Robot size={15} weight="bold" />
-              Solo page
-            </button>
-            <button
-              type="button"
-              className="ct-btn ct-btn-ghost"
-              disabled={!lead || Boolean(actionBusy)}
-              onClick={onConvert}
-            >
-              <CurrencyDollar size={15} weight="bold" />
-              Convert
-            </button>
-          </>
+          <button
+            type="button"
+            className="ct-btn ct-btn-ghost"
+            disabled={!lead || Boolean(actionBusy)}
+            onClick={onConvert}
+          >
+            <CurrencyDollar size={15} weight="bold" />
+            Convert
+          </button>
         )}
-        {!inboxMode ? (
-          <button type="button" className="ct-btn ct-btn-ghost" disabled={!lead || closed || booked || Boolean(actionBusy)} onClick={onManualBooked}>
-            <CheckCircle size={15} weight="bold" />
-            Booked
-          </button>
-        ) : null}
-        {!inboxMode ? (
-          <button type="button" className="ct-btn ct-btn-ghost" disabled={!lead || closed || paused || Boolean(actionBusy)} onClick={onPauseAutomation}>
-            <PauseCircle size={15} weight="bold" />
-            Pause bot
-          </button>
-        ) : null}
-        {!inboxMode ? (
-          <button type="button" className="ct-btn ct-btn-ghost" disabled={!lead || closed || paused || Boolean(actionBusy)} onClick={onManualHandoff}>
-            <NotePencil size={15} weight="bold" />
-            Manual
-          </button>
-        ) : null}
-        {canMarkAnswered && !inboxMode ? (
-          <button type="button" className="ct-btn ct-btn-ghost" disabled={Boolean(actionBusy)} onClick={onMarkAnswered}>
-            <Check size={15} weight="bold" />
-            Answered
-          </button>
-        ) : null}
-        <button type="button" className={`ct-btn ct-btn-ghost ${closed ? "" : "btn-destructive"}`} disabled={!lead || Boolean(actionBusy)} onClick={onToggleClosed}>
-          {closed ? "Reopen" : "Close"}
-        </button>
-        <button type="button" className="ct-btn ct-btn-ghost btn-destructive" disabled={!lead || Boolean(actionBusy)} onClick={onDelete}>Delete</button>
+        <details className="ct-action-menu">
+          <summary className="ct-btn ct-btn-ghost">More</summary>
+          <div className="ct-action-menu-panel">
+            <label className="ct-codex-switch" title={codexEnabled ? "Codex enabled for this lead" : "Codex disabled for this lead"}>
+              <input
+                type="checkbox"
+                checked={codexEnabled}
+                disabled={!lead || Boolean(actionBusy)}
+                onChange={(event) => onToggleCodex(event.target.checked)}
+              />
+              <span>Codex</span>
+            </label>
+            <button type="button" className="ct-btn ct-btn-ghost" disabled={!lead} onClick={onCopyContext} title="Copy context">
+              <Copy size={15} weight="bold" />
+              Copy
+            </button>
+            {!converted ? (
+              <button
+                type="button"
+                className="ct-btn ct-btn-ghost"
+                disabled={!lead || Boolean(actionBusy)}
+                onClick={onStartSoloPage}
+              >
+                <Robot size={15} weight="bold" />
+                Solo page
+              </button>
+            ) : null}
+            {!inboxMode ? (
+              <button type="button" className="ct-btn ct-btn-ghost" disabled={!lead || closed || booked || Boolean(actionBusy)} onClick={onManualBooked}>
+                <CheckCircle size={15} weight="bold" />
+                Booked
+              </button>
+            ) : null}
+            {!inboxMode ? (
+              <button type="button" className="ct-btn ct-btn-ghost" disabled={!lead || closed || paused || Boolean(actionBusy)} onClick={onPauseAutomation}>
+                <PauseCircle size={15} weight="bold" />
+                Pause
+              </button>
+            ) : null}
+            {!inboxMode ? (
+              <button type="button" className="ct-btn ct-btn-ghost" disabled={!lead || closed || paused || Boolean(actionBusy)} onClick={onManualHandoff}>
+                <NotePencil size={15} weight="bold" />
+                Manual
+              </button>
+            ) : null}
+            {canMarkAnswered && !inboxMode ? (
+              <button type="button" className="ct-btn ct-btn-ghost" disabled={Boolean(actionBusy)} onClick={onMarkAnswered}>
+                <Check size={15} weight="bold" />
+                Answered
+              </button>
+            ) : null}
+            <button type="button" className={`ct-btn ct-btn-ghost ${closed ? "" : "btn-destructive"}`} disabled={!lead || Boolean(actionBusy)} onClick={onToggleClosed}>
+              {closed ? "Reopen" : "Close"}
+            </button>
+            <button type="button" className="ct-btn ct-btn-ghost btn-destructive" disabled={!lead || Boolean(actionBusy)} onClick={onDelete}>Delete</button>
+          </div>
+        </details>
         {copyStatus ? <span className="ct-lead-copy-status" aria-live="polite">{copyStatus}</span> : null}
       </div>
     </header>

@@ -142,6 +142,25 @@ Use `./deploy_to_server.sh` and `./server_logs.sh`; both scripts connect to
 For a new niche funnel, create/edit the funnel definition first, deploy code,
 then verify that funnel against its configured sheet and WhatsApp routing.
 
+## Frontend UX Baseline
+
+Contadores frontend work should keep the platform clean, calm, and sparse. Do
+not turn the backoffice into a feature wall or expose internal complexity just
+because the backend has the data.
+
+- Keep top-level navigation to five primary operations at most: Triage, Sell,
+  Build, Deliver, and Observe. Existing code names can differ, but the UI should
+  feel like those few understandable jobs.
+- Each surface should have one dominant job and one obvious next action.
+- Default views should show the important few: what needs attention, what is
+  running, what is blocked, and what to do next.
+- Keep copy short. Collapse secondary details, setup controls, raw payloads,
+  histories, and expert actions behind clear disclosure.
+- Logs and observability should be human-readable by default: what happened,
+  why it matters, current state, owner/system, time, and next action.
+- Raw logs, stack traces, full error bodies, markdown history, and payload dumps
+  can exist, but they should be hidden behind technical details by default.
+
 ## Client Lead Delivery Rollout
 
 Client Lead Delivery rollout is separate from the funnel readiness check. It
