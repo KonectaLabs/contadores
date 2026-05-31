@@ -2968,9 +2968,9 @@ function PlatformOpsView({
                 <div className="ops-table-row" key={attempt.id}>
                   <div>
                     <strong>{platformCampaignNameFromAttempt(attempt) || humanize(attempt.status)}</strong>
-                    <span>{formatPlatformRef("campaign", attempt.campaign_id)} · {formatMissingMetaFields(attempt)}</span>
+                    <span>{formatPlatformRef("campaign", attempt.campaign_id)} · {formatMetaPublishDetail(attempt)}</span>
                   </div>
-                  <OpsStatus value={attempt.approval_status || attempt.status} />
+                  <OpsStatus value={metaPublishStatusValue(attempt)} />
                   <time>{relativeTime(attempt.updated_at)}</time>
                 </div>
               ))}
@@ -3116,7 +3116,10 @@ function isOpenPlatformQuestion(question: PlatformHumanQuestionItem): boolean {
 }
 
 function isBlockedPlatformAttempt(attempt: PlatformMetaPublishAttemptItem): boolean {
-  return ["blocked", "failed", "error"].includes(attempt.status) || ["needs_preflight", "rejected"].includes(attempt.approval_status);
+  return (
+    ["blocked", "failed", "error", "partial_failed"].includes(attempt.status)
+    || ["needs_preflight", "rejected"].includes(attempt.approval_status)
+  );
 }
 
 function campaignBudgetLabel(campaign: PlatformAdCampaignItem): string {
@@ -3131,7 +3134,7 @@ function campaignBudgetLabel(campaign: PlatformAdCampaignItem): string {
 
 function opsStatusTone(value: string): "danger" | "warn" | "ok" | "neutral" {
   const normalized = value.toLowerCase();
-  if (["failed", "error", "blocked", "rejected"].includes(normalized)) {
+  if (["failed", "error", "blocked", "rejected", "partial_failed"].includes(normalized)) {
     return "danger";
   }
   if (["missing_credentials", "partial"].includes(normalized)) {
@@ -3140,7 +3143,7 @@ function opsStatusTone(value: string): "danger" | "warn" | "ok" | "neutral" {
   if (["pending", "needs_preflight", "not_requested", "draft", "staged"].includes(normalized)) {
     return "warn";
   }
-  if (["answered", "approved", "published", "sent", "delivered", "completed", "ready"].includes(normalized)) {
+  if (["answered", "approved", "published", "submitted", "already_submitted", "sent", "delivered", "completed", "ready"].includes(normalized)) {
     return "ok";
   }
   return "neutral";
@@ -3176,6 +3179,33 @@ function formatMissingMetaFields(attempt: PlatformMetaPublishAttemptItem): strin
     return `${missing.length} missing`;
   }
   return attempt.idempotency_key ? truncate(attempt.idempotency_key, 28) : "Ready";
+}
+
+function formatMetaPublishDetail(attempt: PlatformMetaPublishAttemptItem): string {
+  const execution = attempt.response_payload;
+  if (execution.schema_version === "konecta.meta_publish_execution.v1") {
+    const results = Array.isArray(execution.operation_results) ? execution.operation_results : [];
+    const executed = results.filter((item) => {
+      return typeof item === "object" && item !== null && (item as { status?: unknown }).status === "executed";
+    }).length;
+    const failed = results.filter((item) => {
+      return typeof item === "object" && item !== null && (item as { status?: unknown }).status === "failed";
+    }).length;
+    if (failed > 0) {
+      return `${failed} failed · ${executed} executed`;
+    }
+    if (results.length > 0) {
+      return `${results.length} Meta ops`;
+    }
+  }
+  return formatMissingMetaFields(attempt);
+}
+
+function metaPublishStatusValue(attempt: PlatformMetaPublishAttemptItem): string {
+  if (attempt.response_payload.schema_version === "konecta.meta_publish_execution.v1") {
+    return attempt.status;
+  }
+  return attempt.approval_status || attempt.status;
 }
 
 function metaInventoryLabel(snapshot: PlatformMetaInventorySnapshotItem): string {

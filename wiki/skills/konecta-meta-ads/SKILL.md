@@ -40,6 +40,9 @@ agent-native flow first:
    and budget policy.
 6. When Facundo/operator explicitly approves, run `approve_meta_publish_plan`
    with budget caps and the approval note before any future live publish.
+7. Only after approval, credentials, and `META_MARKETING_LIVE_WRITES_ENABLED`,
+   run `execute_meta_publish_plan` with `live_writes_requested=true`. It stores
+   each Meta provider ID so retries skip already-created objects.
 
 ## The 10/10 Pattern
 
@@ -190,10 +193,12 @@ Use this order:
    operation graph.
 7. `approve_meta_publish_plan` only after explicit operator approval. It must
    pass ready inventory, budget caps, idempotency, and `PAUSED` start checks.
-8. `ask_human_question` when account/page/destination/category/budget details
+8. `execute_meta_publish_plan` only after approval and live-write enablement;
+   it executes the ordered graph and persists returned Meta IDs for retries.
+9. `ask_human_question` when account/page/destination/category/budget details
    are missing. Do not invent Meta IDs.
-9. `stage_meta_publish_attempt` only for raw payloads, provider responses, or a
-   future approved publisher execution record.
+10. `stage_meta_publish_attempt` only for raw payloads, provider responses, or
+   manual publisher records.
 
 Before any future live publish, the plan must have:
 
@@ -203,6 +208,8 @@ Before any future live publish, the plan must have:
 - one or more ad sets with budget, targeting, placement/start-stop policy, and
   at least one ad;
 - approved creative refs, final primary text, headline, and CTA;
+- a Meta-ready creative ID, image hash, or video ID; local file paths and
+  `creative_asset_id` are staging references, not live-publishable Meta assets;
 - operator approval, idempotency key, and rollback/disable order.
 
 Published lead flow must be traceable back to the platform. For

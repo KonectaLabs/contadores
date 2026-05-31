@@ -21,7 +21,12 @@ from backend.database import (
 )
 from backend.calendar_events import CalendarSchedulingError, schedule_meeting_calendar_event
 from backend.platform_profile_extraction import PlatformProfileExtractionError, extract_client_profile_from_meeting
-from backend.meta_ads_publish import MetaAdsPublishError, approve_meta_publish_attempt, preflight_meta_publish_attempt
+from backend.meta_ads_publish import (
+    MetaAdsPublishError,
+    approve_meta_publish_attempt,
+    execute_meta_publish_attempt,
+    preflight_meta_publish_attempt,
+)
 from backend.meta_ads_inventory import MetaInventoryError, sync_meta_inventory
 
 platform_router = APIRouter(prefix="/api/platform", tags=["platform"])
@@ -341,6 +346,19 @@ class PlatformMetaPublishApprovalResponse(BaseModel):
 
     attempt: PlatformMetaPublishAttemptResponse
     approval: dict[str, Any]
+
+
+class PlatformMetaPublishExecutionCommand(BaseModel):
+    """Execute an approved Meta publish plan."""
+
+    live_writes_requested: bool = False
+
+
+class PlatformMetaPublishExecutionResponse(BaseModel):
+    """Meta publish execution response."""
+
+    attempt: PlatformMetaPublishAttemptResponse
+    execution: dict[str, Any]
 
 
 class PlatformMetaInventorySyncCommand(BaseModel):
@@ -1118,6 +1136,32 @@ async def approve_meta_publish_attempt_endpoint(
     return PlatformMetaPublishApprovalResponse(
         attempt=serialize_meta_publish_attempt(attempt),
         approval=result.model_dump(mode="json"),
+    )
+
+
+@platform_router.post(
+    "/meta-publish-attempts/{attempt_id}/execute",
+    response_model=PlatformMetaPublishExecutionResponse,
+)
+async def execute_meta_publish_attempt_endpoint(
+    attempt_id: str,
+    command: PlatformMetaPublishExecutionCommand,
+) -> PlatformMetaPublishExecutionResponse:
+    """Execute approved Meta writes and persist provider IDs."""
+    try:
+        attempt, result = execute_meta_publish_attempt(
+            attempt_id=attempt_id,
+            live_writes_requested=command.live_writes_requested,
+            source="platform_api",
+            actor="operator",
+        )
+    except MetaAdsPublishError as error:
+        message = str(error)
+        status_code = 404 if message.startswith("Meta publish attempt not found") else 400
+        raise HTTPException(status_code=status_code, detail=message) from error
+    return PlatformMetaPublishExecutionResponse(
+        attempt=serialize_meta_publish_attempt(attempt),
+        execution=result.model_dump(mode="json"),
     )
 
 

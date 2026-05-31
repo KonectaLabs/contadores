@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import math
 import os
+import json
 from typing import Any, Literal
+from collections.abc import Callable
 
+import httpx
 from pydantic import BaseModel, Field
 
 from backend.database import PlatformEvent, PlatformMetaInventorySnapshot, PlatformMetaPublishAttempt
@@ -47,6 +50,35 @@ class MetaPublishPreflightResult(BaseModel):
     operations: list[MetaPublishOperation] = Field(default_factory=list)
 
 
+class MetaPublishOperationResult(BaseModel):
+    """Provider result for one Meta publish operation."""
+
+    step: int
+    local_ref: str
+    object_type: str
+    path: str
+    status: Literal["executed", "skipped", "failed"]
+    provider_id: str = ""
+    request_params: dict[str, Any] = Field(default_factory=dict)
+    response: dict[str, Any] = Field(default_factory=dict)
+    error: str = ""
+
+
+class MetaPublishExecutionResult(BaseModel):
+    """Live execution result for a staged and approved Meta publish attempt."""
+
+    schema_version: str = "konecta.meta_publish_execution.v1"
+    attempt_id: str
+    campaign_id: str = ""
+    status: Literal["blocked", "submitted", "partial_failed", "already_submitted"]
+    live_writes_requested: bool = False
+    live_write_executed: bool = False
+    api_version: str = ""
+    blocked_reasons: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    operation_results: list[MetaPublishOperationResult] = Field(default_factory=list)
+
+
 class MetaPublishBudgetSummary(BaseModel):
     """Budget totals reviewed before a staged Meta plan can be approved."""
 
@@ -84,6 +116,56 @@ def _clean(value: Any) -> str:
 
 def _env_truthy(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+GraphPoster = Callable[[str, dict[str, Any]], dict[str, Any]]
+
+
+def _sanitize_provider_payload(value: Any) -> Any:
+    """Remove token-like fields before persisting provider payloads."""
+    if isinstance(value, dict):
+        return {
+            key: _sanitize_provider_payload(item)
+            for key, item in value.items()
+            if "token" not in key.lower() and "secret" not in key.lower()
+        }
+    if isinstance(value, list):
+        return [_sanitize_provider_payload(item) for item in value]
+    return value
+
+
+def _graph_base_url(api_version: str) -> str:
+    version = _clean(api_version).strip("/")
+    if not version:
+        raise MetaAdsPublishError("META_MARKETING_API_VERSION is required for Meta publish execution")
+    return f"https://graph.facebook.com/{version}"
+
+
+def _encode_graph_params(params: dict[str, Any]) -> dict[str, Any]:
+    """Encode nested Graph API params as JSON strings for form posts."""
+    encoded: dict[str, Any] = {}
+    for key, value in params.items():
+        if value is None or value == "":
+            continue
+        if isinstance(value, (dict, list)):
+            encoded[key] = json.dumps(value, ensure_ascii=True)
+        else:
+            encoded[key] = value
+    return encoded
+
+
+def _default_graph_poster(*, api_version: str, access_token: str, timeout: float = 30) -> GraphPoster:
+    base_url = _graph_base_url(api_version)
+
+    def graph_post(path: str, params: dict[str, Any]) -> dict[str, Any]:
+        request_params = _encode_graph_params(params)
+        request_params["access_token"] = access_token
+        response = httpx.post(f"{base_url}/{path.strip('/')}", data=request_params, timeout=timeout)
+        response.raise_for_status()
+        payload = response.json()
+        return _sanitize_provider_payload(payload if isinstance(payload, dict) else {"data": payload})
+
+    return graph_post
 
 
 def _money_to_minor_units(value: Any) -> int | None:
@@ -227,6 +309,27 @@ def _status_blockers(plan: dict[str, Any]) -> list[str]:
     return blocked
 
 
+def _provider_creative_blockers(plan: dict[str, Any]) -> list[str]:
+    """Return creatives that still need a Meta creative ID, image hash, or video ID."""
+    blocked: list[str] = []
+    ad_sets = plan.get("ad_sets") if isinstance(plan.get("ad_sets"), list) else []
+    for ad_set_index, ad_set in enumerate(ad_sets, start=1):
+        if not isinstance(ad_set, dict):
+            continue
+        ads = ad_set.get("ads") if isinstance(ad_set.get("ads"), list) else []
+        for ad_index, ad in enumerate(ads, start=1):
+            if not isinstance(ad, dict):
+                continue
+            creative = ad.get("creative") if isinstance(ad.get("creative"), dict) else {}
+            has_provider_asset = any(
+                _clean(creative.get(field))
+                for field in ["meta_creative_id", "image_hash", "video_id"]
+            )
+            if not has_provider_asset:
+                blocked.append(f"ad_sets[{ad_set_index}].ads[{ad_index}].creative.meta_asset")
+    return blocked
+
+
 def _budget_blockers(summary: MetaPublishBudgetSummary) -> list[str]:
     """Return budget policy violations."""
     blocked: list[str] = []
@@ -318,31 +421,50 @@ def _creative_params(plan: dict[str, Any], creative: dict[str, Any], name: str) 
     destination = plan.get("destination") if isinstance(plan.get("destination"), dict) else {}
     destination_type = _clean(destination.get("destination_type")) or "whatsapp"
     page_id = _clean(destination.get("page_id"))
-    call_to_action = _clean(creative.get("call_to_action")) or "WHATSAPP_MESSAGE"
+    call_to_action = _clean(creative.get("call_to_action"))
+    if not call_to_action:
+        call_to_action = "WHATSAPP_MESSAGE" if destination_type == "whatsapp" else "LEARN_MORE"
+    destination_url = (
+        _clean(creative.get("destination_url"))
+        or _clean(destination.get("landing_page_url"))
+        or ("https://api.whatsapp.com/send" if destination_type == "whatsapp" else "")
+    )
+    cta_value: dict[str, Any] = {}
+    if destination_url:
+        cta_value["link"] = destination_url
+    if destination_type == "whatsapp":
+        cta_value["whatsapp_phone_number_id"] = _clean(destination.get("whatsapp_phone_number_id"))
+    if destination_type == "instant_form":
+        cta_value["lead_gen_form_id"] = _clean(destination.get("lead_form_id"))
+
+    story_spec: dict[str, Any] = {"page_id": page_id}
+    if _clean(creative.get("video_id")):
+        story_spec["video_data"] = {
+            "video_id": _clean(creative.get("video_id")),
+            "message": _clean(creative.get("primary_text")),
+            "title": _clean(creative.get("headline")),
+            "call_to_action": {"type": call_to_action, "value": cta_value},
+        }
+        if _clean(creative.get("description")):
+            story_spec["video_data"]["link_description"] = _clean(creative.get("description"))
+    else:
+        link_data: dict[str, Any] = {
+            "message": _clean(creative.get("primary_text")),
+            "name": _clean(creative.get("headline")),
+            "call_to_action": {"type": call_to_action, "value": cta_value},
+        }
+        if destination_url:
+            link_data["link"] = destination_url
+        if _clean(creative.get("description")):
+            link_data["description"] = _clean(creative.get("description"))
+        if _clean(creative.get("image_hash")):
+            link_data["image_hash"] = _clean(creative.get("image_hash"))
+        story_spec["link_data"] = link_data
+
     params: dict[str, Any] = {
         "name": name,
-        "source_creative_asset_id": _clean(creative.get("creative_asset_id")),
-        "source_asset_file_path": _clean(creative.get("asset_file_path")),
-        "primary_text": _clean(creative.get("primary_text")),
-        "headline": _clean(creative.get("headline")),
-        "description": _clean(creative.get("description")),
-        "destination_type": destination_type,
-        "object_story_spec": {
-            "page_id": page_id,
-            "call_to_action": {
-                "type": call_to_action,
-                "value": {
-                    "link": _clean(creative.get("destination_url")) or _clean(destination.get("landing_page_url")),
-                    "whatsapp_phone_number_id": _clean(destination.get("whatsapp_phone_number_id")),
-                    "lead_form_id": _clean(destination.get("lead_form_id")),
-                },
-            },
-        },
+        "object_story_spec": story_spec,
     }
-    if _clean(creative.get("image_hash")):
-        params["image_hash"] = _clean(creative.get("image_hash"))
-    if _clean(creative.get("video_id")):
-        params["video_id"] = _clean(creative.get("video_id"))
     return params
 
 
@@ -484,6 +606,7 @@ def preflight_meta_publish_attempt(
         warnings.append(f"Current approval_status is {attempt.approval_status}.")
 
     if live_writes_requested:
+        blocked.extend(_provider_creative_blockers(plan))
         if not live_writes_enabled:
             blocked.append("META_MARKETING_LIVE_WRITES_ENABLED")
         if not token_present:
@@ -557,6 +680,270 @@ def preflight_meta_publish_attempt(
     return updated, result
 
 
+def _operation_result_from_existing(operation: MetaPublishOperation, provider_id: str) -> MetaPublishOperationResult:
+    """Return a skipped result for an operation already present in execution state."""
+    return MetaPublishOperationResult(
+        step=operation.step,
+        local_ref=operation.local_ref,
+        object_type=operation.object_type,
+        path=operation.path,
+        status="skipped",
+        provider_id=provider_id,
+        request_params=operation.params,
+        response={"id": provider_id, "already_executed": True},
+    )
+
+
+def _resolve_operation_params(params: dict[str, Any], provider_ids: dict[str, str]) -> dict[str, Any]:
+    """Replace local reference placeholders with provider object IDs."""
+    def resolve(value: Any) -> Any:
+        if isinstance(value, str) and value.startswith("{{") and value.endswith(".id}}"):
+            ref = value.removeprefix("{{").removesuffix(".id}}")
+            return provider_ids.get(ref, value)
+        if isinstance(value, dict):
+            return {key: resolve(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [resolve(item) for item in value]
+        return value
+
+    return resolve(params)
+
+
+def _execution_state_from_response(attempt: PlatformMetaPublishAttempt) -> dict[str, Any]:
+    """Return the current execution state from the latest attempt response."""
+    payload = attempt.response_payload()
+    if payload.get("schema_version") == "konecta.meta_publish_execution.v1":
+        return payload
+    request_payload = attempt.request_payload()
+    state = request_payload.get("live_execution_state") if isinstance(request_payload, dict) else {}
+    return state if isinstance(state, dict) else {}
+
+
+def _provider_ids_from_state(state: dict[str, Any]) -> dict[str, str]:
+    """Return local_ref -> provider_id from previous execution results."""
+    results = state.get("operation_results") if isinstance(state.get("operation_results"), list) else []
+    provider_ids: dict[str, str] = {}
+    for result in results:
+        if not isinstance(result, dict):
+            continue
+        local_ref = _clean(result.get("local_ref"))
+        provider_id = _clean(result.get("provider_id"))
+        if local_ref and provider_id and result.get("status") in {"executed", "skipped"}:
+            provider_ids[local_ref] = provider_id
+    return provider_ids
+
+
+def _execution_preflight_blockers(
+    *,
+    attempt: PlatformMetaPublishAttempt,
+    plan: dict[str, Any],
+    live_writes_requested: bool,
+    live_writes_enabled: bool,
+    token_present: bool,
+    api_version: str,
+) -> list[str]:
+    """Return blockers that must pass before live Meta writes."""
+    blocked = list(dict.fromkeys([*_plan_blockers(plan), *plan.get("required_before_live_publish", [])]))
+    blocked.extend(_provider_creative_blockers(plan))
+    if not live_writes_requested:
+        blocked.append("live_writes_requested=true")
+    if not live_writes_enabled:
+        blocked.append("META_MARKETING_LIVE_WRITES_ENABLED")
+    if not token_present:
+        blocked.append("META_MARKETING_ACCESS_TOKEN")
+    if not api_version:
+        blocked.append("META_MARKETING_API_VERSION")
+    if attempt.approval_status != "approved":
+        blocked.append("approval_status=approved")
+    if plan.get("live_writes_allowed") is not True:
+        blocked.append("plan.live_writes_allowed=true")
+    if not _has_approval_gate_event(attempt.id):
+        blocked.append("meta_publish.approval_gate")
+    return list(dict.fromkeys(blocked))
+
+
+def execute_meta_publish_attempt(
+    *,
+    attempt_id: str,
+    live_writes_requested: bool = False,
+    actor: str = "agent",
+    source: str = "codex_agent_tool",
+    graph_post: GraphPoster | None = None,
+) -> tuple[PlatformMetaPublishAttempt, MetaPublishExecutionResult]:
+    """Execute an approved Meta publish plan with idempotent local retries."""
+    attempt = PlatformMetaPublishAttempt.get_by_id(attempt_id)
+    if attempt is None:
+        raise MetaAdsPublishError(f"Meta publish attempt not found: {attempt_id}")
+
+    plan = attempt.request_payload()
+    api_version = _clean(os.getenv("META_MARKETING_API_VERSION"))
+    access_token = _clean(os.getenv("META_MARKETING_ACCESS_TOKEN")) or _clean(os.getenv("META_ACCESS_TOKEN"))
+    live_writes_enabled = _env_truthy("META_MARKETING_LIVE_WRITES_ENABLED")
+    blocked = _execution_preflight_blockers(
+        attempt=attempt,
+        plan=plan,
+        live_writes_requested=live_writes_requested,
+        live_writes_enabled=live_writes_enabled,
+        token_present=bool(access_token) or graph_post is not None,
+        api_version=api_version,
+    )
+    operations = build_meta_publish_operations(plan, live_write=True) if not _plan_blockers(plan) else []
+    if not operations:
+        blocked.append("operations")
+
+    state = _execution_state_from_response(attempt)
+    provider_ids = _provider_ids_from_state(state)
+    previous_results = [
+        MetaPublishOperationResult.model_validate(result)
+        for result in state.get("operation_results", [])
+        if isinstance(result, dict)
+    ]
+    if blocked:
+        result = MetaPublishExecutionResult(
+            attempt_id=attempt.id,
+            campaign_id=attempt.campaign_id,
+            status="blocked",
+            live_writes_requested=live_writes_requested,
+            api_version=api_version,
+            blocked_reasons=list(dict.fromkeys(blocked)),
+            operation_results=previous_results,
+        )
+        updated = PlatformMetaPublishAttempt.update_execution(
+            attempt.id,
+            status="blocked",
+            response_payload=result.model_dump(mode="json"),
+            error=", ".join(result.blocked_reasons),
+        )
+        if updated is None:
+            raise MetaAdsPublishError(f"Meta publish attempt disappeared during execution: {attempt.id}")
+        _emit_execution_event(updated, result, source=source, actor=actor, plan=plan)
+        return updated, result
+
+    poster = graph_post or _default_graph_poster(api_version=api_version, access_token=access_token)
+    operation_results: list[MetaPublishOperationResult] = []
+    for operation in operations:
+        existing_provider_id = provider_ids.get(operation.local_ref)
+        if existing_provider_id:
+            operation_results.append(_operation_result_from_existing(operation, existing_provider_id))
+            continue
+        missing_dependencies = [ref for ref in operation.depends_on if not provider_ids.get(ref)]
+        if missing_dependencies:
+            operation_results.append(
+                MetaPublishOperationResult(
+                    step=operation.step,
+                    local_ref=operation.local_ref,
+                    object_type=operation.object_type,
+                    path=operation.path,
+                    status="failed",
+                    request_params=operation.params,
+                    error=f"Missing provider IDs for dependencies: {', '.join(missing_dependencies)}",
+                )
+            )
+            break
+        request_params = _resolve_operation_params(operation.params, provider_ids)
+        try:
+            response = _sanitize_provider_payload(poster(operation.path, request_params))
+            provider_id = _clean(response.get("id"))
+            if not provider_id:
+                raise MetaAdsPublishError(f"Meta response for {operation.local_ref} did not include an id")
+            provider_ids[operation.local_ref] = provider_id
+            operation_results.append(
+                MetaPublishOperationResult(
+                    step=operation.step,
+                    local_ref=operation.local_ref,
+                    object_type=operation.object_type,
+                    path=operation.path,
+                    status="executed",
+                    provider_id=provider_id,
+                    request_params=request_params,
+                    response=response,
+                )
+            )
+        except Exception as error:
+            operation_results.append(
+                MetaPublishOperationResult(
+                    step=operation.step,
+                    local_ref=operation.local_ref,
+                    object_type=operation.object_type,
+                    path=operation.path,
+                    status="failed",
+                    request_params=request_params,
+                    error=str(error)[:12000],
+                )
+            )
+            break
+
+    failed = any(item.status == "failed" for item in operation_results)
+    executed = any(item.status == "executed" for item in operation_results)
+    all_skipped = operation_results and all(item.status == "skipped" for item in operation_results)
+    status: Literal["blocked", "submitted", "partial_failed", "already_submitted"]
+    if failed:
+        status = "partial_failed"
+    elif all_skipped:
+        status = "already_submitted"
+    else:
+        status = "submitted"
+    result = MetaPublishExecutionResult(
+        attempt_id=attempt.id,
+        campaign_id=attempt.campaign_id,
+        status=status,
+        live_writes_requested=live_writes_requested,
+        live_write_executed=executed,
+        api_version=api_version,
+        operation_results=operation_results,
+    )
+    updated_plan = dict(plan)
+    updated_plan["live_execution_state"] = result.model_dump(mode="json")
+    updated = PlatformMetaPublishAttempt.update_execution(
+        attempt.id,
+        status=status,
+        request_payload=updated_plan,
+        response_payload=result.model_dump(mode="json"),
+        error=", ".join(item.error for item in operation_results if item.error),
+    )
+    if updated is None:
+        raise MetaAdsPublishError(f"Meta publish attempt disappeared during execution: {attempt.id}")
+    _emit_execution_event(updated, result, source=source, actor=actor, plan=plan)
+    return updated, result
+
+
+def _emit_execution_event(
+    attempt: PlatformMetaPublishAttempt,
+    result: MetaPublishExecutionResult,
+    *,
+    source: str,
+    actor: str,
+    plan: dict[str, Any],
+) -> None:
+    """Persist one observability event for Meta publish execution."""
+    PlatformEvent.add(
+        event_type="meta_publish.execution_checked",
+        lifecycle_stage="meta_publish",
+        target_type="meta_publish_attempt",
+        target_id=attempt.id,
+        funnel_id=_clean(plan.get("funnel_id")),
+        source=source,
+        actor=actor,
+        summary=f"Checked Meta publish execution for {attempt.id}.",
+        payload={
+            "campaign_id": attempt.campaign_id,
+            "status": result.status,
+            "live_write_executed": result.live_write_executed,
+            "blocked_reasons": result.blocked_reasons,
+            "operation_results": [
+                {
+                    "local_ref": item.local_ref,
+                    "object_type": item.object_type,
+                    "status": item.status,
+                    "provider_id": item.provider_id,
+                    "error": item.error,
+                }
+                for item in result.operation_results
+            ],
+        },
+    )
+
+
 def approve_meta_publish_attempt(
     *,
     attempt_id: str,
@@ -592,6 +979,7 @@ def approve_meta_publish_attempt(
                 *_plan_blockers(plan),
                 *plan.get("required_before_live_publish", []),
                 *_status_blockers(plan),
+                *_provider_creative_blockers(plan),
                 *_budget_blockers(budget),
             ]
         )

@@ -78,6 +78,9 @@ Platform lifecycle tools:
   operations and persist preflight state without live writes by default.
 - `approve_meta_publish_plan`: apply the audited operator approval gate with
   budget caps, ready inventory, idempotency, and `PAUSED` start checks.
+- `execute_meta_publish_plan`: execute approved Meta writes only when live
+  writes are explicitly requested/enabled, then persist provider IDs for
+  idempotent retries.
 - `stage_meta_publish_attempt`: stage the Meta publish request/response without
   live external writes.
 - `create_client_update`: draft or record 24-hour client updates.
@@ -170,8 +173,9 @@ step from that persisted state.
   `preflight_meta_publish_plan` after staging to get the ordered campaign,
   ad-set, creative, and ad operation graph. Use `approve_meta_publish_plan`
   only after explicit operator approval; include the approved-by name, budget
-  caps, and approval note. Use `stage_meta_publish_attempt` only for raw
-  provider payloads or execution records from an approved publisher.
+  caps, and approval note. Use `execute_meta_publish_plan` only after the
+  approval gate has passed and live writes are intentionally enabled. Use
+  `stage_meta_publish_attempt` only for raw provider payloads or manual records.
 - Use `ask_human_question` only for real uncertainty. Include context, what you
   are trying to do, options when known, and the safe default action.
 - Do not wait forever for answers. Use the timeout/default action when safe.

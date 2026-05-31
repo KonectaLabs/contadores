@@ -110,7 +110,7 @@ formularios:
 - `upsert_client_profile`: conocimiento revisado del cliente.
 - `stage_ad_campaign`, `stage_creative_asset`, `stage_meta_publish_plan`,
   `sync_meta_inventory`, `preflight_meta_publish_plan`,
-  `approve_meta_publish_plan` y
+  `approve_meta_publish_plan`, `execute_meta_publish_plan` y
   `stage_meta_publish_attempt`: ads, inventario y publicacion Meta en modo
   staged/aprobable.
 - `create_client_update`: actualizaciones de 24 horas para clientes.
@@ -139,8 +139,13 @@ Flujo Meta agent-native:
 8. `approve_meta_publish_plan` aplica el gate de aprobacion: presupuesto dentro
    de caps, inventario listo, `idempotency_key`, todo creado en `PAUSED`, y
    aprobacion explicita del operador antes de permitir un candidato live.
-9. `stage_meta_publish_attempt` queda para payloads crudos, respuestas de Meta o
-   ejecuciones futuras hechas por el publicador aprobado.
+9. `execute_meta_publish_plan` es el unico paso que puede hacer writes Meta:
+   requiere `live_writes_requested=true`, `META_MARKETING_LIVE_WRITES_ENABLED`,
+   credenciales, approval gate aprobado y creatividades ya subidas a Meta
+   (`meta_creative_id`, `image_hash` o `video_id`). Guarda cada provider ID para
+   que los retries no dupliquen Campaign, Ad Set, Creative o Ad.
+10. `stage_meta_publish_attempt` queda para payloads crudos, respuestas de Meta
+   o registros manuales del publicador aprobado.
 
 Ejemplo de plan Meta staged:
 
@@ -167,6 +172,15 @@ uv run python -m backend.ai.codex_agent_runtime call \
   --run-id meta-approval-001 \
   --tool approve_meta_publish_plan \
   --arguments-json '{"attempt_id":"ATTEMPT_ID","approved_by":"facundo","approval_note":"Presupuesto e inventario revisados.","approve_live_writes":true,"max_daily_budget_usd":50,"max_estimated_monthly_budget_usd":1500}'
+```
+
+Ejemplo de ejecucion Meta agent-native:
+
+```bash
+uv run python -m backend.ai.codex_agent_runtime call \
+  --run-id meta-execute-001 \
+  --tool execute_meta_publish_plan \
+  --arguments-json '{"attempt_id":"ATTEMPT_ID","live_writes_requested":true}'
 ```
 
 Validar antes de activar:

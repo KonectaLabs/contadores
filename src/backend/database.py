@@ -2911,6 +2911,7 @@ def _meta_publish_idempotency_payload(value: dict[str, Any] | None) -> dict[str,
     payload = dict(value or {})
     if payload.get("schema_version") == "konecta.meta_publish_plan.v1":
         payload.pop("approval_policy", None)
+        payload.pop("live_execution_state", None)
         payload.pop("live_writes_allowed", None)
         payload.pop("publish_mode", None)
     return payload

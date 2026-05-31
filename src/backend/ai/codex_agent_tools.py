@@ -65,7 +65,12 @@ from backend.platform_profile_extraction import (
     PlatformProfileExtractionError,
     extract_client_profile_from_meeting as save_client_profile_from_meeting,
 )
-from backend.meta_ads_publish import MetaAdsPublishError, approve_meta_publish_attempt, preflight_meta_publish_attempt
+from backend.meta_ads_publish import (
+    MetaAdsPublishError,
+    approve_meta_publish_attempt,
+    execute_meta_publish_attempt,
+    preflight_meta_publish_attempt,
+)
 from backend.meta_ads_inventory import MetaInventoryError, sync_meta_inventory
 
 
@@ -430,6 +435,13 @@ class ApproveMetaPublishPlanArgs(BaseModel):
     max_estimated_monthly_budget_usd: int = Field(default=1500, ge=1)
 
 
+class ExecuteMetaPublishPlanArgs(BaseModel):
+    """Arguments for executing an approved Meta publish plan."""
+
+    attempt_id: str = Field(min_length=1)
+    live_writes_requested: bool = False
+
+
 class SyncMetaInventoryArgs(BaseModel):
     """Arguments for reading Meta account/page/form inventory."""
 
@@ -650,6 +662,11 @@ def tool_specs() -> list[CodexAgentToolSpec]:
             "approve_meta_publish_plan",
             "Apply the explicit Meta publish approval gate with budget caps, inventory readiness, idempotency, and PAUSED-start checks.",
             ApproveMetaPublishPlanArgs,
+        ),
+        (
+            "execute_meta_publish_plan",
+            "Execute approved Meta Marketing API writes, persist provider IDs, and keep retries idempotent.",
+            ExecuteMetaPublishPlanArgs,
         ),
         (
             "sync_meta_inventory",
@@ -940,6 +957,7 @@ def read_platform_config(arguments: dict[str, Any]) -> dict[str, Any]:
             "stage_meta_publish_plan",
             "preflight_meta_publish_plan",
             "approve_meta_publish_plan",
+            "execute_meta_publish_plan",
             "sync_meta_inventory",
             "create_client_update",
             "ask_human_question",
@@ -961,6 +979,7 @@ def read_platform_config(arguments: dict[str, Any]) -> dict[str, Any]:
             "stage_meta_publish_plan": StageMetaPublishPlanArgs.model_json_schema(),
             "preflight_meta_publish_plan": PreflightMetaPublishPlanArgs.model_json_schema(),
             "approve_meta_publish_plan": ApproveMetaPublishPlanArgs.model_json_schema(),
+            "execute_meta_publish_plan": ExecuteMetaPublishPlanArgs.model_json_schema(),
             "sync_meta_inventory": SyncMetaInventoryArgs.model_json_schema(),
             "create_client_update": CreateClientUpdateArgs.model_json_schema(),
             "ask_human_question": AskHumanQuestionArgs.model_json_schema(),
@@ -1679,6 +1698,24 @@ def approve_meta_publish_plan(arguments: dict[str, Any]) -> dict[str, Any]:
         "saved": True,
         "attempt": _meta_publish_attempt_payload(attempt),
         "approval": result.model_dump(mode="json"),
+    }
+
+
+def execute_meta_publish_plan(arguments: dict[str, Any]) -> dict[str, Any]:
+    args = ExecuteMetaPublishPlanArgs.model_validate(arguments)
+    try:
+        attempt, result = execute_meta_publish_attempt(
+            attempt_id=args.attempt_id,
+            live_writes_requested=args.live_writes_requested,
+            source="codex_agent_tool",
+            actor="agent",
+        )
+    except MetaAdsPublishError as error:
+        raise AgentToolError(str(error)) from error
+    return {
+        "saved": True,
+        "attempt": _meta_publish_attempt_payload(attempt),
+        "execution": result.model_dump(mode="json"),
     }
 
 
@@ -2477,6 +2514,7 @@ TOOL_HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {
     "stage_meta_publish_plan": stage_meta_publish_plan,
     "preflight_meta_publish_plan": preflight_meta_publish_plan,
     "approve_meta_publish_plan": approve_meta_publish_plan,
+    "execute_meta_publish_plan": execute_meta_publish_plan,
     "sync_meta_inventory": sync_meta_inventory_tool,
     "create_client_update": create_client_update,
     "ask_human_question": ask_human_question,
@@ -2545,6 +2583,8 @@ def _audit_target_for_tool(tool_name: str, arguments: dict[str, Any]) -> tuple[s
     if tool_name == "preflight_meta_publish_plan":
         return "meta_publish_attempt", str(arguments.get("attempt_id") or "")
     if tool_name == "approve_meta_publish_plan":
+        return "meta_publish_attempt", str(arguments.get("attempt_id") or "")
+    if tool_name == "execute_meta_publish_plan":
         return "meta_publish_attempt", str(arguments.get("attempt_id") or "")
     if tool_name == "sync_meta_inventory":
         return "meta_inventory", str(arguments.get("ad_account_id") or arguments.get("business_id") or "meta_inventory")

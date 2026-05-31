@@ -202,13 +202,16 @@ audited, approved plan:
 7. `approve_meta_publish_plan` applies the audited approval gate: budget caps,
    ready inventory, idempotency, and every new object starting `PAUSED` before
    a plan can become a live-write candidate.
-8. `PlatformMetaPublishAttempt` records the staged plan, future submit payload,
-   Meta response, error, idempotency key, and operator approval status.
-9. Lead delivery connects the published ad or lead form back into funnel routing:
+8. `execute_meta_publish_plan` runs the approved operation graph only when live
+   writes are explicitly requested and enabled, then persists returned Meta IDs
+   so retries skip already-created Campaign, Ad Set, Creative, and Ad objects.
+9. `PlatformMetaPublishAttempt` records the staged plan, execution state, Meta
+   response, error, idempotency key, and operator approval status.
+10. Lead delivery connects the published ad or lead form back into funnel routing:
    Click-to-WhatsApp `referral.source_id` for WhatsApp conversations, Meta lead
    form exports/webhooks for Sheets intake, then Client Lead Delivery to the
    client's WhatsApp.
-10. Client updates summarize spend/leads/blockers from events, delivery records,
+11. Client updates summarize spend/leads/blockers from events, delivery records,
    and Meta publish status.
 
 Live Meta writes stay disabled until the platform has:
@@ -217,6 +220,9 @@ Live Meta writes stay disabled until the platform has:
 - Page ID, and either WhatsApp phone number ID, lead form ID, or landing page;
 - special ad category decision when required;
 - approved creative assets and final copy;
+- a Meta-ready creative reference (`meta_creative_id`, `image_hash`, or
+  `video_id`); local generated files are not enough for live publish until they
+  have been uploaded to Meta;
 - campaign/ad set budgets, targeting, placements, start/stop dates, and
   tracking parameters;
 - operator approval for publish and any budget increase;
@@ -225,8 +231,10 @@ Live Meta writes stay disabled until the platform has:
 Do not add RabbitMQ/Kafka just for Meta publishing yet. The first DB-backed
 publisher slices are `sync_meta_inventory` and `preflight_meta_publish_plan`:
 they read and persist readiness/inventory state, build ordered Meta operations,
-and emit events. Live submit remains blocked until credentials, approval policy,
-budget controls, and real provider calls are wired.
+and emit events. The live executor slice is `execute_meta_publish_plan`: it is
+still gated by credentials, approval policy, budget controls, and
+`META_MARKETING_LIVE_WRITES_ENABLED`, but it can now execute the approved graph
+and persist provider IDs for idempotent retries.
 The approval policy slice is `approve_meta_publish_plan`: it records operator
 approval only when budget caps, inventory IDs, idempotency, and `PAUSED` start
 state pass. It still performs no external writes.
@@ -299,8 +307,9 @@ state pass. It still performs no external writes.
    - Approval gate shipped as `approve_meta_publish_plan`; it requires ready
      inventory, `idempotency_key`, explicit operator approval, budget caps, and
      `PAUSED` creation state before `live_writes_allowed=true`.
-   - Execute live writes through a DB-backed publisher that creates Meta objects
-     in `PAUSED` state, stores every returned ID, and keeps retries idempotent.
+   - First live executor slice shipped as `execute_meta_publish_plan`; it
+     creates Meta objects in `PAUSED` state when live writes are explicitly
+     requested/enabled, stores every returned ID, and keeps retries idempotent.
 
 9. Client updates and delivery loop
    - Generate 24-hour client updates from campaign and delivery events.
@@ -316,8 +325,7 @@ state pass. It still performs no external writes.
 ## Known Blockers
 
 - No Google Calendar credentials/internal attendee env on the production server.
-- No Meta Marketing API credentials, ad account IDs, or final live publish
-  executor.
+- No Meta Marketing API credentials or confirmed production ad account IDs.
 - No current Loom for the $599 offer, so the default offer path is text-only.
 - Production `data/funnels.json` may still override the versioned seed; rollout
   must inspect/update the server override before deployment.

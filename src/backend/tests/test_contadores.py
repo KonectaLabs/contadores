@@ -20,6 +20,7 @@ import backend.calendar_events as calendar_events_module
 import backend.database as database_module
 import backend.endpoints.contadores as contadores_endpoints
 import backend.endpoints.workstation as workstation_endpoints
+import backend.meta_ads_publish as meta_ads_publish_module
 import backend.platform_profile_extraction as profile_extraction_module
 from backend.audio_transcription import AudioTranscriptionError
 from backend.codex_utils import CodexSkill, CodexTurnResult
@@ -387,6 +388,8 @@ def test_codex_agent_tool_configures_text_offer_funnel_without_ui(monkeypatch, t
     assert "preflight_meta_publish_plan" in snapshot["result"]["schemas"]
     assert "approve_meta_publish_plan" in snapshot["result"]["agent_native_tools"]
     assert "approve_meta_publish_plan" in snapshot["result"]["schemas"]
+    assert "execute_meta_publish_plan" in snapshot["result"]["agent_native_tools"]
+    assert "execute_meta_publish_plan" in snapshot["result"]["schemas"]
     assert "schedule_platform_meeting" in snapshot["result"]["agent_native_tools"]
     assert "schedule_platform_meeting" in snapshot["result"]["schemas"]
     assert "sync_meta_inventory" in snapshot["result"]["agent_native_tools"]
@@ -540,6 +543,7 @@ def test_meta_publish_approval_gate_requires_inventory_and_budget(monkeypatch, t
                             "name": "ART no paga",
                             "creative": {
                                 "creative_asset_id": "creative-approval-1",
+                                "image_hash": "hash_approval_1",
                                 "primary_text": "Si la ART no te paga, manda tu caso por WhatsApp.",
                                 "headline": "La ART no te pago?",
                             },
@@ -578,6 +582,7 @@ def test_meta_publish_approval_gate_requires_inventory_and_budget(monkeypatch, t
                             "name": "ART no paga",
                             "creative": {
                                 "creative_asset_id": "creative-approval-1",
+                                "image_hash": "hash_approval_1",
                                 "primary_text": "Si la ART no te paga, manda tu caso por WhatsApp.",
                                 "headline": "La ART no te pago?",
                             },
@@ -639,6 +644,7 @@ def test_meta_publish_approval_gate_requires_inventory_and_budget(monkeypatch, t
                                 "status": "PAUSED",
                                 "creative": {
                                     "creative_asset_id": "creative-approval-1",
+                                    "image_hash": "hash_approval_fake_1",
                                     "primary_text": "Manda tu caso por WhatsApp.",
                                     "headline": "Necesitas ayuda?",
                                 },
@@ -738,6 +744,154 @@ def test_meta_publish_approval_gate_requires_inventory_and_budget(monkeypatch, t
     assert approved_attempt.request_payload()["live_writes_allowed"] is True
     assert approved_attempt.request_payload()["approval_policy"]["approved_by"] == "facundo"
 
+    blocked_execute = call_tool(
+        run_id="agent-run-meta-approval",
+        tool_name="execute_meta_publish_plan",
+        arguments={"attempt_id": attempt_id},
+    )
+    assert blocked_execute["ok"] is True
+    assert blocked_execute["result"]["execution"]["status"] == "blocked"
+    assert "live_writes_requested=true" in blocked_execute["result"]["execution"]["blocked_reasons"]
+
+    posted: list[tuple[str, dict]] = []
+
+    def fake_graph_poster(*, api_version: str, access_token: str, timeout: float = 30):
+        assert api_version == "v25.0"
+        assert access_token == "test-token"
+
+        def graph_post(path: str, params: dict) -> dict:
+            posted.append((path, params))
+            return {"id": f"meta_{len(posted)}", "access_token": "do-not-store"}
+
+        return graph_post
+
+    monkeypatch.setenv("META_MARKETING_API_VERSION", "v25.0")
+    monkeypatch.setenv("META_MARKETING_ACCESS_TOKEN", "test-token")
+    monkeypatch.setenv("META_MARKETING_LIVE_WRITES_ENABLED", "true")
+    monkeypatch.setattr(meta_ads_publish_module, "_default_graph_poster", fake_graph_poster)
+    execute_result = call_tool(
+        run_id="agent-run-meta-approval",
+        tool_name="execute_meta_publish_plan",
+        arguments={"attempt_id": attempt_id, "live_writes_requested": True},
+    )
+    assert execute_result["ok"] is True
+    assert execute_result["result"]["execution"]["status"] == "submitted"
+    assert execute_result["result"]["execution"]["live_write_executed"] is True
+    assert [path for path, _ in posted] == [
+        "/act_999/campaigns",
+        "/act_999/adsets",
+        "/act_999/adcreatives",
+        "/act_999/ads",
+    ]
+    assert posted[1][1]["campaign_id"] == "meta_1"
+    assert posted[3][1]["adset_id"] == "meta_2"
+    assert posted[3][1]["creative"]["creative_id"] == "meta_3"
+    execute_payload = PlatformMetaPublishAttempt.get_by_id(attempt_id).response_payload()
+    assert execute_payload["schema_version"] == "konecta.meta_publish_execution.v1"
+    assert execute_payload["operation_results"][0]["provider_id"] == "meta_1"
+    assert "access_token" not in execute_payload["operation_results"][0]["response"]
+
+    retry_execute = call_tool(
+        run_id="agent-run-meta-approval",
+        tool_name="execute_meta_publish_plan",
+        arguments={"attempt_id": attempt_id, "live_writes_requested": True},
+    )
+    assert retry_execute["ok"] is True
+    assert retry_execute["result"]["execution"]["status"] == "already_submitted"
+    assert retry_execute["result"]["execution"]["live_write_executed"] is False
+    assert len(posted) == 4
+
+    failure_plan_result = call_tool(
+        run_id="agent-run-meta-approval",
+        tool_name="stage_meta_publish_plan",
+        arguments={
+            "campaign_id": "campaign-approval-failure-1",
+            "client_id": "client-approval-1",
+            "funnel_id": "abogados",
+            "ad_account_id": "act_998",
+            "campaign_name": "Abogados failure - WhatsApp",
+            "objective": "OUTCOME_LEADS",
+            "destination": {
+                "destination_type": "whatsapp",
+                "page_id": "page_998",
+                "whatsapp_phone_number_id": "wa_phone_998",
+            },
+            "ad_sets": [
+                {
+                    "name": "Despidos",
+                    "budget_daily_usd": 10,
+                    "targeting": {"geo_locations": {"countries": ["AR"]}},
+                    "ads": [
+                        {
+                            "name": "Despido",
+                            "creative": {
+                                "creative_asset_id": "creative-approval-failure-1",
+                                "image_hash": "hash_approval_failure_1",
+                                "primary_text": "Si te despidieron, manda tu caso por WhatsApp.",
+                                "headline": "Te despidieron?",
+                            },
+                        }
+                    ],
+                }
+            ],
+            "idempotency_key": "publish-plan-approval-failure-agent-1",
+        },
+    )
+    assert failure_plan_result["ok"] is True
+    failure_attempt_id = failure_plan_result["result"]["attempt"]["id"]
+    PlatformMetaInventorySnapshot.add(
+        status="ready",
+        source="test",
+        actor="tester",
+        ad_account_id="act_998",
+        business_id="business_998",
+        api_version="v25.0",
+        inventory={
+            "ad_accounts": [{"id": "act_998", "currency": "USD"}],
+            "selected_ad_account": {"id": "act_998", "currency": "USD"},
+            "pages": [{"id": "page_998", "name": "Abogados"}],
+            "lead_forms": [],
+            "pixels": [],
+            "whatsapp_business_accounts": [{"id": "waba_998"}],
+            "whatsapp_phone_numbers": [{"id": "wa_phone_998", "whatsapp_business_account_id": "waba_998"}],
+            "campaigns": [],
+        },
+    )
+    failure_approval = call_tool(
+        run_id="agent-run-meta-approval",
+        tool_name="approve_meta_publish_plan",
+        arguments={
+            "attempt_id": failure_attempt_id,
+            "approved_by": "facundo",
+            "approval_note": "Failure path reviewed.",
+            "approve_live_writes": True,
+            "max_daily_budget_usd": 50,
+            "max_estimated_monthly_budget_usd": 1500,
+        },
+    )
+    assert failure_approval["ok"] is True
+    failure_posts: list[str] = []
+
+    def failing_graph_post(path: str, params: dict) -> dict:
+        del params
+        failure_posts.append(path)
+        if path.endswith("/adsets"):
+            raise RuntimeError("Meta rejected ad set")
+        return {"id": f"failure_meta_{len(failure_posts)}"}
+
+    failed_attempt, failed_execution = meta_ads_publish_module.execute_meta_publish_attempt(
+        attempt_id=failure_attempt_id,
+        live_writes_requested=True,
+        graph_post=failing_graph_post,
+    )
+    assert failed_execution.status == "partial_failed"
+    assert failed_execution.operation_results[0].status == "executed"
+    assert failed_execution.operation_results[1].status == "failed"
+    assert "Meta rejected ad set" in failed_attempt.error
+    assert PlatformMetaPublishAttempt.get_by_id(failure_attempt_id).request_payload()["live_execution_state"][
+        "operation_results"
+    ][0]["provider_id"] == "failure_meta_1"
+
     idempotent_retry = call_tool(
         run_id="agent-run-meta-approval",
         tool_name="stage_meta_publish_plan",
@@ -763,6 +917,7 @@ def test_meta_publish_approval_gate_requires_inventory_and_budget(monkeypatch, t
                             "name": "ART no paga",
                             "creative": {
                                 "creative_asset_id": "creative-approval-1",
+                                "image_hash": "hash_approval_1",
                                 "primary_text": "Si la ART no te paga, manda tu caso por WhatsApp.",
                                 "headline": "La ART no te pago?",
                             },
@@ -1045,6 +1200,14 @@ def test_platform_lifecycle_endpoints_support_agent_native_workflow(monkeypatch,
     assert preflight_response.status_code == 200
     assert preflight_response.json()["preflight"]["status"] == "blocked"
     assert "schema_version" in preflight_response.json()["preflight"]["blocked_reasons"]
+
+    execution_response = client.post(
+        f"/api/platform/meta-publish-attempts/{publish_attempt['id']}/execute",
+        json={"live_writes_requested": True},
+    )
+    assert execution_response.status_code == 200
+    assert execution_response.json()["execution"]["status"] == "blocked"
+    assert "META_MARKETING_LIVE_WRITES_ENABLED" in execution_response.json()["execution"]["blocked_reasons"]
 
     inventory_response = client.post("/api/platform/meta-inventory/sync", json={})
     assert inventory_response.status_code == 200
@@ -1335,6 +1498,18 @@ def test_codex_agent_lifecycle_tools_work_without_ui(monkeypatch, tmp_path) -> N
     assert approval_blocked_result["result"]["approval"]["approved"] is False
     assert "meta_inventory.status=missing_credentials" in approval_blocked_result["result"]["approval"]["blocked_reasons"]
 
+    execution_blocked_result = call_tool(
+        run_id="agent-run-lifecycle",
+        tool_name="execute_meta_publish_plan",
+        arguments={
+            "attempt_id": plan_result["result"]["attempt"]["id"],
+            "live_writes_requested": True,
+        },
+    )
+    assert execution_blocked_result["ok"] is True
+    assert execution_blocked_result["result"]["execution"]["status"] == "blocked"
+    assert "approval_status=approved" in execution_blocked_result["result"]["execution"]["blocked_reasons"]
+
     update_result = call_tool(
         run_id="agent-run-lifecycle",
         tool_name="create_client_update",
@@ -1392,6 +1567,7 @@ def test_codex_agent_lifecycle_tools_work_without_ui(monkeypatch, tmp_path) -> N
         "stage_meta_publish_plan",
         "preflight_meta_publish_plan",
         "approve_meta_publish_plan",
+        "execute_meta_publish_plan",
         "sync_meta_inventory",
         "ask_human_question",
         "answer_human_question",
@@ -1400,6 +1576,7 @@ def test_codex_agent_lifecycle_tools_work_without_ui(monkeypatch, tmp_path) -> N
         "meta_publish.plan_staged",
         "meta_publish.preflight_checked",
         "meta_publish.approval_checked",
+        "meta_publish.execution_checked",
     }
 
 
