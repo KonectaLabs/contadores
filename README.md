@@ -687,6 +687,9 @@ Modelo de estado para UI/API:
   `answered`, `paused`, `converted`, `closed`, `archived`.
 - `conversion_type` explica el origen de `converted`: `meeting`, `manual` o
   `workstation`.
+- El ledger vivo del rediseño frontend esta en
+  `wiki/frontend-concept-ledger.md`; ahi se registra que superficie ya recibio
+  una pasada deliberada, que quedo igual a proposito y que riesgo queda.
 
 Entrada Click-to-WhatsApp:
 

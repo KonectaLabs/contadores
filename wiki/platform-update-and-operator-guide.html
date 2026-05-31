@@ -555,7 +555,7 @@
                 <tr>
                   <td>CRM por funnels</td>
                   <td><span class="pill ok">Listo</span></td>
-                  <td>El operador puede revisar leads, responder, pausar, marcar booked, cerrar, convertir a Workstation y crear funnels desde UI si hace falta.</td>
+                  <td>El operador puede revisar leads, responder, pausar, marcar Converted, cerrar, convertir a Workstation y crear funnels desde UI si hace falta.</td>
                 </tr>
                 <tr>
                   <td>Agent-native config</td>
@@ -721,8 +721,8 @@
                   <h3>Decidir el estado del lead</h3>
                   <p>
                     Usar <code>Answered</code> si ya se respondio, <code>Manual</code>
-                    para dejarlo en manejo humano, <code>Booked</code> si ya tiene
-                    reunion, <code>Close</code> si no va mas, y <code>Reopen</code>
+                    para dejarlo en manejo humano, <code>Converted</code> si ya
+                    avanzo a reunion o Workstation, <code>Close</code> si no va mas, y <code>Reopen</code>
                     si hay que revivir uno cerrado.
                   </p>
                 </div>
@@ -920,7 +920,7 @@
                 <h3>Operacion normal</h3>
                 <ol>
                   <li>Cuando entra un lead importante, revisar mensajes completos antes de responder.</li>
-                  <li>Si hay intencion de llamada, marcar <code>Booked</code> solo cuando tenga datos reales.</li>
+                  <li>Si hay intencion real o pago, marcar <code>Converted</code> solo cuando tenga datos reales.</li>
                   <li>Si pago, usar <code>Convert</code> y mover a <code>Workstation</code>.</li>
                   <li>Si un cliente pregunta por leads, revisar <code>Delivery</code> y <code>Sent chat</code>.</li>
                   <li>Si Meta esta bloqueado por credenciales, no inventar IDs: escalar.</li>

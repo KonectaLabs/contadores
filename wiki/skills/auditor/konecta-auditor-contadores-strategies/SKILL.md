@@ -43,7 +43,8 @@ Stats count:
 - assigned strategy buckets,
 - sent/delivered assignment rows,
 - leads that reached Calendly after assignment,
-- leads booked after assignment.
+- leads converted after assignment; old storage may still expose the legacy
+  booked milestone name.
 
 ## Validation
 Run:

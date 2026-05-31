@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, ClipboardEvent, DragEvent, FormEvent, ReactNode } from "react";
+import type { ClipboardEvent, DragEvent, FormEvent, ReactNode } from "react";
 import {
   ArrowsClockwise,
   ArrowSquareOut,
@@ -2761,98 +2761,100 @@ function ClientLeadDeliveryView({
                         </div>
                         <div className="delivery-sheet-section-meta">
                           <span>{compactNumber(section.leads.length)} rows</span>
-                          <span>{compactNumber(section.columns.length)} columns</span>
+                          <span>{compactNumber(deliveryRawFieldCount(section.leads))} raw fields</span>
                           <span className="delivery-status-pill" data-tone={deliverySourceTone(section.source)}>
                             {deliverySourceStatusIcon(section.source)}
                             {humanize(section.source.last_sync_status || "active")}
                           </span>
                         </div>
                       </header>
-                      <div className="delivery-table-wrap">
-                        <table
-                          className="delivery-table delivery-sheet-table"
-                          style={{ "--delivery-table-min-width": `${deliverySheetTableWidth(section.columns.length)}px` } as CSSProperties}
-                        >
-                          <thead>
-                            <tr>
-                              <th className="delivery-row-number-column">Row</th>
-                              {section.columns.map((column) => (
-                                <th key={column}>{column}</th>
-                              ))}
-                              <th className="delivery-notification-column">Delivery</th>
-                              <th className="delivery-actions-column" />
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {section.leads.map((lead) => {
-                              const waLink = lead.wa_link || buildWaLink(lead.phone_number);
-                              const retryable = isRetryableClientLead(lead);
-                              return (
-                                <tr key={lead.id}>
-                                  <td className="delivery-row-number-cell" data-label="Row">
-                                    <div className="delivery-age-cell">
-                                      <strong>{lead.row_number}</strong>
-                                      <span>{clientLeadAgeText(lead)}</span>
-                                      {lead.created_time ? <small>{shortDate(lead.created_time)}</small> : null}
-                                    </div>
-                                  </td>
-                                  {section.columns.map((column) => {
-                                    const value = formatRawValue(lead.raw_row?.[column]).trim();
-                                    return (
-                                      <td key={`${lead.id}:${column}`} className="delivery-sheet-value-cell" data-label={column}>
-                                        <span className={value ? "delivery-sheet-value" : "delivery-sheet-value empty"}>
-                                          {value || "-"}
-                                        </span>
-                                      </td>
-                                    );
-                                  })}
-                                  <td data-label="Delivery">
-                                    <div className="delivery-status-cell">
-                                      <span className="delivery-status-pill" data-tone={clientLeadDeliveryTone(lead)}>
-                                        {humanize(lead.delivery_status || (lead.block_reason ? "blocked" : "pending"))}
-                                      </span>
-                                      <small>{deliveryStatusDetail(lead)}</small>
-                                      {lead.last_delivery_error || lead.block_reason ? (
-                                        <p>{lead.last_delivery_error || lead.block_reason}</p>
-                                      ) : null}
-                                    </div>
-                                  </td>
-                                  <td data-label="Actions">
-                                    <div className="delivery-row-actions">
-                                      {waLink ? (
-                                        <a className="ct-btn ct-btn-ghost delivery-action-link" href={waLink} target="_blank" rel="noreferrer">
-                                          <ArrowSquareOut size={14} weight="bold" />
-                                          Chat
-                                        </a>
-                                      ) : null}
-                                      <button type="button" className="ct-btn ct-btn-ghost" onClick={() => onCopyLead(lead)}>
-                                        <Copy size={14} weight="bold" />
-                                        Copy
-                                      </button>
-                                      <button
-                                        type="button"
-                                        className="ct-btn ct-btn-ghost"
-                                        disabled={actionBusy === `delivery-copy-${lead.id}`}
-                                        onClick={() => onCopyLeadAll(lead)}
-                                      >
-                                        {actionBusy === `delivery-copy-${lead.id}` ? "Copying..." : "Copy all"}
-                                      </button>
-                                      <button
-                                        type="button"
-                                        className="ct-btn ct-btn-ghost"
-                                        disabled={!retryable || actionBusy === `delivery-retry-${lead.id}`}
-                                        onClick={() => onRetryLead(lead)}
-                                      >
-                                        <ArrowsClockwise size={14} weight="bold" />
-                                        {actionBusy === `delivery-retry-${lead.id}` ? "Retrying..." : "Retry"}
-                                      </button>
-                                    </div>
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
+                      <div className="delivery-sheet-lead-list">
+                        {section.leads.map((lead) => {
+                          const waLink = lead.wa_link || buildWaLink(lead.phone_number);
+                          const retryable = isRetryableClientLead(lead);
+                          const rawFields = deliveryRawFields(lead);
+                          return (
+                            <article className="delivery-sheet-lead-card" data-tone={clientLeadDeliveryTone(lead)} key={lead.id}>
+                              <header className="delivery-sheet-lead-card-head">
+                                <div className="delivery-lead-identity">
+                                  <span>Row {lead.row_number} · {clientLeadAgeText(lead)}</span>
+                                  <strong>{deliveryLeadTitle(lead)}</strong>
+                                  <small>{deliveryLeadSubtitle(lead)}</small>
+                                </div>
+                                <div className="delivery-status-cell">
+                                  <span className="delivery-status-pill" data-tone={clientLeadDeliveryTone(lead)}>
+                                    {humanize(lead.delivery_status || (lead.block_reason ? "blocked" : "pending"))}
+                                  </span>
+                                  <small>{deliveryStatusDetail(lead)}</small>
+                                </div>
+                              </header>
+
+                              <div className="delivery-lead-summary-grid">
+                                {deliveryLeadSummaryFields(lead).map((field) => (
+                                  <div className="delivery-sheet-cell" key={field.label}>
+                                    <strong>{field.label}</strong>
+                                    <span>{field.value}</span>
+                                  </div>
+                                ))}
+                              </div>
+
+                              {lead.notification_text ? (
+                                <p className="delivery-notification-preview">{truncate(lead.notification_text, 220)}</p>
+                              ) : null}
+
+                              {lead.last_delivery_error || lead.block_reason ? (
+                                <p className="delivery-lead-issue">{lead.last_delivery_error || lead.block_reason}</p>
+                              ) : null}
+
+                              <div className="delivery-sheet-lead-card-foot">
+                                <details className="delivery-raw-details">
+                                  <summary>
+                                    Raw row
+                                    <span>{rawFields.length} fields</span>
+                                  </summary>
+                                  <dl>
+                                    {rawFields.map((field) => (
+                                      <div key={field.label}>
+                                        <dt>{field.label}</dt>
+                                        <dd>{field.value || "-"}</dd>
+                                      </div>
+                                    ))}
+                                  </dl>
+                                </details>
+
+                                <div className="delivery-row-actions">
+                                  {waLink ? (
+                                    <a className="ct-btn ct-btn-ghost delivery-action-link" href={waLink} target="_blank" rel="noreferrer">
+                                      <ArrowSquareOut size={14} weight="bold" />
+                                      Chat
+                                    </a>
+                                  ) : null}
+                                  <button type="button" className="ct-btn ct-btn-ghost" onClick={() => onCopyLead(lead)}>
+                                    <Copy size={14} weight="bold" />
+                                    Copy
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="ct-btn ct-btn-ghost"
+                                    disabled={actionBusy === `delivery-copy-${lead.id}`}
+                                    onClick={() => onCopyLeadAll(lead)}
+                                  >
+                                    {actionBusy === `delivery-copy-${lead.id}` ? "Copying..." : "Copy all"}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="ct-btn ct-btn-ghost"
+                                    disabled={!retryable || actionBusy === `delivery-retry-${lead.id}`}
+                                    onClick={() => onRetryLead(lead)}
+                                  >
+                                    <ArrowsClockwise size={14} weight="bold" />
+                                    {actionBusy === `delivery-retry-${lead.id}` ? "Retrying..." : "Retry"}
+                                  </button>
+                                </div>
+                              </div>
+                            </article>
+                          );
+                        })}
                       </div>
                     </section>
                   ))}
@@ -2885,6 +2887,7 @@ type OpsReadinessItem = {
   status: OpsReadinessStatus;
   detail: string;
 };
+type OpsMode = "loading" | "missing" | "blocked" | "review" | "clean";
 
 function PlatformOpsView({
   overview,
@@ -3023,30 +3026,52 @@ function PlatformOpsView({
       updatedAt: call.created_at,
     })),
   ];
+  const overviewLoading = loading && !overview;
+  const overviewMissing = !loading && !overview;
   const operatorActions = [...rawOperatorActions].sort(compareOpsActions);
   const primaryAction = operatorActions[0] ?? null;
-  const opsMode = counts.active_blockers > 0 || operatorActions.some((item) => item.tone === "danger")
-    ? "blocked"
-    : operatorActions.length > 0
-      ? "review"
-      : "clean";
-  const opsHero = opsMode === "blocked"
-    ? {
+  const hasDangerAction = operatorActions.some((item) => item.tone === "danger");
+  let opsMode: OpsMode = "clean";
+  if (overviewLoading) {
+    opsMode = "loading";
+  } else if (overviewMissing) {
+    opsMode = "missing";
+  } else if (counts.active_blockers > 0 || hasDangerAction) {
+    opsMode = "blocked";
+  } else if (operatorActions.length > 0) {
+    opsMode = "review";
+  }
+
+  let opsHero = {
+    label: "State",
+    title: "Clean",
+    detail: "No active platform blockers.",
+  };
+  if (opsMode === "loading") {
+    opsHero = {
+      label: "State",
+      title: "Loading",
+      detail: "Reading platform status before showing blockers.",
+    };
+  } else if (opsMode === "missing") {
+    opsHero = {
+      label: "State",
+      title: "No data",
+      detail: "Refresh platform status before trusting this view.",
+    };
+  } else if (opsMode === "blocked") {
+    opsHero = {
       label: "Next",
       title: primaryAction ? truncate(primaryAction.title, 64) : "Resolve blockers first",
       detail: primaryAction ? truncate(primaryAction.action, 72) : "Clear the blocked queue.",
-    }
-    : opsMode === "review"
-      ? {
-        label: "Next",
-        title: primaryAction ? truncate(primaryAction.title, 64) : "Review pending work",
-        detail: primaryAction ? truncate(primaryAction.action, 72) : "Clear the open queue.",
-      }
-      : {
-        label: "State",
-        title: "Clean",
-        detail: "No active platform blockers.",
-      };
+    };
+  } else if (opsMode === "review") {
+    opsHero = {
+      label: "Next",
+      title: primaryAction ? truncate(primaryAction.title, 64) : "Review pending work",
+      detail: primaryAction ? truncate(primaryAction.action, 72) : "Clear the open queue.",
+    };
+  }
   const metaReadiness: OpsReadinessItem[] = [
     {
       label: "Credentials",
@@ -3108,7 +3133,11 @@ function PlatformOpsView({
       <section className="ops-layout">
         <div className="ops-main-column">
           <OpsPanel eyebrow={<ListChecks size={18} weight="fill" />} title="Action queue" meta={`${operatorActions.length}`}>
-            {operatorActions.length ? (
+            {overviewLoading ? (
+              <OpsEmpty title="Loading platform state" value="..." />
+            ) : overviewMissing ? (
+              <OpsEmpty title="No platform data" value="-" />
+            ) : operatorActions.length ? (
               <div className="ops-action-queue">
                 {operatorActions.slice(0, 5).map((item) => (
                   <OpsActionCard item={item} key={item.id} />
@@ -3443,7 +3472,8 @@ function ObserveRunnerPanel({
               />
             </details>
             <details className="runner-technical">
-              <summary>Tech</summary>
+              <summary>Technical logs</summary>
+              <p className="runner-technical-note">Use these only when the human status above is not enough to debug the runner or LaunchAgent.</p>
               <div className="runner-tail-grid" aria-label="Runner log tails">
                 <RunnerTail title="Latest run tail" text={status?.latest_log_tail || ""} />
                 <RunnerTail title="LaunchAgent stdout" text={status?.launchd_out_tail || ""} />
@@ -3864,7 +3894,7 @@ function RunnerTail({ title, text }: { title: string; text: string }) {
     <section className="workstation-panel runner-tail-panel">
       <div className="workstation-panel-head">
         <div>
-          <span>Log tail</span>
+          <span>Technical tail</span>
           <strong>{title}</strong>
         </div>
       </div>
@@ -3984,6 +4014,12 @@ function WorkstationView({
   const canStopSoloPageWork = activeClient?.work_type === "solo_pagina" && Boolean(automationState?.is_live_working);
   const codexEnabled = Boolean(selectedLead?.codex_enabled);
   const canStartSoloPageWork = activeClient?.work_type === "solo_pagina" && codexEnabled && !soloPageBusy && !workstationClosed;
+  const clientListLoading = loading && clients.length === 0;
+  const clientSummaryText = clientListLoading
+    ? `Loading converted clients in ${funnelLabel}`
+    : clients.length
+      ? `${clients.length} ${clients.length === 1 ? "client" : "clients"} in ${funnelLabel}`
+      : `No converted clients in ${funnelLabel} yet`;
   const workstationStateIsReady = (automationState?.label ?? "").toLowerCase().includes("ready");
   const workstationHasMissingLiveProcess = activeClient?.automation_status === "drafting" || activeClient?.automation_status === "revision_requested"
     ? !automationState?.is_live_working && !automationState?.is_stale
@@ -4158,18 +4194,14 @@ function WorkstationView({
   return (
     <div className="ct-surface workstation-surface">
       <div className="ct-secondary">
-        <p className="ct-secondary-note">
-          {clients.length
-            ? `${clients.length} ${clients.length === 1 ? "client" : "clients"} in ${funnelLabel}`
-            : `No converted clients in ${funnelLabel} yet`}
-        </p>
+        <p className="ct-secondary-note">{clientSummaryText}</p>
       </div>
 
       <div className="ct-workspace workstation-layout">
         <aside className="ct-leads">
           <div className="ct-leads-head">
             <h3>Clients</h3>
-            <p className="ct-leads-summary">{clients.length ? `${clients.length} active` : "Empty"}</p>
+            <p className="ct-leads-summary">{clientListLoading ? "Loading" : clients.length ? `${clients.length} active` : "Empty"}</p>
           </div>
           <div className="ct-leads-list">
             {clients.length ? clients.map((client) => (
@@ -4194,14 +4226,18 @@ function WorkstationView({
                   <small>{client.media_count} media · {client.folder_path}</small>
                 </div>
               </button>
-            )) : (
+            )) : clientListLoading ? (
+              <p className="ct-empty">Loading converted clients...</p>
+            ) : (
               <p className="ct-empty">Convert a paid lead from CRM to open a client workspace.</p>
             )}
           </div>
         </aside>
 
         <section className="ct-detail workstation-detail">
-          {!activeClient ? (
+          {!activeClient && clientListLoading ? (
+            <p className="empty-note">Loading client workspace.</p>
+          ) : !activeClient ? (
             <p className="empty-note">Select a converted client.</p>
           ) : (
             <>
@@ -6480,7 +6516,6 @@ type DeliveryContactGroup = {
 type DeliverySheetLeadSection = {
   source: ClientLeadSource;
   leads: ClientLead[];
-  columns: string[];
 };
 
 function buildDeliveryContactGroups(sources: ClientLeadSource[]): DeliveryContactGroup[] {
@@ -6533,30 +6568,41 @@ function buildDeliverySheetLeadSections(
       return {
         source,
         leads: sourceLeads,
-        columns: deliverySheetColumns(sourceLeads),
       };
     })
     .filter((section) => section.leads.length > 0);
 }
 
-function deliverySheetColumns(leads: ClientLead[]): string[] {
-  const columns: string[] = [];
+type DeliveryRawField = {
+  label: string;
+  value: string;
+};
+
+function deliveryRawFields(lead: ClientLead): DeliveryRawField[] {
+  const fields: DeliveryRawField[] = [];
   const seen = new Set<string>();
-  for (const lead of leads) {
-    for (const rawKey of Object.keys(lead.raw_row ?? {})) {
-      const key = String(rawKey || "").trim();
-      if (!key || seen.has(key)) {
-        continue;
-      }
-      seen.add(key);
-      columns.push(key);
+  for (const [rawKey, rawValue] of Object.entries(lead.raw_row ?? {})) {
+    const label = String(rawKey || "").trim();
+    if (!label || seen.has(label)) {
+      continue;
     }
+    seen.add(label);
+    fields.push({ label, value: formatRawValue(rawValue).trim() });
   }
-  return columns;
+  return fields;
 }
 
-function deliverySheetTableWidth(columnCount: number): number {
-  return Math.max(920, 320 + columnCount * 178);
+function deliveryRawFieldCount(leads: ClientLead[]): number {
+  const fields = new Set<string>();
+  for (const lead of leads) {
+    for (const key of Object.keys(lead.raw_row ?? {})) {
+      const normalized = String(key || "").trim();
+      if (normalized) {
+        fields.add(normalized);
+      }
+    }
+  }
+  return fields.size;
 }
 
 function deliveryContactSourceIdsFor(sources: ClientLeadSource[], selectedSourceId: string | null): string[] {
@@ -6750,6 +6796,31 @@ function firstRawValue(lead: ClientLead, keys: string[]): string {
     }
   }
   return "";
+}
+
+function deliveryLeadTitle(lead: ClientLead): string {
+  return lead.full_name
+    || firstRawValue(lead, ["Nombre", "Name", "nombre", "full_name", "Full name"])
+    || displayLeadPhone(lead.phone_number)
+    || `Row ${lead.row_number}`;
+}
+
+function deliveryLeadSubtitle(lead: ClientLead): string {
+  const parts = [
+    displayLeadPhone(lead.phone_number),
+    lead.email || "",
+    lead.created_time ? shortDate(lead.created_time) : "",
+  ].filter((part) => part && part !== "-");
+  return parts.length ? parts.join(" · ") : "No mapped contact fields";
+}
+
+function deliveryLeadSummaryFields(lead: ClientLead): DeliveryRawField[] {
+  return [
+    { label: "Phone", value: displayLeadPhone(lead.phone_number) },
+    { label: "Email", value: lead.email || "-" },
+    { label: "Created", value: lead.created_time ? shortDate(lead.created_time) : clientLeadAgeText(lead) },
+    { label: "Attempts", value: String(lead.delivery_attempts) },
+  ];
 }
 
 function deliveryStatusDetail(lead: ClientLead): string {

@@ -17,7 +17,6 @@
   --initial: #2f6f8f;
   --video: #6c6847;
   --calendly: #2f7c67;
-  --booked: #376d45;
   --manual: #a7642b;
   --closed: #65716a;
   --warn: #a7642b;
@@ -27,7 +26,6 @@
   --initial-bg: #edf6fa;
   --video-bg: #f8f5e9;
   --calendly-bg: #edf7f1;
-  --booked-bg: #eef8ee;
   --manual-bg: #fff6ed;
   --closed-bg: #eef0ee;
 }
@@ -326,10 +324,6 @@ button:disabled {
   --tile-color: var(--calendly);
 }
 
-.metric-tile.tone-booked {
-  --tile-color: var(--booked);
-}
-
 .metric-tile.tone-closed {
   --tile-color: var(--closed);
 }
@@ -531,10 +525,6 @@ button:disabled {
   --lead-color: var(--calendly);
 }
 
-.lead-row.stage-booked {
-  --lead-color: var(--booked);
-}
-
 .lead-row.stage-needs_human {
   --lead-color: var(--manual);
 }
@@ -633,12 +623,6 @@ button:disabled {
   border-color: rgba(47, 124, 103, 0.28);
   background: var(--calendly-bg);
   color: var(--accent-dark);
-}
-
-.stage-badge.booked {
-  border-color: rgba(55, 109, 69, 0.28);
-  background: var(--booked-bg);
-  color: var(--booked);
 }
 
 .stage-badge.closed,
@@ -1393,7 +1377,6 @@ button:disabled {
   --initial: #0f8f7a;
   --video: #a86428;
   --calendly: #0f8f7a;
-  --booked: #1e7a4e;
   --manual: #a86428;
   --closed: #5f7f74;
   --warn: #a86428;
@@ -1403,7 +1386,6 @@ button:disabled {
   --initial-bg: rgba(15, 143, 122, 0.1);
   --video-bg: rgba(168, 100, 40, 0.12);
   --calendly-bg: rgba(15, 143, 122, 0.12);
-  --booked-bg: rgba(30, 122, 78, 0.12);
   --manual-bg: rgba(168, 100, 40, 0.12);
   --closed-bg: rgba(95, 127, 116, 0.12);
 }
@@ -2713,6 +2695,11 @@ body {
   background: linear-gradient(135deg, #3b260d 0%, #10201c 72%);
 }
 
+#contadoresView .ops-toolbar[data-mode="loading"],
+#contadoresView .ops-toolbar[data-mode="missing"] {
+  background: linear-gradient(135deg, #20312d 0%, #10201c 72%);
+}
+
 #contadoresView .ops-toolbar-main {
   min-width: 0;
   display: grid;
@@ -3550,6 +3537,12 @@ body {
   cursor: pointer;
   color: var(--ct-ink-muted);
   font: 700 12px/1 var(--font-sans);
+}
+
+#contadoresView .runner-technical-note {
+  margin: 10px 0 12px;
+  color: var(--ct-ink-soft);
+  font: 600 12px/1.4 var(--font-sans);
 }
 
 #contadoresView .runner-visual-feed {
@@ -5920,70 +5913,6 @@ body {
   font: 800 10px/1 var(--font-mono);
 }
 
-#contadoresView .delivery-table-wrap {
-  width: 100%;
-  max-width: 100%;
-  flex: 1 1 auto;
-  min-height: 0;
-  min-width: 0;
-  overflow: auto;
-  background: var(--ct-surface);
-  border-top: 1px solid var(--ct-line);
-}
-
-#contadoresView .delivery-table {
-  width: 100%;
-  border-collapse: collapse;
-  table-layout: auto;
-}
-
-#contadoresView .delivery-sheet-table {
-  min-width: var(--delivery-table-min-width, 920px);
-}
-
-#contadoresView .delivery-table th,
-#contadoresView .delivery-table td {
-  padding: 12px 10px;
-  border-bottom: 1px solid var(--ct-line-soft);
-  vertical-align: top;
-  text-align: left;
-}
-
-#contadoresView .delivery-table th {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  background: var(--ct-surface);
-  color: var(--ct-ink-muted);
-  font: 800 10px/1 var(--font-mono);
-  letter-spacing: 0;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-#contadoresView .delivery-sheet-table th:not(.delivery-row-number-column):not(.delivery-notification-column):not(.delivery-actions-column),
-#contadoresView .delivery-sheet-table td.delivery-sheet-value-cell {
-  min-width: 150px;
-  max-width: 280px;
-}
-
-#contadoresView .delivery-row-number-column {
-  width: 96px;
-}
-
-#contadoresView .delivery-notification-column {
-  width: 170px;
-}
-
-#contadoresView .delivery-actions-column {
-  width: 230px;
-}
-
-#contadoresView .delivery-table td {
-  color: var(--ct-ink);
-  font: 500 12px/1.35 var(--font-sans);
-}
-
 #contadoresView .delivery-sheet-sections {
   display: grid;
   gap: 18px;
@@ -6043,25 +5972,141 @@ body {
   text-transform: none;
 }
 
-#contadoresView .delivery-sheet-value {
-  display: block;
+#contadoresView .delivery-sheet-lead-list {
+  display: grid;
+  gap: 10px;
   min-width: 0;
-  max-width: 34ch;
-  color: var(--ct-ink);
+}
+
+#contadoresView .delivery-sheet-lead-card {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 13px;
+  border: 1px solid var(--ct-line-soft);
+  border-left: 4px solid var(--ct-accent);
+  border-radius: var(--ct-radius);
+  background: #ffffff;
+}
+
+#contadoresView .delivery-sheet-lead-card[data-tone="success"] {
+  border-left-color: var(--ct-success);
+}
+
+#contadoresView .delivery-sheet-lead-card[data-tone="warn"] {
+  border-left-color: #a16207;
+}
+
+#contadoresView .delivery-sheet-lead-card[data-tone="danger"] {
+  border-left-color: #b91c1c;
+}
+
+#contadoresView .delivery-sheet-lead-card[data-tone="muted"] {
+  border-left-color: var(--ct-ink-soft);
+}
+
+#contadoresView .delivery-sheet-lead-card-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+}
+
+#contadoresView .delivery-lead-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+#contadoresView .delivery-notification-preview {
+  margin: 0;
+  padding: 10px 11px;
+  border-radius: var(--ct-radius-sm);
+  background: var(--ct-surface-2);
+  color: var(--ct-ink-muted);
+  font: 600 12px/1.45 var(--font-sans);
   overflow-wrap: anywhere;
 }
 
-#contadoresView .delivery-sheet-value.empty {
+#contadoresView .delivery-lead-issue {
+  width: max-content;
+  max-width: 100%;
+  margin: 0;
+  padding: 7px 9px;
+  border: 1px solid rgba(190, 18, 60, 0.2);
+  border-radius: var(--ct-radius-sm);
+  background: #fff1f2;
+  color: #9f1239;
+  font: 650 12px/1.35 var(--font-sans);
+  overflow-wrap: anywhere;
+}
+
+#contadoresView .delivery-sheet-lead-card-foot {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+  padding-top: 2px;
+}
+
+#contadoresView .delivery-raw-details {
+  min-width: 0;
+  border: 1px solid var(--ct-line-soft);
+  border-radius: var(--ct-radius-sm);
+  background: var(--ct-surface-2);
+}
+
+#contadoresView .delivery-raw-details summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 32px;
+  padding: 0 9px;
+  cursor: pointer;
+  color: var(--ct-ink-muted);
+  font: 800 10px/1 var(--font-mono);
+  text-transform: uppercase;
+}
+
+#contadoresView .delivery-raw-details summary span {
   color: var(--ct-ink-soft);
+  text-transform: none;
 }
 
-#contadoresView .delivery-table tr:last-child td {
-  border-bottom: 0;
+#contadoresView .delivery-raw-details dl {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0 9px 9px;
 }
 
-#contadoresView .delivery-age-cell,
+#contadoresView .delivery-raw-details dl > div {
+  display: grid;
+  grid-template-columns: minmax(96px, 0.35fr) minmax(0, 1fr);
+  gap: 10px;
+  padding: 8px 0;
+  border-top: 1px solid var(--ct-line-soft);
+}
+
+#contadoresView .delivery-raw-details dt,
+#contadoresView .delivery-raw-details dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+#contadoresView .delivery-raw-details dt {
+  color: var(--ct-ink-muted);
+  font: 800 10px/1.2 var(--font-mono);
+}
+
+#contadoresView .delivery-raw-details dd {
+  color: var(--ct-ink);
+  font: 600 12px/1.35 var(--font-sans);
+}
+
 #contadoresView .delivery-lead-identity,
-#contadoresView .delivery-contact-cell,
 #contadoresView .delivery-sheet-cell,
 #contadoresView .delivery-status-cell,
 #contadoresView .delivery-row-actions {
@@ -6070,9 +6115,7 @@ body {
   min-width: 0;
 }
 
-#contadoresView .delivery-age-cell strong,
 #contadoresView .delivery-lead-identity strong,
-#contadoresView .delivery-contact-cell strong,
 #contadoresView .delivery-sheet-cell strong {
   display: block;
   min-width: 0;
@@ -6081,22 +6124,14 @@ body {
   font: 700 13px/1.25 var(--font-sans);
 }
 
-#contadoresView .delivery-age-cell span,
-#contadoresView .delivery-age-cell small,
 #contadoresView .delivery-lead-identity span,
 #contadoresView .delivery-lead-identity small,
-#contadoresView .delivery-contact-cell span,
-#contadoresView .delivery-sheet-cell span,
-#contadoresView .delivery-sheet-cell small {
+#contadoresView .delivery-sheet-cell span {
   display: block;
   min-width: 0;
   overflow-wrap: anywhere;
   color: var(--ct-ink-muted);
   font: 600 11px/1.25 var(--font-mono);
-}
-
-#contadoresView .delivery-sheet-cell small {
-  color: #9f1239;
 }
 
 #contadoresView .delivery-status-cell small {
@@ -6105,30 +6140,8 @@ body {
   overflow-wrap: anywhere;
 }
 
-#contadoresView .delivery-contact-cell a {
-  width: max-content;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--ct-accent-strong);
-  font: 800 11px/1 var(--font-mono);
-  text-decoration: none;
-}
-
 #contadoresView .delivery-status-cell {
   justify-items: start;
-}
-
-#contadoresView .delivery-status-cell p {
-  max-width: 30ch;
-  margin: 0;
-  padding: 7px 8px;
-  border: 1px solid rgba(190, 18, 60, 0.2);
-  border-radius: var(--ct-radius-sm);
-  background: #fff1f2;
-  color: #9f1239;
-  font: 600 11px/1.35 var(--font-sans);
-  overflow-wrap: anywhere;
 }
 
 #contadoresView .delivery-row-actions {
@@ -7349,62 +7362,17 @@ body {
     justify-self: start;
   }
 
-  #contadoresView .delivery-table-wrap {
-    overflow: visible;
-    border-top: 0;
+  #contadoresView .delivery-sheet-lead-card-head,
+  #contadoresView .delivery-sheet-lead-card-foot {
+    grid-template-columns: 1fr;
   }
 
-  #contadoresView .delivery-table,
-  #contadoresView .delivery-table tbody,
-  #contadoresView .delivery-table tr,
-  #contadoresView .delivery-table td {
-    display: block;
-    width: 100%;
-    min-width: 0;
+  #contadoresView .delivery-lead-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  #contadoresView .delivery-table {
-    border-collapse: separate;
-    border-spacing: 0;
-  }
-
-  #contadoresView .delivery-table thead {
-    display: none;
-  }
-
-  #contadoresView .delivery-table tbody {
-    display: grid;
-    gap: 10px;
-  }
-
-  #contadoresView .delivery-table tr {
-    overflow: hidden;
-    border: 1px solid var(--ct-line);
-    border-radius: var(--ct-radius);
-    background: var(--ct-surface);
-  }
-
-  #contadoresView .delivery-table td {
-    display: grid;
-    grid-template-columns: 92px minmax(0, 1fr);
-    gap: 10px;
-    padding: 11px 12px;
-    border-bottom: 1px solid var(--ct-line-soft);
-  }
-
-  #contadoresView .delivery-table tr:last-child td {
-    border-bottom: 1px solid var(--ct-line-soft);
-  }
-
-  #contadoresView .delivery-table td:last-child {
-    border-bottom: 0;
-  }
-
-  #contadoresView .delivery-table td::before {
-    content: attr(data-label);
-    color: var(--ct-ink-muted);
-    font: 800 10px/1.2 var(--font-mono);
-    text-transform: uppercase;
+  #contadoresView .delivery-raw-details dl > div {
+    grid-template-columns: minmax(86px, 0.4fr) minmax(0, 1fr);
   }
 
   #contadoresView .delivery-row-actions {
@@ -7516,8 +7484,8 @@ body {
     justify-content: stretch;
   }
 
-  #contadoresView .delivery-table td {
+  #contadoresView .delivery-lead-summary-grid,
+  #contadoresView .delivery-raw-details dl > div {
     grid-template-columns: 1fr;
-    gap: 6px;
   }
 }
