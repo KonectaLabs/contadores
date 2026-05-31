@@ -2121,7 +2121,6 @@ export function App() {
         <FunnelSetupView
           funnel={selectedFunnel}
           configPath={funnelConfigPath}
-          setupIssues={selectedFunnelSetupIssues}
           onEdit={openEditFunnel}
         />
         ) : (
@@ -5312,14 +5311,14 @@ function ProfessionalPhotoModal({
 function FunnelSetupView({
   funnel,
   configPath,
-  setupIssues,
   onEdit,
 }: {
   funnel: FunnelDefinition | null;
   configPath: string;
-  setupIssues: string[];
   onEdit: () => void;
 }) {
+  const [showSetupDetails, setShowSetupDetails] = useState(false);
+
   if (!funnel) {
     return (
       <div className="ct-funnel-setup">
@@ -5331,6 +5330,9 @@ function FunnelSetupView({
   const textStrategy = funnel.strategies.find((strategy) => strategy.delivery === "text");
   const mp4Strategy = funnel.strategies.find((strategy) => strategy.delivery === "video");
   const readyItems = buildFunnelReadyItems(funnel);
+  const blockedItems = readyItems.filter((item) => !item.ready);
+  const readyCount = readyItems.length - blockedItems.length;
+  const setupReady = blockedItems.length === 0;
 
   return (
     <section className="ct-funnel-setup" aria-label="Funnel setup">
@@ -5338,66 +5340,105 @@ function FunnelSetupView({
         <div>
           <p className="ct-detail-kicker">Funnel setup</p>
           <h2>{funnel.label}</h2>
-          <p>{setupIssues.length ? "Complete the missing fields before turning this funnel into a live campaign." : "This funnel has the fields needed to sync leads and run the CRM flow."}</p>
+          <p>{setupReady ? "Ready to sync leads and run the CRM flow." : "Fix the missing fields before turning this funnel into a live campaign."}</p>
         </div>
         <button type="button" className="ct-btn ct-btn-primary" onClick={onEdit}>Edit funnel</button>
       </header>
 
-      <div className="ct-setup-checklist" aria-label="Setup checklist">
-        {readyItems.map((item) => (
-          <div className={`ct-setup-check ${item.ready ? "ready" : "blocked"}`} key={item.label}>
-            {item.ready ? <Check size={16} weight="bold" /> : <WarningCircle size={16} weight="bold" />}
-            <span>{item.label}</span>
+      <div className="ct-setup-overview" data-ready={setupReady ? "true" : "false"}>
+        <div>
+          <span>{setupReady ? "Ready" : "Needs setup"}</span>
+          <strong>{readyCount}/{readyItems.length}</strong>
+        </div>
+        <div className="ct-setup-next">
+          {setupReady ? (
+            <p>No blockers. Keep details closed unless you are changing the funnel.</p>
+          ) : (
+            blockedItems.slice(0, 4).map((item) => (
+              <span key={item.label}>
+                <WarningCircle size={14} weight="bold" />
+                {item.label}
+              </span>
+            ))
+          )}
+        </div>
+      </div>
+
+      <section
+        className="ct-setup-details"
+        data-open={showSetupDetails ? "true" : "false"}
+        onClick={(event) => {
+          const target = event.target as Element;
+          if (target === event.currentTarget || target.closest(".ct-setup-details-summary")) {
+            setShowSetupDetails((open) => !open);
+          }
+        }}
+      >
+        <button
+          type="button"
+          className="ct-setup-details-summary"
+          aria-expanded={showSetupDetails}
+        >
+          Setup details
+          <span>{blockedItems.length ? `${blockedItems.length} blocked` : "All checks ready"}</span>
+        </button>
+
+        <div className="ct-setup-checklist" aria-label="Setup checklist">
+          {readyItems.map((item) => (
+            <div className={`ct-setup-check ${item.ready ? "ready" : "blocked"}`} key={item.label}>
+              {item.ready ? <Check size={16} weight="bold" /> : <WarningCircle size={16} weight="bold" />}
+              <span>{item.label}</span>
+            </div>
+          ))}
+        </div>
+
+        <div className="ct-funnel-grid">
+          <article className="ct-funnel-card">
+            <span>Source</span>
+            <strong>{funnel.sheet_url ? "Sheet connected" : "Missing sheet"}</strong>
+            <p>{funnel.sheet_url ? "Sheet connected" : "No sheet URL yet"}{funnel.sheet_gid ? ` · gid ${funnel.sheet_gid}` : ""}</p>
+          </article>
+          <article className="ct-funnel-card">
+            <span>Polling</span>
+            <strong>{funnel.enabled ? "Enabled" : "Paused"}</strong>
+            <p>Every {funnel.sheet_poll_seconds} seconds</p>
+          </article>
+          <article className="ct-funnel-card">
+            <span>Offer</span>
+            <strong>{textStrategy ? "Text offer" : mp4Strategy ? "Media offer" : "Not configured"}</strong>
+            <p>{textStrategy?.message_text || mp4Strategy?.media_path || "-"}</p>
+          </article>
+          <article className="ct-funnel-card">
+            <span>Meeting</span>
+            <strong>{funnel.calendly_base_url ? "Ready" : "Missing"}</strong>
+            <p>{funnel.calendly_base_url || "-"}</p>
+          </article>
+        </div>
+
+        <section className="ct-funnel-copy">
+          <h3>Sequence copy</h3>
+          <div className="ct-copy-row">
+            <span>Opener template</span>
+            {funnel.opener_template_name ? <code>{funnel.opener_template_name}</code> : null}
+            <blockquote>{funnel.opener_text}</blockquote>
           </div>
-        ))}
-      </div>
+          <div className="ct-copy-row">
+            <span>Operator ping template</span>
+            {funnel.manual_ping_template_name ? <code>{funnel.manual_ping_template_name}</code> : null}
+            <blockquote>{funnel.manual_ping_text}</blockquote>
+          </div>
+          <div className="ct-copy-row">
+            <span>Offer message</span>
+            <blockquote>{textStrategy?.message_text || funnel.loom_intro_text || "-"}</blockquote>
+          </div>
+          <div className="ct-copy-row">
+            <span>Meeting handoff</span>
+            <blockquote>{funnel.calendly_intro_text}</blockquote>
+          </div>
+        </section>
 
-      <div className="ct-funnel-grid">
-        <article className="ct-funnel-card">
-          <span>Source</span>
-          <strong>{funnel.sheet_url ? "Sheet connected" : "Missing sheet"}</strong>
-          <p>{funnel.sheet_url ? "Sheet connected" : "No sheet URL yet"}{funnel.sheet_gid ? ` · gid ${funnel.sheet_gid}` : ""}</p>
-        </article>
-        <article className="ct-funnel-card">
-          <span>Polling</span>
-          <strong>{funnel.enabled ? "Enabled" : "Paused"}</strong>
-          <p>Every {funnel.sheet_poll_seconds} seconds</p>
-        </article>
-        <article className="ct-funnel-card">
-          <span>Offer</span>
-          <strong>{textStrategy ? "Text offer" : mp4Strategy ? "Media offer" : "Not configured"}</strong>
-          <p>{textStrategy?.message_text || mp4Strategy?.media_path || "-"}</p>
-        </article>
-        <article className="ct-funnel-card">
-          <span>Meeting</span>
-          <strong>{funnel.calendly_base_url ? "Ready" : "Missing"}</strong>
-          <p>{funnel.calendly_base_url || "-"}</p>
-        </article>
-      </div>
-
-      <section className="ct-funnel-copy">
-        <h3>Sequence copy</h3>
-        <div className="ct-copy-row">
-          <span>Opener template</span>
-          {funnel.opener_template_name ? <code>{funnel.opener_template_name}</code> : null}
-          <blockquote>{funnel.opener_text}</blockquote>
-        </div>
-        <div className="ct-copy-row">
-          <span>Operator ping template</span>
-          {funnel.manual_ping_template_name ? <code>{funnel.manual_ping_template_name}</code> : null}
-          <blockquote>{funnel.manual_ping_text}</blockquote>
-        </div>
-        <div className="ct-copy-row">
-          <span>Offer message</span>
-          <blockquote>{textStrategy?.message_text || funnel.loom_intro_text || "-"}</blockquote>
-        </div>
-        <div className="ct-copy-row">
-          <span>Meeting handoff</span>
-          <blockquote>{funnel.calendly_intro_text}</blockquote>
-        </div>
+        <p className="ct-config-path">Config file: {configPath || "data/funnels.json"}</p>
       </section>
-
-      <p className="ct-config-path">Config file: {configPath || "data/funnels.json"}</p>
     </section>
   );
 }
@@ -5439,6 +5480,7 @@ function FunnelEditorDrawer({
   const videoStrategy = draft.strategies.find((strategy) => strategy.delivery === "video");
   const primaryStrategy = textStrategy ?? videoStrategy ?? draft.strategies[0];
   const templateChoices = buildTemplateChoices(draft);
+  const [showFunnelDetails, setShowFunnelDetails] = useState(false);
 
   function update<K extends keyof FunnelDefinition>(key: K, value: FunnelDefinition[K]) {
     setDraft((current) => ({ ...current, [key]: value }));
@@ -5556,173 +5598,195 @@ function FunnelEditorDrawer({
             </div>
           </label>
 
-          <div className="ct-field-grid">
-            <label className="ct-field">
-              <span>Offer Price USD</span>
-              <input type="number" min="0" value={draft.offer_price_usd} onChange={(event) => update("offer_price_usd", Number(event.target.value) || 0)} />
-            </label>
-            <label className="ct-field">
-              <span>Payment Model</span>
-              <select value={draft.offer_payment_model} onChange={(event) => update("offer_payment_model", event.target.value as FunnelDefinition["offer_payment_model"])}>
-                <option value="monthly">Monthly</option>
-                <option value="one_time">One time</option>
-                <option value="custom">Custom</option>
-              </select>
-            </label>
-          </div>
-
-          <label className="ct-field">
-            <span>Offer Summary</span>
-            <textarea value={draft.offer_summary} onChange={(event) => update("offer_summary", event.target.value)} rows={3} />
-          </label>
-
-          <div className="ct-field-grid">
-            <label className="ct-field">
-              <span>Offer Version</span>
-              <input value={draft.offer_version} onChange={(event) => update("offer_version", event.target.value)} />
-            </label>
-            <label className="ct-field">
-              <span>Campaign Count</span>
-              <input type="number" min="0" value={draft.default_campaign_count} onChange={(event) => update("default_campaign_count", Number(event.target.value) || 0)} />
-            </label>
-          </div>
-
-          <div className="ct-field-grid">
-            <label className="ct-field">
-              <span>Daily Ad Budget USD</span>
-              <input
-                type="number"
-                min="0"
-                value={draft.default_daily_ad_budget_usd ?? ""}
-                onChange={(event) => update("default_daily_ad_budget_usd", event.target.value ? Number(event.target.value) : null)}
-              />
-            </label>
-            <label className="ct-field ct-field-toggle">
-              <span>Website Included</span>
-              <div className="ct-toggle-row">
-                <input type="checkbox" checked={draft.offer_includes_website} onChange={(event) => update("offer_includes_website", event.target.checked)} />
-                <p className="ct-field-hint">Used by the bot and future campaign briefs.</p>
-              </div>
-            </label>
-          </div>
-
-          <label className="ct-field">
-            <span>Sheet Poll Seconds</span>
-            <input type="number" min="30" value={draft.sheet_poll_seconds} onChange={(event) => update("sheet_poll_seconds", Number(event.target.value) || 30)} />
-          </label>
-
           <label className="ct-field">
             <span>Sheet URL</span>
             <input value={draft.sheet_url ?? ""} onChange={(event) => update("sheet_url", event.target.value || null)} />
           </label>
 
-          <div className="ct-field-grid">
-            <label className="ct-field">
-              <span>Sheet GID</span>
-              <input value={draft.sheet_gid ?? ""} onChange={(event) => update("sheet_gid", event.target.value || null)} />
-            </label>
-            <label className="ct-field">
-              <span>Sheet Source Filter</span>
-              <input value={draft.sheet_source_filter ?? ""} onChange={(event) => update("sheet_source_filter", event.target.value || null)} />
-            </label>
-          </div>
-
-          <TemplateSelectField
-            label="Opener Template"
-            value={draft.opener_template_name ?? ""}
-            text={draft.opener_text}
-            choices={templateChoices}
-            onChange={(value) => updateTemplateChoice("opener_template_name", "opener_text", value)}
-          />
           <label className="ct-field">
-            <span>Opener Text</span>
-            <textarea value={draft.opener_text} onChange={(event) => update("opener_text", event.target.value)} rows={3} />
+            <span>Sheet GID</span>
+            <input value={draft.sheet_gid ?? ""} onChange={(event) => update("sheet_gid", event.target.value || null)} />
           </label>
 
-          <TemplateSelectField
-            label="Follow-up Template"
-            value={draft.opener_followup_template_name ?? ""}
-            text={draft.opener_followup_text}
-            choices={templateChoices}
-            onChange={(value) => updateTemplateChoice("opener_followup_template_name", "opener_followup_text", value)}
-          />
-          <label className="ct-field">
-            <span>Follow-up Text</span>
-            <textarea value={draft.opener_followup_text} onChange={(event) => update("opener_followup_text", event.target.value)} rows={3} />
-          </label>
+          <section
+            className="ct-drawer-details"
+            data-open={showFunnelDetails ? "true" : "false"}
+            onClick={(event) => {
+              const target = event.target as Element;
+              if (target === event.currentTarget || target.closest(".ct-drawer-details-summary")) {
+                setShowFunnelDetails((open) => !open);
+              }
+            }}
+          >
+            <button
+              type="button"
+              className="ct-drawer-details-summary"
+              aria-expanded={showFunnelDetails}
+            >
+              Funnel details
+              <span>Copy, pricing, routing</span>
+            </button>
+            <div className="ct-drawer-details-body">
+              <div className="ct-field-grid">
+                <label className="ct-field">
+                  <span>Offer Price USD</span>
+                  <input type="number" min="0" value={draft.offer_price_usd} onChange={(event) => update("offer_price_usd", Number(event.target.value) || 0)} />
+                </label>
+                <label className="ct-field">
+                  <span>Payment Model</span>
+                  <select value={draft.offer_payment_model} onChange={(event) => update("offer_payment_model", event.target.value as FunnelDefinition["offer_payment_model"])}>
+                    <option value="monthly">Monthly</option>
+                    <option value="one_time">One time</option>
+                    <option value="custom">Custom</option>
+                  </select>
+                </label>
+              </div>
 
-          <TemplateSelectField
-            label="Operator Ping Template"
-            value={draft.manual_ping_template_name ?? ""}
-            text={draft.manual_ping_text}
-            choices={templateChoices}
-            onChange={(value) => updateTemplateChoice("manual_ping_template_name", "manual_ping_text", value)}
-          />
-          <label className="ct-field">
-            <span>Operator Ping Text</span>
-            <textarea value={draft.manual_ping_text} onChange={(event) => update("manual_ping_text", event.target.value)} rows={3} />
-          </label>
+              <label className="ct-field">
+                <span>Offer Summary</span>
+                <textarea value={draft.offer_summary} onChange={(event) => update("offer_summary", event.target.value)} rows={3} />
+              </label>
 
-          <label className="ct-field">
-            <span>Pre-offer Text</span>
-            <textarea value={draft.loom_intro_text} onChange={(event) => update("loom_intro_text", event.target.value)} rows={4} />
-          </label>
+              <div className="ct-field-grid">
+                <label className="ct-field">
+                  <span>Offer Version</span>
+                  <input value={draft.offer_version} onChange={(event) => update("offer_version", event.target.value)} />
+                </label>
+                <label className="ct-field">
+                  <span>Campaign Count</span>
+                  <input type="number" min="0" value={draft.default_campaign_count} onChange={(event) => update("default_campaign_count", Number(event.target.value) || 0)} />
+                </label>
+              </div>
+
+              <div className="ct-field-grid">
+                <label className="ct-field">
+                  <span>Daily Ad Budget USD</span>
+                  <input
+                    type="number"
+                    min="0"
+                    value={draft.default_daily_ad_budget_usd ?? ""}
+                    onChange={(event) => update("default_daily_ad_budget_usd", event.target.value ? Number(event.target.value) : null)}
+                  />
+                </label>
+                <label className="ct-field ct-field-toggle">
+                  <span>Website Included</span>
+                  <div className="ct-toggle-row">
+                    <input type="checkbox" checked={draft.offer_includes_website} onChange={(event) => update("offer_includes_website", event.target.checked)} />
+                    <p className="ct-field-hint">Used by the bot and future campaign briefs.</p>
+                  </div>
+                </label>
+              </div>
+
+              <div className="ct-field-grid">
+                <label className="ct-field">
+                  <span>Sheet Poll Seconds</span>
+                  <input type="number" min="30" value={draft.sheet_poll_seconds} onChange={(event) => update("sheet_poll_seconds", Number(event.target.value) || 30)} />
+                </label>
+                <label className="ct-field">
+                  <span>Sheet Source Filter</span>
+                  <input value={draft.sheet_source_filter ?? ""} onChange={(event) => update("sheet_source_filter", event.target.value || null)} />
+                </label>
+              </div>
+
+              <TemplateSelectField
+                label="Opener Template"
+                value={draft.opener_template_name ?? ""}
+                text={draft.opener_text}
+                choices={templateChoices}
+                onChange={(value) => updateTemplateChoice("opener_template_name", "opener_text", value)}
+              />
+              <label className="ct-field">
+                <span>Opener Text</span>
+                <textarea value={draft.opener_text} onChange={(event) => update("opener_text", event.target.value)} rows={3} />
+              </label>
+
+              <TemplateSelectField
+                label="Follow-up Template"
+                value={draft.opener_followup_template_name ?? ""}
+                text={draft.opener_followup_text}
+                choices={templateChoices}
+                onChange={(value) => updateTemplateChoice("opener_followup_template_name", "opener_followup_text", value)}
+              />
+              <label className="ct-field">
+                <span>Follow-up Text</span>
+                <textarea value={draft.opener_followup_text} onChange={(event) => update("opener_followup_text", event.target.value)} rows={3} />
+              </label>
+
+              <TemplateSelectField
+                label="Operator Ping Template"
+                value={draft.manual_ping_template_name ?? ""}
+                text={draft.manual_ping_text}
+                choices={templateChoices}
+                onChange={(value) => updateTemplateChoice("manual_ping_template_name", "manual_ping_text", value)}
+              />
+              <label className="ct-field">
+                <span>Operator Ping Text</span>
+                <textarea value={draft.manual_ping_text} onChange={(event) => update("manual_ping_text", event.target.value)} rows={3} />
+              </label>
+
+              <label className="ct-field">
+                <span>Pre-offer Text</span>
+                <textarea value={draft.loom_intro_text} onChange={(event) => update("loom_intro_text", event.target.value)} rows={4} />
+              </label>
+
+              {videoStrategy ? (
+                <label className="ct-field">
+                  <span>MP4 Path</span>
+                  <input value={videoStrategy.media_path ?? ""} onChange={(event) => updateStrategyMediaPath(event.target.value)} />
+                </label>
+              ) : null}
+
+              <div className="ct-strategy-edit-list">
+                {draft.strategies.map((strategy) => (
+                  <article className="ct-strategy-edit-row" key={strategy.id}>
+                    <div>
+                      <strong>{strategy.label || formatStrategyLabel(strategy.id)}</strong>
+                      <span>{strategy.id} · {strategy.delivery}</span>
+                    </div>
+                    <label className="ct-field">
+                      <span>Weight</span>
+                      <input type="number" min="0" max="100" value={strategy.weight} onChange={(event) => updateStrategyWeight(strategy.id, event.target.value)} />
+                    </label>
+                    <button
+                      type="button"
+                      className="ct-btn ct-btn-ghost btn-destructive"
+                      disabled={draft.strategies.length <= 1}
+                      onClick={() => deleteStrategy(strategy.id)}
+                    >
+                      Delete
+                    </button>
+                  </article>
+                ))}
+              </div>
+
+              <label className="ct-field">
+                <span>Offer Check Text</span>
+                <input value={draft.video_check_text} onChange={(event) => update("video_check_text", event.target.value)} />
+              </label>
+
+              <label className="ct-field">
+                <span>Meeting URL</span>
+                <input value={draft.calendly_base_url} onChange={(event) => update("calendly_base_url", event.target.value)} />
+              </label>
+              <label className="ct-field">
+                <span>Alert Emails</span>
+                <input value={draft.alert_emails.join(", ")} onChange={(event) => update("alert_emails", event.target.value.split(",").map((item) => item.trim()))} />
+              </label>
+              <label className="ct-field">
+                <span>WhatsApp Ad Source IDs</span>
+                <input value={draft.whatsapp_referral_source_ids.join(", ")} onChange={(event) => update("whatsapp_referral_source_ids", event.target.value.split(",").map((item) => item.trim()))} />
+              </label>
+            </div>
+          </section>
 
           <label className="ct-field">
             <span>Primary Offer Text</span>
             <textarea value={primaryStrategy?.message_text ?? ""} onChange={(event) => updateStrategyMessageText(primaryStrategy?.id, event.target.value)} rows={4} />
           </label>
 
-          {videoStrategy ? (
-            <label className="ct-field">
-              <span>MP4 Path</span>
-              <input value={videoStrategy.media_path ?? ""} onChange={(event) => updateStrategyMediaPath(event.target.value)} />
-            </label>
-          ) : null}
-
-          <div className="ct-strategy-edit-list">
-            {draft.strategies.map((strategy) => (
-              <article className="ct-strategy-edit-row" key={strategy.id}>
-                <div>
-                  <strong>{strategy.label || formatStrategyLabel(strategy.id)}</strong>
-                  <span>{strategy.id} · {strategy.delivery}</span>
-                </div>
-                <label className="ct-field">
-                  <span>Weight</span>
-                  <input type="number" min="0" max="100" value={strategy.weight} onChange={(event) => updateStrategyWeight(strategy.id, event.target.value)} />
-                </label>
-                <button
-                  type="button"
-                  className="ct-btn ct-btn-ghost btn-destructive"
-                  disabled={draft.strategies.length <= 1}
-                  onClick={() => deleteStrategy(strategy.id)}
-                >
-                  Delete
-                </button>
-              </article>
-            ))}
-          </div>
-
-          <label className="ct-field">
-            <span>Offer Check Text</span>
-            <input value={draft.video_check_text} onChange={(event) => update("video_check_text", event.target.value)} />
-          </label>
-
           <label className="ct-field">
             <span>Meeting Text</span>
             <textarea value={draft.calendly_intro_text} onChange={(event) => update("calendly_intro_text", event.target.value)} rows={4} />
-          </label>
-          <label className="ct-field">
-            <span>Legacy Scheduling URL</span>
-            <input value={draft.calendly_base_url} onChange={(event) => update("calendly_base_url", event.target.value)} />
-          </label>
-          <label className="ct-field">
-            <span>Alert Emails</span>
-            <input value={draft.alert_emails.join(", ")} onChange={(event) => update("alert_emails", event.target.value.split(",").map((item) => item.trim()))} />
-          </label>
-          <label className="ct-field">
-            <span>WhatsApp Ad Source IDs</span>
-            <input value={draft.whatsapp_referral_source_ids.join(", ")} onChange={(event) => update("whatsapp_referral_source_ids", event.target.value.split(",").map((item) => item.trim()))} />
           </label>
         </div>
 
@@ -6472,6 +6536,7 @@ function ConfigDrawer({
     strategy_weights: {} as StrategyWeights,
   });
   const [draftReady, setDraftReady] = useState(false);
+  const [showAdvancedControls, setShowAdvancedControls] = useState(false);
 
   useEffect(() => {
     if (!config || draftReady) {
@@ -6523,8 +6588,8 @@ function ConfigDrawer({
       <form className="ct-drawer-panel" role="dialog" aria-modal="false" aria-labelledby="ctDrawerTitle" onSubmit={handleSubmit}>
         <header className="ct-drawer-head">
           <div>
-            <p className="ct-drawer-kicker">Automation Config</p>
-            <h3 id="ctDrawerTitle">Rollout Controls</h3>
+            <p className="ct-drawer-kicker">Runtime</p>
+            <h3 id="ctDrawerTitle">Automation controls</h3>
             <p className="ct-drawer-note">
               Sheet: {config?.last_sheet_sync_status || "idle"} · Ready: {runtime?.ready ? "yes" : "review"}
             </p>
@@ -6539,22 +6604,43 @@ function ConfigDrawer({
               <p className="ct-field-hint">When disabled, no automatic opener/automation runs.</p>
             </div>
           </label>
-          <label className="ct-field">
-            <span>Legacy Scheduling URL</span>
-            <input value={draft.calendly_base_url} onChange={(event) => setDraft((current) => ({ ...current, calendly_base_url: event.target.value }))} />
-          </label>
-          <label className="ct-field">
-            <span>Alert Emails</span>
-            <input value={draft.alert_emails} onChange={(event) => setDraft((current) => ({ ...current, alert_emails: event.target.value }))} />
-          </label>
-          <StrategyStatsPanel
-            items={strategyStats}
-            weights={draft.strategy_weights}
-            onWeightChange={updateStrategyWeight}
-          />
+          <section
+            className="ct-drawer-details"
+            data-open={showAdvancedControls ? "true" : "false"}
+            onClick={(event) => {
+              const target = event.target as Element;
+              if (target === event.currentTarget || target.closest(".ct-drawer-details-summary")) {
+                setShowAdvancedControls((open) => !open);
+              }
+            }}
+          >
+            <button
+              type="button"
+              className="ct-drawer-details-summary"
+              aria-expanded={showAdvancedControls}
+            >
+              Advanced controls
+              <span>Meeting, alerts, weights</span>
+            </button>
+            <div className="ct-drawer-details-body">
+              <label className="ct-field">
+                <span>Meeting URL</span>
+                <input value={draft.calendly_base_url} onChange={(event) => setDraft((current) => ({ ...current, calendly_base_url: event.target.value }))} />
+              </label>
+              <label className="ct-field">
+                <span>Alert Emails</span>
+                <input value={draft.alert_emails} onChange={(event) => setDraft((current) => ({ ...current, alert_emails: event.target.value }))} />
+              </label>
+              <StrategyStatsPanel
+                items={strategyStats}
+                weights={draft.strategy_weights}
+                onWeightChange={updateStrategyWeight}
+              />
+            </div>
+          </section>
         </div>
         <footer className="ct-drawer-foot">
-          <button type="submit" className="ct-btn ct-btn-primary" disabled={saving || !config}>{saving ? "Saving..." : "Save Config"}</button>
+          <button type="submit" className="ct-btn ct-btn-primary" disabled={saving || !config}>{saving ? "Saving..." : "Save controls"}</button>
         </footer>
       </form>
     </aside>

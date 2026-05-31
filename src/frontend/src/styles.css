@@ -2282,6 +2282,8 @@ body {
 }
 
 #contadoresView .ct-setup-callout,
+#contadoresView .ct-setup-overview,
+#contadoresView .ct-setup-details,
 #contadoresView .ct-setup-checklist {
   border: 1px solid var(--ct-line);
   border-radius: var(--ct-radius);
@@ -2309,6 +2311,107 @@ body {
   overflow-wrap: anywhere;
   color: var(--ct-ink-muted);
   font: 500 12px/1.35 var(--font-sans);
+}
+
+#contadoresView .ct-setup-overview {
+  display: grid;
+  grid-template-columns: minmax(160px, 0.22fr) minmax(0, 1fr);
+  gap: 1px;
+  overflow: hidden;
+  background: var(--ct-line);
+}
+
+#contadoresView .ct-setup-overview > div {
+  min-width: 0;
+  padding: 16px;
+  background: var(--ct-surface);
+}
+
+#contadoresView .ct-setup-overview > div:first-child {
+  display: grid;
+  align-content: center;
+  gap: 5px;
+}
+
+#contadoresView .ct-setup-overview span,
+#contadoresView .ct-setup-details-summary span {
+  color: var(--ct-ink-muted);
+  font: 800 10px/1 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+#contadoresView .ct-setup-overview strong {
+  color: var(--ct-ink);
+  font: 800 28px/1 var(--font-sans);
+}
+
+#contadoresView .ct-setup-overview[data-ready="true"] strong {
+  color: var(--ct-accent-strong);
+}
+
+#contadoresView .ct-setup-next {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+#contadoresView .ct-setup-next p {
+  margin: 0;
+  color: var(--ct-ink-muted);
+  font: 600 12px/1.4 var(--font-sans);
+}
+
+#contadoresView .ct-setup-next span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid rgba(180, 83, 9, 0.22);
+  border-radius: var(--ct-radius-sm);
+  background: var(--ct-warn-bg);
+  color: var(--ct-warn);
+}
+
+#contadoresView .ct-setup-details {
+  display: grid;
+  overflow: hidden;
+}
+
+#contadoresView .ct-setup-details-summary {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 14px 16px;
+  border: 0;
+  background: transparent;
+  color: var(--ct-ink);
+  text-align: left;
+  font: 800 13px/1.2 var(--font-sans);
+  cursor: pointer;
+}
+
+#contadoresView .ct-setup-details[data-open="true"] {
+  gap: 12px;
+  padding-bottom: 16px;
+}
+
+#contadoresView .ct-setup-details[data-open="true"] .ct-setup-details-summary {
+  border-bottom: 1px solid var(--ct-line-soft);
+}
+
+#contadoresView .ct-setup-details[data-open="false"] > *:not(.ct-setup-details-summary) {
+  display: none;
+}
+
+#contadoresView .ct-setup-details[data-open="true"] > *:not(.ct-setup-details-summary) {
+  margin-inline: 16px;
 }
 
 #contadoresView .ct-setup-checklist {
@@ -5030,6 +5133,51 @@ body {
   background: var(--ct-surface-2);
 }
 
+#contadoresView .ct-drawer-details {
+  border: 1px solid var(--ct-line-soft);
+  border-radius: var(--ct-radius);
+  background: var(--ct-surface-2);
+  overflow: hidden;
+}
+
+#contadoresView .ct-drawer-details-summary {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 12px;
+  border: 0;
+  background: transparent;
+  color: var(--ct-ink);
+  text-align: left;
+  font: 800 12px/1.2 var(--font-sans);
+  cursor: pointer;
+}
+
+#contadoresView .ct-drawer-details-summary span {
+  color: var(--ct-ink-muted);
+  font: 800 9px/1 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+#contadoresView .ct-drawer-details[data-open="true"] .ct-drawer-details-summary {
+  border-bottom: 1px solid var(--ct-line-soft);
+}
+
+#contadoresView .ct-drawer-details[data-open="false"] > .ct-drawer-details-body {
+  display: none;
+}
+
+#contadoresView .ct-drawer-details-body {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+}
+
 #contadoresView .ct-field {
   display: grid;
   gap: 6px;
@@ -7413,6 +7561,10 @@ body {
     display: grid;
   }
 
+  #contadoresView .ct-setup-overview {
+    grid-template-columns: 1fr;
+  }
+
   #contadoresView .ct-setup-callout {
     grid-template-columns: auto minmax(0, 1fr);
   }
@@ -7663,6 +7815,7 @@ body {
   }
 
   #contadoresView .ct-funnel-grid,
+  #contadoresView .ct-setup-overview,
   #contadoresView .ct-setup-checklist,
   #contadoresView .ct-field-grid {
     grid-template-columns: 1fr;
