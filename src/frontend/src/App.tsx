@@ -464,11 +464,9 @@ export function App() {
   );
   const selectedLeadCustomBlockReason = customMessageBlockReason(selectedLead);
   const bulkCustomBlockedCount = selectedVisibleLeads.filter((lead) => customMessageBlockReason(lead)).length;
-  const bulkClosedCount = selectedVisibleLeads.filter((lead) => lead.terminal_state === "closed" || lead.stage === "closed").length;
-  const bulkConvertedCount = selectedVisibleLeads.filter(
-    (lead) => lead.pipeline_stage === "converted" || lead.stage === "booked",
-  ).length;
-  const bulkArchivedCount = selectedVisibleLeads.filter((lead) => lead.terminal_state === "archived" || lead.stage === "archived").length;
+  const bulkClosedCount = selectedVisibleLeads.filter(isLeadClosed).length;
+  const bulkConvertedCount = selectedVisibleLeads.filter(isLeadConverted).length;
+  const bulkArchivedCount = selectedVisibleLeads.filter(isLeadArchived).length;
   const bulkOutboundBlockedCount = bulkSendKind === "set-tags"
     ? 0
     : bulkClosedCount + bulkConvertedCount + bulkArchivedCount;
@@ -1599,7 +1597,7 @@ export function App() {
 
     setActionBusy("send-modal");
     try {
-      if (selectedLead?.terminal_state === "closed" || selectedLead?.stage === "closed") {
+      if (isLeadClosed(selectedLead)) {
         setError("This lead is closed. Reopen it before sending WhatsApp messages.");
         return;
       }
@@ -2288,7 +2286,7 @@ export function App() {
               onPauseAutomation={() => runAction("pause-automation")}
               onManualHandoff={() => runAction("manual-handoff")}
               onMarkAnswered={() => runAction("mark-answered")}
-              onToggleClosed={() => runAction(selectedLead?.terminal_state === "closed" || selectedLead?.stage === "closed" ? "reopen" : "close")}
+              onToggleClosed={() => runAction(isLeadClosed(selectedLead) ? "reopen" : "close")}
               onDelete={deleteLead}
               onConvert={convertLeadToWorkstation}
               onStartSoloPage={startSoloPageWorkstation}
@@ -5982,9 +5980,9 @@ function LeadDetailHeader({
   onOpenWorkstation: (clientId: string) => void | Promise<void>;
   copyStatus: string;
 }) {
-  const closed = lead?.terminal_state === "closed" || lead?.stage === "closed";
-  const archived = lead?.terminal_state === "archived" || lead?.stage === "archived";
-  const convertedMilestone = lead?.pipeline_stage === "converted" || lead?.stage === "booked";
+  const closed = isLeadClosed(lead);
+  const archived = isLeadArchived(lead);
+  const convertedMilestone = isLeadConverted(lead);
   const crmOutboundBlocked = closed || archived || convertedMilestone;
   const paused = Boolean(lead?.automation_paused);
   const codexEnabled = Boolean(lead?.codex_enabled);
@@ -6100,7 +6098,7 @@ function LeadDetailHeader({
 function PausedBanner({ lead }: {
   lead: LeadSummary | null;
 }) {
-  const closed = lead?.terminal_state === "closed" || lead?.stage === "closed";
+  const closed = isLeadClosed(lead);
   const paused = Boolean(lead?.automation_paused);
   if (!lead || (!closed && !paused)) {
     return null;
@@ -7644,13 +7642,13 @@ function formatConversionType(type: LeadSummary["conversion_type"]): string {
 }
 
 function formatLeadStatusLabel(lead: LeadSummary): string {
-  if (lead.terminal_state === "closed" || lead.stage === "closed") {
+  if (isLeadClosed(lead)) {
     return "Closed";
   }
-  if (lead.terminal_state === "archived" || lead.stage === "archived") {
+  if (isLeadArchived(lead)) {
     return "Archived";
   }
-  return formatPipelineStageLabel(lead.pipeline_stage || lead.stage);
+  return formatPipelineStageLabel(lead.pipeline_stage);
 }
 
 function formatStrategyLabel(value: string | null | undefined): string {
@@ -7719,23 +7717,23 @@ function formatRate(value: number): string {
 }
 
 function leadTone(lead: LeadSummary): "accent" | "warn" | "success" | "muted" {
-  if (lead.terminal_state === "closed" || lead.terminal_state === "archived" || lead.stage === "closed" || lead.stage === "archived") {
+  if (isLeadClosed(lead) || isLeadArchived(lead)) {
     return "muted";
   }
-  if (lead.attention_state === "needs_reply" || lead.queue_state === "operator" || lead.stage === "needs_human") {
+  if (lead.attention_state === "needs_reply" || lead.queue_state === "operator") {
     return "warn";
   }
-  if (lead.pipeline_stage === "converted" || lead.stage === "booked") {
+  if (isLeadConverted(lead)) {
     return "success";
   }
-  if (lead.pipeline_stage === "meeting_sent" || lead.stage === "calendly_sent") {
+  if (lead.pipeline_stage === "meeting_sent") {
     return "success";
   }
   return "accent";
 }
 
 function manualTurn(lead: LeadSummary): "" | "needs_reply" | "answered" {
-  if (lead.queue_state !== "operator" && lead.stage !== "needs_human") {
+  if (lead.queue_state !== "operator") {
     return "";
   }
   if (lead.manual_reply_status === "needs_reply" || lead.manual_reply_status === "answered") {
@@ -7751,10 +7749,10 @@ function strategyTagForLead(lead: LeadSummary): string {
 }
 
 function leadPreview(lead: LeadSummary): string {
-  if (lead.terminal_state === "closed" || lead.stage === "closed") {
+  if (isLeadClosed(lead)) {
     return "Lead marked as closed.";
   }
-  if (lead.pipeline_stage === "converted" || lead.stage === "booked") {
+  if (isLeadConverted(lead)) {
     return `Converted by ${formatConversionType(lead.conversion_type)}.`;
   }
   if (lead.meeting_scheduled_at) {
@@ -7887,7 +7885,7 @@ function customMessageBlockReason(lead: LeadSummary | null): string | null {
   if (!lead) {
     return null;
   }
-  if (lead.terminal_state === "closed" || lead.stage === "closed") {
+  if (isLeadClosed(lead)) {
     return "This lead is closed. Reopen it before sending WhatsApp messages.";
   }
   if (!lead.last_inbound_at) {
@@ -7901,6 +7899,25 @@ function customMessageBlockReason(lead: LeadSummary | null): string | null {
     return "The 24-hour WhatsApp window is closed. Use an approved template such as follow-up ping.";
   }
   return null;
+}
+
+// `stage` is kept only as a legacy payload fallback. Current UI state decisions
+// should come from the split lifecycle fields or durable conversion evidence.
+function isLeadClosed(lead: LeadSummary | null | undefined): boolean {
+  return lead?.terminal_state === "closed" || lead?.stage === "closed";
+}
+
+function isLeadArchived(lead: LeadSummary | null | undefined): boolean {
+  return lead?.terminal_state === "archived" || lead?.stage === "archived";
+}
+
+function isLeadConverted(lead: LeadSummary | null | undefined): boolean {
+  return Boolean(
+    lead?.pipeline_stage === "converted"
+    || lead?.converted_at
+    || lead?.booked_at
+    || lead?.workstation_client_id,
+  );
 }
 
 function monogram(value: string): string {
