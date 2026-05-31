@@ -34,6 +34,7 @@ from backend.database import (
     ClientLeadDelivery,
     ClientLeadSource,
     ContadoresLead,
+    CONTADORES_LEAD_MANUAL_CONVERTED_REASON,
     ContadoresLeadStage,
     ContadoresMessage,
     PlatformAdCampaign,
@@ -79,6 +80,9 @@ from backend.meta_lead_ads import DEFAULT_META_LEAD_FIELDS, MetaLeadAdsCredentia
 
 
 DEFAULT_AGENT_SEQUENCE_STEP = "codex_agent"
+AGENT_MUTABLE_LEAD_STAGE_PATTERN = (
+    "^(awaiting_initial_reply|awaiting_video_reply|needs_human|calendly_sent|closed|archived)$"
+)
 AGENT_TARGET_PATTERN = (
     "^(lead|workstation_client|funnel|client_lead_source|meeting|client_profile|"
     "ad_campaign|creative_asset|meta_publish_attempt|client_update|human_question|client|platform)$"
@@ -558,7 +562,8 @@ class MoveLeadToFunnelArgs(LeadToolArgs):
     funnel_id: str = Field(min_length=1, max_length=120)
     stage: str = Field(
         default=ContadoresLeadStage.AWAITING_INITIAL_REPLY.value,
-        pattern="^(awaiting_initial_reply|awaiting_video_reply|needs_human|calendly_sent|booked|closed|archived)$",
+        pattern=AGENT_MUTABLE_LEAD_STAGE_PATTERN,
+        description="Operational stage after the move. Use mark_converted for conversions, not booked.",
     )
     reason: str = Field(min_length=1, max_length=4000)
 
@@ -573,10 +578,21 @@ class SetLeadTagsArgs(LeadToolArgs):
 class UpdateLeadStateArgs(LeadToolArgs):
     """Arguments for updating a lead state."""
 
-    stage: str | None = None
+    stage: str | None = Field(
+        default=None,
+        pattern=AGENT_MUTABLE_LEAD_STAGE_PATTERN,
+        description="Operational stage to set. Use mark_converted for conversions, not booked.",
+    )
     automation_paused: bool | None = None
     reason: str = Field(default="", max_length=4000)
     classification_label: str = Field(default="codex_agent")
+
+
+class MarkConvertedArgs(LeadToolArgs):
+    """Arguments for marking a lead as converted from an agent run."""
+
+    reason: str = Field(default="Converted by Codex agent.", max_length=4000)
+    converted_at: datetime | None = None
 
 
 class HandoffHumanArgs(LeadToolArgs):
@@ -770,6 +786,7 @@ def tool_specs() -> list[CodexAgentToolSpec]:
         ("move_lead_to_funnel", "Move a lead to another funnel and lifecycle stage.", MoveLeadToFunnelArgs),
         ("set_lead_tags", "Append or replace operator tags on a lead.", SetLeadTagsArgs),
         ("update_lead_state", "Update stage or automation pause state for a lead.", UpdateLeadStateArgs),
+        ("mark_converted", "Mark a lead converted using the canonical conversion action.", MarkConvertedArgs),
         ("handoff_human", "Pause automation and hand a lead to a human.", HandoffHumanArgs),
         (
             "create_or_get_solo_page_client",
@@ -1027,6 +1044,7 @@ def read_platform_config(arguments: dict[str, Any]) -> dict[str, Any]:
             "create_client_update",
             "ask_human_question",
             "answer_human_question",
+            "mark_converted",
         ],
     }
     if args.include_schema:
@@ -1052,6 +1070,7 @@ def read_platform_config(arguments: dict[str, Any]) -> dict[str, Any]:
             "create_client_update": CreateClientUpdateArgs.model_json_schema(),
             "ask_human_question": AskHumanQuestionArgs.model_json_schema(),
             "answer_human_question": AnswerHumanQuestionArgs.model_json_schema(),
+            "mark_converted": MarkConvertedArgs.model_json_schema(),
         }
     return payload
 
@@ -2539,6 +2558,37 @@ def update_lead_state(arguments: dict[str, Any]) -> dict[str, Any]:
     return {"updated": updated is not None, "lead_id": lead.id, "stage": updated.stage.value if updated else lead.stage.value}
 
 
+def mark_converted(arguments: dict[str, Any]) -> dict[str, Any]:
+    args = MarkConvertedArgs.model_validate(arguments)
+    lead = _lead_or_error(args.lead_id)
+    updated = ContadoresLead.mark_converted(
+        lead.id,
+        converted_at=args.converted_at,
+        automation_paused=True,
+        automation_paused_reason=CONTADORES_LEAD_MANUAL_CONVERTED_REASON,
+    )
+    if updated is None:
+        raise AgentToolError(f"Lead not found: {lead.id}")
+    updated = ContadoresLead.update_flow_state(
+        lead.id,
+        classification_completed_at=datetime.now(timezone.utc),
+        last_classification_label="codex_agent_mark_converted",
+        last_classification_reason=args.reason or "Converted by Codex agent.",
+    )
+    if updated is None:
+        raise AgentToolError(f"Lead not found: {lead.id}")
+    return {
+        "converted": True,
+        "lead_id": updated.id,
+        "stage": updated.stage.value,
+        "pipeline_stage": updated.pipeline_stage,
+        "automation_paused": updated.automation_paused,
+        "automation_paused_reason": updated.automation_paused_reason,
+        "converted_at": updated.booked_at.isoformat() if updated.booked_at else None,
+        "booked_at": updated.booked_at.isoformat() if updated.booked_at else None,
+    }
+
+
 def handoff_human(arguments: dict[str, Any]) -> dict[str, Any]:
     args = HandoffHumanArgs.model_validate(arguments)
     lead = _lead_or_error(args.lead_id)
@@ -2795,6 +2845,7 @@ TOOL_HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {
     "move_lead_to_funnel": move_lead_to_funnel,
     "set_lead_tags": set_lead_tags,
     "update_lead_state": update_lead_state,
+    "mark_converted": mark_converted,
     "handoff_human": handoff_human,
     "create_or_get_solo_page_client": create_or_get_solo_page_client,
     "get_workstation_context": get_workstation_context,

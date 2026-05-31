@@ -38,6 +38,7 @@ from backend.database import (
     AgentRun,
     AgentToolCall,
     ClientLeadSource,
+    CONTADORES_LEAD_MANUAL_CONVERTED_REASON,
     ContadoresConfig,
     ContadoresLead,
     ContadoresLeadStage,
@@ -409,6 +410,8 @@ def test_codex_agent_tool_configures_text_offer_funnel_without_ui(monkeypatch, t
     assert snapshot["result"]["meta_marketing"]["live_writes_enabled"] is False
     assert "extract_client_profile_from_meeting_transcript" in snapshot["result"]["agent_native_tools"]
     assert "extract_client_profile_from_meeting_transcript" in snapshot["result"]["schemas"]
+    assert "mark_converted" in snapshot["result"]["agent_native_tools"]
+    assert "mark_converted" in snapshot["result"]["schemas"]
     assert any(item["id"] == "dentistas" for item in snapshot["result"]["funnels"])
 
 
@@ -2168,6 +2171,82 @@ def test_codex_agent_tool_moves_lead_and_sets_tags(monkeypatch, tmp_path) -> Non
     assert updated.automation_paused is True
     assert "form" in updated.tags
     assert "legal-intent" in updated.tags
+
+
+def test_codex_agent_tool_marks_lead_converted_canonically(monkeypatch, tmp_path) -> None:
+    """Codex agents should convert leads through the canonical conversion tool."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-agent-tool-converted",
+        phone="+5491777777798",
+        full_name="Cliente Converted",
+    )
+    converted_at = now_utc()
+
+    result = call_tool(
+        run_id="agent-run-mark-converted",
+        tool_name="mark_converted",
+        arguments={
+            "lead_id": lead.id,
+            "converted_at": converted_at.isoformat(),
+            "reason": "El cliente acepto la propuesta.",
+        },
+    )
+    updated = ContadoresLead.get_by_id(lead.id)
+
+    assert result["ok"] is True
+    assert result["result"]["converted"] is True
+    assert result["result"]["stage"] == "booked"
+    assert result["result"]["pipeline_stage"] == "converted"
+    assert result["result"]["converted_at"] == result["result"]["booked_at"]
+    assert updated is not None
+    assert updated.stage == ContadoresLeadStage.BOOKED
+    assert updated.pipeline_stage == "converted"
+    assert updated.automation_paused is True
+    assert updated.automation_paused_reason == CONTADORES_LEAD_MANUAL_CONVERTED_REASON
+    assert updated.booked_at is not None
+    assert updated.last_classification_label == "codex_agent_mark_converted"
+
+
+def test_codex_agent_stage_tools_reject_legacy_booked_stage(monkeypatch, tmp_path) -> None:
+    """Agent stage tools should route conversions through mark_converted, not booked."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-agent-tool-booked-rejected",
+        phone="+5491777777799",
+        full_name="Cliente Booked Rejected",
+    )
+
+    moved = call_tool(
+        run_id="agent-run-booked-rejected",
+        tool_name="move_lead_to_funnel",
+        arguments={
+            "lead_id": lead.id,
+            "funnel_id": "abogados",
+            "stage": "booked",
+            "reason": "Legacy conversion route.",
+        },
+    )
+    updated = call_tool(
+        run_id="agent-run-booked-rejected",
+        tool_name="update_lead_state",
+        arguments={
+            "lead_id": lead.id,
+            "stage": "booked",
+            "reason": "Legacy conversion route.",
+        },
+    )
+    refreshed = ContadoresLead.get_by_id(lead.id)
+
+    assert moved["ok"] is False
+    assert moved["error_type"] == "ValidationError"
+    assert "booked" in moved["error"]
+    assert updated["ok"] is False
+    assert updated["error_type"] == "ValidationError"
+    assert "booked" in updated["error"]
+    assert refreshed is not None
+    assert refreshed.stage == ContadoresLeadStage.AWAITING_INITIAL_REPLY
+    assert refreshed.booked_at is None
 
 
 def test_codex_agent_runtime_injects_harness_skill(monkeypatch, tmp_path) -> None:

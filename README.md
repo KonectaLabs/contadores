@@ -674,11 +674,13 @@ Template manual de ping:
 - El enqueue central tambien rechaza outbound CRM para leads `archived` o
   `converted`; los unicos mensajes post-conversion permitidos son delivery de
   Workstation.
-- La ruta canonical para conversion manual es `/api/contadores/conversions/mark`
-  o la accion `mark-converted`; el storage/API legacy conserva `stage=booked`,
-  `booked_at`, `mark-booked` y `send-manual-booked` por compatibilidad. En la UI
-  nueva eso se muestra como `Converted`; marcar un lead convertido no envia
-  WhatsApp y solo pausa la automatizacion.
+- La ruta canonical para conversion manual es `/api/contadores/conversions/mark`,
+  la accion UI/API `mark-converted`, o la tool de agente `mark_converted`; el
+  storage/API legacy conserva `stage=booked`, `booked_at`, `mark-booked` y
+  `send-manual-booked` por compatibilidad. En la UI nueva eso se muestra como
+  `Converted`; marcar un lead convertido no envia WhatsApp y solo pausa la
+  automatizacion. Las tools de agente que editan `stage` no aceptan `booked`;
+  deben usar `mark_converted`.
 - Los payloads nuevos deben preferir `converted_at`, `meeting_sent_at`,
   `meeting_scheduled_at`, `meeting_url`, `converted=true` y las metricas
   canonicales de meeting/conversion aunque los aliases legacy sigan disponibles.
@@ -1294,11 +1296,12 @@ carga `.codex/skills/contadores-agent-harness/SKILL.md`, que le explica el loop
 de herramientas, memoria y heartbeats. Si
 `CODEX_AGENT_TOOLS_ENABLED=true` y
 `CODEX_AGENT_TOOLS_WORKSTATION_ENABLED=true`, primero corre el agente autonomo
-con toolbelt interna: puede responder texto, agendar follow-up/heartbeat, leer o
-escribir memoria en `data/agent-memory/`, crear/revisar la pagina, encolar
-entregables, mandar la URL publica de prueba, marcar aprobacion, pasar a humano
-o consultar disponibilidad y precios publicos estimados de dominios sin
-credenciales. Las tools quedan auditadas en
+con toolbelt interna: puede responder texto, marcar un lead convertido con
+`mark_converted`, agendar follow-up/heartbeat, leer o escribir memoria en
+`data/agent-memory/`, crear/revisar la pagina, encolar entregables, mandar la
+URL publica de prueba, marcar aprobacion, pasar a humano o consultar
+disponibilidad y precios publicos estimados de dominios sin credenciales. Las
+tools quedan auditadas en
 `agent_runs`, `agent_tool_calls`, `scheduled_agent_tasks` y
 `data/agent-runs/`. Si el agente con tools falla antes de completar side
 effects, Workstation vuelve al decisionador JSON legacy.

@@ -104,9 +104,13 @@ Typical lead tools:
 - `check_domain_availability`: check if a domain exists and return public
   no-auth registrar price estimates when available. Treat prices as estimates,
   not final checkout totals.
-- `move_lead_to_funnel`: move the lead to another funnel and stage.
+- `move_lead_to_funnel`: move the lead to another funnel and non-conversion
+  stage. Do not pass `booked`; use `mark_converted` for conversions.
 - `set_lead_tags`: append or replace operator tags.
-- `update_lead_state`: update stage or automation pause state.
+- `update_lead_state`: update non-conversion stage or automation pause state.
+  Do not pass `booked`; use `mark_converted` for conversions.
+- `mark_converted`: mark the lead converted through the canonical conversion
+  path. Storage may still show legacy `stage=booked`/`booked_at`.
 - `handoff_human`: pause automation and put a person in control.
 
 Typical Workstation tools:
