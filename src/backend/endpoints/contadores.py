@@ -3583,7 +3583,7 @@ def run_quick_action_for_lead(
         if not resolve_funnel(lead.funnel_id).manual_ping_template_name:
             raise HTTPException(status_code=400, detail="Manual ping template is not configured")
         queued_rows = send_manual_ping_template(lead=lead)
-    elif normalized_action in {"mark-booked", "send-manual-booked"}:
+    elif normalized_action in {"mark-converted", "mark-booked", "send-manual-booked"}:
         updated = ContadoresLead.update_flow_state(
             lead.id,
             stage=ContadoresLeadStage.BOOKED,

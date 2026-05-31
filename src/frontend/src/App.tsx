@@ -313,7 +313,7 @@ type QuickActionName =
   | "enable-codex"
   | "disable-codex"
   | "mark-answered"
-  | "mark-booked"
+  | "mark-converted"
   | "close"
   | "reopen"
   | "archive"
@@ -2263,7 +2263,7 @@ export function App() {
                 setSendKind("custom");
                 setShowSendModal(true);
               }}
-              onManualBooked={() => runAction("mark-booked")}
+              onMarkConverted={() => runAction("mark-converted")}
               onPauseAutomation={() => runAction("pause-automation")}
               onManualHandoff={() => runAction("manual-handoff")}
               onMarkAnswered={() => runAction("mark-answered")}
@@ -5640,7 +5640,7 @@ function LeadDetailHeader({
   actionBusy,
   inboxMode,
   onOpenSend,
-  onManualBooked,
+  onMarkConverted,
   onPauseAutomation,
   onManualHandoff,
   onMarkAnswered,
@@ -5657,7 +5657,7 @@ function LeadDetailHeader({
   actionBusy: string | null;
   inboxMode: boolean;
   onOpenSend: () => void;
-  onManualBooked: () => void;
+  onMarkConverted: () => void;
   onPauseAutomation: () => void;
   onManualHandoff: () => void;
   onMarkAnswered: () => void;
@@ -5748,7 +5748,7 @@ function LeadDetailHeader({
               </button>
             ) : null}
             {!inboxMode ? (
-              <button type="button" className="ct-btn ct-btn-ghost" disabled={!lead || closed || convertedMilestone || Boolean(actionBusy)} onClick={onManualBooked}>
+              <button type="button" className="ct-btn ct-btn-ghost" disabled={!lead || closed || convertedMilestone || Boolean(actionBusy)} onClick={onMarkConverted}>
                 <CheckCircle size={15} weight="bold" />
                 Mark converted
               </button>

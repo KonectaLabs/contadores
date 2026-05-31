@@ -1889,6 +1889,14 @@ class ContadoresMessage(SQLModel, table=True):
         """List every pending outbound step that is due for dispatch."""
         now_utc = datetime.now(timezone.utc)
         closed_lead_delivery_steps = ("ai_rejection_survey",)
+        converted_lead_delivery_steps = (
+            "workstation_intake",
+            "workstation_preview_video",
+            "workstation_revision_video",
+            "workstation_public_page_link",
+            "workstation_codex_heartbeat",
+            "workstation_handoff",
+        )
         with Session(engine) as session:
             statement = (
                 select(cls)
@@ -1898,7 +1906,13 @@ class ContadoresMessage(SQLModel, table=True):
                     cls.delivery_status == MessageDeliveryStatus.UNDELIVERED,
                     cls.dispatch_after <= now_utc,
                     ContadoresLead.stage != ContadoresLeadStage.ARCHIVED,
-                    ContadoresLead.stage != ContadoresLeadStage.BOOKED,
+                    (
+                        (
+                            (ContadoresLead.stage != ContadoresLeadStage.BOOKED)
+                            & ContadoresLead.booked_at.is_(None)
+                        )
+                        | cls.sequence_step.in_(converted_lead_delivery_steps)
+                    ),
                     (
                         (ContadoresLead.stage != ContadoresLeadStage.CLOSED)
                         & ContadoresLead.closed_at.is_(None)

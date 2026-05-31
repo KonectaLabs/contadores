@@ -4009,18 +4009,18 @@ def test_manual_outbound_can_queue_multiple_uploaded_files(monkeypatch, tmp_path
     assert outbound_messages[0]["media_url"].startswith("/api/contadores/media/")
 
 
-def test_manual_booked_action_marks_booked_without_queueing_template(monkeypatch, tmp_path) -> None:
-    """Operators can move a lead straight to Booked without sending WhatsApp."""
+def test_mark_converted_action_keeps_legacy_booked_storage_without_queueing_template(monkeypatch, tmp_path) -> None:
+    """Operators can mark a lead converted without sending WhatsApp."""
     monkeypatch.setenv("FUNNELS_CONFIG_PATH", str(tmp_path / "funnels.json"))
     configure_contadores_db(monkeypatch, tmp_path)
     lead = ContadoresLead.upsert(
-        external_lead_id="sheet-row-manual-booked",
+        external_lead_id="sheet-row-mark-converted",
         phone="+5491888888877",
-        full_name="Booked Manual",
+        full_name="Converted Manual",
     )
 
     with TestClient(app) as client:
-        action_response = client.post(f"/api/contadores/leads/{lead.id}/actions/send-manual-booked")
+        action_response = client.post(f"/api/contadores/leads/{lead.id}/actions/mark-converted")
         pending_response = client.get("/api/contadores/messages/pending-delivery")
         detail_response = client.get(f"/api/contadores/leads/{lead.id}")
 
@@ -4032,6 +4032,7 @@ def test_manual_booked_action_marks_booked_without_queueing_template(monkeypatch
     assert detail_response.status_code == 200
     lead_payload = detail_response.json()["lead"]
     assert lead_payload["stage"] == "booked"
+    assert lead_payload["pipeline_stage"] == "converted"
     assert lead_payload["booked_at"] is not None
     assert lead_payload["automation_paused"] is True
     assert lead_payload["automation_paused_reason"] == "manual_booked"
@@ -4103,6 +4104,43 @@ def test_booked_leads_do_not_expose_pending_manual_ping(monkeypatch, tmp_path) -
     assert booked_response.status_code == 200
     assert pending_response.status_code == 200
     assert pending_response.json()["messages"] == []
+
+
+def test_converted_leads_with_legacy_stage_do_not_expose_pending_delivery(monkeypatch, tmp_path) -> None:
+    """Converted leads must stay out of dispatch even if the raw stage was not rewritten."""
+    monkeypatch.setenv("FUNNELS_CONFIG_PATH", str(tmp_path / "funnels.json"))
+    configure_contadores_db(monkeypatch, tmp_path)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-booked-at-with-ping",
+        phone="+5491888888876",
+        full_name="Converted With Legacy Stage",
+    )
+    ContadoresLead.update_flow_state(
+        lead.id,
+        stage=ContadoresLeadStage.NEEDS_HUMAN,
+        automation_paused=True,
+        automation_paused_reason="manual_handoff",
+    )
+
+    with TestClient(app) as client:
+        ping_response = client.post(f"/api/contadores/leads/{lead.id}/actions/send-manual-ping")
+        ContadoresLead.update_flow_state(
+            lead.id,
+            booked_at=now_utc(),
+            automation_paused=True,
+            automation_paused_reason="manual_workstation_conversion",
+        )
+        pending_response = client.get("/api/contadores/messages/pending-delivery")
+        detail_response = client.get(f"/api/contadores/leads/{lead.id}")
+
+    assert ping_response.status_code == 200
+    assert pending_response.status_code == 200
+    assert pending_response.json()["messages"] == []
+    assert detail_response.status_code == 200
+    lead_payload = detail_response.json()["lead"]
+    assert lead_payload["raw_stage"] == "needs_human"
+    assert lead_payload["stage"] == "booked"
+    assert lead_payload["pipeline_stage"] == "converted"
 
 
 def test_bulk_manual_ping_queues_selected_leads(monkeypatch, tmp_path) -> None:
