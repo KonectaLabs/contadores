@@ -1869,6 +1869,7 @@ def build_followup_lead_snapshot(
         exclusion_reasons=exclusion_reasons,
     )
     effective_stage = derive_effective_lead_stage(lead)
+    converted_at = format_timestamp_seconds(lead.booked_at)
     return ContadoresFollowupLeadSnapshot(
         id=lead.id,
         funnel_id=lead.funnel_id,
@@ -1888,7 +1889,8 @@ def build_followup_lead_snapshot(
         video_check_sent_at=format_timestamp_seconds(lead.video_check_sent_at),
         calendly_sent_at=format_timestamp_seconds(lead.calendly_sent_at),
         meeting_scheduled_at=format_timestamp_seconds(lead.meeting_scheduled_at),
-        booked_at=format_timestamp_seconds(lead.booked_at),
+        converted_at=converted_at,
+        booked_at=converted_at,
         closed_at=format_timestamp_seconds(lead.closed_at),
         archived_at=format_timestamp_seconds(lead.archived_at),
         codex_enabled=bool(lead.codex_enabled),
@@ -1977,6 +1979,7 @@ def build_followup_snapshot_csv(snapshots: list[ContadoresFollowupLeadSnapshot])
         "video_check_sent_at",
         "calendly_sent_at",
         "meeting_scheduled_at",
+        "converted_at",
         "booked_at",
         "closed_at",
         "archived_at",
@@ -2020,6 +2023,7 @@ def build_followup_snapshot_csv(snapshots: list[ContadoresFollowupLeadSnapshot])
                 "video_check_sent_at": snapshot.video_check_sent_at or "",
                 "calendly_sent_at": snapshot.calendly_sent_at or "",
                 "meeting_scheduled_at": snapshot.meeting_scheduled_at or "",
+                "converted_at": snapshot.converted_at or "",
                 "booked_at": snapshot.booked_at or "",
                 "closed_at": snapshot.closed_at or "",
                 "archived_at": snapshot.archived_at or "",
@@ -3776,7 +3780,7 @@ class ContadoresMetrics(BaseModel):
     needs_human: int = 0
     calendly_sent: int = 0
     meeting_sent: int = 0
-    booked: int = 0
+    booked: int = Field(default=0, description="Legacy alias. Use converted or pipeline_converted for new clients.")
     converted: int = 0
     closed: int = 0
     archived: int = 0
@@ -3803,11 +3807,11 @@ class ContadoresStrategyStatsItem(BaseModel):
     delivered: int = 0
     reached_calendly: int = 0
     reached_meeting: int = 0
-    booked: int = 0
+    booked: int = Field(default=0, description="Legacy alias. Use converted for new clients.")
     converted: int = 0
     calendly_rate: float = 0.0
     meeting_rate: float = 0.0
-    booked_rate: float = 0.0
+    booked_rate: float = Field(default=0.0, description="Legacy alias. Use conversion_rate for new clients.")
     conversion_rate: float = 0.0
 
 
@@ -3902,7 +3906,7 @@ class ContadoresLeadSummary(BaseModel):
     calendly_sent_at: str | None = None
     meeting_sent_at: str | None = None
     meeting_scheduled_at: str | None = None
-    booked_at: str | None = None
+    booked_at: str | None = Field(default=None, description="Legacy alias. Use converted_at for new clients.")
     converted_at: str | None = None
     closed_at: str | None = None
     stage_before_closed: str | None = None
@@ -4010,7 +4014,8 @@ class ContadoresFollowupLeadSnapshot(BaseModel):
     video_check_sent_at: str | None = None
     calendly_sent_at: str | None = None
     meeting_scheduled_at: str | None = None
-    booked_at: str | None = None
+    converted_at: str | None = None
+    booked_at: str | None = Field(default=None, description="Legacy alias. Use converted_at for new clients.")
     closed_at: str | None = None
     archived_at: str | None = None
     codex_enabled: bool = False

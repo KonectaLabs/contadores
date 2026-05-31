@@ -2892,6 +2892,13 @@ def test_contadores_followup_snapshot_is_read_only_and_segments_leads(monkeypatc
         text="Manana a las 15 hs puedo. Mi mail es booking@example.com",
         created_at=now_utc() - timedelta(minutes=2),
     )
+    converted = ContadoresLead.upsert(
+        external_lead_id="sheet-row-snapshot-converted",
+        phone="+5491111111122",
+        full_name="Converted Lead",
+        email="converted@example.com",
+    )
+    ContadoresLead.mark_converted(converted.id, converted_at=now_utc() - timedelta(minutes=1))
 
     venezuelan = ContadoresLead.upsert(
         external_lead_id="sheet-row-snapshot-ve",
@@ -2921,6 +2928,7 @@ def test_contadores_followup_snapshot_is_read_only_and_segments_leads(monkeypatc
     assert response.status_code == 200
     assert csv_response.status_code == 200
     assert "lead_id,funnel_id,full_name,email" in csv_response.text
+    assert "converted_at,booked_at" in csv_response.text
     assert warm.id in csv_response.text
     payload = response.json()
     assert payload["counts_by_bucket"]["booking_time_provided"] == 1
@@ -2932,6 +2940,9 @@ def test_contadores_followup_snapshot_is_read_only_and_segments_leads(monkeypatc
     assert by_id[warm.id]["suggested_buckets"] == ["needs_answer_now", "close_call"]
     assert by_id[warm.id]["latest_inbound"]["text"] == "Que presupuesto tienen?"
     assert by_id[booking.id]["suggested_buckets"] == ["booking_time_provided", "needs_answer_now", "close_call"]
+    assert by_id[converted.id]["converted_at"] is not None
+    assert by_id[converted.id]["converted_at"] == by_id[converted.id]["booked_at"]
+    assert by_id[converted.id]["exclusion_reasons"] == ["closed_converted_or_archived"]
     assert by_id[venezuelan.id]["excluded"] is True
     assert by_id[venezuelan.id]["suggested_buckets"] == []
 

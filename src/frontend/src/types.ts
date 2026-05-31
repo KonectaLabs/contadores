@@ -438,6 +438,7 @@ export interface ContadoresMetrics {
   needs_human: number;
   calendly_sent: number;
   meeting_sent: number;
+  /** Legacy alias. Prefer converted or pipeline_converted in new UI. */
   booked: number;
   converted: number;
   closed: number;
@@ -492,6 +493,7 @@ export interface LeadSummary {
   calendly_sent_at: string | null;
   meeting_sent_at: string | null;
   meeting_scheduled_at: string | null;
+  /** Legacy alias. Prefer converted_at in new UI. */
   booked_at: string | null;
   converted_at: string | null;
   closed_at: string | null;
@@ -584,10 +586,12 @@ export interface StrategyStatsItem {
   delivered: number;
   reached_calendly: number;
   reached_meeting: number;
+  /** Legacy alias. Prefer converted in new UI. */
   booked: number;
   converted: number;
   calendly_rate: number;
   meeting_rate: number;
+  /** Legacy alias. Prefer conversion_rate in new UI. */
   booked_rate: number;
   conversion_rate: number;
 }
