@@ -160,6 +160,7 @@ const stageFilters: Array<{
   { value: "pipeline:offer_sent", label: "Offer", metric: "pipeline_offer_sent", tone: "neutral" },
   { value: "pipeline:meeting_sent", label: "Meeting", metric: "pipeline_meeting_sent", tone: "accent" },
   { value: "pipeline:converted", label: "Converted", metric: "pipeline_converted", tone: "success" },
+  { value: "queue:operator", label: "Operator", metric: "queue_operator", tone: "warn" },
   { value: "attention:needs_reply", label: "Needs reply", metric: "attention_needs_reply", tone: "warn" },
   { value: "queue:paused", label: "Paused", metric: "queue_paused", tone: "warn" },
   { value: "terminal:closed", label: "Closed", metric: "terminal_closed", tone: "muted" },
@@ -275,15 +276,15 @@ const moveStageOptions: Array<{ value: LeadStage; label: string }> = [
 
 const sendOptions = [
   { value: "custom", title: "Custom message", help: "Write your own WhatsApp reply." },
-  { value: "send-manual-ping", title: "Manual ping", help: "Send the approved ping template to reopen WhatsApp." },
+  { value: "send-manual-ping", title: "Follow-up ping", help: "Send the approved follow-up template to reopen WhatsApp." },
   { value: "offer-solo-page-promo", title: "Promo solo pagina", help: "Offer the page-only promo and let automation handle the reply." },
   { value: "send-opener", title: "Opener", help: "Queue the default opener template." },
   { value: "send-loom", title: "Send offer", help: "Queue the configured offer message." },
   { value: "send-accountant-page-example-video", title: "Pagina contador", help: "Send the accountant page example video." },
   { value: "send-lawyer-page-example-video", title: "Pagina abogado", help: "Send the lawyer page example video." },
   { value: "send-video-check", title: "Offer check", help: "Ask if they want to review the offer on a short call." },
-  { value: "send-calendly", title: "Meeting with intro", help: "Send the booking instructions and then the legacy scheduling link." },
-  { value: "send-calendly-link", title: "Meeting link only", help: "Send only the legacy scheduling link and mark meeting sent." },
+  { value: "send-calendly", title: "Meeting with intro", help: "Send the booking instructions and meeting link." },
+  { value: "send-calendly-link", title: "Meeting link only", help: "Send only the meeting link and mark meeting sent." },
 ] as const;
 
 type DetailTab = "messages" | "strategies";
@@ -1634,7 +1635,7 @@ export function App() {
         return;
       }
       if (bulkSendKind === "custom" && bulkCustomBlockedCount > 0) {
-        setError(`Custom WhatsApp is blocked for ${bulkCustomBlockedCount} selected chat${bulkCustomBlockedCount === 1 ? "" : "s"} because the 24-hour window is closed. Use Manual ping template instead.`);
+          setError(`Custom WhatsApp is blocked for ${bulkCustomBlockedCount} selected chat${bulkCustomBlockedCount === 1 ? "" : "s"} because the 24-hour window is closed. Use the follow-up ping template instead.`);
         return;
       }
       const payload = await apiFetch<BulkActionResponse>("/api/contadores/leads/bulk-action", {
@@ -2326,7 +2327,7 @@ export function App() {
             </div>
 
             <details className="ct-manual-disclosure" open={Boolean(manualText.trim() || manualFiles.length)}>
-              <summary>Manual</summary>
+              <summary>Operator message</summary>
               <ManualDock
                 disabled={!selectedLead || Boolean(actionBusy)}
                 blockReason={selectedLeadCustomBlockReason}
@@ -2502,10 +2503,6 @@ function ClientLeadDeliveryView({
     }
   }, [editorMode, selectedGroupKey]);
 
-  function updateDraft<K extends keyof ClientLeadSourceDraft>(key: K, value: ClientLeadSourceDraft[K]) {
-    onDraftChange({ ...draft, [key]: value });
-  }
-
   return (
     <div className="ct-surface delivery-surface">
       <div className="ct-secondary delivery-summary">
@@ -2598,10 +2595,11 @@ function ClientLeadDeliveryView({
               <button
                 type="button"
                 className="ct-btn ct-btn-ghost"
-                onClick={() => setConfigOpen((current) => !current)}
+                disabled={!isExisting && editorMode !== "create"}
+                onClick={() => setConfigOpen(true)}
               >
                 <GearSix size={15} weight="bold" />
-                Config
+                {editorMode === "create" ? "Source setup" : "Edit source"}
               </button>
             </div>
           </header>
@@ -2652,127 +2650,6 @@ function ClientLeadDeliveryView({
                 onCopyLeadAll={onCopyLeadAll}
                 onRetryLead={onRetryLead}
               />
-            ) : null}
-
-            {configOpen ? (
-              <form className="delivery-source-form delivery-config-panel" onSubmit={onSaveSource}>
-                <div className="workstation-panel-head">
-                  <div>
-                    <span>Config</span>
-                    <strong>{editorMode === "create" ? "New delivery contact" : "Sheet and template"}</strong>
-                  </div>
-                </div>
-
-                <div className="ct-field-grid">
-                  <label className="ct-field">
-                    <span>Source ID</span>
-                    <input
-                      value={draft.id}
-                      disabled={isExisting}
-                      onChange={(event) => updateDraft("id", slugifyClient(event.target.value))}
-                      placeholder="client-name"
-                    />
-                  </label>
-                  <label className="ct-field">
-                    <span>Label</span>
-                    <input value={draft.label} onChange={(event) => updateDraft("label", event.target.value)} placeholder="Cliente · Sheet delivery" />
-                  </label>
-                  <label className="ct-field">
-                    <span>Recipient name</span>
-                    <input value={draft.recipient_name} onChange={(event) => updateDraft("recipient_name", event.target.value)} placeholder="Client operator" />
-                  </label>
-                  <label className="ct-field">
-                    <span>Recipient phone</span>
-                    <input value={draft.recipient_phone} onChange={(event) => updateDraft("recipient_phone", event.target.value)} placeholder="+54..." />
-                  </label>
-                </div>
-
-                <label className="ct-field ct-field-toggle">
-                  <span>Enabled</span>
-                  <div className="ct-toggle-row">
-                    <input type="checkbox" checked={draft.enabled} onChange={(event) => updateDraft("enabled", event.target.checked)} />
-                    <p className="ct-field-hint">Disabled contacts stay visible but do not poll or notify recipients.</p>
-                  </div>
-                </label>
-
-                <label className="ct-field">
-                  <span>Sheet URL</span>
-                  <input value={draft.sheet_url} onChange={(event) => updateDraft("sheet_url", event.target.value)} placeholder="https://docs.google.com/spreadsheets/..." />
-                </label>
-
-                <div className="ct-field-grid">
-                  <label className="ct-field">
-                    <span>Sheet GID</span>
-                    <input value={draft.sheet_gid} onChange={(event) => updateDraft("sheet_gid", event.target.value)} placeholder="0" />
-                  </label>
-                  <label className="ct-field">
-                    <span>Tab name</span>
-                    <input value={draft.sheet_tab_name} onChange={(event) => updateDraft("sheet_tab_name", event.target.value)} placeholder="deuda" />
-                  </label>
-                </div>
-
-                <div className="ct-field-grid">
-                  <label className="ct-field">
-                    <span>Poll seconds</span>
-                    <input
-                      type="number"
-                      min="5"
-                      value={draft.sheet_poll_seconds}
-                      onChange={(event) => updateDraft("sheet_poll_seconds", Number(event.target.value) || 10)}
-                    />
-                  </label>
-                </div>
-
-                <div className="ct-field-grid">
-                  <label className="ct-field">
-                    <span>Template name</span>
-                    <input value={draft.template_name} onChange={(event) => updateDraft("template_name", event.target.value)} placeholder="client_lead_delivery_es" />
-                  </label>
-                  <label className="ct-field">
-                    <span>Template language</span>
-                    <input value={draft.template_language} onChange={(event) => updateDraft("template_language", event.target.value)} placeholder="es" />
-                  </label>
-                </div>
-
-                <label className="ct-field">
-                  <span>Context fields</span>
-                  <textarea
-                    value={draft.context_field_mapping_text}
-                    onChange={(event) => updateDraft("context_field_mapping_text", event.target.value)}
-                    rows={4}
-                    spellCheck={false}
-                    placeholder={'{\n  "Tipo de deuda": "¿qué_tipo_de_deuda_tiene_pendiente?",\n  "Caso": "breve_descripción_de_su_caso"\n}'}
-                  />
-                </label>
-
-                <label className="ct-field">
-                  <span>Column mapping</span>
-                  <textarea
-                    value={draft.column_mapping_text}
-                    onChange={(event) => updateDraft("column_mapping_text", event.target.value)}
-                    rows={5}
-                    spellCheck={false}
-                  />
-                </label>
-
-                <div className="delivery-form-actions">
-                  {isExisting ? (
-                    <button
-                      type="button"
-                      className="ct-btn ct-btn-ghost btn-destructive"
-                      disabled={actionBusy === "delivery-delete"}
-                      onClick={onDeleteSource}
-                    >
-                      <Trash size={15} weight="bold" />
-                      {actionBusy === "delivery-delete" ? "Deleting..." : "Delete"}
-                    </button>
-                  ) : null}
-                  <button type="submit" className="ct-btn ct-btn-primary" disabled={actionBusy === "delivery-save" || !draft.label.trim()}>
-                    <Check size={15} weight="bold" />
-                    {actionBusy === "delivery-save" ? "Saving..." : editorMode === "create" ? "Create contact" : "Save config"}
-                  </button>
-                </div>
-              </form>
             ) : null}
 
             {isExisting && sentChatOpen ? (
@@ -2972,7 +2849,191 @@ function ClientLeadDeliveryView({
           </div>
         </section>
       </div>
+
+      {configOpen ? (
+        <DeliverySourceEditorDrawer
+          actionBusy={actionBusy}
+          draft={draft}
+          editorMode={editorMode}
+          isExisting={isExisting}
+          onClose={() => setConfigOpen(false)}
+          onDeleteSource={onDeleteSource}
+          onDraftChange={onDraftChange}
+          onSaveSource={onSaveSource}
+        />
+      ) : null}
     </div>
+  );
+}
+
+function DeliverySourceEditorDrawer({
+  actionBusy,
+  draft,
+  editorMode,
+  isExisting,
+  onClose,
+  onDeleteSource,
+  onDraftChange,
+  onSaveSource,
+}: {
+  actionBusy: string | null;
+  draft: ClientLeadSourceDraft;
+  editorMode: DeliveryEditorMode;
+  isExisting: boolean;
+  onClose: () => void;
+  onDeleteSource: () => void;
+  onDraftChange: (draft: ClientLeadSourceDraft) => void;
+  onSaveSource: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  function updateDraft<K extends keyof ClientLeadSourceDraft>(key: K, value: ClientLeadSourceDraft[K]) {
+    onDraftChange({ ...draft, [key]: value });
+  }
+
+  return (
+    <aside className="ct-drawer open delivery-source-drawer" aria-hidden="false" aria-label="Delivery source editor">
+      <button className="ct-drawer-overlay" type="button" onClick={onClose} aria-label="Close Delivery source editor" />
+      <form className="ct-drawer-panel wide delivery-source-drawer-panel" role="dialog" aria-modal="false" aria-labelledby="deliverySourceDrawerTitle" onSubmit={onSaveSource}>
+        <header className="ct-drawer-head">
+          <div>
+            <p className="ct-drawer-kicker">Delivery source</p>
+            <h3 id="deliverySourceDrawerTitle">{editorMode === "create" ? "New contact" : "Sheet and template"}</h3>
+            <p className="ct-drawer-note">Keep polling, recipient, and mapping details out of the daily Delivery view.</p>
+          </div>
+          <button type="button" className="ct-icon-btn" onClick={onClose} aria-label="Close Delivery source editor">
+            <X size={16} weight="bold" />
+          </button>
+        </header>
+
+        <div className="ct-drawer-body delivery-source-form">
+          <section className="delivery-drawer-section">
+            <div className="workstation-panel-head">
+              <div>
+                <span>Contact</span>
+                <strong>Recipient and label</strong>
+              </div>
+            </div>
+            <div className="ct-field-grid">
+              <label className="ct-field">
+                <span>Source ID</span>
+                <input
+                  value={draft.id}
+                  disabled={isExisting}
+                  onChange={(event) => updateDraft("id", slugifyClient(event.target.value))}
+                  placeholder="client-name"
+                />
+              </label>
+              <label className="ct-field">
+                <span>Label</span>
+                <input value={draft.label} onChange={(event) => updateDraft("label", event.target.value)} placeholder="Cliente · Sheet delivery" />
+              </label>
+              <label className="ct-field">
+                <span>Recipient name</span>
+                <input value={draft.recipient_name} onChange={(event) => updateDraft("recipient_name", event.target.value)} placeholder="Client operator" />
+              </label>
+              <label className="ct-field">
+                <span>Recipient phone</span>
+                <input value={draft.recipient_phone} onChange={(event) => updateDraft("recipient_phone", event.target.value)} placeholder="+54..." />
+              </label>
+            </div>
+            <label className="ct-field ct-field-toggle">
+              <span>Enabled</span>
+              <div className="ct-toggle-row">
+                <input type="checkbox" checked={draft.enabled} onChange={(event) => updateDraft("enabled", event.target.checked)} />
+                <p className="ct-field-hint">Disabled contacts stay visible but do not poll or notify recipients.</p>
+              </div>
+            </label>
+          </section>
+
+          <section className="delivery-drawer-section">
+            <div className="workstation-panel-head">
+              <div>
+                <span>Sheet</span>
+                <strong>Source and polling</strong>
+              </div>
+            </div>
+            <label className="ct-field">
+              <span>Sheet URL</span>
+              <input value={draft.sheet_url} onChange={(event) => updateDraft("sheet_url", event.target.value)} placeholder="https://docs.google.com/spreadsheets/..." />
+            </label>
+            <div className="ct-field-grid">
+              <label className="ct-field">
+                <span>Sheet GID</span>
+                <input value={draft.sheet_gid} onChange={(event) => updateDraft("sheet_gid", event.target.value)} placeholder="0" />
+              </label>
+              <label className="ct-field">
+                <span>Tab name</span>
+                <input value={draft.sheet_tab_name} onChange={(event) => updateDraft("sheet_tab_name", event.target.value)} placeholder="deuda" />
+              </label>
+              <label className="ct-field">
+                <span>Poll seconds</span>
+                <input
+                  type="number"
+                  min="5"
+                  value={draft.sheet_poll_seconds}
+                  onChange={(event) => updateDraft("sheet_poll_seconds", Number(event.target.value) || 10)}
+                />
+              </label>
+            </div>
+          </section>
+
+          <section className="delivery-drawer-section">
+            <div className="workstation-panel-head">
+              <div>
+                <span>Template</span>
+                <strong>Message mapping</strong>
+              </div>
+            </div>
+            <div className="ct-field-grid">
+              <label className="ct-field">
+                <span>Template name</span>
+                <input value={draft.template_name} onChange={(event) => updateDraft("template_name", event.target.value)} placeholder="client_lead_delivery_es" />
+              </label>
+              <label className="ct-field">
+                <span>Template language</span>
+                <input value={draft.template_language} onChange={(event) => updateDraft("template_language", event.target.value)} placeholder="es" />
+              </label>
+            </div>
+            <label className="ct-field">
+              <span>Context fields</span>
+              <textarea
+                value={draft.context_field_mapping_text}
+                onChange={(event) => updateDraft("context_field_mapping_text", event.target.value)}
+                rows={4}
+                spellCheck={false}
+                placeholder={'{\n  "Tipo de deuda": "¿qué_tipo_de_deuda_tiene_pendiente?",\n  "Caso": "breve_descripción_de_su_caso"\n}'}
+              />
+            </label>
+            <label className="ct-field">
+              <span>Column mapping</span>
+              <textarea
+                value={draft.column_mapping_text}
+                onChange={(event) => updateDraft("column_mapping_text", event.target.value)}
+                rows={5}
+                spellCheck={false}
+              />
+            </label>
+          </section>
+        </div>
+
+        <footer className="ct-drawer-foot">
+          {isExisting ? (
+            <button
+              type="button"
+              className="ct-btn ct-btn-ghost btn-destructive"
+              disabled={actionBusy === "delivery-delete"}
+              onClick={onDeleteSource}
+            >
+              <Trash size={15} weight="bold" />
+              {actionBusy === "delivery-delete" ? "Deleting..." : "Delete"}
+            </button>
+          ) : null}
+          <button type="submit" className="ct-btn ct-btn-primary" disabled={actionBusy === "delivery-save" || !draft.label.trim()}>
+            <Check size={15} weight="bold" />
+            {actionBusy === "delivery-save" ? "Saving..." : editorMode === "create" ? "Create contact" : "Save source"}
+          </button>
+        </footer>
+      </form>
+    </aside>
   );
 }
 
@@ -5322,7 +5383,7 @@ function FunnelSetupView({
           <blockquote>{funnel.opener_text}</blockquote>
         </div>
         <div className="ct-copy-row">
-          <span>Manual ping template</span>
+          <span>Operator ping template</span>
           {funnel.manual_ping_template_name ? <code>{funnel.manual_ping_template_name}</code> : null}
           <blockquote>{funnel.manual_ping_text}</blockquote>
         </div>
@@ -5591,14 +5652,14 @@ function FunnelEditorDrawer({
           </label>
 
           <TemplateSelectField
-            label="Manual Ping Template"
+            label="Operator Ping Template"
             value={draft.manual_ping_template_name ?? ""}
             text={draft.manual_ping_text}
             choices={templateChoices}
             onChange={(value) => updateTemplateChoice("manual_ping_template_name", "manual_ping_text", value)}
           />
           <label className="ct-field">
-            <span>Manual Ping Text</span>
+            <span>Operator Ping Text</span>
             <textarea value={draft.manual_ping_text} onChange={(event) => update("manual_ping_text", event.target.value)} rows={3} />
           </label>
 
@@ -5924,10 +5985,10 @@ function LeadDetailHeader({
               </button>
             ) : null}
             {!inboxMode ? (
-              <button type="button" className="ct-btn ct-btn-ghost" disabled={!lead || closed || paused || Boolean(actionBusy)} onClick={onManualHandoff}>
-                <NotePencil size={15} weight="bold" />
-                Manual
-              </button>
+	              <button type="button" className="ct-btn ct-btn-ghost" disabled={!lead || closed || paused || Boolean(actionBusy)} onClick={onManualHandoff}>
+	                <NotePencil size={15} weight="bold" />
+	                Operator
+	              </button>
             ) : null}
             {canMarkAnswered && !inboxMode ? (
               <button type="button" className="ct-btn ct-btn-ghost" disabled={Boolean(actionBusy)} onClick={onMarkAnswered}>
@@ -6339,7 +6400,7 @@ function ManualDock({
       onPaste={handlePaste}
     >
       <div className="ct-manual-head">
-        <span className="ct-manual-lock">Manual outbound</span>
+        <span className="ct-manual-lock">Operator outbound</span>
         <p className={`ct-manual-hint ${blocked ? "blocked" : ""}`}>
           {blockReason || "Sending a custom message pauses automation for this lead."}
         </p>
@@ -6593,7 +6654,7 @@ function SendModal({
         </header>
         <div className="ct-modal-body">
           <p className="ct-modal-warning">
-            <strong>Heads up:</strong> {pausesAutomation ? "sending this pauses the bot for this lead. You can resume automation after." : "sending a meeting link marks the lead as meeting sent and keeps it in Manual."}
+	            <strong>Heads up:</strong> {pausesAutomation ? "sending this pauses the bot for this lead. You can resume automation after." : "sending a meeting link marks the lead as meeting sent and keeps it in operator review."}
           </p>
 
           <fieldset className="ct-send-options">
@@ -6705,7 +6766,7 @@ function BulkSendModal({
               ? " Tags will be replaced for those leads."
               : pausesAutomation
                 ? " Sending this pauses automation for those leads."
-                : " Sending a meeting link marks them as meeting sent and keeps them in Manual."}
+	                : " Sending a meeting link marks them as meeting sent and keeps them in operator review."}
           </p>
 
           <fieldset className="ct-send-options">
@@ -6758,7 +6819,7 @@ function BulkSendModal({
               checked={manualPingConfirmed}
               onChange={(event) => onManualPingConfirmedChange(event.target.checked)}
             />
-            <span>I explicitly want to send Manual ping to every selected chat.</span>
+	            <span>I explicitly want to send the follow-up ping to every selected chat.</span>
           </label>
         </div>
         <footer className="ct-modal-foot">
@@ -7349,12 +7410,12 @@ function buildFunnelReadyItems(
     { label: "Opener text", ready: Boolean(funnel.opener_text.trim()) },
     { label: "Follow-up template", ready: Boolean(funnel.opener_followup_template_name?.trim()) },
     { label: "Follow-up text", ready: Boolean(funnel.opener_followup_text.trim()) },
-    { label: "Manual ping template", ready: Boolean(funnel.manual_ping_template_name?.trim()) },
-    { label: "Manual ping text", ready: Boolean(funnel.manual_ping_text.trim()) },
+    { label: "Operator ping template", ready: Boolean(funnel.manual_ping_template_name?.trim()) },
+    { label: "Operator ping text", ready: Boolean(funnel.manual_ping_text.trim()) },
     { label: "Text or media offer", ready: hasTextOffer || hasMediaOffer },
     { label: "Offer check text", ready: Boolean(funnel.video_check_text.trim()) },
     { label: "Meeting text", ready: Boolean(funnel.calendly_intro_text.trim()) },
-    { label: "Legacy scheduling URL", ready: Boolean(funnel.calendly_base_url.trim()) },
+    { label: "Meeting URL", ready: Boolean(funnel.calendly_base_url.trim()) },
     { label: "Alert emails", ready: funnel.alert_emails.length > 0 },
   ];
 }
@@ -7372,7 +7433,7 @@ function buildTemplateChoices(funnel: FunnelDefinition): TemplateChoice[] {
       text: funnel.opener_followup_text,
     },
     {
-      label: "Manual ping",
+      label: "Operator ping",
       templateId: funnel.manual_ping_template_name ?? "",
       text: funnel.manual_ping_text,
     },
@@ -7440,7 +7501,7 @@ function formatPipelineStageLabel(stage: string | null | undefined): string {
 
 function formatConversionType(type: LeadSummary["conversion_type"]): string {
   const labels: Record<string, string> = {
-    manual: "manual mark",
+    manual: "operator mark",
     meeting: "meeting link",
     workstation: "Workstation",
   };
@@ -7588,7 +7649,7 @@ function buildLeadContextText({
     `Lead: ${lead.full_name || lead.phone || lead.external_lead_id || lead.id}`,
     `Funnel: ${funnelLabel}`,
     `Status: ${status}`,
-    `Manual reply: ${humanize(lead.manual_reply_status || "")}`,
+    `Operator reply: ${humanize(lead.manual_reply_status || "")}`,
     `WhatsApp window: ${whatsappWindow}`,
     `Phone: ${lead.phone || "-"}`,
     `Normalized phone: ${lead.normalized_phone || "-"}`,
@@ -7691,14 +7752,14 @@ function customMessageBlockReason(lead: LeadSummary | null): string | null {
     return "This lead is closed. Reopen it before sending WhatsApp messages.";
   }
   if (!lead.last_inbound_at) {
-    return "Custom WhatsApp is blocked until the lead sends a message. Use an approved template such as Manual ping.";
+    return "Custom WhatsApp is blocked until the lead sends a message. Use an approved template such as follow-up ping.";
   }
   const lastInboundAt = new Date(lead.last_inbound_at).getTime();
   if (Number.isNaN(lastInboundAt)) {
-    return "Custom WhatsApp is blocked because the last inbound time is unavailable. Use an approved template such as Manual ping.";
+    return "Custom WhatsApp is blocked because the last inbound time is unavailable. Use an approved template such as follow-up ping.";
   }
   if (Date.now() - lastInboundAt >= WHATSAPP_CUSTOM_WINDOW_MS) {
-    return "The 24-hour WhatsApp window is closed. Use an approved template such as Manual ping.";
+    return "The 24-hour WhatsApp window is closed. Use an approved template such as follow-up ping.";
   }
   return null;
 }

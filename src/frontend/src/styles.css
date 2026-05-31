@@ -5869,19 +5869,24 @@ body {
   padding: 16px;
 }
 
-#contadoresView .delivery-config-panel {
-  flex: 0 0 auto;
-  max-height: min(54dvh, 610px);
-  border: 1px solid var(--ct-line);
-  border-radius: var(--ct-radius);
-  background: var(--ct-surface-2);
+#contadoresView .delivery-source-drawer-panel {
+  width: min(680px, 96vw);
 }
 
-#contadoresView .delivery-form-actions {
-  display: flex;
-  gap: 8px;
-  justify-content: flex-end;
-  padding-top: 4px;
+#contadoresView .delivery-drawer-section {
+  display: grid;
+  gap: 12px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--ct-line-soft);
+}
+
+#contadoresView .delivery-drawer-section:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+#contadoresView .delivery-source-drawer .btn-destructive {
+  margin-right: auto;
 }
 
 #contadoresView .delivery-recipient-chat-panel {
@@ -7206,12 +7211,10 @@ body {
     overflow: visible;
   }
 
-  #contadoresView .delivery-source-form,
   #contadoresView .delivery-lead-panel {
     overflow: visible;
   }
 
-  #contadoresView .delivery-config-panel,
   #contadoresView .delivery-recipient-messages {
     max-height: none;
   }
@@ -7528,17 +7531,8 @@ body {
     justify-content: space-between;
   }
 
-  #contadoresView .delivery-config-panel .ct-field-grid,
-  #contadoresView .delivery-form-actions {
+  #contadoresView .delivery-source-drawer .ct-field-grid {
     grid-template-columns: 1fr;
-  }
-
-  #contadoresView .delivery-form-actions {
-    display: grid;
-  }
-
-  #contadoresView .delivery-form-actions .ct-btn {
-    width: 100%;
   }
 
   #contadoresView .delivery-lead-panel .workstation-panel-head {
