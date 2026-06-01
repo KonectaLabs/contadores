@@ -1921,61 +1921,144 @@ body {
   background: var(--ct-surface);
 }
 
+#contadoresView .ct-simple-head {
+  display: grid;
+  grid-template-columns: minmax(180px, auto) minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--ct-line);
+  border-radius: var(--ct-radius);
+  background: var(--ct-surface);
+}
+
+#contadoresView .ct-simple-title {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+#contadoresView .ct-simple-title span {
+  color: var(--ct-ink-muted);
+  font: 850 10px/1 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+#contadoresView .ct-simple-title strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--ct-ink);
+  font: 850 19px/1.05 var(--font-sans);
+}
+
+#contadoresView .ct-simple-title small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ct-ink-soft);
+  font: 760 11px/1.15 var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#contadoresView .ct-simple-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+
+#contadoresView .ct-simple-metrics span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--ct-line-soft);
+  border-radius: var(--ct-radius);
+  background: var(--ct-surface-2);
+  color: var(--ct-ink-muted);
+  font: 820 10px/1 var(--font-mono);
+  text-transform: uppercase;
+}
+
+#contadoresView .ct-simple-metrics strong {
+  color: var(--ct-ink);
+  font: 850 18px/1 var(--font-mono);
+  text-transform: none;
+}
+
+#contadoresView .ct-crm-hero {
+  border-color: rgba(18, 49, 45, 0.16);
+  color: #f7fbf8;
+  background: linear-gradient(135deg, #17352f, #111916);
+}
+
+#contadoresView .ct-crm-hero[data-mode="sell"] {
+  background: linear-gradient(135deg, #182b3a, #102620);
+}
+
+#contadoresView .ct-crm-hero .ct-simple-title span,
+#contadoresView .ct-crm-hero .ct-simple-title small {
+  color: rgba(247, 251, 248, 0.72);
+}
+
+#contadoresView .ct-crm-hero .ct-simple-title strong,
+#contadoresView .ct-crm-hero .ct-simple-metrics strong {
+  color: #ffffff;
+}
+
+#contadoresView .ct-crm-hero .ct-simple-metrics span {
+  border-color: rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(247, 251, 248, 0.76);
+}
+
+#contadoresView .workstation-simple-head {
+  border-color: rgba(15, 118, 110, 0.2);
+  background: linear-gradient(135deg, #f6fbf8, #eef6f2);
+}
+
 #contadoresView .ct-queue-bar {
   display: grid;
-  grid-template-columns: minmax(142px, 174px) minmax(0, 1fr);
-  align-items: stretch;
-  gap: 1px;
+  gap: 10px;
   padding: 0;
-  border: 1px solid rgba(28, 38, 44, 0.18);
-  border-radius: calc(var(--ct-radius) + 2px);
-  background: rgba(28, 38, 44, 0.12);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.72);
-  overflow: hidden;
-}
-
-#contadoresView .ct-queue-summary {
-  display: grid;
-  align-content: center;
-  gap: 5px;
-  min-height: 82px;
-  padding: 12px 14px;
-  background: linear-gradient(180deg, #172923, #20352e);
-  color: #f7fbf8;
-}
-
-#contadoresView .ct-queue-summary strong {
-  color: currentColor;
-  font: 850 17px/1 var(--font-sans);
-}
-
-#contadoresView .ct-queue-summary span {
-  color: rgba(247, 251, 248, 0.72);
-  font: 800 11px/1 var(--font-mono);
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
 }
 
 #contadoresView .ct-filter-board {
-  grid-column: 1 / -1;
   display: grid;
-  gap: 7px;
+  gap: 8px;
   margin: 0;
-  padding: 9px 12px 11px;
-  border-top: 1px solid rgba(28, 38, 44, 0.1);
-  background: #f7faf8;
+  padding: 0;
+  border: 0;
+  background: transparent;
 }
 
 #contadoresView .ct-filter-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--ct-line);
+  border-radius: var(--ct-radius);
+  background: var(--ct-surface);
 }
 
 #contadoresView .ct-filter-row-label {
-  flex: 0 0 82px;
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  border-radius: var(--ct-radius-sm);
+  background: var(--ct-surface-2);
   color: var(--ct-ink-muted);
   font: 850 10px/1 var(--font-mono);
-  letter-spacing: 0.08em;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
@@ -1998,12 +2081,14 @@ body {
 
 #contadoresView .ct-lead-filter-bar {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: minmax(96px, 120px) minmax(0, 1fr);
   align-items: start;
   gap: 12px;
   min-width: 0;
-  padding: 10px 12px;
-  background: #fbfcfb;
+  padding: 12px;
+  border: 1px solid var(--ct-line);
+  border-radius: var(--ct-radius);
+  background: var(--ct-surface);
 }
 
 #contadoresView .ct-lead-filter-head {
@@ -2054,7 +2139,7 @@ body {
 
 #contadoresView .ct-lead-state-strip {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
   align-items: stretch;
   gap: 8px;
   min-width: 0;
@@ -2063,18 +2148,17 @@ body {
 
 #contadoresView .ct-lead-view {
   --lead-view-accent: #64748b;
+  --lead-view-bg: #f7f9fb;
   display: grid;
   grid-template-columns: 1fr;
   align-content: center;
   gap: 5px;
   min-width: 0;
-  min-height: 62px;
+  min-height: 58px;
   padding: 9px 11px;
-  border: 1px solid rgba(28, 38, 44, 0.12);
-  border-radius: 10px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(246, 249, 247, 0.96)),
-    #f9fbfa;
+  border: 1px solid color-mix(in srgb, var(--lead-view-accent) 18%, rgba(28, 38, 44, 0.1));
+  border-radius: var(--ct-radius);
+  background: var(--lead-view-bg);
   color: var(--ct-ink);
   text-align: left;
   transition: background 160ms ease, border-color 160ms ease, box-shadow 160ms ease, color 160ms ease, transform 160ms ease;
@@ -2088,8 +2172,7 @@ body {
 
 #contadoresView .ct-lead-view.active {
   border-color: var(--lead-view-accent);
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--lead-view-accent) 90%, #111827), var(--lead-view-accent));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--lead-view-accent) 88%, #151b18), var(--lead-view-accent));
   color: #ffffff;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 8px 18px rgba(18, 49, 45, 0.12);
 }
@@ -2099,11 +2182,11 @@ body {
   font: 850 17px/1 var(--font-mono);
 }
 
-#contadoresView .ct-lead-view[data-tone="all"] { --lead-view-accent: #12312d; }
-#contadoresView .ct-lead-view[data-tone="warn"] { --lead-view-accent: #b85c38; }
-#contadoresView .ct-lead-view[data-tone="accent"] { --lead-view-accent: #2f6587; }
-#contadoresView .ct-lead-view[data-tone="success"] { --lead-view-accent: #0f766e; }
-#contadoresView .ct-lead-view[data-tone="muted"] { --lead-view-accent: #6b7280; }
+#contadoresView .ct-lead-view[data-tone="all"] { --lead-view-accent: #12312d; --lead-view-bg: #eef7f2; }
+#contadoresView .ct-lead-view[data-tone="warn"] { --lead-view-accent: #b85c38; --lead-view-bg: #fff3e8; }
+#contadoresView .ct-lead-view[data-tone="accent"] { --lead-view-accent: #2f6587; --lead-view-bg: #edf6fb; }
+#contadoresView .ct-lead-view[data-tone="success"] { --lead-view-accent: #0f766e; --lead-view-bg: #eaf8f5; }
+#contadoresView .ct-lead-view[data-tone="muted"] { --lead-view-accent: #6b7280; --lead-view-bg: #f4f6f8; }
 
 #contadoresView .ct-lead-view-label {
   color: var(--ct-ink-muted);
@@ -2115,14 +2198,6 @@ body {
 #contadoresView .ct-lead-view.active .ct-lead-view-count,
 #contadoresView .ct-lead-view.active .ct-lead-view-label {
   color: #ffffff;
-}
-
-#contadoresView .ct-secondary {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
-  flex-wrap: wrap;
 }
 
 #contadoresView .ct-manual-segment {
@@ -2177,12 +2252,6 @@ body {
   border-color: rgba(30, 64, 175, 0.32);
   background: var(--ct-accent-soft);
   color: var(--ct-accent-strong);
-}
-
-#contadoresView .ct-secondary-note {
-  margin: 0 0 0 auto;
-  color: var(--ct-ink-soft);
-  font: 500 12px/1.2 var(--font-mono);
 }
 
 #contadoresView .ct-workspace {
@@ -4017,20 +4086,12 @@ body.ct-resizing {
   background: var(--ct-surface);
 }
 
-#contadoresView .delivery-home-title {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-}
-
-#contadoresView .delivery-home-title span,
 #contadoresView .delivery-sheet-heading span {
   color: var(--ct-ink-muted);
   font: 800 10px/1 var(--font-mono);
   text-transform: uppercase;
 }
 
-#contadoresView .delivery-home-title strong,
 #contadoresView .delivery-sheet-heading strong {
   min-width: 0;
   overflow-wrap: anywhere;
@@ -4038,7 +4099,6 @@ body.ct-resizing {
   font: 800 15px/1.15 var(--font-sans);
 }
 
-#contadoresView .delivery-summary-metrics,
 #contadoresView .delivery-client-summary,
 #contadoresView .delivery-card-counts,
 #contadoresView .delivery-sheet-metrics {
@@ -4048,7 +4108,6 @@ body.ct-resizing {
   min-width: 0;
 }
 
-#contadoresView .delivery-summary-metrics span,
 #contadoresView .delivery-client-summary span,
 #contadoresView .delivery-sheet-metrics span {
   display: inline-flex;
@@ -5726,19 +5785,6 @@ body.ct-resizing {
     min-height: clamp(520px, 72dvh, 780px);
   }
 
-  #contadoresView .ct-queue-bar {
-    grid-template-columns: 1fr;
-  }
-
-  #contadoresView .ct-queue-summary {
-    min-height: 46px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    border-right: 0;
-    border-bottom: 1px solid rgba(28, 38, 44, 0.14);
-  }
-
   #contadoresView .ct-funnel-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -5926,6 +5972,15 @@ body.ct-resizing {
 
   #contadoresView .ct-surface {
     padding: 16px 16px 24px;
+  }
+
+  #contadoresView .ct-simple-head {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+
+  #contadoresView .ct-simple-metrics {
+    justify-content: flex-start;
   }
 
   #contadoresView .ct-lead-filter-bar {
@@ -6163,11 +6218,6 @@ body.ct-resizing {
 
   #contadoresView .ct-route-panel {
     grid-template-columns: 1fr;
-  }
-
-  #contadoresView .ct-secondary-note {
-    width: 100%;
-    margin-left: 0;
   }
 
   #contadoresView .delivery-home-head,

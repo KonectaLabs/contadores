@@ -2060,6 +2060,21 @@ export function App() {
     Boolean(tagFilter),
     Boolean(query.trim()),
   ].filter(Boolean).length;
+  const crmHeroMetrics = activeSection === "sell"
+    ? [
+        { label: "Offer", value: metrics?.pipeline_offer_sent ?? 0 },
+        { label: "Meeting", value: metrics?.pipeline_meeting_sent ?? 0 },
+        { label: "Converted", value: metrics?.pipeline_converted ?? 0 },
+      ]
+    : [
+        { label: "Needs reply", value: metrics?.attention_needs_reply ?? 0 },
+        { label: "Operator", value: metrics?.queue_operator ?? 0 },
+        { label: "New", value: metrics?.pipeline_new ?? 0 },
+      ];
+  const crmHeroTitle = activeSection === "sell" ? "Move deals forward" : "Clear the queue";
+  const crmHeroDetail = totalCount
+    ? `${compactNumber(visibleCount)}/${compactNumber(totalCount)} visible · ${activeLeadView.label}`
+    : "No leads in this view";
   const clearCrmFilters = useCallback(() => {
     setLeadViewFilter("all");
     setStrategyFilter({ step: "", strategyId: "" });
@@ -2358,11 +2373,24 @@ export function App() {
           />
         ) : null}
         {!isInboxFunnel ? (
-          <div className="ct-queue-bar">
-            <div className="ct-queue-summary">
-              <strong>{crmModeLabel}</strong>
-              <span>{totalCount ? `${visibleCount}/${totalCount}` : "0"}</span>
+          <section className="ct-simple-head ct-crm-hero" data-mode={activeSection === "sell" ? "sell" : "triage"}>
+            <div className="ct-simple-title">
+              <span>{activeSection === "sell" ? "Sell" : "Triage"}</span>
+              <strong>{crmHeroTitle}</strong>
+              <small>{crmHeroDetail}</small>
             </div>
+            <div className="ct-simple-metrics" aria-label={`${crmModeLabel} metrics`}>
+              {crmHeroMetrics.map((item) => (
+                <span key={item.label}>
+                  <strong>{compactNumber(item.value)}</strong>
+                  {item.label}
+                </span>
+              ))}
+            </div>
+          </section>
+        ) : null}
+        {!isInboxFunnel ? (
+          <div className="ct-queue-bar">
             <section className="ct-lead-filter-bar" aria-labelledby="ctLeadStateLabel">
               <div className="ct-lead-filter-head">
                 <div>
@@ -2782,15 +2810,25 @@ function ClientLeadDeliveryView({
 
   return (
     <div className="ct-surface delivery-surface">
-      <div className="delivery-home-head">
-        <div className="delivery-home-title">
+      <div className="ct-simple-head delivery-home-head">
+        <div className="ct-simple-title delivery-home-title">
           <span>Delivery</span>
           <strong>{contactGroups.length ? `${compactNumber(contactGroups.length)} clients` : "No clients yet"}</strong>
+          <small>{showingSheet && activeSheet ? deliverySheetLabel(activeSheet) : "Lead delivery"}</small>
         </div>
-        <div className="delivery-summary-metrics" aria-label="Delivery summary">
-          <span>{compactNumber(totalLeads)} leads</span>
-          <span>{compactNumber(deliveredLeads)} delivered</span>
-          <span>{compactNumber(failedLeads)} issues</span>
+        <div className="ct-simple-metrics delivery-summary-metrics" aria-label="Delivery summary">
+          <span>
+            <strong>{compactNumber(totalLeads)}</strong>
+            Leads
+          </span>
+          <span>
+            <strong>{compactNumber(deliveredLeads)}</strong>
+            Delivered
+          </span>
+          <span>
+            <strong>{compactNumber(failedLeads)}</strong>
+            Issues
+          </span>
         </div>
         <button type="button" className="ct-btn ct-btn-ghost delivery-small-btn" onClick={startNewDeliveryContact}>
           <Plus size={13} weight="bold" />
@@ -4731,11 +4769,8 @@ function WorkstationView({
   const showNotesPrimary = !showStartCodexPrimary && !showSteerCodexPrimary && !publicPage;
   const clientListLoading = listLoading && clients.length === 0;
   const clientDetailLoading = Boolean(selectedClientId && loading && detail?.client.id !== selectedClientId);
-  const clientSummaryText = clientListLoading
-    ? `Loading converted clients in ${funnelLabel}`
-    : clients.length
-      ? `${clients.length} ${clients.length === 1 ? "client" : "clients"} in ${funnelLabel}${listLoading ? " · refreshing" : ""}`
-      : `No converted clients in ${funnelLabel} yet`;
+  const failedClientCount = clients.filter((client) => client.automation_status === "failed").length;
+  const totalClientMedia = clients.reduce((total, client) => total + (client.media_count ?? 0), 0);
   const workstationStateIsReady = (automationState?.label ?? "").toLowerCase().includes("ready");
   const workstationHasMissingLiveProcess = automationState && (activeClient?.automation_status === "drafting" || activeClient?.automation_status === "revision_requested")
     ? !automationState?.is_live_working && !automationState?.is_stale
@@ -4944,8 +4979,26 @@ function WorkstationView({
 
   return (
     <div className="ct-surface workstation-surface">
-      <div className="ct-secondary">
-        <p className="ct-secondary-note">{clientSummaryText}</p>
+      <div className="ct-simple-head workstation-simple-head">
+        <div className="ct-simple-title">
+          <span>Build</span>
+          <strong>{clients.length ? `${compactNumber(clients.length)} clients` : "No clients yet"}</strong>
+          <small>{clientListLoading ? "Loading converted workspaces" : funnelLabel}</small>
+        </div>
+        <div className="ct-simple-metrics" aria-label="Build summary">
+          <span>
+            <strong>{compactNumber(clients.length)}</strong>
+            Clients
+          </span>
+          <span>
+            <strong>{compactNumber(failedClientCount)}</strong>
+            Alerts
+          </span>
+          <span>
+            <strong>{compactNumber(totalClientMedia)}</strong>
+            Media
+          </span>
+        </div>
       </div>
 
       <div className="ct-workspace workstation-layout">
