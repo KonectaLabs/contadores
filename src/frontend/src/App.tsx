@@ -1029,6 +1029,19 @@ export function App() {
     }
   }
 
+  async function refreshObserve() {
+    setPlatformLoading(true);
+    setRunnerLoading(true);
+    try {
+      await Promise.all([loadPlatformOverview(), loadRunnerStatus()]);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not refresh Observe.");
+    } finally {
+      setPlatformLoading(false);
+      setRunnerLoading(false);
+    }
+  }
+
   async function copySelectedLeadContext() {
     if (!selectedLead) {
       return;
@@ -2082,7 +2095,14 @@ export function App() {
           {isCrmWorkspace && canEditLegacyRuntimeConfig ? (
             <button type="button" className="ct-icon-btn" onClick={() => setShowConfig(true)}>Runtime</button>
           ) : null}
-          <button type="button" className="ct-icon-btn" onClick={refreshAll} disabled={loading || deliveryLoading || platformLoading}>Refresh</button>
+          <button
+            type="button"
+            className="ct-icon-btn"
+            onClick={activeSection === "ops" ? refreshObserve : refreshAll}
+            disabled={activeSection === "ops" ? platformLoading || runnerLoading : loading || deliveryLoading || platformLoading}
+          >
+            Refresh
+          </button>
         </div>
       </header>
 
@@ -2106,16 +2126,6 @@ export function App() {
           loading={platformLoading}
           runnerStatus={runnerStatus}
           runnerLoading={runnerLoading}
-          onRefresh={() => {
-            setPlatformLoading(true);
-            setRunnerLoading(true);
-            Promise.all([loadPlatformOverview(), loadRunnerStatus()])
-              .catch((reason) => setError(reason instanceof Error ? reason.message : "Could not refresh platform ops."))
-              .finally(() => {
-                setPlatformLoading(false);
-                setRunnerLoading(false);
-              });
-          }}
         />
         ) : activeSection === "workstation" ? (
         <WorkstationView
@@ -3251,13 +3261,11 @@ function PlatformOpsView({
   loading,
   runnerStatus,
   runnerLoading,
-  onRefresh,
 }: {
   overview: PlatformOverviewResponse | null;
   loading: boolean;
   runnerStatus: RunnerStatusResponse | null;
   runnerLoading: boolean;
-  onRefresh: () => void;
 }) {
   const defaultCounts = {
     active_blockers: 0,
@@ -3471,12 +3479,6 @@ function PlatformOpsView({
           <span>{opsHero.label}</span>
           <strong>{opsHero.title}</strong>
           <small>{opsHero.detail}</small>
-        </div>
-        <div className="ops-toolbar-side">
-          <button type="button" className="ct-btn ct-btn-ghost" onClick={onRefresh} disabled={loading}>
-            {loading ? <SpinnerGap size={16} weight="bold" /> : <ArrowsClockwise size={16} weight="bold" />}
-            Refresh
-          </button>
         </div>
       </section>
 
@@ -4818,162 +4820,146 @@ function WorkstationView({
                       Add notes
                     </button>
                   )}
-                  <div className="workstation-action-menu">
-                    <button
-                      type="button"
-                      className={`ct-btn ct-btn-ghost ${actionsOpen ? "active" : ""}`}
-                      onClick={() => setActionsOpen((current) => !current)}
-                      aria-expanded={actionsOpen}
-                      aria-haspopup="menu"
-                    >
+                  <details
+                    className="ct-action-menu workstation-action-menu"
+                    open={actionsOpen}
+                    onToggle={(event) => setActionsOpen(event.currentTarget.open)}
+                  >
+                    <summary className="ct-btn ct-btn-ghost">
                       More
                       <CaretDown size={14} weight="bold" />
-                    </button>
-                    {actionsOpen ? (
-                      <div className="workstation-action-popover" role="menu">
-                        <div className="workstation-menu-group" role="presentation">
-                          <span className="workstation-menu-label">Build controls</span>
-                          <label
-                            className="ct-codex-switch workstation-menu-switch"
-                            role="menuitemcheckbox"
-                            aria-checked={codexEnabled}
-                            title={codexEnabled ? "Codex enabled for this lead" : "Codex disabled for this lead"}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={codexEnabled}
-                              disabled={!selectedLead || Boolean(actionBusy)}
-                              onChange={(event) => onToggleLeadCodex(selectedLead, event.target.checked)}
-                            />
-                            <span>Codex</span>
-                          </label>
-                          {!showStartCodexPrimary ? (
-                            <button
-                              type="button"
-                              role="menuitem"
-                              onClick={openSoloPagePromptModal}
-                              disabled={!canStartSoloPageWork}
-                            >
-                              <Robot size={16} weight="bold" />
-                              <span>Start Codex</span>
-                            </button>
-                          ) : null}
+                    </summary>
+                    <div className="ct-action-menu-panel workstation-action-popover">
+                      <div className="workstation-menu-group">
+                        <span className="workstation-menu-label">Build controls</span>
+                        <label
+                          className="ct-codex-switch workstation-menu-switch"
+                          title={codexEnabled ? "Codex enabled for this lead" : "Codex disabled for this lead"}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={codexEnabled}
+                            disabled={!selectedLead || Boolean(actionBusy)}
+                            onChange={(event) => onToggleLeadCodex(selectedLead, event.target.checked)}
+                          />
+                          <span>Codex</span>
+                        </label>
+                        {!showStartCodexPrimary ? (
                           <button
                             type="button"
-                            role="menuitem"
-                            onClick={() => {
-                              setActionsOpen(false);
-                              onStopSoloPageCodexWork();
-                            }}
-                            disabled={!canStopSoloPageWork || actionBusy === "solo-page-stop"}
+                            onClick={openSoloPagePromptModal}
+                            disabled={!canStartSoloPageWork}
                           >
-                            <X size={16} weight="bold" />
-                            <span>Stop Codex</span>
+                            <Robot size={16} weight="bold" />
+                            <span>Start Codex</span>
                           </button>
-                          {!showSteerCodexPrimary ? (
-                            <button
-                              type="button"
-                              role="menuitem"
-                              onClick={openSoloPageSteerModal}
-                              disabled={!codexEnabled || !canStopSoloPageWork || actionBusy === "solo-page-steer"}
-                            >
-                              <PaperPlaneTilt size={16} weight="bold" />
-                              <span>Steer Codex</span>
-                            </button>
-                          ) : null}
-                        </div>
+                        ) : null}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActionsOpen(false);
+                            onStopSoloPageCodexWork();
+                          }}
+                          disabled={!canStopSoloPageWork || actionBusy === "solo-page-stop"}
+                        >
+                          <X size={16} weight="bold" />
+                          <span>Stop Codex</span>
+                        </button>
+                        {!showSteerCodexPrimary ? (
+                          <button
+                            type="button"
+                            onClick={openSoloPageSteerModal}
+                            disabled={!codexEnabled || !canStopSoloPageWork || actionBusy === "solo-page-steer"}
+                          >
+                            <PaperPlaneTilt size={16} weight="bold" />
+                            <span>Steer Codex</span>
+                          </button>
+                        ) : null}
+                      </div>
 
-                        <div className="workstation-menu-group" role="presentation">
-                          <span className="workstation-menu-label">Workstation actions</span>
+                      <div className="workstation-menu-group">
+                        <span className="workstation-menu-label">Workstation actions</span>
+                        <button
+                          type="button"
+                          onClick={openProfessionalPhotoModal}
+                          disabled={!codexEnabled || workstationClosed || !imageAssets.length || professionalPhotoJobBusy || actionBusy === "professional-photo-start"}
+                        >
+                          <Camera size={16} weight="bold" />
+                          <span>Professional photo</span>
+                        </button>
+                        {!showNotesPrimary ? (
                           <button
                             type="button"
-                            role="menuitem"
-                            onClick={openProfessionalPhotoModal}
-                            disabled={!codexEnabled || workstationClosed || !imageAssets.length || professionalPhotoJobBusy || actionBusy === "professional-photo-start"}
-                          >
-                            <Camera size={16} weight="bold" />
-                            <span>Professional photo</span>
-                          </button>
-                          {!showNotesPrimary ? (
-                            <button
-                              type="button"
-                              role="menuitem"
-                              onClick={() => {
-                                setNotesOpen((current) => !current);
-                                setActionsOpen(false);
-                              }}
-                              aria-expanded={notesOpen}
-                              aria-controls="workstation-notes-panel"
-                            >
-                              <NotePencil size={16} weight="bold" />
-                              <span>Notes</span>
-                            </button>
-                          ) : null}
-                        </div>
-
-                        <div className="workstation-menu-group" role="presentation">
-                          <span className="workstation-menu-label">Client utilities</span>
-                          <button
-                            type="button"
-                            role="menuitem"
                             onClick={() => {
+                              setNotesOpen((current) => !current);
                               setActionsOpen(false);
-                              onOpenCrmLead(selectedLead);
                             }}
+                            aria-expanded={notesOpen}
+                            aria-controls="workstation-notes-panel"
                           >
-                            <ArrowSquareOut size={16} weight="bold" />
-                            <span>Open CRM chat</span>
+                            <NotePencil size={16} weight="bold" />
+                            <span>Notes</span>
                           </button>
+                        ) : null}
+                      </div>
+
+                      <div className="workstation-menu-group">
+                        <span className="workstation-menu-label">Client utilities</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActionsOpen(false);
+                            onOpenCrmLead(selectedLead);
+                          }}
+                        >
+                          <ArrowSquareOut size={16} weight="bold" />
+                          <span>Open CRM chat</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActionsOpen(false);
+                            onCopyAll();
+                          }}
+                        >
+                          <Copy size={16} weight="bold" />
+                          <span>Copy all</span>
+                        </button>
+                        {publicPage ? (
                           <button
                             type="button"
-                            role="menuitem"
                             onClick={() => {
                               setActionsOpen(false);
-                              onCopyAll();
+                              copyTextToClipboard(publicPage.public_url).catch(() => undefined);
                             }}
                           >
                             <Copy size={16} weight="bold" />
-                            <span>Copy all</span>
+                            <span>Copy public URL</span>
                           </button>
-                          {publicPage ? (
-                            <button
-                              type="button"
-                              role="menuitem"
-                              onClick={() => {
-                                setActionsOpen(false);
-                                copyTextToClipboard(publicPage.public_url).catch(() => undefined);
-                              }}
-                            >
-                              <Copy size={16} weight="bold" />
-                              <span>Copy public URL</span>
-                            </button>
-                          ) : null}
-                          <a
-                            role="menuitem"
-                            className="workstation-menu-link"
-                            href={`/api/workstation/clients/${activeClient.id}/zip`}
-                            onClick={() => setActionsOpen(false)}
-                          >
-                            <DownloadSimple size={16} weight="bold" />
-                            <span>Download ZIP</span>
-                          </a>
-                          <button
-                            type="button"
-                            role="menuitem"
-                            className="danger"
-                            onClick={() => {
-                              setActionsOpen(false);
-                              onCloseWorkstationClient();
-                            }}
-                            disabled={workstationClosed || actionBusy === "workstation-close"}
-                          >
-                            <Trash size={16} weight="bold" />
-                            <span>{actionBusy === "workstation-close" ? "Closing..." : "Close lead"}</span>
-                          </button>
-                        </div>
+                        ) : null}
+                        <a
+                          className="workstation-menu-link"
+                          href={`/api/workstation/clients/${activeClient.id}/zip`}
+                          onClick={() => setActionsOpen(false)}
+                        >
+                          <DownloadSimple size={16} weight="bold" />
+                          <span>Download ZIP</span>
+                        </a>
+                        <button
+                          type="button"
+                          className="danger"
+                          onClick={() => {
+                            setActionsOpen(false);
+                            onCloseWorkstationClient();
+                          }}
+                          disabled={workstationClosed || actionBusy === "workstation-close"}
+                        >
+                          <Trash size={16} weight="bold" />
+                          <span>{actionBusy === "workstation-close" ? "Closing..." : "Close lead"}</span>
+                        </button>
                       </div>
-                    ) : null}
-                  </div>
+                      </div>
+                  </details>
                 </div>
               </header>
 
