@@ -7287,7 +7287,7 @@ function SendModal({
   return (
     <div className="ct-modal open" aria-hidden="false">
       <button className="ct-modal-overlay" type="button" onClick={onClose} aria-label="Close send message" />
-      <form className="ct-modal-panel" role="dialog" aria-modal="true" aria-labelledby="ctSendModalTitle" onSubmit={onSubmit}>
+      <form className="ct-modal-panel ct-send-panel" role="dialog" aria-modal="true" aria-labelledby="ctSendModalTitle" onSubmit={onSubmit}>
         <header className="ct-modal-head">
           <h3 id="ctSendModalTitle">Send message</h3>
           <button type="button" className="ct-icon-btn" onClick={onClose}>Close</button>
@@ -7299,22 +7299,26 @@ function SendModal({
 
           <fieldset className="ct-send-options">
             <legend className="ct-sr-only">Message type</legend>
-            {availableOptions.map((option) => (
-              <label className="ct-send-option" key={option.value}>
-                <input
-                  type="radio"
-                  name="ctSendKind"
-                  value={option.value}
-                  disabled={option.value === "custom" && customBlocked}
-                  checked={kind === option.value}
-                  onChange={() => onKindChange(option.value)}
-                />
-                <div>
-                  <strong>{option.title}</strong>
-                  <span>{option.value === "custom" && customBlockReason ? customBlockReason : sendOptionPreview(option.value, funnel) || option.help}</span>
-                </div>
-              </label>
-            ))}
+            {availableOptions.map((option) => {
+              const isDisabled = option.value === "custom" && customBlocked;
+
+              return (
+                <label className="ct-send-option" data-selected={kind === option.value} data-disabled={isDisabled} key={option.value}>
+                  <input
+                    type="radio"
+                    name="ctSendKind"
+                    value={option.value}
+                    disabled={isDisabled}
+                    checked={kind === option.value}
+                    onChange={() => onKindChange(option.value)}
+                  />
+                  <div>
+                    <strong>{option.title}</strong>
+                    <span>{option.value === "custom" && customBlockReason ? customBlockReason : sendOptionPreview(option.value, funnel) || option.help}</span>
+                  </div>
+                </label>
+              );
+            })}
           </fieldset>
 
           <label className="ct-modal-field" hidden={kind !== "custom"}>
@@ -7411,7 +7415,7 @@ function BulkSendModal({
   return (
     <div className="ct-modal open" aria-hidden="false">
       <button className="ct-modal-overlay" type="button" onClick={onClose} aria-label="Close bulk action" />
-      <form className="ct-modal-panel" role="dialog" aria-modal="true" aria-labelledby="ctBulkSendModalTitle" onSubmit={onSubmit}>
+      <form className="ct-modal-panel ct-send-panel" role="dialog" aria-modal="true" aria-labelledby="ctBulkSendModalTitle" onSubmit={onSubmit}>
         <header className="ct-modal-head">
           <div>
             <h3 id="ctBulkSendModalTitle">Bulk action</h3>
@@ -7436,26 +7440,30 @@ function BulkSendModal({
 
           <fieldset className="ct-send-options">
             <legend className="ct-sr-only">Bulk action type</legend>
-            {availableOptions.map((option) => (
-              <label className="ct-send-option" key={option.value}>
-                <input
-                  type="radio"
-                  name="ctBulkSendKind"
-                  value={option.value}
-                  disabled={(option.value !== "set-tags" && bulkOutboundBlocked) || (option.value === "custom" && customBlocked)}
-                  checked={kind === option.value}
-                  onChange={() => onKindChange(option.value)}
-                />
-                <div>
-                  <strong>{option.title}</strong>
-                  <span>
-                    {option.value === "custom" && customBlocked
-                      ? `Custom WhatsApp is blocked for ${customBlockedCount} selected chat${customBlockedCount === 1 ? "" : "s"} because the 24-hour window is closed.`
-                      : option.value === "set-tags" ? option.help : sendOptionPreview(option.value, funnel) || option.help}
-                  </span>
-                </div>
-              </label>
-            ))}
+            {availableOptions.map((option) => {
+              const isDisabled = (option.value !== "set-tags" && bulkOutboundBlocked) || (option.value === "custom" && customBlocked);
+
+              return (
+                <label className="ct-send-option" data-selected={kind === option.value} data-disabled={isDisabled} key={option.value}>
+                  <input
+                    type="radio"
+                    name="ctBulkSendKind"
+                    value={option.value}
+                    disabled={isDisabled}
+                    checked={kind === option.value}
+                    onChange={() => onKindChange(option.value)}
+                  />
+                  <div>
+                    <strong>{option.title}</strong>
+                    <span>
+                      {option.value === "custom" && customBlocked
+                        ? `Custom WhatsApp is blocked for ${customBlockedCount} selected chat${customBlockedCount === 1 ? "" : "s"} because the 24-hour window is closed.`
+                        : option.value === "set-tags" ? option.help : sendOptionPreview(option.value, funnel) || option.help}
+                    </span>
+                  </div>
+                </label>
+              );
+            })}
           </fieldset>
 
           <label className="ct-modal-field" hidden={kind !== "custom"}>

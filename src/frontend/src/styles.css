@@ -3909,6 +3909,21 @@ body.ct-resizing {
   box-shadow: 0 24px 60px rgba(32, 33, 36, 0.24);
 }
 
+#contadoresView .ct-send-panel {
+  width: min(920px, calc(100vw - 40px));
+  max-height: calc(100dvh - 32px);
+}
+
+#contadoresView .ct-send-panel .ct-modal-head,
+#contadoresView .ct-send-panel .ct-modal-foot {
+  padding-inline: 18px;
+}
+
+#contadoresView .ct-send-panel .ct-modal-body {
+  gap: 12px;
+  padding: 16px 18px;
+}
+
 #contadoresView .ct-modal-body {
   display: grid;
   gap: 16px;
@@ -3964,47 +3979,67 @@ body.ct-resizing {
 
 #contadoresView .ct-send-options {
   display: grid;
-  gap: 6px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-auto-rows: minmax(126px, auto);
+  gap: 10px;
   padding: 0;
   margin: 0;
   border: 0;
 }
 
 #contadoresView .ct-send-option {
-  display: flex;
+  min-width: 0;
+  min-height: 126px;
+  display: grid;
+  align-content: start;
   align-items: flex-start;
-  gap: 10px;
-  padding: 10px 12px;
+  gap: 12px;
+  padding: 14px;
   border: 1px solid var(--ct-line);
-  border-radius: var(--ct-radius);
+  border-radius: 10px;
   background: var(--ct-surface);
   cursor: pointer;
+  position: relative;
+  transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease, transform 140ms ease;
 }
 
 #contadoresView .ct-send-option:hover,
-#contadoresView .ct-send-option:has(input[type="radio"]:checked) {
+#contadoresView .ct-send-option[data-selected="true"] {
   border-color: var(--ct-accent);
   background: var(--ct-accent-soft);
+  box-shadow: inset 0 0 0 1px rgba(13, 124, 113, 0.32);
 }
 
-#contadoresView .ct-send-option:has(input:disabled) {
+#contadoresView .ct-send-option:hover {
+  transform: translateY(-1px);
+}
+
+#contadoresView .ct-send-option[data-disabled="true"] {
   cursor: not-allowed;
   border-color: var(--ct-line-soft);
   background: rgba(245, 247, 244, 0.72);
+  box-shadow: none;
+  transform: none;
 }
 
-#contadoresView .ct-send-option:has(input:disabled):hover {
+#contadoresView .ct-send-option[data-disabled="true"]:hover {
   border-color: var(--ct-line-soft);
   background: rgba(245, 247, 244, 0.72);
+  transform: none;
 }
 
-#contadoresView .ct-send-option:has(input:disabled) strong,
-#contadoresView .ct-send-option:has(input:disabled) span {
+#contadoresView .ct-send-option[data-disabled="true"] strong,
+#contadoresView .ct-send-option[data-disabled="true"] span {
   color: var(--ct-ink-muted);
 }
 
 #contadoresView .ct-send-option input {
-  margin-top: 3px;
+  position: absolute;
+  top: 13px;
+  right: 13px;
+  width: 14px;
+  height: 14px;
+  margin: 0;
   accent-color: var(--ct-accent);
 }
 
@@ -4026,12 +4061,43 @@ body.ct-resizing {
 
 #contadoresView .ct-send-option strong {
   color: var(--ct-ink);
-  font: 600 13px/1.2 var(--font-sans);
+  padding-right: 22px;
+  font: 750 13px/1.15 var(--font-sans);
 }
 
 #contadoresView .ct-send-option span {
   color: var(--ct-ink-muted);
-  font: 400 12px/1.35 var(--font-sans);
+  font: 500 12px/1.35 var(--font-sans);
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+}
+
+@media (max-width: 900px) {
+  #contadoresView .ct-send-options {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  #contadoresView .ct-modal {
+    padding: 12px;
+  }
+
+  #contadoresView .ct-send-panel {
+    width: 100%;
+    max-height: calc(100dvh - 24px);
+  }
+
+  #contadoresView .ct-send-options {
+    grid-template-columns: 1fr;
+    grid-auto-rows: auto;
+  }
+
+  #contadoresView .ct-send-option {
+    min-height: 0;
+  }
 }
 
 #contadoresView .ct-sr-only {
