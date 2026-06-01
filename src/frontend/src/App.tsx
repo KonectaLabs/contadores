@@ -1962,15 +1962,6 @@ export function App() {
   const visibleCount = leadList?.leads.length ?? 0;
   const totalCount = metrics?.total ?? 0;
   const activeLeadView = leadViewFilters.find((filter) => filter.value === leadViewFilter) ?? leadViewFilters[0];
-  const orderedLeadViewFilterGroups = useMemo(() => {
-    if (activeLeadView.group === "overview") {
-      return leadViewFilterGroups;
-    }
-    return [
-      ...leadViewFilterGroups.filter((group) => group.group === activeLeadView.group),
-      ...leadViewFilterGroups.filter((group) => group.group !== activeLeadView.group),
-    ];
-  }, [activeLeadView.group]);
   const activeCrmFilterCount = [
     leadViewFilter !== "all",
     Boolean(strategyFilter.step || strategyFilter.strategyId),
@@ -2051,6 +2042,7 @@ export function App() {
               <button
                 type="button"
                 className={isActive ? "active" : ""}
+                aria-current={isActive ? "page" : undefined}
                 aria-label={badge ? `${operation.label}, ${badge} needs attention` : operation.label}
                 key={operation.section}
                 onClick={() => selectOperation(operation.section)}
@@ -2071,12 +2063,14 @@ export function App() {
           <nav className="ct-topbar-nav" aria-label={activeSection === "workstation" ? "Build funnels" : "Funnel views"}>
             {funnels.map((funnel) => {
               const attentionCount = manualAttentionCounts[funnel.id] ?? 0;
+              const isActiveFunnel = selectedFunnelId === funnel.id;
 
               return (
                 <button
                   key={funnel.id}
                   type="button"
-                  className={`ct-nav-btn ${selectedFunnelId === funnel.id ? "active" : ""}`}
+                  className={`ct-nav-btn ${isActiveFunnel ? "active" : ""}`}
+                  aria-current={isActiveFunnel ? "page" : undefined}
                   onClick={() => setSelectedFunnelId(funnel.id)}
                 >
                   <span>{funnel.label}</span>
@@ -2275,7 +2269,7 @@ export function App() {
             <section className="ct-lead-filter-bar" aria-labelledby="ctLeadStateLabel">
               <div className="ct-lead-filter-head">
                 <div>
-                  <span id="ctLeadStateLabel">Visible state board</span>
+                  <span id="ctLeadStateLabel">State</span>
                   <strong>{activeLeadView.label}</strong>
                 </div>
                 {activeCrmFilterCount ? (
@@ -2288,32 +2282,26 @@ export function App() {
                   </button>
                 ) : null}
               </div>
-              <div className="ct-lead-filter-groups" role="group" aria-label="Lead state filters">
-                {orderedLeadViewFilterGroups.map((group) => (
-                  <div className="ct-lead-filter-group" data-group={group.group} key={group.group}>
-                    <span className="ct-lead-filter-group-label">{group.label}</span>
-                    <div className="ct-lead-filter-set">
-                      {leadViewFilters.filter((filter) => filter.group === group.group).map((filter) => {
-                        const count = Number(metrics?.[filter.metric ?? "total"] ?? 0);
+              <div className="ct-lead-state-strip" role="group" aria-label="Lead state filters">
+                {leadViewFilters.map((filter) => {
+                  const count = Number(metrics?.[filter.metric ?? "total"] ?? 0);
+                  const isActiveFilter = leadViewFilter === filter.value;
 
-                        return (
-                          <button
-                            key={filter.value}
-                            type="button"
-                            className={`ct-lead-view ${leadViewFilter === filter.value ? "active" : ""}`}
-                            data-group={filter.group}
-                            data-tone={filter.tone}
-                            aria-pressed={leadViewFilter === filter.value}
-                            onClick={() => setLeadViewFilter(filter.value)}
-                          >
-                            <span className="ct-lead-view-count">{compactNumber(count)}</span>
-                            <span className="ct-lead-view-label">{filter.label}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ))}
+                  return (
+                    <button
+                      key={filter.value}
+                      type="button"
+                      className={`ct-lead-view ${isActiveFilter ? "active" : ""}`}
+                      data-group={filter.group}
+                      data-tone={filter.tone}
+                      aria-pressed={isActiveFilter}
+                      onClick={() => setLeadViewFilter(filter.value)}
+                    >
+                      <span className="ct-lead-view-count">{compactNumber(count)}</span>
+                      <span className="ct-lead-view-label">{filter.label}</span>
+                    </button>
+                  );
+                })}
               </div>
             </section>
             {(strategyStats.length || tagOptions.length) ? (
