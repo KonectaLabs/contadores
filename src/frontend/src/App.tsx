@@ -451,6 +451,8 @@ export function App() {
   const [acknowledgingDeliveryErrorIds, setAcknowledgingDeliveryErrorIds] = useState<number[]>([]);
   const [leadContextCopyStatus, setLeadContextCopyStatus] = useState("");
   const detailRequestId = useRef(0);
+  const workstationDetailRequestId = useRef(0);
+  const workstationLoadingRequestId = useRef(0);
   const deliveryDraftSourceId = useRef<string | null>(null);
   const deliverySourcesRef = useRef<ClientLeadSource[]>([]);
   const previousFunnelIdRef = useRef(selectedFunnelId);
@@ -655,20 +657,28 @@ export function App() {
   }, []);
 
   const loadWorkstationDetail = useCallback(async (clientId: string, options: LoadWorkstationDetailOptions = {}) => {
+    const requestId = workstationDetailRequestId.current + 1;
+    workstationDetailRequestId.current = requestId;
     const syncNotes = options.syncNotes ?? true;
     const showLoading = options.showLoading ?? true;
+    const loadingRequestId = workstationLoadingRequestId.current + (showLoading ? 1 : 0);
     if (showLoading) {
+      workstationLoadingRequestId.current = loadingRequestId;
       setWorkstationLoading(true);
+      setWorkstationDetail((current) => current?.client.id === clientId ? current : null);
     }
     try {
       const payload = await apiFetch<WorkstationClientDetailResponse>(`/api/workstation/clients/${clientId}`);
-      setWorkstationDetail(payload);
-      if (syncNotes) {
-        setWorkstationNotesDraft(payload.notes ?? "");
+      if (workstationDetailRequestId.current === requestId) {
+        setWorkstationDetail(payload);
+        if (syncNotes) {
+          setWorkstationNotesDraft(payload.notes ?? "");
+        }
+        return payload;
       }
-      return payload;
+      return null;
     } finally {
-      if (showLoading) {
+      if (showLoading && workstationLoadingRequestId.current === loadingRequestId) {
         setWorkstationLoading(false);
       }
     }
@@ -1271,15 +1281,18 @@ export function App() {
 
   async function openWorkstationClient(clientId: string) {
     setSelectedWorkstationClientId(clientId);
+    setWorkstationDetail((current) => current?.client.id === clientId ? current : null);
+    setWorkstationNotesDraft("");
     setActiveSection("workstation");
     setProfessionalPhotoMediaIds([]);
     setProfessionalPhotoContext("");
     setProfessionalPhotoEditPrompts({});
     try {
-      const payload = await apiFetch<WorkstationClientDetailResponse>(`/api/workstation/clients/${clientId}`);
+      const payload = await loadWorkstationDetail(clientId);
+      if (!payload) {
+        return;
+      }
       setSelectedFunnelId(payload.client.funnel_id || "contadores");
-      setWorkstationDetail(payload);
-      setWorkstationNotesDraft(payload.notes ?? "");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not open Workstation client.");
     }
@@ -2179,7 +2192,12 @@ export function App() {
           professionalPhotoEditPrompts={professionalPhotoEditPrompts}
           professionalPhotoJob={professionalPhotoJob}
           onSelectClient={(clientId) => {
+            const switchingClient = selectedWorkstationClientId !== clientId;
             setSelectedWorkstationClientId(clientId);
+            if (switchingClient) {
+              setWorkstationDetail(null);
+              setWorkstationNotesDraft("");
+            }
             setProfessionalPhotoMediaIds([]);
             setProfessionalPhotoContext("");
             setProfessionalPhotoEditPrompts({});
@@ -4562,6 +4580,7 @@ function WorkstationView({
   const showSteerCodexPrimary = !showStartCodexPrimary && canStopSoloPageWork;
   const showNotesPrimary = !showStartCodexPrimary && !showSteerCodexPrimary && !publicPage;
   const clientListLoading = listLoading && clients.length === 0;
+  const clientDetailLoading = Boolean(selectedClientId && loading && detail?.client.id !== selectedClientId);
   const clientSummaryText = clientListLoading
     ? `Loading converted clients in ${funnelLabel}`
     : clients.length
@@ -4814,8 +4833,10 @@ function WorkstationView({
         </aside>
 
         <section className="ct-detail workstation-detail">
-          {!activeClient && clientListLoading ? (
+          {clientDetailLoading ? (
             <p className="empty-note">Loading client workspace.</p>
+          ) : !activeClient && clientListLoading ? (
+            <p className="empty-note">Loading converted clients.</p>
           ) : !activeClient ? (
             <p className="empty-note">Select a converted client.</p>
           ) : (
