@@ -77,6 +77,13 @@ from backend.meta_ads_publish import (
 )
 from backend.meta_ads_inventory import MetaInventoryError, sync_meta_inventory
 from backend.meta_lead_ads import DEFAULT_META_LEAD_FIELDS, MetaLeadAdsCredentialsError, MetaLeadAdsError
+from backend.meta_lead_forms import (
+    CreateMetaLeadFormArgs,
+    MetaLeadFormsError,
+    SubscribeMetaLeadWebhookArgs,
+    create_meta_lead_form,
+    subscribe_meta_lead_webhook,
+)
 
 
 DEFAULT_AGENT_SEQUENCE_STEP = "codex_agent"
@@ -224,6 +231,8 @@ class UpsertClientLeadDeliverySourceArgs(BaseModel):
     sheet_url: str = ""
     sheet_gid: str | None = None
     sheet_tab_name: str | None = None
+    meta_page_id: str | None = None
+    meta_lead_form_id: str | None = None
     sheet_poll_seconds: int = Field(default=10, ge=5)
     recipient_name: str | None = None
     recipient_phone: str = ""
@@ -260,6 +269,16 @@ class FetchMetaLeadFormToDeliveryArgs(BaseModel):
     leadgen_id: str = Field(min_length=1, max_length=160)
     fields: str | None = DEFAULT_META_LEAD_FIELDS
     reason: str = Field(default="Fetched from Meta Lead Ads by Codex agent.", max_length=1000)
+
+
+class BackfillMetaLeadFormToDeliveryArgs(BaseModel):
+    """Arguments for fetching recent leads from one Meta form and importing them."""
+
+    source_id: str = Field(min_length=1, max_length=120)
+    form_id: str | None = Field(default=None, max_length=160)
+    fields: str | None = DEFAULT_META_LEAD_FIELDS
+    limit: int = Field(default=100, ge=1, le=500)
+    reason: str = Field(default="Backfilled from Meta Lead Ads by Codex agent.", max_length=1000)
 
 
 class ValidatePlatformConfigArgs(BaseModel):
@@ -442,6 +461,11 @@ class MetaAdSetPlan(BaseModel):
     bid_strategy: str = "LOWEST_COST_WITHOUT_CAP"
     targeting: dict[str, Any] = Field(default_factory=dict)
     placements: list[str] = Field(default_factory=list)
+    facebook_positions: list[str] = Field(default_factory=list)
+    instagram_positions: list[str] = Field(default_factory=list)
+    messenger_positions: list[str] = Field(default_factory=list)
+    audience_network_positions: list[str] = Field(default_factory=list)
+    device_platforms: list[str] = Field(default_factory=list)
     start_time: str = ""
     end_time: str = ""
     ads: list[MetaAdPlan] = Field(default_factory=list)
@@ -672,6 +696,16 @@ def tool_specs() -> list[CodexAgentToolSpec]:
             UpsertClientLeadDeliverySourceArgs,
         ),
         (
+            "create_meta_lead_form",
+            "Create one Meta Lead Ads instant form and optionally bind it to a Client Lead Delivery source.",
+            CreateMetaLeadFormArgs,
+        ),
+        (
+            "subscribe_meta_lead_webhook",
+            "Subscribe a Meta Page app to leadgen webhooks for instant-form leads.",
+            SubscribeMetaLeadWebhookArgs,
+        ),
+        (
             "import_meta_lead_form_to_delivery",
             "Import one retrieved Meta Lead Ads instant-form lead into Client Lead Delivery without using the UI.",
             ImportMetaLeadFormToDeliveryArgs,
@@ -680,6 +714,11 @@ def tool_specs() -> list[CodexAgentToolSpec]:
             "fetch_meta_lead_form_to_delivery",
             "Fetch one Meta Lead Ads leadgen_id from Graph API and import it into Client Lead Delivery without using the UI.",
             FetchMetaLeadFormToDeliveryArgs,
+        ),
+        (
+            "backfill_meta_lead_form_to_delivery",
+            "Fetch recent leads from one Meta Lead Ads form and import new rows into Client Lead Delivery and Google Sheets.",
+            BackfillMetaLeadFormToDeliveryArgs,
         ),
         (
             "create_platform_meeting",
@@ -935,6 +974,8 @@ def _client_source_payload(source: ClientLeadSource) -> dict[str, Any]:
         "sheet_url_configured": bool(source.sheet_url),
         "sheet_gid": source.sheet_gid,
         "sheet_tab_name": source.sheet_tab_name,
+        "meta_page_id": source.meta_page_id,
+        "meta_lead_form_id": source.meta_lead_form_id,
         "sheet_poll_seconds": source.sheet_poll_seconds,
         "recipient_name": source.recipient_name,
         "recipient_phone_configured": bool(source.recipient_phone),
@@ -1025,8 +1066,11 @@ def read_platform_config(arguments: dict[str, Any]) -> dict[str, Any]:
             "configure_text_offer_funnel",
             "upsert_funnel_config",
             "upsert_client_lead_delivery_source",
+            "create_meta_lead_form",
+            "subscribe_meta_lead_webhook",
             "import_meta_lead_form_to_delivery",
             "fetch_meta_lead_form_to_delivery",
+            "backfill_meta_lead_form_to_delivery",
             "create_platform_meeting",
             "schedule_platform_meeting",
             "attach_meeting_transcript",
@@ -1052,8 +1096,11 @@ def read_platform_config(arguments: dict[str, Any]) -> dict[str, Any]:
             "funnel": FunnelDefinition.model_json_schema(),
             "configure_text_offer_funnel": ConfigureTextOfferFunnelArgs.model_json_schema(),
             "client_lead_delivery_source": UpsertClientLeadDeliverySourceArgs.model_json_schema(),
+            "create_meta_lead_form": CreateMetaLeadFormArgs.model_json_schema(),
+            "subscribe_meta_lead_webhook": SubscribeMetaLeadWebhookArgs.model_json_schema(),
             "import_meta_lead_form_to_delivery": ImportMetaLeadFormToDeliveryArgs.model_json_schema(),
             "fetch_meta_lead_form_to_delivery": FetchMetaLeadFormToDeliveryArgs.model_json_schema(),
+            "backfill_meta_lead_form_to_delivery": BackfillMetaLeadFormToDeliveryArgs.model_json_schema(),
             "create_platform_meeting": CreatePlatformMeetingArgs.model_json_schema(),
             "schedule_platform_meeting": SchedulePlatformMeetingArgs.model_json_schema(),
             "extract_client_profile_from_meeting_transcript": ExtractClientProfileFromMeetingArgs.model_json_schema(),
@@ -1274,6 +1321,8 @@ def upsert_client_lead_delivery_source(arguments: dict[str, Any]) -> dict[str, A
             sheet_url=args.sheet_url,
             sheet_gid=args.sheet_gid,
             sheet_tab_name=args.sheet_tab_name,
+            meta_page_id=args.meta_page_id,
+            meta_lead_form_id=args.meta_lead_form_id,
             sheet_poll_seconds=args.sheet_poll_seconds,
             recipient_name=args.recipient_name,
             recipient_phone=args.recipient_phone,
@@ -1295,6 +1344,26 @@ def upsert_client_lead_delivery_source(arguments: dict[str, Any]) -> dict[str, A
         payload={"reason": args.reason, "enabled": source.enabled, "sheet_url_configured": bool(source.sheet_url)},
     )
     return {"saved": True, "source": _client_source_payload(source)}
+
+
+def create_meta_lead_form_tool(arguments: dict[str, Any]) -> dict[str, Any]:
+    """Create one Meta Lead Ads instant form through the audited write gate."""
+    args = CreateMetaLeadFormArgs.model_validate(arguments)
+    try:
+        result = create_meta_lead_form(args, source="codex_agent_tool", actor="agent")
+    except MetaLeadFormsError as error:
+        raise AgentToolError(str(error)) from error
+    return result.model_dump(mode="json")
+
+
+def subscribe_meta_lead_webhook_tool(arguments: dict[str, Any]) -> dict[str, Any]:
+    """Subscribe a Meta Page app to leadgen webhooks through the audited write gate."""
+    args = SubscribeMetaLeadWebhookArgs.model_validate(arguments)
+    try:
+        result = subscribe_meta_lead_webhook(args, source="codex_agent_tool", actor="agent")
+    except MetaLeadFormsError as error:
+        raise AgentToolError(str(error)) from error
+    return result.model_dump(mode="json")
 
 
 def import_meta_lead_form_to_delivery(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -1342,9 +1411,61 @@ def import_meta_lead_form_to_delivery(arguments: dict[str, Any]) -> dict[str, An
             "updated": result.updated,
             "blocked": result.blocked,
             "queued": result.queued,
+            "sheet_appended": result.sheet_appended,
+            "sheet_append_errors": result.sheet_append_errors,
         },
         idempotency_key=f"meta_lead:{source.id}:{args.leadgen_id.strip()}",
     )
+    return result.model_dump(mode="json")
+
+
+def backfill_meta_lead_form_to_delivery(arguments: dict[str, Any]) -> dict[str, Any]:
+    """Fetch recent Meta Lead Ads form leads and route them through Delivery."""
+    from backend.endpoints.client_leads import MetaLeadFormBackfillCommand, fetch_and_import_meta_lead_form_records
+
+    args = BackfillMetaLeadFormToDeliveryArgs.model_validate(arguments)
+    source = ClientLeadSource.get_by_id(args.source_id.strip())
+    if source is None:
+        raise AgentToolError(f"Client lead delivery source not found: {args.source_id}")
+    if not source.enabled:
+        source = ClientLeadSource.mark_sync(source.id, status="disabled", note="source disabled") or source
+        return {"status": "disabled", "source": _client_source_payload(source)}
+
+    command = MetaLeadFormBackfillCommand(
+        form_id=args.form_id,
+        fields=args.fields or DEFAULT_META_LEAD_FIELDS,
+        limit=args.limit,
+        reason=args.reason,
+    )
+    try:
+        result = fetch_and_import_meta_lead_form_records(
+            source,
+            command,
+            event_source="codex_agent_tool",
+            actor="agent",
+        )
+    except MetaLeadAdsCredentialsError as error:
+        note = f"missing Meta Lead Ads credentials: {', '.join(error.missing)}"
+        source = ClientLeadSource.mark_sync(source.id, status="failed", note=note) or source
+        PlatformEvent.add(
+            event_type="client_lead.meta_form_backfill_blocked",
+            lifecycle_stage="delivery",
+            target_type="client_lead_source",
+            target_id=source.id,
+            source="codex_agent_tool",
+            actor="agent",
+            summary=f"Could not backfill Meta leads for source {source.id}: {note}.",
+            payload={"form_id": args.form_id or source.meta_lead_form_id, "errors": error.missing, "reason": args.reason},
+            idempotency_key=f"meta_lead_backfill_blocked:{source.id}:{args.form_id or source.meta_lead_form_id}",
+        )
+        return {
+            "status": "missing_credentials",
+            "source": _client_source_payload(source),
+            "errors": error.missing,
+        }
+    except MetaLeadAdsError as error:
+        ClientLeadSource.mark_sync(source.id, status="failed", note=str(error))
+        raise AgentToolError(str(error)) from error
     return result.model_dump(mode="json")
 
 
@@ -2814,8 +2935,11 @@ TOOL_HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {
     "configure_text_offer_funnel": configure_text_offer_funnel,
     "upsert_funnel_config": upsert_funnel_config,
     "upsert_client_lead_delivery_source": upsert_client_lead_delivery_source,
+    "create_meta_lead_form": create_meta_lead_form_tool,
+    "subscribe_meta_lead_webhook": subscribe_meta_lead_webhook_tool,
     "import_meta_lead_form_to_delivery": import_meta_lead_form_to_delivery,
     "fetch_meta_lead_form_to_delivery": fetch_meta_lead_form_to_delivery,
+    "backfill_meta_lead_form_to_delivery": backfill_meta_lead_form_to_delivery,
     "create_platform_meeting": create_platform_meeting,
     "schedule_platform_meeting": schedule_platform_meeting,
     "attach_meeting_transcript": attach_meeting_transcript,

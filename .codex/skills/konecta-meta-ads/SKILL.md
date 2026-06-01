@@ -48,6 +48,19 @@ agent-native flow first:
    run `execute_meta_publish_plan` with `live_writes_requested=true`. It stores
    each Meta provider ID so retries skip already-created objects.
 
+Validated local Meta defaults for Contadores/Konecta as of 2026-05-31:
+
+- API version: `v25.0`
+- Ad account: `act_396900435976478`
+- Business: `1017654719078489`
+- Page: `100444969619229`
+- WhatsApp phone number: `881994095003323`
+- WABA: `1873936066568522`
+
+Keep the access token only in local secrets (`.env`, bashrc, or 1Password). Do not
+write it in tracked docs or prompts. These IDs are defaults for the validated
+Konecta setup, not permission to invent IDs for another client/funnel.
+
 ## The 10/10 Pattern
 
 Use the Eliana v3 pattern:
@@ -250,7 +263,8 @@ Before any future live publish, the plan must have:
   to the same funnel or a new-ad execution plan that will persist returned Meta
   ad IDs into the funnel after live publish;
 - for instant forms, a ready `client_lead_source_id` whose Sheet, recipient,
-  template, and polling config feed Client Lead Delivery;
+  template, `meta_page_id`, `meta_lead_form_id`, and polling config feed Client
+  Lead Delivery;
 - special ad category decision when applicable;
 - one or more ad sets with budget, targeting, placement/start-stop policy, and
   at least one ad;
@@ -259,7 +273,12 @@ Before any future live publish, the plan must have:
   `creative_asset_id` are staging references, not live-publishable Meta assets;
 - operator approval, idempotency key, and rollback/disable order.
 
-Published lead flow must be traceable back to the platform. For
+Published lead flow must be traceable back to the platform. Use
+`create_meta_lead_form` to create an instant form and optionally bind the
+returned `lead_form_id` to `client_lead_source_id`; use
+`subscribe_meta_lead_webhook` to subscribe the Page to `leadgen`. Both are live
+writes and require explicit `live_writes_requested=true` plus
+`META_MARKETING_LIVE_WRITES_ENABLED=true`. For
 Click-to-WhatsApp ads, keep `referral.source_id` mapped to the funnel; new ads
 created through `execute_meta_publish_plan` should persist returned Meta ad IDs
 as `whatsapp_referral_source_ids`. For lead forms, use
@@ -269,7 +288,10 @@ Lead Delivery instead of creating a side channel. When a webhook gives only
 `field_data` from Graph API and queues Delivery. When the full Lead Ads payload
 has already been retrieved from Meta, call `import_meta_lead_form_to_delivery`
 with the `leadgen_id`, metadata, and `field_data`; both tools dedupe by
-`leadgen_id` and queue the same WhatsApp delivery used by Sheets imports.
+`leadgen_id`, append new imports to the connected Google Sheet when the service
+account is configured, and queue the same WhatsApp delivery used by Sheets
+imports. Use `backfill_meta_lead_form_to_delivery` to import recent historical
+form leads after webhook setup or migration.
 
 ## Angle Selection
 

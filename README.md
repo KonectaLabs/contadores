@@ -113,10 +113,15 @@ formularios:
   `approve_meta_publish_plan`, `execute_meta_publish_plan` y
   `stage_meta_publish_attempt`: ads, inventario y publicacion Meta en modo
   staged/aprobable.
+- `create_meta_lead_form` y `subscribe_meta_lead_webhook`: crean instant forms
+  y suscriben la Page al webhook `leadgen` con el mismo gate de live writes que
+  el publish.
 - `import_meta_lead_form_to_delivery`: importa un lead ya recuperado de Meta
   Lead Ads por `leadgen_id` a la misma cola de Client Lead Delivery.
 - `fetch_meta_lead_form_to_delivery`: lee un `leadgen_id` desde Graph API y lo
   importa en Delivery sin abrir la UI.
+- `backfill_meta_lead_form_to_delivery`: trae leads recientes de un form y los
+  importa/deduplica en Delivery y en el Google Sheet conectado.
 - `create_client_update`: actualizaciones de 24 horas para clientes.
 - `ask_human_question` y `answer_human_question`: dudas a Facundo/operador con
   contexto, accion por defecto y memoria reutilizable.
@@ -132,32 +137,39 @@ Flujo Meta agent-native:
    concepto para que Meta elija ganadoras por delivery.
 3. `stage_creative_asset` guarda prompts, archivos y referencias de imagen/video
    para cada variante generada.
-4. `stage_meta_publish_plan` arma el plan tipado `Campaign -> Ad Set ->
+4. `upsert_client_lead_delivery_source` deja lista la fuente que recibe leads
+   del cliente: Sheet, destinatario WhatsApp, mapping y, para instant forms,
+   `meta_page_id` / `meta_lead_form_id`.
+5. `create_meta_lead_form` crea el instant form en la Page y puede vincular el
+   `lead_form_id` devuelto con `client_lead_source_id`. `subscribe_meta_lead_webhook`
+   suscribe la Page al campo `leadgen`. Ambos son writes externos y requieren
+   `live_writes_requested=true` + `META_MARKETING_LIVE_WRITES_ENABLED=true`.
+6. `stage_meta_publish_plan` arma el plan tipado `Campaign -> Ad Set ->
    Ad/Creative`, siempre en modo `PAUSED` y sin writes externos. El destino
    tambien declara el ruteo: Click-to-WhatsApp usa el funnel y, si ya existe,
    `whatsapp_referral_source_id`; instant forms usan `client_lead_source_id`
    para entrar a Client Lead Delivery.
-5. `sync_meta_inventory` lee cuentas, Pages, formularios, pixels, numeros de
+7. `sync_meta_inventory` lee cuentas, Pages, formularios, pixels, numeros de
    WhatsApp y campanas existentes cuando hay credenciales; si faltan, guarda un
    snapshot `missing_credentials` para observabilidad.
-6. `upload_meta_creative_asset` sube una imagen/video staged a Meta media
+8. `upload_meta_creative_asset` sube una imagen/video staged a Meta media
    storage y guarda `image_hash` o `video_id` en el asset y en los publish plans
    que lo referencian. Es un write externo acotado: exige
    `live_writes_requested=true`, `META_MARKETING_LIVE_WRITES_ENABLED=true`,
    credenciales y archivo local existente, pero no crea Campaign, Ad Set,
    Creative ni Ad.
-7. Si faltan `ad_account_id`, `page_id`, destino WhatsApp/form, ruteo de leads,
+9. Si faltan `ad_account_id`, `page_id`, destino WhatsApp/form, ruteo de leads,
    presupuesto, targeting o creatividades, el resultado incluye
    `required_before_live_publish` y el agente debe usar `ask_human_question` en
    vez de inventar datos.
-8. `preflight_meta_publish_plan` convierte el plan staged en operaciones
+10. `preflight_meta_publish_plan` convierte el plan staged en operaciones
    ordenadas `campaign -> ad_set -> creative -> ad`, guarda el resultado en el
    intento y bloquea cualquier live write si faltan credenciales, aprobacion o
    politica.
-9. `approve_meta_publish_plan` aplica el gate de aprobacion: presupuesto dentro
+11. `approve_meta_publish_plan` aplica el gate de aprobacion: presupuesto dentro
    de caps, inventario listo, `idempotency_key`, todo creado en `PAUSED`, y
    aprobacion explicita del operador antes de permitir un candidato live.
-10. `execute_meta_publish_plan` es el unico paso que puede crear objetos de
+12. `execute_meta_publish_plan` es el unico paso que puede crear objetos de
    campana en Meta:
    requiere `live_writes_requested=true`, `META_MARKETING_LIVE_WRITES_ENABLED`,
    credenciales, approval gate aprobado y creatividades ya subidas a Meta
@@ -166,12 +178,30 @@ Flujo Meta agent-native:
    Click-to-WhatsApp, tambien persiste los IDs de anuncios creados como
    `whatsapp_referral_source_ids` del funnel, para que los webhooks entrantes
    vuelvan al mismo flujo.
-11. Cuando un instant form genera un `leadgen_id`, el agente usa
+13. Cuando un instant form genera un `leadgen_id`, el webhook publico
+   `GET/POST /api/meta-leads/webhook` verifica el challenge con
+   `META_LEAD_WEBHOOK_VERIFY_TOKEN`, resuelve la fuente por `meta_lead_form_id`
+   y usa Graph API para meter el lead en Delivery. Si hace falta backfill, usar
+   `backfill_meta_lead_form_to_delivery`.
+14. Cuando un instant form genera un `leadgen_id`, el agente usa
    `fetch_meta_lead_form_to_delivery` para traer `field_data` desde Graph API y
    meter el lead en Client Lead Delivery. Si ya tiene el payload completo, usa
    `import_meta_lead_form_to_delivery`.
-12. `stage_meta_publish_attempt` queda para payloads crudos, respuestas de Meta
+15. `stage_meta_publish_attempt` queda para payloads crudos, respuestas de Meta
    o registros manuales del publicador aprobado.
+
+Credenciales Meta locales validadas el 2026-05-31:
+
+- API version: `v25.0`
+- Ad account: `act_396900435976478`
+- Business: `1017654719078489`
+- Page: `100444969619229`
+- WhatsApp phone number: `881994095003323`
+- WABA: `1873936066568522`
+
+El access token vive solo en secretos locales, como `.env`, bashrc local o
+1Password; no commitear tokens. `META_MARKETING_LIVE_WRITES_ENABLED` queda
+`false` hasta una aprobacion explicita de publish real.
 
 Ejemplo de plan Meta staged:
 
@@ -729,17 +759,26 @@ Client Lead Delivery:
 - Delivery es una superficie separada del CRM, Workstation y Runner para leads que
   se generan para clientes de Konecta.
 - Cada fuente guarda URL/GID del Google Sheet, intervalo de polling, destinatario
-  WhatsApp, mapping de columnas, campos de contexto y template Meta.
+  WhatsApp, mapping de columnas, campos de contexto, template Meta y, cuando
+  aplica, `meta_page_id` / `meta_lead_form_id` para resolver webhooks.
 - Los Meta instant forms staged con `stage_meta_publish_plan` deben declarar
   `destination.client_lead_source_id`; el gate de publish bloquea si la fuente
   no existe, esta deshabilitada o no tiene sheet/destinatario/template listo.
+- `POST /api/meta-leads/forms` crea instant forms con el gate de writes Meta y
+  puede vincular el form devuelto a una fuente con `client_lead_source_id`.
+- `POST /api/meta-leads/webhook-subscriptions` suscribe la Page a `leadgen`.
+  `GET /api/meta-leads/webhook` responde el challenge de Meta con
+  `META_LEAD_WEBHOOK_VERIFY_TOKEN`; `POST /api/meta-leads/webhook` recibe
+  `leadgen_id`, resuelve la fuente por `form_id` o
+  `META_LEAD_WEBHOOK_DEFAULT_SOURCE_ID`, y fetch/importa el lead.
 - Cuando el lead de un instant form ya fue recuperado desde Meta por API o por
-  un futuro webhook verificado, enviarlo a
+  un webhook verificado, enviarlo a
   `POST /api/client-lead-sources/{source_id}/meta-lead` o al tool
   `import_meta_lead_form_to_delivery`. El backend aplana `field_data`, usa
   `leadgen_id` como clave idempotente por fuente, guarda el raw row en
-  `client_lead_deliveries` y deja la notificacion WhatsApp `pending` igual que
-  un sync de Sheets.
+  `client_lead_deliveries`, apendea el nuevo row al Google Sheet por service
+  account cuando esta configurado, y deja la notificacion WhatsApp `pending`
+  igual que un sync de Sheets.
 - Si solo tenes el `leadgen_id` del webhook, usar
   `POST /api/client-lead-sources/{source_id}/meta-lead/fetch` o el tool
   `fetch_meta_lead_form_to_delivery`. El fetch lee
@@ -747,6 +786,10 @@ Client Lead Delivery:
   desde Graph API con `META_MARKETING_API_VERSION` y
   `META_MARKETING_ACCESS_TOKEN` / `META_ACCESS_TOKEN`. No requiere
   `META_MARKETING_LIVE_WRITES_ENABLED` porque es read-only.
+- Para recuperar historico reciente de un form, usar
+  `POST /api/client-lead-sources/{source_id}/meta-leads/backfill` o
+  `backfill_meta_lead_form_to_delivery`; tambien deduplica por `leadgen_id` y
+  apendea solo imports nuevos al Sheet.
 - Las fuentes tambien se pueden declarar por archivo. El seed versionado es
   `config/default-client-lead-sources.json`; el override editable del server es
   `CLIENT_LEAD_SOURCES_CONFIG_PATH` o `data/client-lead-sources.json`.

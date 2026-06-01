@@ -108,6 +108,8 @@ class ClientLeadSheetDefinition(BaseModel):
     sheet_url: str = ""
     sheet_gid: str | None = None
     sheet_tab_name: str | None = None
+    meta_page_id: str | None = None
+    meta_lead_form_id: str | None = None
     column_mapping: dict[str, str] | None = None
     context_fields: list[str] | None = None
     context_field_mapping: dict[str, str] | None = None
@@ -120,7 +122,7 @@ class ClientLeadSheetDefinition(BaseModel):
             return None
         return slugify_client_lead_source_id(value or "")
 
-    @field_validator("label", "sheet_url", "sheet_gid", "sheet_tab_name")
+    @field_validator("label", "sheet_url", "sheet_gid", "sheet_tab_name", "meta_page_id", "meta_lead_form_id")
     @classmethod
     def strip_text(cls, value: str | None) -> str | None:
         """Strip optional sheet fields."""
@@ -170,6 +172,8 @@ class ClientLeadSourceFileEntry(BaseModel):
     sheet_url: str = ""
     sheet_gid: str | None = None
     sheet_tab_name: str | None = None
+    meta_page_id: str = ""
+    meta_lead_form_id: str = ""
     sheet_poll_seconds: int = Field(default=10, ge=5)
     recipient_name: str | None = None
     recipient_phone: str = ""
@@ -188,6 +192,8 @@ class ClientLeadSourceDefinition(BaseModel):
     sheet_url: str | None = ""
     sheet_gid: str | None = None
     sheet_tab_name: str | None = None
+    meta_page_id: str | None = None
+    meta_lead_form_id: str | None = None
     sheets: list[ClientLeadSheetDefinition] = Field(default_factory=list)
     sheet_poll_seconds: int = Field(default=10, ge=5)
     recipient_name: str | None = None
@@ -210,6 +216,8 @@ class ClientLeadSourceDefinition(BaseModel):
         "sheet_url",
         "sheet_gid",
         "sheet_tab_name",
+        "meta_page_id",
+        "meta_lead_form_id",
         "recipient_name",
         "recipient_phone",
         "template_name",
@@ -305,6 +313,8 @@ class ClientLeadSourceDefinition(BaseModel):
                         sheet_url=sheet.sheet_url or "",
                         sheet_gid=sheet.sheet_gid or None,
                         sheet_tab_name=sheet.sheet_tab_name or None,
+                        meta_page_id=sheet.meta_page_id or self.meta_page_id or "",
+                        meta_lead_form_id=sheet.meta_lead_form_id or self.meta_lead_form_id or "",
                         sheet_poll_seconds=self.sheet_poll_seconds,
                         recipient_name=recipient.name or self.recipient_name,
                         recipient_phone=recipient.phone,
@@ -385,6 +395,8 @@ def sync_client_lead_sources_from_config() -> ClientLeadConfigSyncResult:
                 sheet_url=entry.sheet_url,
                 sheet_gid=entry.sheet_gid,
                 sheet_tab_name=entry.sheet_tab_name,
+                meta_page_id=entry.meta_page_id,
+                meta_lead_form_id=entry.meta_lead_form_id,
                 sheet_poll_seconds=entry.sheet_poll_seconds,
                 recipient_name=entry.recipient_name,
                 recipient_phone=entry.recipient_phone,

@@ -27,6 +27,7 @@ from backend.endpoints import (
     client_leads_router,
     contadores_router,
     funnels_router,
+    meta_leads_router,
     platform_router,
     public_workstation_router,
     workstation_router,
@@ -72,6 +73,7 @@ PUBLIC_PATHS_WITHOUT_SESSION = {
     "/login",
     "/api/auth/login",
     "/api/auth/logout",
+    "/api/meta-leads/webhook",
 }
 
 
@@ -81,6 +83,7 @@ def is_internal_bot_api_path(path: str) -> bool:
         path.startswith("/api/contadores/")
         or path.startswith("/api/client-lead-sources")
         or path.startswith("/api/client-lead-deliveries")
+        or path.startswith("/api/meta-leads")
         or path.startswith("/api/workstation/automation/")
         or path.startswith("/api/platform/")
         or path == "/api/runtime"
@@ -177,6 +180,7 @@ app.include_router(client_leads_router)
 app.include_router(client_lead_deliveries_router)
 app.include_router(client_leads_actions_router)
 app.include_router(funnels_router)
+app.include_router(meta_leads_router)
 app.include_router(platform_router)
 app.include_router(workstation_router)
 

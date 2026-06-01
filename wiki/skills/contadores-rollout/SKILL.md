@@ -179,27 +179,38 @@ Before enabling a live Delivery source:
    Edit the server override at `CLIENT_LEAD_SOURCES_CONFIG_PATH`, usually
    `/root/projects/contadores/data/client-lead-sources.json`. The versioned
    seed is `config/default-client-lead-sources.json`.
-2. Confirm the source has `sheet_url`, `sheet_gid`, recipient phone or
-   `sheet_tab_name`, recipient phone or `recipients`, column mapping, optional
-   context field mapping, template name, and template language. Multiple
-   `recipients` are expanded into one DB source per recipient. Multiple
+2. Confirm the source has `sheet_url`, `sheet_gid` or `sheet_tab_name`,
+   recipient phone or `recipients`, column mapping, optional context field
+   mapping, template name, and template language. For Meta instant forms, bind
+   `meta_page_id` and `meta_lead_form_id` so the webhook can resolve the source.
+   Multiple `recipients` are expanded into one DB source per recipient. Multiple
    `sheets` are expanded into one DB source per sheet/campaign.
    Meta instant-form publish plans must reference this source with
    `destination.client_lead_source_id` before approval.
-3. If a Meta Lead Ads webhook only has `leadgen_id`, fetch and import it through
-   `fetch_meta_lead_form_to_delivery` or
-   `POST /api/client-lead-sources/{source_id}/meta-lead/fetch`. If the full
-   payload has already been retrieved, import it through
-   `import_meta_lead_form_to_delivery` or
-   `POST /api/client-lead-sources/{source_id}/meta-lead`. Do not create a
-   parallel delivery table; the same `client_lead_deliveries` queue handles
-   dedupe, blocking, retry, and WhatsApp notification.
-4. Decide whether the first sync should notify historical rows. First sync
+3. Create instant forms with `create_meta_lead_form` or
+   `POST /api/meta-leads/forms`; subscribe the Page with
+   `subscribe_meta_lead_webhook` or
+   `POST /api/meta-leads/webhook-subscriptions`. Both require explicit Meta
+   live-write flags. The public webhook is `GET/POST /api/meta-leads/webhook`
+   and verifies challenges with `META_LEAD_WEBHOOK_VERIFY_TOKEN`.
+4. If a Meta Lead Ads webhook only has `leadgen_id`, fetch and import it through
+   `fetch_meta_lead_form_to_delivery`,
+   `POST /api/client-lead-sources/{source_id}/meta-lead/fetch`, or the public
+   webhook route. If the full payload has already been retrieved, import it
+   through `import_meta_lead_form_to_delivery` or
+   `POST /api/client-lead-sources/{source_id}/meta-lead`. For historical form
+   leads, use `backfill_meta_lead_form_to_delivery` or
+   `POST /api/client-lead-sources/{source_id}/meta-leads/backfill`. Do not
+   create a parallel delivery table; the same `client_lead_deliveries` queue
+   handles dedupe, blocking, retry, Google Sheet append, and WhatsApp
+   notification.
+5. Decide whether the first sync should notify historical rows. First sync
    imports all non-empty rows and queues valid new rows immediately.
-5. If the sheet is private, set `CONTADORES_GOOGLE_SERVICE_ACCOUNT_FILE` or
+6. If the sheet is private, set `CONTADORES_GOOGLE_SERVICE_ACCOUNT_FILE` or
    `GOOGLE_SERVICE_ACCOUNT_FILE` on the server and share the sheet with that
-   service account.
-6. Validate the template spec locally:
+   service account. Read-only access is enough for polling; Meta form imports
+   that should append rows back to Sheets require Editor access.
+7. Validate the template spec locally:
 
 ```bash
 uv run python src/scripts/whatsapp_templates.py create \
@@ -207,7 +218,7 @@ uv run python src/scripts/whatsapp_templates.py create \
   --dry-run
 ```
 
-7. On the server, check that the Meta template exists and is approved:
+8. On the server, check that the Meta template exists and is approved:
 
 ```bash
 uv run python src/scripts/whatsapp_templates.py check \

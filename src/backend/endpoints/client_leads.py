@@ -37,6 +37,7 @@ from backend.meta_lead_ads import (
     DEFAULT_META_LEAD_FIELDS,
     MetaLeadAdsCredentialsError,
     MetaLeadAdsError,
+    fetch_meta_form_leads,
     fetch_meta_lead_payload,
 )
 
@@ -54,6 +55,22 @@ HEADER_ALIASES = {
 DEFAULT_PENDING_LIMIT = 100
 MAX_CONTEXT_VALUE_CHARS = 240
 MAX_CONTEXT_BLOCK_CHARS = 1000
+META_SHEET_PREFERRED_HEADERS = [
+    "id",
+    "leadgen_id",
+    "created_time",
+    "form_id",
+    "ad_id",
+    "ad_name",
+    "adset_id",
+    "adset_name",
+    "campaign_id",
+    "campaign_name",
+    "platform",
+    "full_name",
+    "phone_number",
+    "email",
+]
 
 
 class ClientLeadSourceCommand(BaseModel):
@@ -65,6 +82,8 @@ class ClientLeadSourceCommand(BaseModel):
     sheet_url: str | None = ""
     sheet_gid: str | None = None
     sheet_tab_name: str | None = None
+    meta_page_id: str | None = None
+    meta_lead_form_id: str | None = None
     sheet_poll_seconds: int = Field(default=10, ge=5)
     recipient_name: str | None = None
     recipient_phone: str | None = ""
@@ -83,6 +102,8 @@ class ClientLeadSourceResponse(BaseModel):
     sheet_url: str
     sheet_gid: str | None
     sheet_tab_name: str | None
+    meta_page_id: str
+    meta_lead_form_id: str
     sheet_poll_seconds: int
     recipient_name: str | None
     recipient_phone: str
@@ -193,6 +214,8 @@ class ClientLeadSyncResponse(BaseModel):
     blocked: int = 0
     skipped: int = 0
     queued: int = 0
+    sheet_appended: int = 0
+    sheet_append_errors: list[str] = Field(default_factory=list)
 
 
 class MetaLeadFormImportCommand(BaseModel):
@@ -217,6 +240,15 @@ class MetaLeadFormFetchCommand(BaseModel):
 
     leadgen_id: str = Field(min_length=1)
     fields: str | None = DEFAULT_META_LEAD_FIELDS
+    reason: str | None = Field(default=None, max_length=1000)
+
+
+class MetaLeadFormBackfillCommand(BaseModel):
+    """Fetch recent leads from one Meta instant form and import them."""
+
+    form_id: str | None = None
+    fields: str | None = DEFAULT_META_LEAD_FIELDS
+    limit: int = Field(default=100, ge=1, le=500)
     reason: str | None = Field(default=None, max_length=1000)
 
 
@@ -297,6 +329,8 @@ def build_source_response(source: ClientLeadSource, counts: dict[str, dict[str, 
         sheet_url=source.sheet_url,
         sheet_gid=source.sheet_gid,
         sheet_tab_name=source.sheet_tab_name,
+        meta_page_id=source.meta_page_id,
+        meta_lead_form_id=source.meta_lead_form_id,
         sheet_poll_seconds=source.sheet_poll_seconds,
         recipient_name=source.recipient_name,
         recipient_phone=source.recipient_phone,
@@ -640,7 +674,15 @@ def meta_field_data_to_row(command: MetaLeadFormImportCommand) -> dict[str, str]
 def import_meta_lead_form_record(source: ClientLeadSource, command: MetaLeadFormImportCommand) -> ClientLeadSyncResponse:
     """Import one retrieved Meta Lead Ads record through the Delivery queue."""
     row = meta_field_data_to_row(command)
-    return import_sheet_records(source, [row])
+    result = import_sheet_records(source, [row])
+    if result.imported <= 0 or not source.sheet_url.strip():
+        return result
+    try:
+        append_record_to_sheet(source, row)
+        result.sheet_appended = 1
+    except Exception as exc:
+        result.sheet_append_errors.append(str(exc))
+    return result
 
 
 def meta_payload_to_import_command(payload: dict[str, Any], requested_leadgen_id: str) -> MetaLeadFormImportCommand:
@@ -698,8 +740,90 @@ def fetch_and_import_meta_lead_form_record(
             "updated": result.updated,
             "blocked": result.blocked,
             "queued": result.queued,
+            "sheet_appended": result.sheet_appended,
+            "sheet_append_errors": result.sheet_append_errors,
         },
         idempotency_key=f"meta_lead_fetch:{source.id}:{import_command.leadgen_id.strip()}",
+    )
+    return result
+
+
+def fetch_and_import_meta_lead_form_records(
+    source: ClientLeadSource,
+    command: MetaLeadFormBackfillCommand,
+    *,
+    event_source: str,
+    actor: str,
+) -> ClientLeadSyncResponse:
+    """Fetch recent Meta leads for a form and import them through Delivery."""
+    form_id = " ".join((command.form_id or source.meta_lead_form_id or "").split()).strip()
+    if not form_id:
+        raise MetaLeadAdsError("form_id is required")
+    payloads = fetch_meta_form_leads(
+        form_id=form_id,
+        fields=command.fields or DEFAULT_META_LEAD_FIELDS,
+        limit=command.limit,
+    )
+    totals = {
+        "imported": 0,
+        "updated": 0,
+        "blocked": 0,
+        "skipped": 0,
+        "queued": 0,
+        "sheet_appended": 0,
+    }
+    sheet_append_errors: list[str] = []
+    for payload in payloads:
+        leadgen_id = stringify_meta_field_value(payload.get("id") or payload.get("leadgen_id"))
+        import_command = meta_payload_to_import_command(payload, leadgen_id)
+        if not import_command.form_id:
+            import_command.form_id = form_id
+        result = import_meta_lead_form_record(source, import_command)
+        totals["imported"] += result.imported
+        totals["updated"] += result.updated
+        totals["blocked"] += result.blocked
+        totals["skipped"] += result.skipped
+        totals["queued"] += result.queued
+        totals["sheet_appended"] += result.sheet_appended
+        sheet_append_errors.extend(result.sheet_append_errors)
+
+    note = (
+        f"meta_form={form_id} fetched={len(payloads)} imported={totals['imported']} "
+        f"updated={totals['updated']} blocked={totals['blocked']} queued={totals['queued']}"
+    )
+    source = ClientLeadSource.mark_sync(source.id, status="ok", note=note) or source
+    result = ClientLeadSyncResponse(
+        status="ok",
+        source=build_source_response(source, ClientLeadDelivery.count_by_status_for_sources()),
+        fetched=len(payloads),
+        imported=totals["imported"],
+        updated=totals["updated"],
+        blocked=totals["blocked"],
+        skipped=totals["skipped"],
+        queued=totals["queued"],
+        sheet_appended=totals["sheet_appended"],
+        sheet_append_errors=sheet_append_errors,
+    )
+    PlatformEvent.add(
+        event_type="client_lead.meta_form_backfilled",
+        lifecycle_stage="delivery",
+        target_type="client_lead_source",
+        target_id=source.id,
+        source=event_source,
+        actor=actor,
+        summary=f"Backfilled {len(payloads)} Meta leads from form {form_id} into Delivery source {source.id}.",
+        payload={
+            "reason": command.reason,
+            "form_id": form_id,
+            "fetched": result.fetched,
+            "imported": result.imported,
+            "updated": result.updated,
+            "blocked": result.blocked,
+            "queued": result.queued,
+            "sheet_appended": result.sheet_appended,
+            "sheet_append_errors": result.sheet_append_errors,
+        },
+        idempotency_key=f"meta_lead_backfill:{source.id}:{form_id}:{len(payloads)}",
     )
     return result
 
@@ -829,16 +953,21 @@ def service_account_file() -> str | None:
     return None
 
 
-def build_sheets_service(credentials_path: str):
+def build_sheets_service(credentials_path: str, *, readonly: bool = True):
     """Build a Google Sheets API service."""
     try:
         from google.oauth2.service_account import Credentials
         from googleapiclient.discovery import build
     except ImportError as exc:
         raise RuntimeError("google-api-python-client and google-auth are required for private sheets.") from exc
+    scope = (
+        "https://www.googleapis.com/auth/spreadsheets.readonly"
+        if readonly
+        else "https://www.googleapis.com/auth/spreadsheets"
+    )
     credentials = Credentials.from_service_account_file(
         credentials_path,
-        scopes=["https://www.googleapis.com/auth/spreadsheets.readonly"],
+        scopes=[scope],
     )
     return build("sheets", "v4", credentials=credentials)
 
@@ -895,6 +1024,60 @@ def read_records_with_service_account(source: ClientLeadSource) -> list[dict[str
         .execute()
     )
     return rows_to_records(response.get("values", []))
+
+
+def meta_sheet_headers_for_record(row: dict[str, str]) -> list[str]:
+    """Return a stable Google Sheet header order for Meta lead rows."""
+    headers = [header for header in META_SHEET_PREFERRED_HEADERS if header in row]
+    headers.extend(key for key in row.keys() if key and key not in headers)
+    return headers
+
+
+def append_record_to_sheet(source: ClientLeadSource, row: dict[str, str]) -> dict[str, Any]:
+    """Append one imported Meta lead row to the source Google Sheet."""
+    if not source.sheet_url.strip():
+        raise RuntimeError("Sheet URL is required to append Meta leads.")
+    credentials_path = service_account_file()
+    if not credentials_path:
+        raise RuntimeError("Google service account file is required to append Meta leads.")
+
+    spreadsheet_id, gid = parse_sheet_target(source.sheet_url, source.sheet_gid)
+    service = build_sheets_service(credentials_path, readonly=False)
+    resolved_range = resolve_range_from_gid(service, spreadsheet_id, gid, source.sheet_tab_name)
+    values_api = service.spreadsheets().values()
+    header_range = f"{resolved_range}!1:1"
+    response = values_api.get(spreadsheetId=spreadsheet_id, range=header_range).execute()
+    existing_headers = [
+        str(value or "").strip()
+        for value in (response.get("values", [[]]) or [[]])[0]
+    ]
+    headers = [header for header in existing_headers if header]
+    if not headers:
+        headers = meta_sheet_headers_for_record(row)
+    else:
+        for header in meta_sheet_headers_for_record(row):
+            if header not in headers:
+                headers.append(header)
+
+    values_api.update(
+        spreadsheetId=spreadsheet_id,
+        range=header_range,
+        valueInputOption="RAW",
+        body={"values": [headers]},
+    ).execute()
+    append_response = values_api.append(
+        spreadsheetId=spreadsheet_id,
+        range=f"{resolved_range}!A1",
+        valueInputOption="RAW",
+        insertDataOption="INSERT_ROWS",
+        body={"values": [[row.get(header, "") for header in headers]]},
+    ).execute()
+    return {
+        "spreadsheet_id": spreadsheet_id,
+        "range": resolved_range,
+        "headers": headers,
+        "provider_response": append_response,
+    }
 
 
 async def fetch_sheet_records(source: ClientLeadSource) -> list[dict[str, str]]:
@@ -1140,6 +1323,8 @@ async def import_meta_lead_form_for_source(
             "updated": result.updated,
             "blocked": result.blocked,
             "queued": result.queued,
+            "sheet_appended": result.sheet_appended,
+            "sheet_append_errors": result.sheet_append_errors,
         },
         idempotency_key=f"meta_lead:{source.id}:{command.leadgen_id.strip()}",
     )
@@ -1176,6 +1361,46 @@ async def fetch_meta_lead_form_for_source(
             summary=f"Could not fetch Meta lead {command.leadgen_id.strip()}: {note}.",
             payload={"leadgen_id": command.leadgen_id.strip(), "errors": exc.missing},
             idempotency_key=f"meta_lead_fetch_blocked:{source.id}:{command.leadgen_id.strip()}",
+        )
+        raise HTTPException(
+            status_code=503,
+            detail={"status": "missing_credentials", "errors": exc.missing},
+        ) from exc
+    except MetaLeadAdsError as exc:
+        ClientLeadSource.mark_sync(source.id, status="failed", note=str(exc))
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@client_leads_router.post("/{source_id}/meta-leads/backfill", response_model=ClientLeadSyncResponse)
+async def backfill_meta_lead_form_for_source(
+    source_id: str,
+    command: MetaLeadFormBackfillCommand,
+) -> ClientLeadSyncResponse:
+    """Fetch recent leads from one Meta instant form and import them into Delivery."""
+    source = get_required_source(source_id)
+    if not source.enabled:
+        source = ClientLeadSource.mark_sync(source.id, status="disabled", note="source disabled") or source
+        return ClientLeadSyncResponse(status="disabled", source=build_source_response(source))
+    try:
+        return fetch_and_import_meta_lead_form_records(
+            source,
+            command,
+            event_source="meta_lead_ads_graph",
+            actor="agent",
+        )
+    except MetaLeadAdsCredentialsError as exc:
+        note = f"missing Meta Lead Ads credentials: {', '.join(exc.missing)}"
+        ClientLeadSource.mark_sync(source.id, status="failed", note=note)
+        PlatformEvent.add(
+            event_type="client_lead.meta_form_backfill_blocked",
+            lifecycle_stage="delivery",
+            target_type="client_lead_source",
+            target_id=source.id,
+            source="meta_lead_ads_graph",
+            actor="agent",
+            summary=f"Could not backfill Meta form leads for source {source.id}: {note}.",
+            payload={"form_id": command.form_id or source.meta_lead_form_id, "errors": exc.missing},
+            idempotency_key=f"meta_lead_backfill_blocked:{source.id}:{command.form_id or source.meta_lead_form_id}",
         )
         raise HTTPException(
             status_code=503,

@@ -82,12 +82,20 @@ Platform lifecycle tools:
 - `execute_meta_publish_plan`: execute approved Meta writes only when live
   writes are explicitly requested/enabled, then persist provider IDs for
   idempotent retries.
+- `create_meta_lead_form`: create a Meta Lead Ads instant form and optionally
+  bind the returned form id to a Client Lead Delivery source. It is a live write
+  and requires explicit Meta live-write flags.
+- `subscribe_meta_lead_webhook`: subscribe the Page app to `leadgen` webhooks.
+  It is a live write and uses the same Meta live-write gate.
 - `import_meta_lead_form_to_delivery`: import one retrieved Meta Lead Ads
   `leadgen_id` payload into a Client Lead Delivery source, deduping and queuing
-  the normal WhatsApp notification without the UI.
+  the normal WhatsApp notification without the UI. New imports append to the
+  connected Google Sheet when the service account can write.
 - `fetch_meta_lead_form_to_delivery`: fetch one Meta Lead Ads `leadgen_id` from
   Graph API and import it into Client Lead Delivery without the UI. It is
   read-only and does not require Meta live writes.
+- `backfill_meta_lead_form_to_delivery`: fetch recent leads from a Meta form,
+  dedupe by `leadgen_id`, append new imports to Sheets, and queue Delivery.
 - `stage_meta_publish_attempt`: stage the Meta publish request/response without
   live external writes.
 - `create_client_update`: draft or record 24-hour client updates.

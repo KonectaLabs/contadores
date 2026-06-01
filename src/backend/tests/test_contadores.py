@@ -21,6 +21,7 @@ import backend.database as database_module
 import backend.endpoints.contadores as contadores_endpoints
 import backend.endpoints.workstation as workstation_endpoints
 import backend.meta_ads_publish as meta_ads_publish_module
+import backend.meta_lead_forms as meta_lead_forms_module
 import backend.platform_profile_extraction as profile_extraction_module
 from backend.audio_transcription import AudioTranscriptionError
 from backend.codex_utils import CodexSkill, CodexTurnResult
@@ -703,6 +704,75 @@ def test_meta_inventory_sync_redacts_access_token_from_errors(monkeypatch, tmp_p
     assert result.status == "partial"
     assert "secret-token" not in error_text
     assert "access_token=[redacted]" in error_text
+
+
+def test_meta_lead_form_write_tools_are_gated_and_post_expected_payloads(monkeypatch, tmp_path) -> None:
+    """Lead form creation and webhook subscription should share the Meta live-write gate."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.delenv("META_MARKETING_LIVE_WRITES_ENABLED", raising=False)
+    monkeypatch.delenv("META_MARKETING_API_VERSION", raising=False)
+    monkeypatch.delenv("META_MARKETING_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("META_ACCESS_TOKEN", raising=False)
+
+    blocked = call_tool(
+        run_id="agent-run-meta-lead-form-blocked",
+        tool_name="create_meta_lead_form",
+        arguments={
+            "page_id": "page_1",
+            "name": "Consulta laboral",
+            "privacy_policy_url": "https://example.com/privacy",
+            "reason": "Test blocked gate.",
+        },
+    )
+    assert blocked["ok"] is True
+    assert blocked["result"]["status"] == "blocked"
+    assert "live_writes_requested" in blocked["result"]["blocked"]
+    assert "META_MARKETING_LIVE_WRITES_ENABLED" in blocked["result"]["blocked"]
+
+    monkeypatch.setenv("META_MARKETING_LIVE_WRITES_ENABLED", "true")
+    monkeypatch.setenv("META_MARKETING_API_VERSION", "v25.0")
+    calls = []
+
+    def fake_graph_post(path: str, params: dict) -> dict:
+        calls.append((path, params))
+        if path == "page_1/leadgen_forms":
+            assert params["name"] == "Consulta laboral"
+            assert params["privacy_policy"]["url"] == "https://example.com/privacy"
+            assert params["questions"] == [{"type": "FULL_NAME"}]
+            return {"id": "form_created_1"}
+        if path == "page_1/subscribed_apps":
+            assert params["subscribed_fields"] == "leadgen"
+            return {"success": True}
+        raise AssertionError(path)
+
+    created = meta_lead_forms_module.create_meta_lead_form(
+        meta_lead_forms_module.CreateMetaLeadFormArgs(
+            page_id="page_1",
+            name="Consulta laboral",
+            questions=[{"type": "FULL_NAME"}],
+            privacy_policy_url="https://example.com/privacy",
+            live_writes_requested=True,
+            reason="Create test form.",
+        ),
+        graph_post=fake_graph_post,
+        source="test",
+        actor="tester",
+    )
+    subscribed = meta_lead_forms_module.subscribe_meta_lead_webhook(
+        meta_lead_forms_module.SubscribeMetaLeadWebhookArgs(
+            page_id="page_1",
+            live_writes_requested=True,
+            reason="Subscribe test page.",
+        ),
+        graph_post=fake_graph_post,
+        source="test",
+        actor="tester",
+    )
+
+    assert created.status == "created"
+    assert created.lead_form_id == "form_created_1"
+    assert subscribed.status == "subscribed"
+    assert [path for path, _params in calls] == ["page_1/leadgen_forms", "page_1/subscribed_apps"]
 
 
 def test_meta_publish_attempt_idempotency_key_has_db_guard(monkeypatch, tmp_path) -> None:

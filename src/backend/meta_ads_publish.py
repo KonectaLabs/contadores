@@ -746,6 +746,15 @@ def build_meta_publish_operations(plan: dict[str, Any], *, live_write: bool = Fa
             params["end_time"] = _clean(ad_set.get("end_time"))
         if isinstance(ad_set.get("placements"), list) and ad_set["placements"]:
             params["publisher_platforms"] = ad_set["placements"]
+        for placement_field in [
+            "facebook_positions",
+            "instagram_positions",
+            "messenger_positions",
+            "audience_network_positions",
+            "device_platforms",
+        ]:
+            if isinstance(ad_set.get(placement_field), list) and ad_set[placement_field]:
+                params[placement_field] = ad_set[placement_field]
         operations.append(
             MetaPublishOperation(
                 step=step,

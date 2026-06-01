@@ -109,3 +109,49 @@ def fetch_meta_lead_payload(
     if not isinstance(payload, dict):
         raise MetaLeadAdsError("Meta lead fetch returned a non-object payload")
     return _clean_graph_payload(payload)
+
+
+def fetch_meta_form_leads(
+    *,
+    form_id: str,
+    fields: str = DEFAULT_META_LEAD_FIELDS,
+    limit: int = 100,
+    graph_get: GraphGetter | None = None,
+) -> list[dict[str, Any]]:
+    """Fetch recent Lead Ads submissions for one instant form."""
+    clean_form_id = _clean(form_id)
+    if not clean_form_id:
+        raise MetaLeadAdsError("form_id is required")
+
+    api_version = _clean(os.getenv("META_MARKETING_API_VERSION"))
+    access_token = _clean(os.getenv("META_MARKETING_ACCESS_TOKEN")) or _clean(os.getenv("META_ACCESS_TOKEN"))
+    missing: list[str] = []
+    if not api_version:
+        missing.append("META_MARKETING_API_VERSION")
+    if not access_token and graph_get is None:
+        missing.append("META_MARKETING_ACCESS_TOKEN")
+    if missing:
+        raise MetaLeadAdsCredentialsError(missing)
+
+    getter = graph_get or _default_graph_getter(api_version=api_version, access_token=access_token)
+    params = {
+        "fields": fields or DEFAULT_META_LEAD_FIELDS,
+        "limit": max(1, min(int(limit or 100), 500)),
+    }
+    try:
+        payload = getter(f"{clean_form_id}/leads", params)
+    except httpx.HTTPStatusError as error:
+        detail = error.response.text[:500] if error.response is not None else str(error)
+        raise MetaLeadAdsError(f"Meta form leads fetch failed: {_redact_graph_error(detail)}") from error
+    except httpx.HTTPError as error:
+        raise MetaLeadAdsError(f"Meta form leads fetch failed: {_redact_graph_error(error)}") from error
+    if not isinstance(payload, dict):
+        raise MetaLeadAdsError("Meta form leads fetch returned a non-object payload")
+    data = payload.get("data", [])
+    if not isinstance(data, list):
+        raise MetaLeadAdsError("Meta form leads fetch returned a non-list data payload")
+    return [
+        _clean_graph_payload(item)
+        for item in data
+        if isinstance(item, dict)
+    ]

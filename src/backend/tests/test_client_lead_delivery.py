@@ -380,6 +380,41 @@ def test_meta_lead_form_import_blocks_invalid_phone(monkeypatch, tmp_path) -> No
         assert client.get("/api/client-lead-deliveries/pending").json()["notifications"] == []
 
 
+def test_meta_lead_form_import_appends_new_rows_to_google_sheet(monkeypatch, tmp_path) -> None:
+    """New Meta form imports should append to Sheets once and dedupe repeats."""
+    configure_delivery_db(monkeypatch, tmp_path)
+    appended_rows = []
+
+    def fake_append_record_to_sheet(source, row):
+        appended_rows.append((source.id, row))
+        return {"range": "'Leads'", "headers": list(row.keys())}
+
+    monkeypatch.setattr(client_leads_endpoints, "append_record_to_sheet", fake_append_record_to_sheet)
+
+    with TestClient(app) as client:
+        source_id = client.post("/api/client-lead-sources", json=source_payload()).json()["id"]
+        command = {
+            "leadgen_id": "meta-sheet-lead-1",
+            "form_id": "form_sheet_1",
+            "field_data": [
+                {"name": "full_name", "values": ["Sheet Lead"]},
+                {"name": "phone_number", "values": ["+5491112345678"]},
+                {"name": "email", "values": ["sheet@example.com"]},
+            ],
+        }
+
+        imported = client.post(f"/api/client-lead-sources/{source_id}/meta-lead", json=command)
+        assert imported.status_code == 200
+        assert imported.json()["sheet_appended"] == 1
+        assert len(appended_rows) == 1
+        assert appended_rows[0][1]["leadgen_id"] == "meta-sheet-lead-1"
+
+        repeated = client.post(f"/api/client-lead-sources/{source_id}/meta-lead", json=command)
+        assert repeated.status_code == 200
+        assert repeated.json()["sheet_appended"] == 0
+        assert len(appended_rows) == 1
+
+
 def test_meta_lead_form_fetch_imports_from_graph(monkeypatch, tmp_path) -> None:
     """A leadgen_id fetch should import through the same Delivery queue."""
     configure_delivery_db(monkeypatch, tmp_path)
@@ -433,6 +468,59 @@ def test_meta_lead_form_fetch_imports_from_graph(monkeypatch, tmp_path) -> None:
         assert events[0].payload_dict()["leadgen_id"] == "meta-fetch-lead-1"
 
 
+def test_meta_lead_form_backfill_imports_form_leads(monkeypatch, tmp_path) -> None:
+    """A form backfill should fetch recent form leads and append new imports to Sheets."""
+    configure_delivery_db(monkeypatch, tmp_path)
+    appended_rows = []
+
+    def fake_fetch_meta_form_leads(*, form_id, fields, limit):
+        assert form_id == "form_backfill_1"
+        assert fields == DEFAULT_META_LEAD_FIELDS
+        assert limit == 100
+        return [
+            {
+                "id": "backfill-lead-1",
+                "form_id": "form_backfill_1",
+                "field_data": [
+                    {"name": "full_name", "values": ["Backfill Uno"]},
+                    {"name": "phone_number", "values": ["+5491111112222"]},
+                    {"name": "email", "values": ["uno@example.com"]},
+                ],
+            },
+            {
+                "id": "backfill-lead-2",
+                "form_id": "form_backfill_1",
+                "field_data": [
+                    {"name": "full_name", "values": ["Backfill Dos"]},
+                    {"name": "phone_number", "values": ["+5491133334444"]},
+                    {"name": "email", "values": ["dos@example.com"]},
+                ],
+            },
+        ]
+
+    monkeypatch.setattr(client_leads_endpoints, "fetch_meta_form_leads", fake_fetch_meta_form_leads)
+    monkeypatch.setattr(
+        client_leads_endpoints,
+        "append_record_to_sheet",
+        lambda source, row: appended_rows.append(row) or {"range": "'Leads'"},
+    )
+
+    with TestClient(app) as client:
+        source_id = client.post(
+            "/api/client-lead-sources",
+            json=source_payload(meta_lead_form_id="form_backfill_1"),
+        ).json()["id"]
+
+        imported = client.post(f"/api/client-lead-sources/{source_id}/meta-leads/backfill", json={})
+        assert imported.status_code == 200
+        payload = imported.json()
+        assert payload["fetched"] == 2
+        assert payload["imported"] == 2
+        assert payload["queued"] == 2
+        assert payload["sheet_appended"] == 2
+        assert len(appended_rows) == 2
+
+
 def test_meta_lead_form_fetch_reports_missing_credentials(monkeypatch, tmp_path) -> None:
     """Graph fetch should fail before network calls when Meta credentials are absent."""
     configure_delivery_db(monkeypatch, tmp_path)
@@ -456,6 +544,74 @@ def test_meta_lead_form_fetch_reports_missing_credentials(monkeypatch, tmp_path)
         source = client.get("/api/client-lead-sources").json()["sources"][0]
         assert source["last_sync_status"] == "failed"
         assert "META_MARKETING_ACCESS_TOKEN" in source["last_sync_note"]
+
+
+def test_meta_lead_webhook_verifies_and_imports_leadgen_change(monkeypatch, tmp_path) -> None:
+    """The public Meta webhook should verify challenges and route leadgen changes by form id."""
+    configure_delivery_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("META_LEAD_WEBHOOK_VERIFY_TOKEN", "verify-token")
+
+    def fake_fetch_meta_lead_payload(*, leadgen_id, fields):
+        assert leadgen_id == "webhook-lead-1"
+        assert fields == DEFAULT_META_LEAD_FIELDS
+        return {
+            "id": "webhook-lead-1",
+            "form_id": "form_webhook_1",
+            "field_data": [
+                {"name": "full_name", "values": ["Webhook Lead"]},
+                {"name": "phone_number", "values": ["+5491199998888"]},
+                {"name": "email", "values": ["webhook@example.com"]},
+            ],
+        }
+
+    monkeypatch.setattr(client_leads_endpoints, "fetch_meta_lead_payload", fake_fetch_meta_lead_payload)
+
+    with TestClient(app) as client:
+        challenge = client.get(
+            "/api/meta-leads/webhook",
+            params={
+                "hub.mode": "subscribe",
+                "hub.verify_token": "verify-token",
+                "hub.challenge": "challenge-ok",
+            },
+        )
+        assert challenge.status_code == 200
+        assert challenge.text == "challenge-ok"
+
+        source_id = client.post(
+            "/api/client-lead-sources",
+            json=source_payload(meta_lead_form_id="form_webhook_1"),
+        ).json()["id"]
+        webhook = client.post(
+            "/api/meta-leads/webhook",
+            json={
+                "object": "page",
+                "entry": [
+                    {
+                        "id": "page_1",
+                        "changes": [
+                            {
+                                "field": "leadgen",
+                                "value": {
+                                    "leadgen_id": "webhook-lead-1",
+                                    "form_id": "form_webhook_1",
+                                    "page_id": "page_1",
+                                },
+                            }
+                        ],
+                    }
+                ],
+            },
+        )
+        assert webhook.status_code == 200
+        payload = webhook.json()
+        assert payload["processed"] == 1
+        assert payload["items"][0]["source_id"] == source_id
+        assert payload["items"][0]["imported"] == 1
+
+        row = ClientLeadDelivery.list_by_source(source_id)[0]
+        assert row.source_row_key == "webhook-lead-1"
+        assert row.delivery_status == ClientLeadDeliveryStatus.PENDING
 
 
 def test_codex_tool_imports_meta_lead_form_to_delivery(monkeypatch, tmp_path) -> None:

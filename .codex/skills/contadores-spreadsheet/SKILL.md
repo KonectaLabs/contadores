@@ -98,13 +98,19 @@ Delivery flow without using the UI.
 Meta instant-form publish plans must reference a ready source with
 `destination.client_lead_source_id`; otherwise the Meta approval/preflight gate
 must stay blocked because the leads would not have a delivery path.
+Instant-form sources should store `meta_page_id` and `meta_lead_form_id` so
+`POST /api/meta-leads/webhook` can resolve the Delivery source from the webhook
+`form_id`. `META_LEAD_WEBHOOK_DEFAULT_SOURCE_ID` is only a fallback for narrow
+single-source deployments.
 When a Meta Lead Ads webhook only has `leadgen_id`, fetch and import it through
 `fetch_meta_lead_form_to_delivery` or
 `POST /api/client-lead-sources/{source_id}/meta-lead/fetch`. When the full
 payload has already been retrieved, import it through
 `import_meta_lead_form_to_delivery` or
-`POST /api/client-lead-sources/{source_id}/meta-lead`; do not create a separate
-delivery table.
+`POST /api/client-lead-sources/{source_id}/meta-lead`. For historical form
+leads, use `backfill_meta_lead_form_to_delivery` or
+`POST /api/client-lead-sources/{source_id}/meta-leads/backfill`; do not create a
+separate delivery table.
 
 Config files:
 
@@ -128,6 +134,8 @@ Each configured source supports:
   can override part or all of `column_mapping` and `context_field_mapping` when
   that tab uses different column names. Omitted column mappings inherit from the
   parent source.
+- `meta_page_id`, optional Page id used by Meta Lead Ads webhooks
+- `meta_lead_form_id`, optional form id used to route webhook leads to this source
 - `sheet_poll_seconds`, minimum 5
 - `recipient_name`
 - `recipient_phone`
@@ -171,6 +179,9 @@ Sheet access order:
 For private sheets, set `CONTADORES_GOOGLE_SERVICE_ACCOUNT_FILE` or
 `GOOGLE_SERVICE_ACCOUNT_FILE`. The Contadores-specific env var has priority.
 The service account only needs readonly Sheets access for Delivery import.
+If Meta Lead Ads imports should append the new lead back into the connected
+Sheet, the same service account needs Editor access. The backend appends only
+new `leadgen_id` imports and preserves/extends the header row.
 
 Delivery statuses are `pending`, `sent`, `delivered`, `failed`, `blocked`, and
 `skipped`. Invalid lead phones or invalid recipient phones become `blocked`
@@ -185,6 +196,12 @@ Endpoints:
 - `DELETE /api/client-lead-sources/{source_id}`
 - `POST /api/client-lead-sources/{source_id}/sync`
 - `POST /api/client-lead-sources/{source_id}/meta-lead`
+- `POST /api/client-lead-sources/{source_id}/meta-lead/fetch`
+- `POST /api/client-lead-sources/{source_id}/meta-leads/backfill`
+- `POST /api/meta-leads/forms`
+- `POST /api/meta-leads/webhook-subscriptions`
+- `GET /api/meta-leads/webhook`
+- `POST /api/meta-leads/webhook`
 - `GET /api/client-lead-sources/{source_id}/leads`
 - `GET /api/client-leads/{delivery_id}/copy-all`
 - `POST /api/client-leads/{delivery_id}/retry`
