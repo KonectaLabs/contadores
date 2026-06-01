@@ -390,8 +390,15 @@ body {
 }
 
 #contadoresView .ct-topbar-tools .ct-icon-btn {
-  width: 38px;
-  padding-inline: 0;
+  width: auto;
+  padding-inline: 12px;
+  white-space: nowrap;
+}
+
+#contadoresView .ct-toolbar-label {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
 }
 
 #contadoresView .ct-error {
@@ -3245,6 +3252,37 @@ body {
   font: 500 12px/1.4 var(--font-mono);
 }
 
+#contadoresView .ct-empty-state {
+  align-self: stretch;
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  min-height: 150px;
+  margin: auto 0;
+  padding: 18px;
+  border: 1px dashed rgba(28, 38, 44, 0.18);
+  border-radius: var(--ct-radius);
+  background: rgba(255, 255, 255, 0.58);
+  color: var(--ct-ink-muted);
+  text-align: center;
+}
+
+#contadoresView .ct-empty-state strong {
+  color: var(--ct-ink);
+  font: 760 14px/1.15 var(--font-sans);
+}
+
+#contadoresView .ct-empty-state span {
+  max-width: 24ch;
+  font: 550 11px/1.4 var(--font-mono);
+}
+
+#contadoresView .ct-empty-state .ct-btn {
+  height: 30px;
+  padding-inline: 10px;
+  font-size: 11px;
+}
+
 #contadoresView .ct-manual {
   flex: 0 0 auto;
   display: grid;
@@ -6016,6 +6054,12 @@ body {
 
   #contadoresView .ct-topbar-tools .ct-icon-btn {
     justify-self: end;
+    width: 38px;
+    padding-inline: 0;
+  }
+
+  #contadoresView .ct-topbar-tools .ct-toolbar-label {
+    display: none;
   }
 
   #contadoresView .ct-search {

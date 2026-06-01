@@ -440,7 +440,7 @@ def build_lead_outbound_state_block_reason(
     if effective_stage == ContadoresLeadStage.CLOSED and not sequence_step_allows_closed_lead_delivery(sequence_step):
         return "closed"
     if (
-        (effective_stage == ContadoresLeadStage.BOOKED or lead.booked_at is not None)
+        ContadoresLead.lead_is_converted(lead, effective_stage=effective_stage)
         and not sequence_step_allows_converted_lead_delivery(sequence_step)
     ):
         return "converted"

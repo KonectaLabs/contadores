@@ -1141,6 +1141,18 @@ class ContadoresLead(SQLModel, table=True):
         return not cls.workstation_handoff_requires_operator(lead, workstation_client)
 
     @classmethod
+    def lead_is_converted(
+        cls,
+        lead: "ContadoresLead",
+        *,
+        effective_stage: ContadoresLeadStage | None = None,
+    ) -> bool:
+        """Return True when stored lead evidence crosses the conversion boundary."""
+        if effective_stage == ContadoresLeadStage.BOOKED:
+            return True
+        return lead.stage == ContadoresLeadStage.BOOKED or lead.booked_at is not None
+
+    @classmethod
     def derive_effective_stage(cls, lead: "ContadoresLead") -> ContadoresLeadStage:
         """Return the current operator-facing legacy stage."""
         if lead.stage == ContadoresLeadStage.ARCHIVED or lead.archived_at is not None:
@@ -1153,12 +1165,12 @@ class ContadoresLead(SQLModel, table=True):
                 if cls.workstation_handoff_requires_operator(lead, workstation_client):
                     return ContadoresLeadStage.NEEDS_HUMAN
                 return ContadoresLeadStage.BOOKED
-            if lead.booked_at is not None:
+            if cls.lead_is_converted(lead):
                 return ContadoresLeadStage.BOOKED
             if lead.meeting_scheduled_at is not None:
                 return ContadoresLeadStage.CALENDLY_SENT
             return ContadoresLeadStage.NEEDS_HUMAN
-        if lead.booked_at is not None:
+        if cls.lead_is_converted(lead):
             return ContadoresLeadStage.BOOKED
         if lead.meeting_scheduled_at is not None:
             return ContadoresLeadStage.CALENDLY_SENT
@@ -1225,7 +1237,7 @@ class ContadoresLead(SQLModel, table=True):
             return "archived"
         if stage == ContadoresLeadStage.CLOSED:
             return "closed"
-        if stage == ContadoresLeadStage.BOOKED or lead.booked_at is not None:
+        if cls.lead_is_converted(lead, effective_stage=stage):
             return "converted"
         if (
             stage == ContadoresLeadStage.CALENDLY_SENT
@@ -1256,7 +1268,7 @@ class ContadoresLead(SQLModel, table=True):
             return "operator"
         if cls.open_workstation_client(lead) is not None:
             return "workstation"
-        if stage == ContadoresLeadStage.BOOKED or lead.booked_at is not None:
+        if cls.lead_is_converted(lead, effective_stage=stage):
             return "none"
         if lead.automation_paused:
             return "paused"
@@ -1277,7 +1289,7 @@ class ContadoresLead(SQLModel, table=True):
             return terminal_state
         if manual_reply_status in {"needs_reply", "answered"}:
             return manual_reply_status
-        if stage == ContadoresLeadStage.BOOKED or lead.booked_at is not None:
+        if cls.lead_is_converted(lead, effective_stage=stage):
             return "converted"
         if lead.automation_paused:
             return "paused"

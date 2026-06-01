@@ -4342,6 +4342,8 @@ def test_lifecycle_v2_fields_are_persisted_after_flow_updates(monkeypatch, tmp_p
         automation_paused_reason="manual_converted",
     )
     converted_lead = ContadoresLead.get_by_id(lead.id)
+    assert converted_lead is not None
+    assert ContadoresLead.lead_is_converted(converted_lead) is True
     assert converted_lead.pipeline_stage == "converted"
     assert converted_lead.queue_state == "none"
     assert converted_lead.terminal_state == "open"

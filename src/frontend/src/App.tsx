@@ -1975,7 +1975,14 @@ export function App() {
     leadViewFilter !== "all",
     Boolean(strategyFilter.step || strategyFilter.strategyId),
     Boolean(tagFilter),
+    Boolean(query.trim()),
   ].filter(Boolean).length;
+  const clearCrmFilters = useCallback(() => {
+    setLeadViewFilter("all");
+    setStrategyFilter({ step: "", strategyId: "" });
+    setTagFilter("");
+    setQuery("");
+  }, []);
   const selectedFunnelNeedsSetup = Boolean(
     isCrmWorkspace
       && selectedFunnel
@@ -2114,18 +2121,18 @@ export function App() {
             />
           </label>
           ) : null}
-          {isCrmWorkspace || activeSection === "workstation" ? (
-            <button type="button" className="ct-icon-btn" onClick={openEditFunnel} disabled={!selectedFunnel} title="Edit funnel" aria-label="Edit funnel">
-              <NotePencil size={15} weight="bold" />
-              <span className="ct-sr-only">Funnel</span>
-            </button>
-          ) : null}
-          {isCrmWorkspace && canEditLegacyRuntimeConfig ? (
-            <button type="button" className="ct-icon-btn" onClick={() => setShowConfig(true)} title="Runtime config" aria-label="Runtime config">
-              <GearSix size={15} weight="bold" />
-              <span className="ct-sr-only">Runtime</span>
-            </button>
-          ) : null}
+            {isCrmWorkspace || activeSection === "workstation" ? (
+              <button type="button" className="ct-icon-btn" onClick={openEditFunnel} disabled={!selectedFunnel} title="Edit funnel" aria-label="Edit funnel">
+                <NotePencil size={15} weight="bold" />
+                <span className="ct-toolbar-label">Funnel</span>
+              </button>
+            ) : null}
+            {isCrmWorkspace && canEditLegacyRuntimeConfig ? (
+              <button type="button" className="ct-icon-btn" onClick={() => setShowConfig(true)} title="Runtime config" aria-label="Runtime config">
+                <GearSix size={15} weight="bold" />
+                <span className="ct-toolbar-label">Runtime</span>
+              </button>
+            ) : null}
           <button
             type="button"
             className="ct-icon-btn"
@@ -2135,7 +2142,7 @@ export function App() {
             disabled={activeSection === "ops" ? platformLoading || runnerLoading : loading || deliveryLoading || platformLoading}
           >
             <ArrowsClockwise size={15} weight="bold" />
-            <span className="ct-sr-only">Refresh</span>
+            <span className="ct-toolbar-label">Refresh</span>
           </button>
         </div>
       </header>
@@ -2275,11 +2282,7 @@ export function App() {
                   <button
                     type="button"
                     className="ct-filter-clear"
-                    onClick={() => {
-                      setLeadViewFilter("all");
-                      setStrategyFilter({ step: "", strategyId: "" });
-                      setTagFilter("");
-                    }}
+                    onClick={clearCrmFilters}
                   >
                     Clear filters
                   </button>
@@ -2407,6 +2410,8 @@ export function App() {
               selectedLeadIds={selectedLeadIds}
               inboxMode={isInboxFunnel}
               loading={loading}
+              hasActiveFilters={Boolean(activeCrmFilterCount)}
+              onClearFilters={clearCrmFilters}
               onSelect={setSelectedLeadId}
               onToggleSelected={toggleLeadSelection}
             />
@@ -6159,6 +6164,8 @@ function LeadList({
   selectedLeadIds,
   inboxMode,
   loading,
+  hasActiveFilters,
+  onClearFilters,
   onSelect,
   onToggleSelected,
 }: {
@@ -6167,15 +6174,36 @@ function LeadList({
   selectedLeadIds: string[];
   inboxMode: boolean;
   loading: boolean;
+  hasActiveFilters: boolean;
+  onClearFilters: () => void;
   onSelect: (leadId: string) => void;
   onToggleSelected: (leadId: string) => void;
 }) {
   if (loading && !leads.length) {
-    return <div className="ct-leads-list"><p className="ct-empty">Loading leads...</p></div>;
+    return (
+      <div className="ct-leads-list">
+        <div className="ct-empty-state">
+          <strong>Loading leads</strong>
+          <span>Fetching the current queue.</span>
+        </div>
+      </div>
+    );
   }
 
   if (!leads.length) {
-    return <div className="ct-leads-list"><p className="ct-empty">No leads match the current filters.</p></div>;
+    return (
+      <div className="ct-leads-list">
+        <div className="ct-empty-state">
+          <strong>{hasActiveFilters ? "No visible leads" : "No leads loaded"}</strong>
+          <span>{hasActiveFilters ? "Clear filters to return to the full queue." : "Refresh after the next sheet sync."}</span>
+          {hasActiveFilters ? (
+            <button type="button" className="ct-btn ct-btn-ghost" onClick={onClearFilters}>
+              Clear filters
+            </button>
+          ) : null}
+        </div>
+      </div>
+    );
   }
 
   return (
