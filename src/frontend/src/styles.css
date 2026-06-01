@@ -65,13 +65,13 @@ body {
   --ct-danger-ink: #8f2323;
   --ct-info: #2f6587;
   --ct-info-bg: #edf5f8;
-  --ct-chat-outbound-bg: #173936;
-  --ct-chat-outbound-line: #11a99a;
-  --ct-chat-outbound-ink: #f4fffc;
-  --ct-chat-inbound-bg: #fff8ed;
-  --ct-chat-inbound-line: #c56b2d;
-  --ct-chat-inbound-ink: #312419;
-  --ct-chat-panel: #eef1ef;
+  --ct-chat-outbound-bg: #eef7f5;
+  --ct-chat-outbound-line: #4e8f86;
+  --ct-chat-outbound-ink: #243331;
+  --ct-chat-inbound-bg: #ffffff;
+  --ct-chat-inbound-line: #b8c3ce;
+  --ct-chat-inbound-ink: #252a2f;
+  --ct-chat-panel: #f6f8fa;
   --ct-shadow-soft: 0 10px 28px rgba(36, 45, 39, 0.06);
   --ct-shadow-popover: 0 18px 44px rgba(36, 45, 39, 0.14);
   --ct-radius: 8px;
@@ -2820,57 +2820,43 @@ body {
 }
 
 #contadoresView .ct-timeline {
-  gap: 14px;
-  padding: 18px 14px 28px;
-  background:
-    linear-gradient(90deg, transparent 0, transparent calc(50% - 1px), rgba(28, 38, 44, 0.08) calc(50% - 1px), rgba(28, 38, 44, 0.08) calc(50% + 1px), transparent calc(50% + 1px)),
-    #f7f8f6;
+  gap: 8px;
+  padding: 14px 18px 22px;
+  background: var(--ct-chat-panel);
   border-radius: var(--ct-radius);
 }
 
 #contadoresView .crm-message-shell {
-  display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) minmax(80px, 18%);
-  gap: 12px;
+  width: min(920px, 100%);
+  margin-inline: auto;
+  display: flex;
+  align-items: flex-start;
 }
 
 #contadoresView .crm-message-shell.outbound {
-  grid-template-columns: minmax(80px, 18%) minmax(0, 1fr) 28px;
+  justify-content: flex-end;
 }
 
-#contadoresView .crm-message-shell.outbound .crm-message-rail {
-  grid-column: 3;
-  grid-row: 1;
-}
-
-#contadoresView .crm-message-shell.outbound .crm-message-card {
-  grid-column: 2;
-  justify-self: end;
-}
-
-#contadoresView .crm-message-shell.inbound .crm-message-card {
-  grid-column: 2;
-  justify-self: start;
+#contadoresView .crm-message-shell.inbound {
+  justify-content: flex-start;
 }
 
 #contadoresView .crm-message-rail {
-  display: flex;
-  justify-content: center;
-  padding-top: 16px;
+  display: none;
 }
 
 #contadoresView .crm-message-dot {
-  width: 10px;
-  height: 10px;
-  border: 2px solid #f7f8f6;
+  width: 7px;
+  height: 7px;
+  border: 1px solid var(--ct-chat-panel);
   border-radius: 50%;
-  background: var(--ct-chat-outbound-line);
-  box-shadow: 0 0 0 4px rgba(17, 169, 154, 0.14);
+  background: var(--ct-ink-soft);
+  box-shadow: 0 0 0 3px rgba(92, 100, 112, 0.1);
 }
 
 #contadoresView .crm-message-dot.inbound {
   background: var(--ct-chat-inbound-line);
-  box-shadow: 0 0 0 4px rgba(197, 107, 45, 0.14);
+  box-shadow: 0 0 0 3px rgba(92, 100, 112, 0.1);
 }
 
 #contadoresView .crm-message-dot.pending {
@@ -2901,24 +2887,24 @@ body {
 
 #contadoresView .crm-message-card {
   position: relative;
-  width: min(760px, 100%);
-  border-radius: 12px;
-  box-shadow: none;
+  width: fit-content;
+  min-width: min(230px, 100%);
+  max-width: min(690px, 74%);
+  padding: 12px 13px;
+  border-radius: var(--ct-radius);
+  box-shadow: 0 1px 1px rgba(24, 32, 37, 0.03);
 }
 
 #contadoresView .crm-message-card.outbound {
-  border-color: rgba(23, 57, 54, 0.92);
-  border-right: 4px solid var(--ct-chat-outbound-line);
-  background:
-    linear-gradient(135deg, #244742, var(--ct-chat-outbound-bg) 58%),
-    var(--ct-chat-outbound-bg);
+  border-color: #d3e4e0;
+  border-right: 3px solid var(--ct-chat-outbound-line);
+  background: var(--ct-chat-outbound-bg);
   color: var(--ct-chat-outbound-ink);
-  box-shadow: 0 12px 24px rgba(23, 57, 54, 0.16);
 }
 
 #contadoresView .crm-message-card.inbound {
-  border-color: rgba(197, 107, 45, 0.22);
-  border-left: 4px solid var(--ct-chat-inbound-line);
+  border-color: #dce3ea;
+  border-left: 3px solid var(--ct-chat-inbound-line);
   background: var(--ct-chat-inbound-bg);
   color: var(--ct-chat-inbound-ink);
 }
@@ -2968,7 +2954,7 @@ body {
 #contadoresView .crm-message-eyebrow {
   min-width: 0;
   display: grid;
-  gap: 7px;
+  gap: 6px;
   color: currentColor;
   font: 500 11px/1 var(--font-mono);
 }
@@ -2977,27 +2963,27 @@ body {
   min-width: 0;
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 5px;
 }
 
 #contadoresView .crm-message-meta-chips span {
-  max-width: 220px;
-  min-height: 20px;
-  padding: 4px 6px;
-  border: 1px solid rgba(255, 255, 255, 0.22);
+  max-width: 190px;
+  min-height: 19px;
+  padding: 3px 6px;
+  border: 1px solid rgba(92, 100, 112, 0.2);
   border-radius: var(--ct-radius-sm);
-  background: rgba(255, 255, 255, 0.1);
-  color: currentColor;
+  background: rgba(255, 255, 255, 0.68);
+  color: var(--ct-ink-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  opacity: 0.9;
+  opacity: 1;
 }
 
 #contadoresView .crm-message-card.inbound .crm-message-meta-chips span,
 #contadoresView .crm-message-card.acknowledged .crm-message-meta-chips span {
-  border-color: rgba(197, 107, 45, 0.18);
-  background: #fff0de;
+  border-color: var(--ct-line);
+  background: var(--ct-surface-2);
 }
 
 #contadoresView .crm-message-card.pending .crm-message-meta-chips span {
@@ -3008,24 +2994,24 @@ body {
 #contadoresView .crm-message-author {
   display: inline-flex;
   justify-self: start;
-  min-height: 24px;
+  min-height: 20px;
   align-items: center;
-  padding: 0 9px;
+  padding: 0 7px;
   border-radius: 4px;
   color: var(--ct-ink-muted);
   font: 850 10px/1 var(--font-mono);
-  letter-spacing: 0.06em;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
 #contadoresView .crm-message-author.outbound {
-  background: rgba(45, 212, 191, 0.2);
-  color: #dffdf8;
+  background: #dcefeb;
+  color: #315f58;
 }
 
 #contadoresView .crm-message-author.inbound {
-  background: rgba(209, 127, 63, 0.14);
-  color: #8b4e17;
+  background: var(--ct-surface-2);
+  color: var(--ct-ink-muted);
 }
 
 #contadoresView .crm-message-error-icon {
@@ -3099,9 +3085,9 @@ body {
 }
 
 #contadoresView .crm-message-body {
-  margin: 12px 0 0;
+  margin: 9px 0 0;
   color: currentColor;
-  font: 540 14px/1.66 var(--font-sans);
+  font: 520 13px/1.56 var(--font-sans);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -6233,18 +6219,18 @@ body {
 
   #contadoresView .crm-message-shell,
   #contadoresView .crm-message-shell.outbound {
-    grid-template-columns: 12px minmax(0, 1fr);
+    justify-content: stretch;
     gap: 8px;
   }
 
   #contadoresView .crm-message-shell.outbound .crm-message-rail {
-    grid-column: 1;
+    display: none;
   }
 
   #contadoresView .crm-message-shell.outbound .crm-message-card,
   #contadoresView .crm-message-shell.inbound .crm-message-card {
-    grid-column: 2;
-    justify-self: stretch;
+    width: 100%;
+    max-width: 100%;
   }
 
   #contadoresView .crm-message-card {
