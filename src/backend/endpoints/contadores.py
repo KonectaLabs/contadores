@@ -1873,6 +1873,7 @@ def build_followup_lead_snapshot(
     )
     effective_stage = derive_effective_lead_stage(lead)
     converted_at = format_timestamp_seconds(lead.booked_at)
+    public_stage = "converted" if effective_stage == ContadoresLeadStage.BOOKED else effective_stage.value
     return ContadoresFollowupLeadSnapshot(
         id=lead.id,
         funnel_id=lead.funnel_id,
@@ -1882,7 +1883,7 @@ def build_followup_lead_snapshot(
         normalized_phone=lead.normalized_phone,
         platform=lead.platform,
         tags=lead.tags,
-        stage=effective_stage.value,
+        stage=public_stage,
         raw_stage=lead.stage.value,
         manual_reply_status=derive_manual_reply_status(lead),
         last_inbound_at=format_timestamp_seconds(lead.last_inbound_at),
@@ -4008,8 +4009,8 @@ class ContadoresFollowupLeadSnapshot(BaseModel):
     normalized_phone: str
     platform: str | None = None
     tags: list[str] = Field(default_factory=list)
-    stage: str
-    raw_stage: str
+    stage: str = Field(description="Operator-facing state. Converted leads use converted; raw_stage keeps the stored legacy stage.")
+    raw_stage: str = Field(description="Stored legacy stage value for compatibility and debugging.")
     manual_reply_status: str | None = None
     last_inbound_at: str | None = None
     last_outbound_at: str | None = None

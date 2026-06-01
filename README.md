@@ -610,6 +610,8 @@ los chats recientes de `contadores` y `abogados`, ultimos mensajes, estado de
 delivery, exclusiones fuertes y buckets sugeridos para que una automation pueda
 analizar el CRM sin depender de SSH. Usar `include_all_funnels=true` si se quiere
 incluir tambien inboxes/funnels fuera de Contadores y Abogados.
+En el snapshot, `stage` sigue el contrato operator-facing nuevo y devuelve
+`converted` para conversiones; `raw_stage` conserva el valor legacy persistido.
 
 Acciones internas para automations de follow-up:
 

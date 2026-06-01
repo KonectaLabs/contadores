@@ -53,6 +53,8 @@ Also read these skills when relevant:
 - For spreadsheet-style analysis, use
   `GET http://149.50.136.121/api/contadores/followup/snapshot.csv?limit=20000&messages_per_lead=12`
   with the same headers.
+- In snapshot payloads, treat `stage=converted` as the operator-facing converted
+  state. Use `raw_stage` only for historical legacy debugging.
 - If a standalone Codex cron reports `Operation not permitted` before SSH
   authentication, treat SSH as unavailable in that runtime. Do not use localhost
   as fallback. Use the production HTTP APIs for CRM state and approved actions.

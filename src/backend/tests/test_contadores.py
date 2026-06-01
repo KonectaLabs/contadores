@@ -3010,9 +3010,13 @@ def test_contadores_followup_snapshot_is_read_only_and_segments_leads(monkeypatc
     assert by_id[warm.id]["suggested_buckets"] == ["needs_answer_now", "close_call"]
     assert by_id[warm.id]["latest_inbound"]["text"] == "Que presupuesto tienen?"
     assert by_id[booking.id]["suggested_buckets"] == ["booking_time_provided", "needs_answer_now", "close_call"]
+    assert by_id[converted.id]["stage"] == "converted"
+    assert by_id[converted.id]["raw_stage"] == "awaiting_initial_reply"
     assert by_id[converted.id]["converted_at"] is not None
     assert by_id[converted.id]["converted_at"] == by_id[converted.id]["booked_at"]
     assert by_id[converted.id]["exclusion_reasons"] == ["closed_converted_or_archived"]
+    assert f"{converted.id},contadores,Converted Lead,converted@example.com" in csv_response.text
+    assert ",converted,awaiting_initial_reply," in csv_response.text
     assert by_id[venezuelan.id]["excluded"] is True
     assert by_id[venezuelan.id]["suggested_buckets"] == []
 
