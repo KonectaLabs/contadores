@@ -6506,12 +6506,6 @@ body {
   align-items: start;
 }
 
-#contadoresView .delivery-lead-summary-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-}
-
 #contadoresView .delivery-notification-preview {
   margin: 0;
   padding: 10px 11px;
@@ -6601,7 +6595,6 @@ body {
 }
 
 #contadoresView .delivery-lead-identity,
-#contadoresView .delivery-sheet-cell,
 #contadoresView .delivery-status-cell,
 #contadoresView .delivery-row-actions {
   display: grid;
@@ -6609,8 +6602,7 @@ body {
   min-width: 0;
 }
 
-#contadoresView .delivery-lead-identity strong,
-#contadoresView .delivery-sheet-cell strong {
+#contadoresView .delivery-lead-identity strong {
   display: block;
   min-width: 0;
   overflow-wrap: anywhere;
@@ -6619,8 +6611,7 @@ body {
 }
 
 #contadoresView .delivery-lead-identity span,
-#contadoresView .delivery-lead-identity small,
-#contadoresView .delivery-sheet-cell span {
+#contadoresView .delivery-lead-identity small {
   display: block;
   min-width: 0;
   overflow-wrap: anywhere;
@@ -8004,10 +7995,6 @@ body {
     grid-template-columns: 1fr;
   }
 
-  #contadoresView .delivery-lead-summary-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   #contadoresView .delivery-raw-details dl > div {
     grid-template-columns: minmax(86px, 0.4fr) minmax(0, 1fr);
   }
@@ -8108,7 +8095,6 @@ body {
     justify-content: stretch;
   }
 
-  #contadoresView .delivery-lead-summary-grid,
   #contadoresView .delivery-raw-details dl > div {
     grid-template-columns: 1fr;
   }

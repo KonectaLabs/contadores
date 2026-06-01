@@ -3093,6 +3093,41 @@ def test_contadores_followup_internal_apis_send_and_update_leads(monkeypatch, tm
     assert action.status_code == 200
 
 
+def test_contadores_followup_booked_stage_marks_converted_without_raw_booked(monkeypatch, tmp_path) -> None:
+    """Internal follow-up callers can use the old stage name without writing raw booked state."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("INTERNAL_API_TOKEN", "test-internal-token")
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-followup-converted",
+        phone="+5491111111131",
+        full_name="Converted Followup",
+    )
+    ContadoresLead.update_flow_state(
+        lead.id,
+        stage=ContadoresLeadStage.AWAITING_INITIAL_REPLY,
+    )
+
+    with TestClient(app) as client:
+        response = client.patch(
+            f"/api/contadores/followup/leads/{lead.id}",
+            headers={"X-Internal-Token": "test-internal-token"},
+            json={
+                "stage": "booked",
+                "codex_enabled": True,
+                "classification_label": "converted",
+                "classification_reason": "Automation confirmed the client converted.",
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["stage"] == "booked"
+    assert payload["raw_stage"] == "awaiting_initial_reply"
+    assert payload["pipeline_stage"] == "converted"
+    assert payload["converted_at"] is not None
+    assert payload["converted_at"] == payload["booked_at"]
+
+
 def test_contadores_provider_failed_status_requeues_before_final_failure(monkeypatch, tmp_path) -> None:
     """Meta failed webhooks should use the same retry budget as send exceptions."""
     configure_contadores_db(monkeypatch, tmp_path)

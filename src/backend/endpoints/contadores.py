@@ -2832,12 +2832,14 @@ def start_solo_page_workstation_for_lead(
         status=WorkstationClientStatus.PENDING_PAYMENT,
         last_automation_handled_at=now,
     )
-    ContadoresLead.update_flow_state(
+    converted_lead = ContadoresLead.mark_converted(
         lead.id,
-        stage=ContadoresLeadStage.BOOKED,
-        booked_at=now,
+        converted_at=now,
         automation_paused=True,
         automation_paused_reason=WORKSTATION_SOLO_PAGE_STARTED_REASON,
+    ) or lead
+    ContadoresLead.update_flow_state(
+        converted_lead.id,
         classification_completed_at=now,
         last_classification_label=WORKSTATION_SOLO_PAGE_STARTED_REASON,
         last_classification_reason=reason,
@@ -4878,18 +4880,23 @@ async def update_followup_lead_classification(
 
     now = now_utc()
     flow_updates: dict[str, Any] = {}
+    mark_converted_from_followup = False
     if command.stage is not None:
         target_stage = ContadoresLead.normalize_stage(command.stage)
-        flow_updates["stage"] = target_stage
         if target_stage == ContadoresLeadStage.CLOSED:
+            flow_updates["stage"] = target_stage
             flow_updates["closed_at"] = now
             flow_updates["stage_before_closed"] = resolve_stage_before_closing(updated)
         elif target_stage == ContadoresLeadStage.BOOKED:
-            flow_updates["booked_at"] = now
+            mark_converted_from_followup = True
             flow_updates["clear_archived_at"] = True
+            flow_updates["clear_closed_at"] = True
+            flow_updates["clear_stage_before_closed"] = True
         elif target_stage == ContadoresLeadStage.ARCHIVED:
+            flow_updates["stage"] = target_stage
             flow_updates["archived_at"] = now
         else:
+            flow_updates["stage"] = target_stage
             flow_updates["clear_archived_at"] = True
 
     if command.classification_label is not None:
@@ -4909,6 +4916,8 @@ async def update_followup_lead_classification(
     if command.automation_paused_reason is not None:
         flow_updates["automation_paused_reason"] = command.automation_paused_reason
 
+    if mark_converted_from_followup:
+        updated = ContadoresLead.mark_converted(updated.id, converted_at=now) or updated
     if flow_updates:
         updated = ContadoresLead.update_flow_state(updated.id, **flow_updates) or updated
     if command.tags is None and not flow_updates:

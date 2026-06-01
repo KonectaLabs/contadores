@@ -2824,7 +2824,6 @@ function ClientLeadDeliveryView({
                         </div>
                         <div className="delivery-sheet-section-meta">
                           <span>{compactNumber(section.leads.length)} rows</span>
-                          <span>{compactNumber(deliveryRawFieldCount(section.leads))} raw fields</span>
                           <span className="delivery-status-pill" data-tone={deliverySourceTone(section.source)}>
                             {deliverySourceStatusIcon(section.source)}
                             {humanize(section.source.last_sync_status || "active")}
@@ -2852,15 +2851,6 @@ function ClientLeadDeliveryView({
                                 </div>
                               </header>
 
-                              <div className="delivery-lead-summary-grid">
-                                {deliveryLeadSummaryFields(lead).map((field) => (
-                                  <div className="delivery-sheet-cell" key={field.label}>
-                                    <strong>{field.label}</strong>
-                                    <span>{field.value}</span>
-                                  </div>
-                                ))}
-                              </div>
-
                               {lead.notification_text ? (
                                 <p className="delivery-notification-preview">{truncate(lead.notification_text, 220)}</p>
                               ) : null}
@@ -2872,7 +2862,7 @@ function ClientLeadDeliveryView({
                               <div className="delivery-sheet-lead-card-foot">
                                 <details className="delivery-raw-details">
                                   <summary>
-                                    Raw row
+                                    Source details
                                     <span>{rawFields.length} fields</span>
                                   </summary>
                                   <dl>
@@ -3611,16 +3601,27 @@ function PlatformOpsView({
 
           <OpsPanel eyebrow={<ListChecks size={18} weight="fill" />} title="Meta inventory" meta={`${inventorySnapshots.length}`}>
             <div className="ops-table-list">
-              {inventorySnapshots.slice(0, 5).map((snapshot) => (
-                <div className="ops-table-row" key={snapshot.id}>
-                  <div>
-                    <strong>{metaInventoryLabel(snapshot)}</strong>
-                    <span>{metaInventoryCounts(snapshot)}</span>
+              {inventorySnapshots.slice(0, 5).map((snapshot) => {
+                const technicalFields = metaInventoryTechnicalFields(snapshot);
+                return (
+                  <div className="ops-table-row" key={snapshot.id}>
+                    <div>
+                      <strong>{metaInventoryLabel(snapshot)}</strong>
+                      <span>{metaInventoryCounts(snapshot)}</span>
+                      {technicalFields.length ? (
+                        <details className="ops-debug-details">
+                          <summary>Technical details</summary>
+                          {technicalFields.map((field) => (
+                            <code key={field}>{field}</code>
+                          ))}
+                        </details>
+                      ) : null}
+                    </div>
+                    <OpsStatus value={snapshot.status} />
+                    <time>{relativeTime(snapshot.created_at)}</time>
                   </div>
-                  <OpsStatus value={snapshot.status} />
-                  <time>{relativeTime(snapshot.created_at)}</time>
-                </div>
-              ))}
+                );
+              })}
               {!inventorySnapshots.length ? <OpsEmpty title="No inventory" value="0" /> : null}
             </div>
           </OpsPanel>
@@ -4178,7 +4179,15 @@ function metaPublishStatusValue(attempt: PlatformMetaPublishAttemptItem): string
 }
 
 function metaInventoryLabel(snapshot: PlatformMetaInventorySnapshotItem): string {
-  return snapshot.ad_account_id || snapshot.business_id || "Meta inventory";
+  return snapshot.status === "missing_credentials" ? "Meta inventory needs access" : "Meta inventory";
+}
+
+function metaInventoryTechnicalFields(snapshot: PlatformMetaInventorySnapshotItem): string[] {
+  return [
+    snapshot.ad_account_id ? `Ad account ${truncate(snapshot.ad_account_id, 32)}` : "",
+    snapshot.business_id ? `Business ${truncate(snapshot.business_id, 32)}` : "",
+    snapshot.api_version ? `API ${snapshot.api_version}` : "",
+  ].filter(Boolean);
 }
 
 function metaInventoryArrayCount(snapshot: PlatformMetaInventorySnapshotItem, key: string): number {
@@ -7461,19 +7470,6 @@ function deliveryRawFields(lead: ClientLead): DeliveryRawField[] {
   return fields;
 }
 
-function deliveryRawFieldCount(leads: ClientLead[]): number {
-  const fields = new Set<string>();
-  for (const lead of leads) {
-    for (const key of Object.keys(lead.raw_row ?? {})) {
-      const normalized = String(key || "").trim();
-      if (normalized) {
-        fields.add(normalized);
-      }
-    }
-  }
-  return fields.size;
-}
-
 function deliveryContactSourceIdsFor(sources: ClientLeadSource[], selectedSourceId: string | null): string[] {
   if (!selectedSourceId) {
     return [];
@@ -7678,18 +7674,8 @@ function deliveryLeadSubtitle(lead: ClientLead): string {
   const parts = [
     displayLeadPhone(lead.phone_number),
     lead.email || "",
-    lead.created_time ? shortDate(lead.created_time) : "",
   ].filter((part) => part && part !== "-");
   return parts.length ? parts.join(" · ") : "No mapped contact fields";
-}
-
-function deliveryLeadSummaryFields(lead: ClientLead): DeliveryRawField[] {
-  return [
-    { label: "Phone", value: displayLeadPhone(lead.phone_number) },
-    { label: "Email", value: lead.email || "-" },
-    { label: "Created", value: lead.created_time ? shortDate(lead.created_time) : clientLeadAgeText(lead) },
-    { label: "Attempts", value: String(lead.delivery_attempts) },
-  ];
 }
 
 function deliveryStatusDetail(lead: ClientLead): string {
