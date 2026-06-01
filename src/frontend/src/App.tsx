@@ -2924,6 +2924,8 @@ function ClientLeadDeliveryView({
                         {section.leads.map((lead) => {
                           const waLink = lead.wa_link || buildWaLink(lead.phone_number);
                           const retryable = isRetryableClientLead(lead);
+                          const copyBusy = actionBusy === `delivery-copy-${lead.id}`;
+                          const retryBusy = actionBusy === `delivery-retry-${lead.id}`;
                           const rawFields = deliveryRawFields(lead);
                           return (
                             <article className="delivery-sheet-lead-card" data-tone={clientLeadDeliveryTone(lead)} key={lead.id}>
@@ -2971,30 +2973,42 @@ function ClientLeadDeliveryView({
                                       <ArrowSquareOut size={14} weight="bold" />
                                       Chat
                                     </a>
-                                  ) : null}
-                                  <button type="button" className="ct-btn ct-btn-ghost" onClick={() => onCopyLead(lead)}>
-                                    <Copy size={14} weight="bold" />
-                                    Copy
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="ct-btn ct-btn-ghost"
-                                    disabled={actionBusy === `delivery-copy-${lead.id}`}
-                                    onClick={() => onCopyLeadAll(lead)}
-                                  >
-                                    {actionBusy === `delivery-copy-${lead.id}` ? "Copying..." : "Copy all"}
-                                  </button>
-                                  {retryable ? (
-                                    <button
-                                      type="button"
-                                      className="ct-btn ct-btn-ghost"
-                                      disabled={actionBusy === `delivery-retry-${lead.id}`}
-                                      onClick={() => onRetryLead(lead)}
-                                    >
-                                      <ArrowsClockwise size={14} weight="bold" />
-                                      {actionBusy === `delivery-retry-${lead.id}` ? "Retrying..." : "Retry"}
+                                  ) : (
+                                    <button type="button" className="ct-btn ct-btn-ghost" onClick={() => onCopyLead(lead)}>
+                                      <Copy size={14} weight="bold" />
+                                      Copy
                                     </button>
-                                  ) : null}
+                                  )}
+                                  <details className="ct-action-menu delivery-row-menu">
+                                    <summary className="ct-btn ct-btn-ghost">More</summary>
+                                    <div className="ct-action-menu-panel">
+                                      {waLink ? (
+                                        <button type="button" className="ct-btn ct-btn-ghost" onClick={() => onCopyLead(lead)}>
+                                          <Copy size={14} weight="bold" />
+                                          Copy
+                                        </button>
+                                      ) : null}
+                                      <button
+                                        type="button"
+                                        className="ct-btn ct-btn-ghost"
+                                        disabled={copyBusy}
+                                        onClick={() => onCopyLeadAll(lead)}
+                                      >
+                                        {copyBusy ? "Copying..." : "Copy all"}
+                                      </button>
+                                      {retryable ? (
+                                        <button
+                                          type="button"
+                                          className="ct-btn ct-btn-ghost"
+                                          disabled={retryBusy}
+                                          onClick={() => onRetryLead(lead)}
+                                        >
+                                          <ArrowsClockwise size={14} weight="bold" />
+                                          {retryBusy ? "Retrying..." : "Retry"}
+                                        </button>
+                                      ) : null}
+                                    </div>
+                                  </details>
                                 </div>
                               </div>
                             </article>
@@ -3311,6 +3325,7 @@ type OpsActionItem = {
   area: string;
   title: string;
   detail: string;
+  debugLines?: string[];
   action: string;
   status: string;
   updatedAt: string | null;
@@ -3392,6 +3407,10 @@ function PlatformOpsView({
       area: "Question",
       title: question.question,
       detail: question.trying_to_do || question.context_summary || question.workflow || "Operator answer needed.",
+      debugLines: [
+        formatPlatformRef(question.target_type, question.target_id),
+        question.default_action ? `Default action: ${question.default_action}` : "",
+      ],
       action: question.default_action || "Answer or choose the safe default.",
       status: question.status,
       updatedAt: question.updated_at,
@@ -3401,7 +3420,13 @@ function PlatformOpsView({
       tone: "danger" as const,
       area: "Meta",
       title: platformCampaignNameFromAttempt(attempt) || "Meta publish blocked",
-      detail: attempt.error || formatMissingMetaFields(attempt),
+      detail: "Meta publish needs operator review.",
+      debugLines: [
+        attempt.error,
+        formatPlatformRef("attempt", attempt.id),
+        formatPlatformRef("campaign", attempt.campaign_id),
+        formatMissingMetaFields(attempt),
+      ],
       action: "Complete missing fields, credentials, or approval before live publish.",
       status: metaPublishStatusValue(attempt),
       updatedAt: attempt.updated_at,
@@ -3411,7 +3436,11 @@ function PlatformOpsView({
       tone: "danger" as const,
       area: "Inventory",
       title: "Meta inventory needs access",
-      detail: snapshot.errors.length ? formatUnknownList(snapshot.errors) : metaInventoryCounts(snapshot),
+      detail: snapshot.errors.length ? "Meta inventory access is blocked." : metaInventoryCounts(snapshot),
+      debugLines: [
+        snapshot.errors.length ? formatUnknownList(snapshot.errors) : "",
+        ...metaInventoryTechnicalFields(snapshot),
+      ],
       action: "Add Meta credentials or ask Alan for the missing access.",
       status: snapshot.status,
       updatedAt: snapshot.created_at,
@@ -3421,8 +3450,13 @@ function PlatformOpsView({
       id: `update:${update.id}`,
       tone: "warn" as const,
       area: "Client update",
-      title: update.summary_text || formatPlatformRef("client", update.client_id),
-      detail: formatUnknownList(update.blockers),
+      title: update.summary_text || "Client update blocked",
+      detail: "Resolve blockers before the next update.",
+      debugLines: [
+        formatUnknownList(update.blockers),
+        formatPlatformRef("client", update.client_id),
+        formatPlatformRef("campaign", update.campaign_id),
+      ],
       action: update.next_action || "Resolve blockers before sending update.",
       status: update.status,
       updatedAt: update.updated_at,
@@ -3431,8 +3465,9 @@ function PlatformOpsView({
       id: `creative:${creative.id}`,
       tone: "warn" as const,
       area: "Creative",
-      title: creative.file_path ? truncate(creative.file_path, 54) : formatPlatformRef("creative", creative.id),
-      detail: creative.failure_reason || metaCreativeDetail(creative),
+      title: creative.file_path ? truncate(creative.file_path.split("/").pop() || creative.file_path, 54) : humanize(creative.asset_type || "Creative"),
+      detail: creative.failure_reason ? "Creative upload needs review." : metaCreativeDetail(creative),
+      debugLines: [creative.failure_reason, formatPlatformRef("creative", creative.id), formatPlatformRef("campaign", creative.campaign_id)],
       action: "Upload to Meta after credentials and file readiness are confirmed.",
       status: creative.status,
       updatedAt: creative.updated_at,
@@ -3442,7 +3477,8 @@ function PlatformOpsView({
       tone: "danger" as const,
       area: "Agent",
       title: run.agent_kind || "Agent run failed",
-      detail: run.error_preview || run.final_response_preview || formatPlatformRef(run.target_type, run.target_id),
+      detail: run.error_preview ? "Agent run failed." : run.final_response_preview ? "Agent run needs review." : "Agent target needs review.",
+      debugLines: [run.error_preview, run.final_response_preview, formatPlatformRef(run.target_type, run.target_id)],
       action: "Inspect the run context before retrying.",
       status: run.status,
       updatedAt: run.finished_at || run.started_at,
@@ -3452,7 +3488,8 @@ function PlatformOpsView({
       tone: "danger" as const,
       area: "Tool",
       title: call.tool_name,
-      detail: call.error_preview || call.arguments_preview || formatPlatformRef(call.target_type, call.target_id),
+      detail: call.error_preview ? "Tool call failed." : call.arguments_preview ? "Tool input needs review." : "Tool target needs review.",
+      debugLines: [call.error_preview, call.arguments_preview, formatPlatformRef(call.target_type, call.target_id)],
       action: "Fix the input or provider blocker, then rerun the tool.",
       status: call.status,
       updatedAt: call.created_at,
@@ -3610,9 +3647,9 @@ function PlatformOpsView({
                   <strong>{question.question}</strong>
                   <p>{question.trying_to_do || question.context_summary || question.workflow}</p>
                   <div className="ops-item-meta">
-                    <span>{formatPlatformRef(question.target_type, question.target_id)}</span>
-                    {question.default_action ? <span>{question.default_action}</span> : null}
+                    {question.default_action ? <span>{question.default_action}</span> : <span>Operator input needed</span>}
                   </div>
+                  <OpsDebugDetails lines={[formatPlatformRef(question.target_type, question.target_id)]} />
                 </article>
               ))}
               {blockedAttempts.map((attempt) => (
@@ -3622,11 +3659,11 @@ function PlatformOpsView({
                     <time>{relativeTime(attempt.updated_at)}</time>
                   </div>
                   <strong>{platformCampaignNameFromAttempt(attempt) || "Meta publish"}</strong>
-                  <p>{attempt.error || formatPlatformRef("campaign", attempt.campaign_id)}</p>
+                  <p>Meta publish is blocked until required fields, credentials, or approval are ready.</p>
                   <div className="ops-item-meta">
-                    <span>{formatPlatformRef("attempt", attempt.id)}</span>
                     <span>{formatMissingMetaFields(attempt)}</span>
                   </div>
+                  <OpsDebugDetails lines={[attempt.error, formatPlatformRef("attempt", attempt.id), formatPlatformRef("campaign", attempt.campaign_id)]} />
                 </article>
               ))}
               {updatesWithBlockers.map((update) => (
@@ -3635,12 +3672,12 @@ function PlatformOpsView({
                     <OpsStatus value={update.status} />
                     <time>{relativeTime(update.updated_at)}</time>
                   </div>
-                  <strong>{update.summary_text || formatPlatformRef("client", update.client_id)}</strong>
-                  <p>{formatUnknownList(update.blockers)}</p>
+                  <strong>{update.summary_text || "Client update blocked"}</strong>
+                  <p>Resolve blockers before sending the next client update.</p>
                   <div className="ops-item-meta">
-                    <span>{formatPlatformRef("campaign", update.campaign_id)}</span>
                     <span>{update.next_action || "-"}</span>
                   </div>
+                  <OpsDebugDetails lines={[formatUnknownList(update.blockers), formatPlatformRef("client", update.client_id), formatPlatformRef("campaign", update.campaign_id)]} />
                 </article>
               ))}
               {!openQuestions.length && !blockedAttempts.length && !updatesWithBlockers.length ? (
@@ -3654,8 +3691,9 @@ function PlatformOpsView({
               {campaigns.slice(0, 8).map((campaign) => (
                 <div className="ops-table-row" key={campaign.id}>
                   <div>
-                    <strong>{campaign.objective || formatPlatformRef("campaign", campaign.id)}</strong>
-                    <span>{formatPlatformRef("client", campaign.client_id)} · {campaignBudgetLabel(campaign)}</span>
+                    <strong>{campaign.objective || "Campaign"}</strong>
+                    <span>{campaignBudgetLabel(campaign)}</span>
+                    <OpsDebugDetails lines={[formatPlatformRef("campaign", campaign.id), formatPlatformRef("client", campaign.client_id)]} />
                   </div>
                   <OpsStatus value={campaign.approval_status || campaign.status} />
                   <time>{relativeTime(campaign.updated_at)}</time>
@@ -3671,7 +3709,8 @@ function PlatformOpsView({
                 <div className="ops-table-row" key={attempt.id}>
                   <div>
                     <strong>{platformCampaignNameFromAttempt(attempt) || humanize(attempt.status)}</strong>
-                    <span>{formatPlatformRef("campaign", attempt.campaign_id)} · {formatMetaPublishDetail(attempt)}</span>
+                    <span>{formatMetaPublishDetail(attempt)}</span>
+                    <OpsDebugDetails lines={[formatPlatformRef("attempt", attempt.id), formatPlatformRef("campaign", attempt.campaign_id), attempt.error]} />
                   </div>
                   <OpsStatus value={metaPublishStatusValue(attempt)} />
                   <time>{relativeTime(attempt.updated_at)}</time>
@@ -3774,14 +3813,17 @@ function PlatformOpsView({
                     <OpsStatus value={meeting.status} />
                     <time>{relativeTime(meeting.updated_at)}</time>
                   </div>
-                  <strong>{meeting.lead_email || formatPlatformRef("lead", meeting.lead_id)}</strong>
+                  <strong>{meeting.lead_email || "Lead meeting"}</strong>
                   <p>{[meeting.requested_day, meeting.requested_time, meeting.timezone].filter(Boolean).join(" · ") || meeting.context_summary || "-"}</p>
                   {meeting.calendar_event_link ? (
                     <a href={meeting.calendar_event_link} target="_blank" rel="noreferrer">
                       Calendar event
                     </a>
                   ) : meeting.calendar_error ? (
-                    <p>{meeting.calendar_error}</p>
+                    <>
+                      <p>Calendar sync needs review.</p>
+                      <OpsDebugDetails lines={[meeting.calendar_error, formatPlatformRef("lead", meeting.lead_id)]} />
+                    </>
                   ) : null}
                 </article>
               ))}
@@ -3797,8 +3839,9 @@ function PlatformOpsView({
                     <OpsStatus value={update.status} />
                     <time>{relativeTime(update.updated_at)}</time>
                   </div>
-                  <strong>{update.summary_text || formatPlatformRef("client", update.client_id)}</strong>
+                  <strong>{update.summary_text || "Client update"}</strong>
                   <p>{`${compactNumber(update.leads_count)} leads · ${update.next_action || "-"}`}</p>
+                  <OpsDebugDetails lines={[formatPlatformRef("client", update.client_id), formatPlatformRef("campaign", update.campaign_id)]} />
                 </article>
               ))}
               {!updates.length ? <OpsEmpty title="No updates" value="0" /> : null}
@@ -3824,8 +3867,9 @@ function PlatformOpsView({
               {creatives.slice(0, 5).map((creative) => (
                 <div className="ops-table-row" key={creative.id}>
                   <div>
-                    <strong>{creative.file_path ? truncate(creative.file_path, 42) : formatPlatformRef("creative", creative.id)}</strong>
+                    <strong>{creative.file_path ? truncate(creative.file_path.split("/").pop() || creative.file_path, 42) : humanize(creative.asset_type || "Creative")}</strong>
                     <span>{metaCreativeDetail(creative)}</span>
+                    <OpsDebugDetails lines={[formatPlatformRef("creative", creative.id), formatPlatformRef("campaign", creative.campaign_id), creative.file_path, creative.failure_reason]} />
                   </div>
                   <OpsStatus value={creative.status} />
                   <time>{relativeTime(creative.updated_at)}</time>
@@ -3995,9 +4039,25 @@ function OpsActionCard({ item }: { item: OpsActionItem }) {
         <strong>{truncate(item.title, 72)}</strong>
         <p>{truncate(item.detail, 90)}</p>
         <em>{truncate(item.action, 90)}</em>
+        <OpsDebugDetails lines={item.debugLines ?? []} />
       </div>
       <OpsStatus value={item.status} />
     </article>
+  );
+}
+
+function OpsDebugDetails({ lines }: { lines: Array<string | null | undefined> }) {
+  const visibleLines = lines.map((line) => (line ?? "").trim()).filter(Boolean);
+  if (!visibleLines.length) {
+    return null;
+  }
+  return (
+    <details className="ops-debug-details">
+      <summary>Raw context</summary>
+      {visibleLines.map((line, index) => (
+        <span key={`${line}:${index}`}>{truncate(line, 180)}</span>
+      ))}
+    </details>
   );
 }
 
@@ -4057,16 +4117,16 @@ function isMetaReadyCreative(creative: PlatformCreativeAssetItem): boolean {
 
 function metaCreativeDetail(creative: PlatformCreativeAssetItem): string {
   if (creative.meta_creative_id) {
-    return `Meta creative ${truncate(creative.meta_creative_id, 24)}`;
+    return "Meta creative ready";
   }
   if (creative.image_hash) {
-    return `Image hash ${truncate(creative.image_hash, 24)}`;
+    return "Image uploaded to Meta";
   }
   if (creative.video_id) {
-    return `Video ${truncate(creative.video_id, 24)}`;
+    return "Video uploaded to Meta";
   }
   if (creative.failure_reason) {
-    return truncate(creative.failure_reason, 72);
+    return "Upload needs review";
   }
   return [humanize(creative.asset_type), creative.dimensions || "No dimensions"].filter(Boolean).join(" · ");
 }
