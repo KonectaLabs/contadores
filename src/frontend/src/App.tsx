@@ -2060,7 +2060,10 @@ export function App() {
               );
             })}
             {isCrmWorkspace ? (
-              <button type="button" className="ct-nav-btn ct-nav-add" onClick={openCreateFunnel}>+ Funnel</button>
+              <button type="button" className="ct-nav-btn ct-nav-add" onClick={openCreateFunnel}>
+                <Plus size={14} weight="bold" />
+                <span>Funnel</span>
+              </button>
             ) : null}
           </nav>
         ) : null}
@@ -2090,18 +2093,27 @@ export function App() {
           </label>
           ) : null}
           {isCrmWorkspace || activeSection === "workstation" ? (
-            <button type="button" className="ct-icon-btn" onClick={openEditFunnel} disabled={!selectedFunnel}>Funnel</button>
+            <button type="button" className="ct-icon-btn" onClick={openEditFunnel} disabled={!selectedFunnel} title="Edit funnel" aria-label="Edit funnel">
+              <NotePencil size={15} weight="bold" />
+              <span className="ct-sr-only">Funnel</span>
+            </button>
           ) : null}
           {isCrmWorkspace && canEditLegacyRuntimeConfig ? (
-            <button type="button" className="ct-icon-btn" onClick={() => setShowConfig(true)}>Runtime</button>
+            <button type="button" className="ct-icon-btn" onClick={() => setShowConfig(true)} title="Runtime config" aria-label="Runtime config">
+              <GearSix size={15} weight="bold" />
+              <span className="ct-sr-only">Runtime</span>
+            </button>
           ) : null}
           <button
             type="button"
             className="ct-icon-btn"
+            title={activeSection === "ops" ? "Refresh Observe" : "Refresh"}
+            aria-label={activeSection === "ops" ? "Refresh Observe" : "Refresh"}
             onClick={activeSection === "ops" ? refreshObserve : refreshAll}
             disabled={activeSection === "ops" ? platformLoading || runnerLoading : loading || deliveryLoading || platformLoading}
           >
-            Refresh
+            <ArrowsClockwise size={15} weight="bold" />
+            <span className="ct-sr-only">Refresh</span>
           </button>
         </div>
       </header>

@@ -313,6 +313,7 @@ body {
   align-items: center;
   justify-self: end;
   gap: 10px;
+  min-width: 0;
 }
 
 #contadoresView .ct-search {
@@ -370,6 +371,9 @@ body {
 #contadoresView .ct-icon-btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 0;
   height: 38px;
   padding: 0 14px;
   border: 1px solid var(--ct-line);
@@ -383,6 +387,11 @@ body {
 #contadoresView .ct-icon-btn:hover:not(:disabled) {
   border-color: var(--ct-accent);
   color: var(--ct-accent-strong);
+}
+
+#contadoresView .ct-topbar-tools .ct-icon-btn {
+  width: 38px;
+  padding-inline: 0;
 }
 
 #contadoresView .ct-error {
@@ -5832,6 +5841,7 @@ body {
 
   #contadoresView .ct-topbar-tools {
     max-width: calc(100vw - 32px);
+    width: 100%;
   }
 
   #contadoresView .ct-section-switch button {
@@ -5857,7 +5867,17 @@ body {
 
   #contadoresView .ct-topbar-tools {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-columns: minmax(0, 1fr) repeat(3, 38px);
+    gap: 8px;
+  }
+
+  #contadoresView .ct-topbar-tools:not(:has(.ct-search)) {
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  #contadoresView .ct-topbar-tools .ct-icon-btn {
+    justify-self: end;
   }
 
   #contadoresView .ct-search {
@@ -6239,7 +6259,12 @@ body {
   }
 
   #contadoresView .ct-topbar-tools {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: minmax(0, 1fr) repeat(3, 38px);
+  }
+
+  #contadoresView .ct-topbar-tools:not(:has(.ct-search)) {
+    display: flex;
+    justify-content: flex-end;
   }
 
   #contadoresView .ct-search {
