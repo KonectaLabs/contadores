@@ -65,13 +65,13 @@ body {
   --ct-danger-ink: #8f2323;
   --ct-info: #2f6587;
   --ct-info-bg: #edf5f8;
-  --ct-chat-outbound-bg: #12312d;
-  --ct-chat-outbound-line: #0f9f8a;
-  --ct-chat-outbound-ink: #f4fbf8;
-  --ct-chat-inbound-bg: #fffdf7;
-  --ct-chat-inbound-line: #c9782d;
-  --ct-chat-inbound-ink: #2b241b;
-  --ct-chat-panel: #e6ece9;
+  --ct-chat-outbound-bg: #18243f;
+  --ct-chat-outbound-line: #2dd4bf;
+  --ct-chat-outbound-ink: #f8fbff;
+  --ct-chat-inbound-bg: #ffffff;
+  --ct-chat-inbound-line: #d17f3f;
+  --ct-chat-inbound-ink: #29231c;
+  --ct-chat-panel: #e2e7e8;
   --ct-shadow-soft: 0 10px 28px rgba(36, 45, 39, 0.06);
   --ct-shadow-popover: 0 18px 44px rgba(36, 45, 39, 0.14);
   --ct-radius: 8px;
@@ -1917,7 +1917,7 @@ body {
 
 #contadoresView .ct-queue-bar {
   display: grid;
-  grid-template-columns: minmax(136px, 168px) minmax(0, 1fr);
+  grid-template-columns: minmax(142px, 174px) minmax(0, 1fr);
   align-items: stretch;
   gap: 1px;
   padding: 0;
@@ -1996,10 +1996,10 @@ body {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   align-items: start;
-  gap: 9px;
+  gap: 10px;
   min-width: 0;
-  padding: 10px 12px;
-  background: #ffffff;
+  padding: 11px 12px 12px;
+  background: #f8fafb;
 }
 
 #contadoresView .ct-lead-filter-head {
@@ -2048,14 +2048,37 @@ body {
   color: #0f6b5f;
 }
 
+#contadoresView .ct-lead-filter-groups {
+  display: grid;
+  grid-template-columns: minmax(104px, 0.7fr) minmax(330px, 2.1fr) minmax(210px, 1.15fr) minmax(170px, 0.95fr);
+  gap: 8px;
+  min-width: 0;
+}
+
+#contadoresView .ct-lead-filter-group {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+  padding: 8px;
+  border: 1px solid rgba(28, 38, 44, 0.1);
+  border-radius: var(--ct-radius);
+  background: #ffffff;
+}
+
+#contadoresView .ct-lead-filter-group-label {
+  color: var(--ct-ink-soft);
+  font: 850 9px/1 var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
 #contadoresView .ct-lead-filter-set {
   display: flex;
   flex-wrap: wrap;
   align-items: stretch;
-  gap: 7px;
+  gap: 6px;
   min-width: 0;
   overflow: visible;
-  padding-bottom: 2px;
 }
 
 #contadoresView .ct-lead-view {
@@ -2065,10 +2088,10 @@ body {
   align-items: center;
   column-gap: 8px;
   row-gap: 2px;
-  flex: 0 0 auto;
-  min-width: 104px;
-  min-height: 38px;
-  padding: 7px 10px;
+  flex: 1 1 86px;
+  min-width: 78px;
+  min-height: 44px;
+  padding: 8px 9px;
   border: 1px solid rgba(28, 38, 44, 0.13);
   border-radius: var(--ct-radius-sm);
   background: #f9fbfa;
@@ -2085,7 +2108,7 @@ body {
 
 #contadoresView .ct-lead-view.active {
   border-color: var(--lead-view-accent);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--lead-view-accent) 88%, #121a18), var(--lead-view-accent));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--lead-view-accent) 90%, #111827), var(--lead-view-accent));
   color: #ffffff;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 8px 18px rgba(18, 49, 45, 0.1);
 }
@@ -2109,6 +2132,10 @@ body {
   overflow-wrap: normal;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+#contadoresView .ct-lead-filter-group[data-group="pipeline"] .ct-lead-view {
+  flex-basis: 94px;
 }
 
 #contadoresView .ct-lead-view.active .ct-lead-view-count,
@@ -2274,34 +2301,47 @@ body {
 }
 
 #contadoresView .ct-lead-row {
+  --lead-row-accent: 29, 78, 216;
   position: relative;
   display: grid;
   grid-template-columns: 24px minmax(0, 1fr);
   align-items: center;
   gap: 6px;
   border: 1px solid transparent;
-  border-left: 3px solid transparent;
+  border-left: 3px solid rgba(var(--lead-row-accent), 0.38);
   border-radius: var(--ct-radius);
-  background: rgba(252, 252, 250, 0.74);
+  background:
+    linear-gradient(90deg, rgba(var(--lead-row-accent), 0.09), rgba(252, 252, 250, 0.82) 42%),
+    rgba(252, 252, 250, 0.78);
   transition: background 160ms ease, border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
 
+#contadoresView .ct-lead-row[data-tone="warn"] { --lead-row-accent: 184, 92, 56; }
+#contadoresView .ct-lead-row[data-tone="success"] { --lead-row-accent: 15, 118, 110; }
+#contadoresView .ct-lead-row[data-tone="muted"] { --lead-row-accent: 107, 114, 128; }
+
 #contadoresView .ct-lead-row:hover {
   border-color: rgba(21, 94, 117, 0.22);
-  border-left-color: rgba(21, 94, 117, 0.48);
-  background: rgba(255, 255, 255, 0.96);
+  border-left-color: rgba(var(--lead-row-accent), 0.7);
+  background:
+    linear-gradient(90deg, rgba(var(--lead-row-accent), 0.13), rgba(255, 255, 255, 0.96) 44%),
+    #ffffff;
 }
 
 #contadoresView .ct-lead-row.active {
-  border-color: rgba(21, 94, 117, 0.42);
-  border-left-color: var(--ct-accent);
-  background: #ffffff;
+  border-color: rgba(var(--lead-row-accent), 0.42);
+  border-left-color: rgb(var(--lead-row-accent));
+  background:
+    linear-gradient(90deg, rgba(var(--lead-row-accent), 0.16), #ffffff 46%),
+    #ffffff;
   box-shadow: 0 10px 22px rgba(35, 47, 50, 0.08);
 }
 
 #contadoresView .ct-lead-row.selected {
   border-color: rgba(21, 94, 117, 0.58);
-  background: #edf7f9;
+  background:
+    linear-gradient(90deg, rgba(var(--lead-row-accent), 0.16), #edf7f9 46%),
+    #edf7f9;
 }
 
 #contadoresView .ct-lead-row.has-error {
@@ -2767,8 +2807,10 @@ body {
   overflow: hidden;
   padding: 10px 16px 0;
   background:
-    linear-gradient(180deg, rgba(246, 250, 248, 0.96), rgba(224, 234, 230, 0.98)),
+    linear-gradient(180deg, rgba(246, 248, 249, 0.97), rgba(222, 228, 230, 0.98)),
+    linear-gradient(90deg, rgba(24, 36, 63, 0.05) 1px, transparent 1px),
     var(--ct-chat-panel);
+  background-size: auto, 32px 32px, auto;
 }
 
 #contadoresView .ct-pane {
@@ -2791,8 +2833,8 @@ body {
 }
 
 #contadoresView .ct-timeline {
-  gap: 18px;
-  padding: 16px 8px 26px;
+  gap: 20px;
+  padding: 18px 10px 28px;
 }
 
 #contadoresView .crm-message-shell {
@@ -2867,24 +2909,51 @@ body {
 }
 
 #contadoresView .crm-message-card {
+  position: relative;
   width: min(700px, 100%);
-  box-shadow: 0 12px 26px rgba(22, 35, 32, 0.1);
+  border-radius: 15px;
+  box-shadow: 0 16px 34px rgba(25, 35, 44, 0.12);
 }
 
 #contadoresView .crm-message-card.outbound {
-  border-color: rgba(18, 49, 45, 0.86);
-  border-right: 5px solid var(--ct-chat-outbound-line);
-  border-bottom-right-radius: 2px;
-  background: var(--ct-chat-outbound-bg);
+  border-color: rgba(24, 36, 63, 0.92);
+  border-bottom-right-radius: 4px;
+  background:
+    linear-gradient(135deg, #23355d, var(--ct-chat-outbound-bg) 58%),
+    var(--ct-chat-outbound-bg);
   color: var(--ct-chat-outbound-ink);
+  box-shadow: 0 18px 36px rgba(24, 36, 63, 0.2);
 }
 
 #contadoresView .crm-message-card.inbound {
-  border-color: rgba(201, 120, 45, 0.34);
-  border-left: 5px solid var(--ct-chat-inbound-line);
-  border-bottom-left-radius: 2px;
+  border-color: rgba(160, 94, 38, 0.26);
+  border-bottom-left-radius: 4px;
   background: var(--ct-chat-inbound-bg);
   color: var(--ct-chat-inbound-ink);
+}
+
+#contadoresView .crm-message-card.outbound::before,
+#contadoresView .crm-message-card.inbound::before {
+  content: "";
+  position: absolute;
+  bottom: 13px;
+  width: 12px;
+  height: 12px;
+  border: inherit;
+  background: inherit;
+  transform: rotate(45deg);
+}
+
+#contadoresView .crm-message-card.outbound::before {
+  right: -6px;
+  border-left: 0;
+  border-bottom: 0;
+}
+
+#contadoresView .crm-message-card.inbound::before {
+  left: -6px;
+  border-right: 0;
+  border-top: 0;
 }
 
 #contadoresView .crm-message-card.pending {
@@ -2956,8 +3025,8 @@ body {
 
 #contadoresView .crm-message-card.inbound .crm-message-meta-chips span,
 #contadoresView .crm-message-card.acknowledged .crm-message-meta-chips span {
-  border-color: rgba(201, 120, 45, 0.16);
-  background: rgba(255, 248, 235, 0.84);
+  border-color: rgba(160, 94, 38, 0.16);
+  background: #fff6eb;
 }
 
 #contadoresView .crm-message-card.pending .crm-message-meta-chips span {
@@ -2978,12 +3047,12 @@ body {
 }
 
 #contadoresView .crm-message-author.outbound {
-  background: rgba(15, 159, 138, 0.2);
-  color: #d9fff7;
+  background: rgba(45, 212, 191, 0.2);
+  color: #dffdf8;
 }
 
 #contadoresView .crm-message-author.inbound {
-  background: rgba(201, 120, 45, 0.14);
+  background: rgba(209, 127, 63, 0.14);
   color: #8b4e17;
 }
 
@@ -5962,11 +6031,41 @@ body {
     min-height: 48px;
   }
 
-  #contadoresView .ct-lead-filter-set {
-    flex-wrap: nowrap;
+  #contadoresView .ct-lead-filter-groups {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    max-width: calc(100vw - 58px);
     overflow-x: auto;
     overscroll-behavior-x: contain;
     scrollbar-width: thin;
+  }
+
+  #contadoresView .ct-lead-filter-group {
+    flex: 0 0 min(244px, calc(100vw - 72px));
+    align-self: flex-start;
+  }
+
+  #contadoresView .ct-lead-filter-group[data-group="pipeline"] {
+    flex-basis: min(328px, calc(100vw - 72px));
+  }
+
+  #contadoresView .ct-lead-filter-set {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+    overflow: visible;
+  }
+
+  #contadoresView .ct-lead-filter-group[data-group="overview"] .ct-lead-filter-set {
+    grid-template-columns: 1fr;
+  }
+
+  #contadoresView .ct-lead-view,
+  #contadoresView .ct-lead-filter-group[data-group="pipeline"] .ct-lead-view {
+    flex: none;
+    min-width: 0;
+    width: 100%;
   }
 
   #contadoresView .ct-lead-filter-bar {
