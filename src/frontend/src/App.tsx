@@ -1954,6 +1954,12 @@ export function App() {
 
   const visibleCount = leadList?.leads.length ?? 0;
   const totalCount = metrics?.total ?? 0;
+  const activeLeadView = leadViewFilters.find((filter) => filter.value === leadViewFilter) ?? leadViewFilters[0];
+  const activeCrmFilterCount = [
+    leadViewFilter !== "all",
+    Boolean(strategyFilter.step || strategyFilter.strategyId),
+    Boolean(tagFilter),
+  ].filter(Boolean).length;
   const selectedFunnelNeedsSetup = Boolean(
     isCrmWorkspace
       && selectedFunnel
@@ -2245,8 +2251,23 @@ export function App() {
             </div>
             <section className="ct-lead-filter-bar" aria-labelledby="ctLeadStateLabel">
               <div className="ct-lead-filter-head">
-                <span id="ctLeadStateLabel">Visible</span>
-                <strong>{leadViewFilters.find((filter) => filter.value === leadViewFilter)?.label ?? "All"}</strong>
+                <div>
+                  <span id="ctLeadStateLabel">State filters</span>
+                  <strong>{activeLeadView.label}</strong>
+                </div>
+                {activeCrmFilterCount ? (
+                  <button
+                    type="button"
+                    className="ct-filter-clear"
+                    onClick={() => {
+                      setLeadViewFilter("all");
+                      setStrategyFilter({ step: "", strategyId: "" });
+                      setTagFilter("");
+                    }}
+                  >
+                    Clear filters
+                  </button>
+                ) : null}
               </div>
               <div className="ct-lead-filter-set" role="group" aria-label="Lead state filters">
                 {leadViewFilters.map((filter) => {
@@ -6505,7 +6526,7 @@ function MessageTimeline({
         return (
           <div className={`crm-message-shell ${direction}`} key={message.id}>
             <div className="crm-message-rail">
-              <span className={`crm-message-dot ${direction} ${needsDeliveryErrorAck ? "failed" : ""} ${errorAcknowledged ? "acknowledged" : ""}`} />
+              <span className={`crm-message-dot ${direction} ${deliveryStatus === "undelivered" ? "pending" : ""} ${needsDeliveryErrorAck ? "failed" : ""} ${errorAcknowledged ? "acknowledged" : ""}`} />
             </div>
             <article
               className={`crm-message-card ${direction} ${deliveryStatus === "undelivered" ? "pending" : ""} ${needsDeliveryErrorAck ? "failed" : ""} ${errorAcknowledged ? "acknowledged" : ""}`}

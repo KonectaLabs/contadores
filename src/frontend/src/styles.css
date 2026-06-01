@@ -65,13 +65,13 @@ body {
   --ct-danger-ink: #8f2323;
   --ct-info: #2f6587;
   --ct-info-bg: #edf5f8;
-  --ct-chat-outbound-bg: #0f172a;
-  --ct-chat-outbound-line: #2563eb;
-  --ct-chat-outbound-ink: #f8fafc;
-  --ct-chat-inbound-bg: #f8fafc;
-  --ct-chat-inbound-line: #64748b;
-  --ct-chat-inbound-ink: #111827;
-  --ct-chat-panel: #eef2f7;
+  --ct-chat-outbound-bg: #12312d;
+  --ct-chat-outbound-line: #0f9f8a;
+  --ct-chat-outbound-ink: #f4fbf8;
+  --ct-chat-inbound-bg: #fffdf7;
+  --ct-chat-inbound-line: #c9782d;
+  --ct-chat-inbound-ink: #2b241b;
+  --ct-chat-panel: #e6ece9;
   --ct-shadow-soft: 0 10px 28px rgba(36, 45, 39, 0.06);
   --ct-shadow-popover: 0 18px 44px rgba(36, 45, 39, 0.14);
   --ct-radius: 8px;
@@ -1917,13 +1917,13 @@ body {
 
 #contadoresView .ct-queue-bar {
   display: grid;
-  grid-template-columns: minmax(118px, 144px) minmax(0, 1fr);
+  grid-template-columns: minmax(136px, 168px) minmax(0, 1fr);
   align-items: stretch;
-  gap: 0;
+  gap: 1px;
   padding: 0;
-  border: 1px solid rgba(30, 64, 175, 0.2);
+  border: 1px solid rgba(28, 38, 44, 0.18);
   border-radius: calc(var(--ct-radius) + 2px);
-  background: #ffffff;
+  background: rgba(28, 38, 44, 0.12);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.72);
   overflow: hidden;
 }
@@ -1932,32 +1932,30 @@ body {
   display: grid;
   align-content: center;
   gap: 5px;
-  min-height: 74px;
+  min-height: 82px;
   padding: 12px 14px;
-  border-right: 1px solid rgba(30, 64, 175, 0.16);
-  background: linear-gradient(180deg, #eff6ff, #e2e8f0);
-  color: var(--ct-ink);
+  background: linear-gradient(180deg, #172923, #20352e);
+  color: #f7fbf8;
 }
 
 #contadoresView .ct-queue-summary strong {
   color: currentColor;
-  font: 850 13px/1 var(--font-sans);
+  font: 850 17px/1 var(--font-sans);
 }
 
 #contadoresView .ct-queue-summary span {
-  color: var(--ct-ink-soft);
+  color: rgba(247, 251, 248, 0.72);
   font: 800 11px/1 var(--font-mono);
 }
 
 #contadoresView .ct-filter-board {
   grid-column: 1 / -1;
   display: grid;
-  gap: 8px;
-  margin: 8px 10px 10px;
-  padding: 9px 10px;
-  border: 1px dashed rgba(91, 103, 115, 0.28);
-  border-radius: var(--ct-radius);
-  background: #f8fafc;
+  gap: 7px;
+  margin: 0;
+  padding: 9px 12px 11px;
+  border-top: 1px solid rgba(28, 38, 44, 0.1);
+  background: #f7faf8;
 }
 
 #contadoresView .ct-filter-row {
@@ -1996,21 +1994,20 @@ body {
 
 #contadoresView .ct-lead-filter-bar {
   display: grid;
-  grid-template-columns: minmax(68px, 82px) minmax(0, 1fr);
-  align-items: stretch;
-  gap: 8px;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 9px;
   min-width: 0;
-  padding: 8px;
+  padding: 10px 12px;
+  background: #ffffff;
 }
 
 #contadoresView .ct-lead-filter-head {
-  display: grid;
-  align-content: center;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 5px;
-  padding: 8px 9px;
-  border: 1px solid rgba(30, 64, 175, 0.16);
-  border-radius: var(--ct-radius-sm);
-  background: #f8fafc;
+  min-width: 0;
 }
 
 #contadoresView .ct-lead-filter-head span {
@@ -2021,16 +2018,44 @@ body {
 }
 
 #contadoresView .ct-lead-filter-head strong {
-  color: var(--ct-accent-strong);
-  font: 850 13px/1.05 var(--font-sans);
+  color: var(--ct-ink);
+  font: 850 14px/1.05 var(--font-sans);
+}
+
+#contadoresView .ct-lead-filter-head div {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+#contadoresView .ct-filter-clear {
+  flex: 0 0 auto;
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid rgba(28, 38, 44, 0.16);
+  border-radius: var(--ct-radius-sm);
+  background: #f2f6f4;
+  color: var(--ct-ink-muted);
+  font: 800 10px/1 var(--font-mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+#contadoresView .ct-filter-clear:hover {
+  border-color: rgba(15, 159, 138, 0.36);
+  background: #e7f5f1;
+  color: #0f6b5f;
 }
 
 #contadoresView .ct-lead-filter-set {
   display: flex;
   flex-wrap: wrap;
   align-items: stretch;
-  gap: 6px;
+  gap: 7px;
   min-width: 0;
+  overflow: visible;
+  padding-bottom: 2px;
 }
 
 #contadoresView .ct-lead-view {
@@ -2040,13 +2065,13 @@ body {
   align-items: center;
   column-gap: 8px;
   row-gap: 2px;
-  flex: 1 1 104px;
+  flex: 0 0 auto;
   min-width: 104px;
-  min-height: 42px;
-  padding: 7px 9px;
-  border: 1px solid var(--ct-line);
+  min-height: 38px;
+  padding: 7px 10px;
+  border: 1px solid rgba(28, 38, 44, 0.13);
   border-radius: var(--ct-radius-sm);
-  background: #fbfcfd;
+  background: #f9fbfa;
   color: var(--ct-ink);
   text-align: left;
   transition: background 160ms ease, border-color 160ms ease, box-shadow 160ms ease, color 160ms ease, transform 160ms ease;
@@ -2060,9 +2085,9 @@ body {
 
 #contadoresView .ct-lead-view.active {
   border-color: var(--lead-view-accent);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--lead-view-accent) 92%, #111827), var(--lead-view-accent));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--lead-view-accent) 88%, #121a18), var(--lead-view-accent));
   color: #ffffff;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 8px 18px rgba(15, 23, 42, 0.09);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 8px 18px rgba(18, 49, 45, 0.1);
 }
 
 #contadoresView .ct-lead-view-count {
@@ -2070,9 +2095,9 @@ body {
   font: 850 16px/1 var(--font-mono);
 }
 
-#contadoresView .ct-lead-view[data-tone="all"] { --lead-view-accent: #1d4ed8; }
+#contadoresView .ct-lead-view[data-tone="all"] { --lead-view-accent: #12312d; }
 #contadoresView .ct-lead-view[data-tone="warn"] { --lead-view-accent: #b85c38; }
-#contadoresView .ct-lead-view[data-tone="accent"] { --lead-view-accent: #4338ca; }
+#contadoresView .ct-lead-view[data-tone="accent"] { --lead-view-accent: #2f6587; }
 #contadoresView .ct-lead-view[data-tone="success"] { --lead-view-accent: #0f766e; }
 #contadoresView .ct-lead-view[data-tone="muted"] { --lead-view-accent: #6b7280; }
 
@@ -2718,7 +2743,7 @@ body {
   overflow: hidden;
   padding: 10px 16px 0;
   background:
-    linear-gradient(180deg, rgba(244, 248, 250, 0.98), rgba(228, 235, 241, 0.98)),
+    linear-gradient(180deg, rgba(246, 250, 248, 0.96), rgba(224, 234, 230, 0.98)),
     var(--ct-chat-panel);
 }
 
@@ -2743,17 +2768,17 @@ body {
 
 #contadoresView .ct-timeline {
   gap: 18px;
-  padding: 14px 6px 24px;
+  padding: 16px 8px 26px;
 }
 
 #contadoresView .crm-message-shell {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) minmax(84px, 19%);
-  gap: 12px;
+  grid-template-columns: 24px minmax(0, 1fr) minmax(120px, 22%);
+  gap: 13px;
 }
 
 #contadoresView .crm-message-shell.outbound {
-  grid-template-columns: minmax(84px, 19%) minmax(0, 1fr) 18px;
+  grid-template-columns: minmax(120px, 22%) minmax(0, 1fr) 24px;
 }
 
 #contadoresView .crm-message-shell.outbound .crm-message-rail {
@@ -2774,20 +2799,26 @@ body {
 #contadoresView .crm-message-rail {
   display: flex;
   justify-content: center;
-  padding-top: 15px;
+  padding-top: 17px;
 }
 
 #contadoresView .crm-message-dot {
-  width: 11px;
-  height: 11px;
+  width: 13px;
+  height: 13px;
+  border: 2px solid rgba(255, 255, 255, 0.94);
   border-radius: 50%;
   background: var(--ct-chat-outbound-line);
-  box-shadow: 0 0 0 5px rgba(37, 99, 235, 0.16);
+  box-shadow: 0 0 0 5px rgba(15, 159, 138, 0.15);
 }
 
 #contadoresView .crm-message-dot.inbound {
   background: var(--ct-chat-inbound-line);
-  box-shadow: 0 0 0 5px rgba(100, 116, 139, 0.14);
+  box-shadow: 0 0 0 5px rgba(201, 120, 45, 0.14);
+}
+
+#contadoresView .crm-message-dot.pending {
+  background: #7c6a2f;
+  box-shadow: 0 0 0 5px rgba(124, 106, 47, 0.16);
 }
 
 #contadoresView .crm-message-dot.failed {
@@ -2805,34 +2836,43 @@ body {
 
 #contadoresView .crm-message-card,
 #contadoresView .ct-lead-strategy-card {
-  padding: 13px 15px 14px;
+  padding: 14px 16px 15px;
   border: 1px solid var(--ct-line);
   border-radius: var(--ct-radius);
   background: var(--ct-surface-2);
 }
 
 #contadoresView .crm-message-card {
-  width: min(760px, 100%);
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+  width: min(700px, 100%);
+  box-shadow: 0 12px 26px rgba(22, 35, 32, 0.1);
 }
 
 #contadoresView .crm-message-card.outbound {
-  border-color: rgba(15, 23, 42, 0.8);
-  border-right: 6px solid var(--ct-chat-outbound-line);
+  border-color: rgba(18, 49, 45, 0.86);
+  border-right: 5px solid var(--ct-chat-outbound-line);
+  border-bottom-right-radius: 2px;
   background: var(--ct-chat-outbound-bg);
   color: var(--ct-chat-outbound-ink);
 }
 
 #contadoresView .crm-message-card.inbound {
-  border-color: rgba(100, 116, 139, 0.32);
-  border-left: 6px solid var(--ct-chat-inbound-line);
+  border-color: rgba(201, 120, 45, 0.34);
+  border-left: 5px solid var(--ct-chat-inbound-line);
+  border-bottom-left-radius: 2px;
   background: var(--ct-chat-inbound-bg);
   color: var(--ct-chat-inbound-ink);
+}
+
+#contadoresView .crm-message-card.pending {
+  border-color: rgba(124, 106, 47, 0.42);
+  background: #fffbeb;
+  color: #312c18;
 }
 
 #contadoresView .crm-message-card.failed {
   border-color: rgba(190, 18, 60, 0.42);
   background: #fff1f2;
+  color: #4a1020;
 }
 
 #contadoresView .crm-message-card.failed[data-clickable="true"] {
@@ -2864,7 +2904,7 @@ body {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 10px;
   color: currentColor;
   font: 500 11px/1 var(--font-mono);
 }
@@ -2873,27 +2913,32 @@ body {
   min-width: 0;
   display: flex;
   flex-wrap: wrap;
-  gap: 5px;
+  gap: 6px;
 }
 
 #contadoresView .crm-message-meta-chips span {
   max-width: 220px;
-  min-height: 22px;
-  padding: 5px 7px;
+  min-height: 21px;
+  padding: 4px 7px;
   border: 1px solid rgba(255, 255, 255, 0.22);
   border-radius: var(--ct-radius-sm);
-  background: rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.13);
   color: currentColor;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  opacity: 0.86;
+  opacity: 0.9;
 }
 
 #contadoresView .crm-message-card.inbound .crm-message-meta-chips span,
 #contadoresView .crm-message-card.acknowledged .crm-message-meta-chips span {
-  border-color: rgba(100, 116, 139, 0.18);
-  background: rgba(255, 255, 255, 0.74);
+  border-color: rgba(201, 120, 45, 0.16);
+  background: rgba(255, 248, 235, 0.84);
+}
+
+#contadoresView .crm-message-card.pending .crm-message-meta-chips span {
+  border-color: rgba(124, 106, 47, 0.18);
+  background: rgba(255, 255, 255, 0.64);
 }
 
 #contadoresView .crm-message-author {
@@ -2909,13 +2954,13 @@ body {
 }
 
 #contadoresView .crm-message-author.outbound {
-  background: rgba(255, 255, 255, 0.14);
-  color: #ffffff;
+  background: rgba(15, 159, 138, 0.2);
+  color: #d9fff7;
 }
 
 #contadoresView .crm-message-author.inbound {
-  background: var(--ct-chat-inbound-line);
-  color: #ffffff;
+  background: rgba(201, 120, 45, 0.14);
+  color: #8b4e17;
 }
 
 #contadoresView .crm-message-error-icon {
@@ -2989,9 +3034,9 @@ body {
 }
 
 #contadoresView .crm-message-body {
-  margin: 8px 0 0;
+  margin: 10px 0 0;
   color: currentColor;
-  font: 470 14px/1.58 var(--font-sans);
+  font: 520 14px/1.62 var(--font-sans);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -5679,7 +5724,7 @@ body {
     align-items: center;
     justify-content: space-between;
     border-right: 0;
-    border-bottom: 1px solid rgba(30, 64, 175, 0.16);
+    border-bottom: 1px solid rgba(28, 38, 44, 0.14);
   }
 
   #contadoresView .ct-funnel-grid {
@@ -5891,6 +5936,13 @@ body {
 
   #contadoresView .ct-lead-view {
     min-height: 48px;
+  }
+
+  #contadoresView .ct-lead-filter-set {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: thin;
   }
 
   #contadoresView .ct-lead-filter-bar {
