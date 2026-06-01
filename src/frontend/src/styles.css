@@ -2207,6 +2207,58 @@ body {
   align-items: stretch;
 }
 
+#contadoresView .ct-workspace-resizable {
+  grid-template-columns: var(--crm-leads-width, 360px) 10px minmax(0, 1fr);
+  gap: 0;
+}
+
+#contadoresView .ct-workspace-resizable > .ct-leads {
+  margin-right: 6px;
+}
+
+#contadoresView .ct-workspace-resizable > .ct-detail {
+  margin-left: 6px;
+}
+
+#contadoresView .ct-workspace-resizer {
+  width: 10px;
+  min-width: 10px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  cursor: col-resize;
+  touch-action: none;
+  align-self: stretch;
+  position: relative;
+}
+
+#contadoresView .ct-workspace-resizer::before {
+  content: "";
+  position: absolute;
+  inset: 12px 3px;
+  border-radius: 999px;
+  background: rgba(100, 116, 139, 0.3);
+  transition: background 160ms ease, opacity 160ms ease, transform 160ms ease;
+}
+
+#contadoresView .ct-workspace-resizer:hover::before,
+#contadoresView .ct-workspace-resizer:focus-visible::before,
+body.ct-resizing #contadoresView .ct-workspace-resizer::before {
+  background: var(--ct-accent);
+  transform: scaleX(1.35);
+}
+
+#contadoresView .ct-workspace-resizer:focus-visible {
+  outline: 2px solid var(--ct-accent);
+  outline-offset: 2px;
+}
+
+body.ct-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
 #contadoresView .ct-leads,
 #contadoresView .ct-detail {
   min-height: 0;
@@ -5761,6 +5813,15 @@ body {
   #contadoresView .ct-workspace,
   #contadoresView .delivery-workspace {
     grid-template-columns: 1fr;
+  }
+
+  #contadoresView .ct-workspace-resizer {
+    display: none;
+  }
+
+  #contadoresView .ct-workspace-resizable > .ct-leads,
+  #contadoresView .ct-workspace-resizable > .ct-detail {
+    margin: 0;
   }
 
   #contadoresView .ct-leads {

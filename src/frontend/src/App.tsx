@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { ClipboardEvent, DragEvent, FormEvent, KeyboardEvent, ReactNode } from "react";
+import type { CSSProperties, ClipboardEvent, DragEvent, FormEvent, KeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import {
   ArrowsClockwise,
   ArrowSquareOut,
@@ -84,6 +84,12 @@ const DASHBOARD_FUNNEL_STORAGE_KEY = "contadores.dashboard.selectedFunnelId";
 const DASHBOARD_LEAD_VIEW_FILTER_STORAGE_KEY = "contadores.dashboard.leadViewFilter";
 const LEGACY_DASHBOARD_STAGE_FILTER_STORAGE_KEY = "contadores.dashboard.stageFilter";
 const DASHBOARD_SECTION_STORAGE_KEY = "contadores.dashboard.activeSection";
+const DASHBOARD_CRM_LEADS_WIDTH_STORAGE_KEY = "contadores.dashboard.crmLeadsWidth";
+const CRM_LEADS_DEFAULT_WIDTH = 360;
+const CRM_LEADS_MIN_WIDTH = 280;
+const CRM_LEADS_MAX_WIDTH = 620;
+const CRM_DETAIL_MIN_WIDTH = 440;
+const CRM_STACKED_LAYOUT_WIDTH = 1180;
 
 type LeadViewFilterValue =
   | "all"
@@ -226,6 +232,20 @@ function readStoredLeadViewFilter(): LeadViewFilterValue {
     return value as LeadViewFilterValue;
   }
   return legacyLeadViewFilterAliases[value || ""] ?? "all";
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
+function readStoredCrmLeadsWidth(): number {
+  const storedWidth = Number(readStoredValue(DASHBOARD_CRM_LEADS_WIDTH_STORAGE_KEY));
+
+  if (!Number.isFinite(storedWidth)) {
+    return CRM_LEADS_DEFAULT_WIDTH;
+  }
+
+  return clampNumber(storedWidth, CRM_LEADS_MIN_WIDTH, CRM_LEADS_MAX_WIDTH);
 }
 
 function CtEmptyState({
@@ -423,6 +443,7 @@ export function App() {
   const [detail, setDetail] = useState<LeadDetailResponse | null>(null);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [leadViewFilter, setLeadViewFilter] = useState<LeadViewFilterValue>(readStoredLeadViewFilter);
+  const [crmLeadsWidth, setCrmLeadsWidth] = useState(readStoredCrmLeadsWidth);
   const [tagFilter, setTagFilter] = useState("");
   const [strategyFilter, setStrategyFilter] = useState<{ step: string; strategyId: string }>({ step: "", strategyId: "" });
   const [activeTab, setActiveTab] = useState<DetailTab>("messages");
@@ -480,6 +501,7 @@ export function App() {
   const deliveryDraftSourceId = useRef<string | null>(null);
   const deliverySourcesRef = useRef<ClientLeadSource[]>([]);
   const previousFunnelIdRef = useRef(selectedFunnelId);
+  const crmWorkspaceRef = useRef<HTMLDivElement | null>(null);
   const debouncedQuery = useDebouncedValue(query, 250);
   const debouncedWorkstationQuery = useDebouncedValue(workstationQuery, 250);
 
@@ -734,6 +756,10 @@ export function App() {
   useEffect(() => {
     writeStoredValue(DASHBOARD_LEAD_VIEW_FILTER_STORAGE_KEY, leadViewFilter);
   }, [leadViewFilter]);
+
+  useEffect(() => {
+    writeStoredValue(DASHBOARD_CRM_LEADS_WIDTH_STORAGE_KEY, String(Math.round(crmLeadsWidth)));
+  }, [crmLeadsWidth]);
 
   useEffect(() => {
     setSelectedLeadIds((current) => current.filter((leadId) => visibleLeadIds.includes(leadId)));
@@ -1920,6 +1946,42 @@ export function App() {
     });
   }
 
+  const startCrmLeadsResize = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
+    const workspace = crmWorkspaceRef.current;
+
+    if (!workspace || window.innerWidth <= CRM_STACKED_LAYOUT_WIDTH) {
+      return;
+    }
+
+    event.preventDefault();
+
+    const startX = event.clientX;
+    const startWidth = crmLeadsWidth;
+    const workspaceWidth = workspace.getBoundingClientRect().width;
+    const maxWidth = Math.max(
+      CRM_LEADS_MIN_WIDTH,
+      Math.min(CRM_LEADS_MAX_WIDTH, workspaceWidth - CRM_DETAIL_MIN_WIDTH),
+    );
+
+    document.body.classList.add("ct-resizing");
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      const nextWidth = clampNumber(startWidth + moveEvent.clientX - startX, CRM_LEADS_MIN_WIDTH, maxWidth);
+      setCrmLeadsWidth(nextWidth);
+    };
+
+    const stopResize = () => {
+      document.removeEventListener("pointermove", handlePointerMove);
+      document.removeEventListener("pointerup", stopResize);
+      document.removeEventListener("pointercancel", stopResize);
+      document.body.classList.remove("ct-resizing");
+    };
+
+    document.addEventListener("pointermove", handlePointerMove);
+    document.addEventListener("pointerup", stopResize);
+    document.addEventListener("pointercancel", stopResize);
+  }, [crmLeadsWidth]);
+
   async function saveConfig(nextConfig: Partial<ContadoresConfig>) {
     setActionBusy("config");
     try {
@@ -2405,7 +2467,11 @@ export function App() {
           </div>
         ) : null}
 
-        <div className="ct-workspace">
+        <div
+          className="ct-workspace ct-workspace-resizable"
+          ref={crmWorkspaceRef}
+          style={{ "--crm-leads-width": `${crmLeadsWidth}px` } as CSSProperties}
+        >
           <aside className="ct-leads">
             <div className="ct-leads-head">
               <h3>{crmLeadListTitle}</h3>
@@ -2446,6 +2512,13 @@ export function App() {
               onToggleSelected={toggleLeadSelection}
             />
           </aside>
+
+          <button
+            type="button"
+            className="ct-workspace-resizer"
+            aria-label="Resize lead list"
+            onPointerDown={startCrmLeadsResize}
+          />
 
           <section className="ct-detail">
             <LeadDetailHeader
