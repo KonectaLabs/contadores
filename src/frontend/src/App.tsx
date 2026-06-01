@@ -2700,7 +2700,8 @@ function ClientLeadDeliveryView({
 }) {
   const [configOpen, setConfigOpen] = useState(editorMode === "create");
   const [sentChatOpen, setSentChatOpen] = useState(false);
-  const [activeSheetFilter, setActiveSheetFilter] = useState("all");
+  const [deliveryStage, setDeliveryStage] = useState<"contacts" | "client" | "sheet">("contacts");
+  const [activeSheetId, setActiveSheetId] = useState<string | null>(null);
   const isExisting = editorMode === "edit" && Boolean(selectedSource);
   const selectedGroup = isExisting
     ? contactGroups.find((group) => group.sources.some((source) => source.id === selectedSourceId)) ?? null
@@ -2710,9 +2711,9 @@ function ClientLeadDeliveryView({
   const selectedGroupLabel = selectedGroup?.label || selectedSource?.label || "Select a contact";
   const selectedGroupTone = selectedGroup ? deliveryContactTone(selectedGroup) : selectedSource ? deliverySourceTone(selectedSource) : "muted";
   const selectedGroupStatus = selectedGroup ? deliveryContactStatusLabel(selectedGroup) : selectedSource?.enabled ? humanize(selectedSource.last_sync_status || "active") : "Paused";
-  const visibleLeads = activeSheetFilter === "all" ? leads : leads.filter((lead) => lead.source_id === activeSheetFilter);
-  const nextActionLeads = visibleLeads.filter(isRetryableClientLead);
-  const visibleSheetSections = buildDeliverySheetLeadSections(selectedSources, visibleLeads, activeSheetFilter);
+  const activeSheet = selectedSources.find((source) => source.id === activeSheetId) ?? null;
+  const activeSheetLeads = activeSheet ? leads.filter((lead) => lead.source_id === activeSheet.id) : [];
+  const activeSheetSections = activeSheet ? buildDeliverySheetLeadSections([activeSheet], activeSheetLeads, activeSheet.id) : [];
   const totalLeads = sources.reduce((total, source) => total + deliverySourceCount(source, "total"), 0);
   const failedLeads = contactGroups.reduce((total, group) => total + group.issues, 0);
   const deliveredLeads = sources.reduce((total, source) => total + deliverySourceCount(source, "sent") + deliverySourceCount(source, "delivered"), 0);
@@ -2720,8 +2721,13 @@ function ClientLeadDeliveryView({
   const selectedDeliveredLeads = selectedSources.reduce((total, source) => total + deliverySourceCount(source, "sent") + deliverySourceCount(source, "delivered"), 0);
   const selectedBlockedLeads = selectedSources.reduce((total, source) => total + deliverySourceCount(source, "blocked"), 0);
   const selectedFailedLeads = selectedSources.reduce((total, source) => total + deliverySourceCount(source, "failed"), 0);
+  const activeSheetTotalLeads = activeSheet ? deliverySourceCount(activeSheet, "total") : 0;
+  const activeSheetDeliveredLeads = activeSheet ? deliverySourceCount(activeSheet, "sent") + deliverySourceCount(activeSheet, "delivered") : 0;
+  const activeSheetBlockedLeads = activeSheet ? deliverySourceCount(activeSheet, "blocked") : 0;
+  const activeSheetFailedLeads = activeSheet ? deliverySourceCount(activeSheet, "failed") : 0;
   const selectedLabel = editorMode === "create" ? "New contact" : selectedGroupLabel;
   const selectedIssueSources = selectedSources.filter(deliverySourceHasIssue);
+  const activeSheetIssueSources = activeSheet && deliverySourceHasIssue(activeSheet) ? [activeSheet] : [];
   const recipientMessages = recipientChat?.messages ?? [];
   const recipientDeliveredCount = recipientMessages.filter((message) => message.delivery_status === "delivered").length;
   const recipientCrmLead = recipientChat?.crm_leads?.[0] ?? null;
@@ -2729,6 +2735,8 @@ function ClientLeadDeliveryView({
   useEffect(() => {
     if (editorMode === "create") {
       setConfigOpen(true);
+      setDeliveryStage("client");
+      setActiveSheetId(null);
     }
   }, [editorMode]);
 
@@ -2736,78 +2744,117 @@ function ClientLeadDeliveryView({
     if (editorMode === "edit" && selectedGroupKey) {
       setConfigOpen(false);
       setSentChatOpen(false);
-      setActiveSheetFilter("all");
+      setActiveSheetId(null);
     }
   }, [editorMode, selectedGroupKey]);
 
+  function startNewDeliveryContact() {
+    setDeliveryStage("client");
+    setActiveSheetId(null);
+    onNewSource();
+  }
+
+  function openDeliveryContact(group: DeliveryContactGroup) {
+    setDeliveryStage("client");
+    setActiveSheetId(null);
+    onSelectSource(group.primarySource.id);
+  }
+
+  function openDeliverySheet(source: ClientLeadSource) {
+    setDeliveryStage("sheet");
+    setActiveSheetId(source.id);
+    onSelectSource(source.id);
+  }
+
+  function backToDeliveryContacts() {
+    setDeliveryStage("contacts");
+    setActiveSheetId(null);
+    setSentChatOpen(false);
+  }
+
+  function backToDeliveryClient() {
+    setDeliveryStage("client");
+    setActiveSheetId(null);
+  }
+
+  const canInspectClient = isExisting && selectedSources.length > 0;
+  const showingSheet = deliveryStage === "sheet" && Boolean(activeSheet);
+
   return (
     <div className="ct-surface delivery-surface">
-      <div className="ct-secondary delivery-summary">
-        <p className="ct-secondary-note">
-          {contactGroups.length
-            ? `${contactGroups.length} ${contactGroups.length === 1 ? "contact" : "contacts"} · ${compactNumber(totalLeads)} leads · ${compactNumber(deliveredLeads)} delivered · ${compactNumber(failedLeads)} issues`
-            : "No delivery contacts configured yet"}
-        </p>
-        {copyStatus ? <p className="delivery-copy-status" aria-live="polite">{copyStatus}</p> : null}
+      <div className="delivery-home-head">
+        <div className="delivery-home-title">
+          <span>Delivery</span>
+          <strong>{contactGroups.length ? `${compactNumber(contactGroups.length)} clients` : "No clients yet"}</strong>
+        </div>
+        <div className="delivery-summary-metrics" aria-label="Delivery summary">
+          <span>{compactNumber(totalLeads)} leads</span>
+          <span>{compactNumber(deliveredLeads)} delivered</span>
+          <span>{compactNumber(failedLeads)} issues</span>
+        </div>
+        <button type="button" className="ct-btn ct-btn-ghost delivery-small-btn" onClick={startNewDeliveryContact}>
+          <Plus size={13} weight="bold" />
+          Contact
+        </button>
       </div>
+      {copyStatus ? <p className="delivery-copy-status" aria-live="polite">{copyStatus}</p> : null}
 
-      <div className="ct-workspace delivery-workspace">
-        <aside className="ct-leads delivery-sources">
-          <div className="ct-leads-head">
-            <h3>Delivery contacts</h3>
-            <button type="button" className="ct-btn ct-btn-ghost delivery-small-btn" onClick={onNewSource}>
-              <Plus size={13} weight="bold" />
-              Contact
-            </button>
-          </div>
-          <div className="ct-leads-list delivery-source-list">
-            {loading && !contactGroups.length ? (
-              <CtEmptyState compact loading title="Loading contacts" message="Checking Delivery sources." />
-            ) : contactGroups.length ? contactGroups.map((group) => {
-              const active = editorMode === "edit" && group.sources.some((source) => source.id === selectedSourceId);
-              return (
-                <button
-                  type="button"
-                  className={`delivery-source-row ${active ? "active" : ""} ${group.sources.some((source) => source.enabled) ? "" : "disabled"}`}
-                  data-tone={deliveryContactTone(group)}
-                  key={group.key}
-                  onClick={() => onSelectSource(group.primarySource.id)}
-                >
-                  <div className="delivery-source-row-top">
-                    <strong>{group.label || group.key}</strong>
-                    <span className="delivery-status-pill" data-tone={deliveryContactTone(group)}>
-                      {deliveryContactStatusLabel(group)}
-                    </span>
-                  </div>
-                  <div className="delivery-source-counts">
-                    <span>Total <strong>{compactNumber(group.total)}</strong></span>
-                    <span>Delivered <strong>{compactNumber(group.delivered)}</strong></span>
-                    <span>Sheets <strong>{compactNumber(group.sources.length)}</strong></span>
-                    <span>Issues <strong>{compactNumber(group.issues)}</strong></span>
-                  </div>
-                  <p>{group.recipientName || "No recipient"}{group.recipientPhone ? ` · ${group.recipientPhone}` : ""}</p>
-                  <div className="delivery-source-sheet-tags">
-                    {group.sources.map((source) => (
-                      <span key={source.id} data-tone={deliverySourceTone(source)}>
-                        {deliverySheetLabel(source)}
+      {deliveryStage === "contacts" ? (
+        <section className="delivery-home">
+          {loading && !contactGroups.length ? (
+            <CtEmptyState compact loading title="Loading clients" message="Checking Delivery sources." />
+          ) : contactGroups.length ? (
+            <div className="delivery-contact-grid">
+              {contactGroups.map((group) => {
+                const active = editorMode === "edit" && group.sources.some((source) => source.id === selectedSourceId);
+                return (
+                  <button
+                    type="button"
+                    className={`delivery-contact-card ${active ? "active" : ""} ${group.sources.some((source) => source.enabled) ? "" : "disabled"}`}
+                    data-tone={deliveryContactTone(group)}
+                    key={group.key}
+                    onClick={() => openDeliveryContact(group)}
+                  >
+                    <div className="delivery-card-title">
+                      <strong>{group.label || group.key}</strong>
+                      <span className="delivery-status-pill" data-tone={deliveryContactTone(group)}>
+                        {deliveryContactStatusLabel(group)}
                       </span>
-                    ))}
-                  </div>
-                </button>
-              );
-            }) : (
-              <CtEmptyState compact title="No contacts yet" message="Add a Delivery contact to pull sheet leads." />
-            )}
-          </div>
-        </aside>
-
-        <section className="ct-detail delivery-detail">
-          <header className="ct-detail-head delivery-detail-head">
-            <div className="ct-detail-head-main">
+                    </div>
+                    <p>{group.recipientName || "No recipient"}{group.recipientPhone ? ` · ${group.recipientPhone}` : ""}</p>
+                    <div className="delivery-card-counts">
+                      <span><strong>{compactNumber(group.total)}</strong>Total</span>
+                      <span><strong>{compactNumber(group.delivered)}</strong>Delivered</span>
+                      <span><strong>{compactNumber(group.sources.length)}</strong>Sheets</span>
+                      <span><strong>{compactNumber(group.issues)}</strong>Issues</span>
+                    </div>
+                    <div className="delivery-source-sheet-tags">
+                      {group.sources.slice(0, 4).map((source) => (
+                        <span key={source.id} data-tone={deliverySourceTone(source)}>
+                          {deliverySheetLabel(source)}
+                        </span>
+                      ))}
+                      {group.sources.length > 4 ? <span>+{group.sources.length - 4}</span> : null}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <CtEmptyState compact title="No clients yet" message="Add a Delivery contact to pull sheet leads." />
+          )}
+        </section>
+      ) : (
+        <section className="delivery-client-page">
+          <header className="delivery-client-head">
+            <button type="button" className="ct-btn ct-btn-ghost delivery-back-btn" onClick={backToDeliveryContacts}>
+              All clients
+            </button>
+            <div className="delivery-client-main">
               <div className="ct-detail-avatar">{monogram(selectedLabel)}</div>
               <div className="ct-detail-head-copy">
-                <p className="ct-detail-kicker">Client Lead Delivery</p>
-                <h3>{selectedLabel}</h3>
+                <p className="ct-detail-kicker">{showingSheet ? "Delivery sheet" : "Delivery client"}</p>
+                <h3>{showingSheet && activeSheet ? deliverySheetLabel(activeSheet) : selectedLabel}</h3>
                 <p className="ct-detail-meta">
                   {isExisting
                     ? [selectedGroup?.recipientName || selectedSource?.recipient_name || "-", selectedGroup?.recipientPhone || selectedSource?.recipient_phone || "-", `${selectedSources.length} ${selectedSources.length === 1 ? "sheet" : "sheets"}`].join(" · ")
@@ -2815,11 +2862,10 @@ function ClientLeadDeliveryView({
                 </p>
               </div>
             </div>
-            <div className="ct-detail-head-actions">
+            <div className="delivery-client-actions">
               <span className="delivery-live-pill" data-tone={selectedGroupTone}>
                 {isExisting ? selectedGroupStatus : "Draft"}
               </span>
-              <button type="button" className="ct-btn ct-btn-ghost" onClick={onNewSource}>New contact</button>
               <button
                 type="button"
                 className="ct-btn ct-btn-ghost"
@@ -2841,255 +2887,159 @@ function ClientLeadDeliveryView({
             </div>
           </header>
 
-          <div className="delivery-detail-body">
-            {isExisting && selectedSources.length ? (
-              <div className="delivery-source-strip">
-                <button
-                  type="button"
-                  className={activeSheetFilter === "all" ? "active" : ""}
-                  onClick={() => setActiveSheetFilter("all")}
-                >
-                  <ListChecks size={14} weight="bold" />
-                  All sheets
-                  <strong>{compactNumber(selectedTotalLeads)}</strong>
+          {!canInspectClient ? (
+            <CtEmptyState compact title="New Delivery contact" message="Complete the source setup to start syncing leads." />
+          ) : showingSheet && activeSheet ? (
+            <div className="delivery-sheet-page">
+              <div className="delivery-sheet-page-head">
+                <button type="button" className="ct-btn ct-btn-ghost delivery-back-btn" onClick={backToDeliveryClient}>
+                  Sheets
                 </button>
-                {selectedSources.map((source) => (
-                  <button
-                    type="button"
-                    className={activeSheetFilter === source.id ? "active" : ""}
-                    data-tone={deliverySourceTone(source)}
-                    key={source.id}
-                    onClick={() => setActiveSheetFilter(source.id)}
-                  >
-                    {deliverySourceStatusIcon(source)}
-                    {deliverySheetLabel(source)}
-                    <strong>{compactNumber(deliverySourceCount(source, "total"))}</strong>
-                  </button>
-                ))}
-              </div>
-            ) : null}
-
-            {selectedIssueSources.length ? (
-              <div className="delivery-source-alert" data-tone="danger">
-                <WarningCircle size={18} weight="fill" />
-                <div>
-                  <strong>{selectedIssueSources.length === 1 ? "Sheet needs access" : "Sheets need access"}</strong>
-                  <span>{selectedIssueSources.map((source) => `${deliverySheetLabel(source)}: ${deliverySourceIssueText(source)}`).join(" · ")}</span>
+                <div className="delivery-sheet-heading">
+                  <span>{activeSheet.sheet_tab_name || activeSheet.sheet_gid || "Sheet"}</span>
+                  <strong>{deliverySheetLabel(activeSheet)}</strong>
+                </div>
+                <div className="delivery-sheet-metrics">
+                  <span>{compactNumber(activeSheetTotalLeads)} total</span>
+                  <span>{compactNumber(activeSheetDeliveredLeads)} delivered</span>
+                  <span>{compactNumber(activeSheetBlockedLeads)} blocked</span>
+                  <span>{compactNumber(activeSheetFailedLeads)} failed</span>
                 </div>
               </div>
-            ) : null}
 
-            {isExisting && nextActionLeads.length ? (
-              <DeliveryNextActions
-                leads={nextActionLeads}
+              {activeSheetIssueSources.length ? (
+                <div className="delivery-source-alert" data-tone="danger">
+                  <WarningCircle size={18} weight="fill" />
+                  <div>
+                    <strong>Sheet needs access</strong>
+                    <span>{deliverySourceIssueText(activeSheet)}</span>
+                  </div>
+                </div>
+              ) : null}
+
+              <DeliverySheetRows
                 actionBusy={actionBusy}
+                leadsLoading={leadsLoading}
+                rowCount={activeSheetLeads.length}
+                sections={activeSheetSections}
                 onCopyLead={onCopyLead}
                 onCopyLeadAll={onCopyLeadAll}
                 onRetryLead={onRetryLead}
               />
-            ) : null}
+            </div>
+          ) : (
+            <div className="delivery-client-overview">
+              <div className="delivery-client-summary">
+                <span><strong>{compactNumber(selectedTotalLeads)}</strong>Total</span>
+                <span><strong>{compactNumber(selectedDeliveredLeads)}</strong>Delivered</span>
+                <span><strong>{compactNumber(selectedBlockedLeads)}</strong>Blocked</span>
+                <span><strong>{compactNumber(selectedFailedLeads)}</strong>Failed</span>
+              </div>
 
-            {isExisting && sentChatOpen ? (
-              <section className="delivery-recipient-chat-panel">
-                <div className="workstation-panel-head">
+              {selectedIssueSources.length ? (
+                <div className="delivery-source-alert" data-tone="danger">
+                  <WarningCircle size={18} weight="fill" />
                   <div>
-                    <span>Sent chat</span>
-                    <strong>
-                      {(recipientChat?.recipient_name || selectedSource?.recipient_name || "Recipient")}
-                      {" · "}
-                      {recipientChat?.recipient_phone || selectedSource?.recipient_phone || "-"}
-                    </strong>
+                    <strong>{selectedIssueSources.length === 1 ? "Sheet needs access" : "Sheets need access"}</strong>
+                    <span>{selectedIssueSources.map((source) => `${deliverySheetLabel(source)}: ${deliverySourceIssueText(source)}`).join(" · ")}</span>
                   </div>
-                  <div className="delivery-recipient-actions">
-                    <span>{recipientMessages.length} messages</span>
-                    <span>{recipientDeliveredCount} delivered</span>
+                </div>
+              ) : null}
+
+              <section className="delivery-sheet-grid" aria-label="Delivery sheets">
+                {selectedSources.map((source) => {
+                  const sourceDelivered = deliverySourceCount(source, "sent") + deliverySourceCount(source, "delivered");
+                  const sourceIssues = deliverySourceCount(source, "blocked") + deliverySourceCount(source, "failed");
+                  return (
                     <button
                       type="button"
-                      className="ct-btn ct-btn-ghost"
-                      disabled={!recipientCrmLead}
-                      onClick={() => {
-                        if (recipientCrmLead) {
-                          onOpenCrmLead(recipientCrmLead);
-                        }
-                      }}
-                      title={recipientCrmLead ? "Open matching CRM chat" : "No CRM chat found for this recipient phone"}
+                      className="delivery-sheet-card"
+                      data-tone={deliverySourceTone(source)}
+                      key={source.id}
+                      onClick={() => openDeliverySheet(source)}
                     >
-                      <ChatCircleText size={14} weight="bold" />
-                      CRM chat
-                    </button>
-                  </div>
-                </div>
-
-                {recipientChatLoading && !recipientMessages.length ? (
-                  <CtEmptyState compact loading title="Loading sent chat" message="Fetching recipient messages." />
-                ) : recipientMessages.length ? (
-                  <div className="delivery-recipient-messages">
-                    {recipientMessages.map((message) => (
-                      <article className="delivery-recipient-message" data-tone={recipientChatMessageTone(message)} key={message.delivery_id}>
-                        <div className="delivery-recipient-message-head">
-                          <div>
-                            <strong>{message.lead_name || message.lead_phone || `Row ${message.row_number}`}</strong>
-                            <span>Row {message.row_number}{message.lead_email ? ` · ${message.lead_email}` : ""}</span>
-                          </div>
-                          <span className="delivery-status-pill" data-tone={recipientChatMessageTone(message)}>
-                            {humanize(message.delivery_status)}
-                          </span>
-                        </div>
-                        <p>{message.text || "-"}</p>
-                        <small>
-                          {recipientChatMessageDetail(message)}
-                          {message.external_id ? ` · Meta ${truncate(message.external_id, 24)}` : ""}
-                        </small>
-                        {message.last_delivery_error ? <em>{message.last_delivery_error}</em> : null}
-                      </article>
-                    ))}
-                  </div>
-                ) : (
-                  <CtEmptyState compact title="No sent chat yet" message="Delivery messages will appear here." />
-                )}
-              </section>
-            ) : null}
-
-            <details className="delivery-lead-panel delivery-rows-disclosure">
-              <summary className="workstation-panel-head">
-                <div>
-                  <span>Rows</span>
-                  <strong>{isExisting ? compactNumber(visibleLeads.length) : "-"}</strong>
-                </div>
-                <div className="delivery-sheet-metrics">
-                  <span>{compactNumber(selectedTotalLeads)} total</span>
-                  <span>{compactNumber(selectedDeliveredLeads)} delivered</span>
-                  <span>{compactNumber(selectedBlockedLeads)} blocked</span>
-                  <span>{compactNumber(selectedFailedLeads)} failed</span>
-                </div>
-              </summary>
-
-              {!isExisting ? (
-                <CtEmptyState compact title="Select a contact" message="Pick a Delivery contact to inspect rows." />
-              ) : leadsLoading && !visibleLeads.length ? (
-                <CtEmptyState compact loading title="Loading rows" message="Fetching sheet leads." />
-              ) : visibleLeads.length ? (
-                <div className="delivery-sheet-sections">
-                  {visibleSheetSections.map((section) => (
-                    <section className="delivery-sheet-section" key={section.source.id}>
-                      <header className="delivery-sheet-section-head">
-                        <div>
-                          <span>{section.source.sheet_tab_name || section.source.sheet_gid || "Sheet"}</span>
-                          <strong>{deliverySheetLabel(section.source)}</strong>
-                        </div>
-                        <div className="delivery-sheet-section-meta">
-                          <span>{compactNumber(section.leads.length)} rows</span>
-                          <span className="delivery-status-pill" data-tone={deliverySourceTone(section.source)}>
-                            {deliverySourceStatusIcon(section.source)}
-                            {humanize(section.source.last_sync_status || "active")}
-                          </span>
-                        </div>
-                      </header>
-                      <div className="delivery-sheet-lead-list">
-                        {section.leads.map((lead) => {
-                          const waLink = lead.wa_link || buildWaLink(lead.phone_number);
-                          const retryable = isRetryableClientLead(lead);
-                          const copyBusy = actionBusy === `delivery-copy-${lead.id}`;
-                          const retryBusy = actionBusy === `delivery-retry-${lead.id}`;
-                          const rawFields = deliveryRawFields(lead);
-                          return (
-                            <article className="delivery-sheet-lead-card" data-tone={clientLeadDeliveryTone(lead)} key={lead.id}>
-                              <header className="delivery-sheet-lead-card-head">
-                                <div className="delivery-lead-identity">
-                                  <span>Row {lead.row_number} · {clientLeadAgeText(lead)}</span>
-                                  <strong>{deliveryLeadTitle(lead)}</strong>
-                                  <small>{deliveryLeadSubtitle(lead)}</small>
-                                </div>
-                                <div className="delivery-status-cell">
-                                  <span className="delivery-status-pill" data-tone={clientLeadDeliveryTone(lead)}>
-                                    {humanize(lead.delivery_status || (lead.block_reason ? "blocked" : "pending"))}
-                                  </span>
-                                  <small>{deliveryStatusDetail(lead)}</small>
-                                </div>
-                              </header>
-
-                              {lead.notification_text ? (
-                                <p className="delivery-notification-preview">{truncate(lead.notification_text, 220)}</p>
-                              ) : null}
-
-                              {lead.last_delivery_error || lead.block_reason ? (
-                                <p className="delivery-lead-issue">{lead.last_delivery_error || lead.block_reason}</p>
-                              ) : null}
-
-                              <div className="delivery-sheet-lead-card-foot">
-                                <details className="delivery-raw-details">
-                                  <summary>
-                                    Source details
-                                    <span>{rawFields.length} fields</span>
-                                  </summary>
-                                  <dl>
-                                    {rawFields.map((field) => (
-                                      <div key={field.label}>
-                                        <dt>{field.label}</dt>
-                                        <dd>{field.value || "-"}</dd>
-                                      </div>
-                                    ))}
-                                  </dl>
-                                </details>
-
-                                <div className="delivery-row-actions">
-                                  {waLink ? (
-                                    <a className="ct-btn ct-btn-ghost delivery-action-link" href={waLink} target="_blank" rel="noreferrer">
-                                      <ArrowSquareOut size={14} weight="bold" />
-                                      Chat
-                                    </a>
-                                  ) : (
-                                    <button type="button" className="ct-btn ct-btn-ghost" onClick={() => onCopyLead(lead)}>
-                                      <Copy size={14} weight="bold" />
-                                      Copy
-                                    </button>
-                                  )}
-                                  <details className="ct-action-menu delivery-row-menu">
-                                    <summary className="ct-btn ct-btn-ghost">More</summary>
-                                    <div className="ct-action-menu-panel">
-                                      {waLink ? (
-                                        <button type="button" className="ct-btn ct-btn-ghost" onClick={() => onCopyLead(lead)}>
-                                          <Copy size={14} weight="bold" />
-                                          Copy
-                                        </button>
-                                      ) : null}
-                                      <button
-                                        type="button"
-                                        className="ct-btn ct-btn-ghost"
-                                        disabled={copyBusy}
-                                        onClick={() => onCopyLeadAll(lead)}
-                                      >
-                                        {copyBusy ? "Copying..." : "Copy all"}
-                                      </button>
-                                      {retryable ? (
-                                        <button
-                                          type="button"
-                                          className="ct-btn ct-btn-ghost"
-                                          disabled={retryBusy}
-                                          onClick={() => onRetryLead(lead)}
-                                        >
-                                          <ArrowsClockwise size={14} weight="bold" />
-                                          {retryBusy ? "Retrying..." : "Retry"}
-                                        </button>
-                                      ) : null}
-                                    </div>
-                                  </details>
-                                </div>
-                              </div>
-                            </article>
-                          );
-                        })}
+                      <div className="delivery-card-title">
+                        <strong>{deliverySheetLabel(source)}</strong>
+                        <span className="delivery-status-pill" data-tone={deliverySourceTone(source)}>
+                          {deliverySourceStatusIcon(source)}
+                          {humanize(source.last_sync_status || "active")}
+                        </span>
                       </div>
-                    </section>
-                  ))}
-                </div>
-              ) : (
-                <CtEmptyState compact title="No rows loaded" message="Rows will appear after the next sync." />
-              )}
-            </details>
-          </div>
+                      <p>{source.sheet_tab_name || source.sheet_gid || "Sheet"}</p>
+                      <div className="delivery-card-counts">
+                        <span><strong>{compactNumber(deliverySourceCount(source, "total"))}</strong>Rows</span>
+                        <span><strong>{compactNumber(sourceDelivered)}</strong>Delivered</span>
+                        <span><strong>{compactNumber(sourceIssues)}</strong>Issues</span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </section>
+
+              {sentChatOpen ? (
+                <section className="delivery-recipient-chat-panel">
+                  <div className="workstation-panel-head">
+                    <div>
+                      <span>Sent chat</span>
+                      <strong>
+                        {(recipientChat?.recipient_name || selectedSource?.recipient_name || "Recipient")}
+                        {" · "}
+                        {recipientChat?.recipient_phone || selectedSource?.recipient_phone || "-"}
+                      </strong>
+                    </div>
+                    <div className="delivery-recipient-actions">
+                      <span>{recipientMessages.length} messages</span>
+                      <span>{recipientDeliveredCount} delivered</span>
+                      <button
+                        type="button"
+                        className="ct-btn ct-btn-ghost"
+                        disabled={!recipientCrmLead}
+                        onClick={() => {
+                          if (recipientCrmLead) {
+                            onOpenCrmLead(recipientCrmLead);
+                          }
+                        }}
+                        title={recipientCrmLead ? "Open matching CRM chat" : "No CRM chat found for this recipient phone"}
+                      >
+                        <ChatCircleText size={14} weight="bold" />
+                        CRM chat
+                      </button>
+                    </div>
+                  </div>
+
+                  {recipientChatLoading && !recipientMessages.length ? (
+                    <CtEmptyState compact loading title="Loading sent chat" message="Fetching recipient messages." />
+                  ) : recipientMessages.length ? (
+                    <div className="delivery-recipient-messages">
+                      {recipientMessages.map((message) => (
+                        <article className="delivery-recipient-message" data-tone={recipientChatMessageTone(message)} key={message.delivery_id}>
+                          <div className="delivery-recipient-message-head">
+                            <div>
+                              <strong>{message.lead_name || message.lead_phone || `Row ${message.row_number}`}</strong>
+                              <span>Row {message.row_number}{message.lead_email ? ` · ${message.lead_email}` : ""}</span>
+                            </div>
+                            <span className="delivery-status-pill" data-tone={recipientChatMessageTone(message)}>
+                              {humanize(message.delivery_status)}
+                            </span>
+                          </div>
+                          <p>{message.text || "-"}</p>
+                          <small>
+                            {recipientChatMessageDetail(message)}
+                            {message.external_id ? ` · Meta ${truncate(message.external_id, 24)}` : ""}
+                          </small>
+                          {message.last_delivery_error ? <em>{message.last_delivery_error}</em> : null}
+                        </article>
+                      ))}
+                    </div>
+                  ) : (
+                    <CtEmptyState compact title="No sent chat yet" message="Delivery messages will appear here." />
+                  )}
+                </section>
+              ) : null}
+            </div>
+          )}
         </section>
-      </div>
+      )}
 
       {configOpen ? (
         <DeliverySourceEditorDrawer
@@ -3313,71 +3263,146 @@ function DeliverySourceEditorDrawer({
   );
 }
 
-function DeliveryNextActions({
-  leads,
+function DeliverySheetRows({
+  sections,
+  leadsLoading,
+  rowCount,
   actionBusy,
   onCopyLead,
   onCopyLeadAll,
   onRetryLead,
 }: {
-  leads: ClientLead[];
+  sections: DeliverySheetLeadSection[];
+  leadsLoading: boolean;
+  rowCount: number;
   actionBusy: string | null;
   onCopyLead: (lead: ClientLead) => void | Promise<void>;
   onCopyLeadAll: (lead: ClientLead) => void | Promise<void>;
   onRetryLead: (lead: ClientLead) => void | Promise<void>;
 }) {
+  if (leadsLoading && !rowCount) {
+    return <CtEmptyState compact loading title="Loading rows" message="Fetching sheet leads." />;
+  }
+
+  if (!sections.length) {
+    return <CtEmptyState compact title="No rows loaded" message="Rows will appear after the next sync." />;
+  }
+
   return (
-    <section className="delivery-next-actions" aria-label="Delivery next actions">
-      <header className="delivery-next-head">
-        <div>
-          <span>Next actions</span>
-          <strong>{leads.length === 1 ? "1 lead needs delivery" : `${leads.length} leads need delivery`}</strong>
-        </div>
-      </header>
-      <div className="delivery-next-list">
-        {leads.map((lead) => {
-          const busy = actionBusy === `delivery-retry-${lead.id}`;
-          const copyBusy = actionBusy === `delivery-copy-${lead.id}`;
-          const waLink = lead.wa_link || buildWaLink(lead.phone_number);
-          return (
-            <article className="delivery-next-card" data-tone={clientLeadDeliveryTone(lead)} key={lead.id}>
-              <div className="delivery-next-copy">
-                <span>Row {lead.row_number} · {humanize(lead.delivery_status || "blocked")}</span>
-                <strong>{deliveryLeadTitle(lead)}</strong>
-                <small>{lead.last_delivery_error || lead.block_reason || deliveryLeadSubtitle(lead)}</small>
+    <section className="delivery-lead-panel delivery-sheet-rows-panel">
+      <div className="delivery-sheet-sections">
+        {sections.map((section) => (
+          <section className="delivery-sheet-section" key={section.source.id}>
+            <header className="delivery-sheet-section-head">
+              <div>
+                <span>{section.source.sheet_tab_name || section.source.sheet_gid || "Sheet"}</span>
+                <strong>{deliverySheetLabel(section.source)}</strong>
               </div>
-              <div className="delivery-next-actions-row">
-                <button
-                  type="button"
-                  className="ct-btn ct-btn-primary"
-                  disabled={busy}
-                  onClick={() => onRetryLead(lead)}
-                >
-                  <ArrowsClockwise size={14} weight="bold" />
-                  {busy ? "Retrying..." : "Retry"}
-                </button>
-                <details className="ct-action-menu">
-                  <summary className="ct-btn ct-btn-ghost">More</summary>
-                  <div className="ct-action-menu-panel">
-                    {waLink ? (
-                      <a className="ct-btn ct-btn-ghost delivery-action-link" href={waLink} target="_blank" rel="noreferrer">
-                        <ArrowSquareOut size={14} weight="bold" />
-                        Chat
-                      </a>
+              <div className="delivery-sheet-section-meta">
+                <span>{compactNumber(section.leads.length)} rows</span>
+                <span className="delivery-status-pill" data-tone={deliverySourceTone(section.source)}>
+                  {deliverySourceStatusIcon(section.source)}
+                  {humanize(section.source.last_sync_status || "active")}
+                </span>
+              </div>
+            </header>
+            <div className="delivery-sheet-lead-list">
+              {section.leads.map((lead) => {
+                const waLink = lead.wa_link || buildWaLink(lead.phone_number);
+                const retryable = isRetryableClientLead(lead);
+                const copyBusy = actionBusy === `delivery-copy-${lead.id}`;
+                const retryBusy = actionBusy === `delivery-retry-${lead.id}`;
+                const rawFields = deliveryRawFields(lead);
+                return (
+                  <article className="delivery-sheet-lead-card" data-tone={clientLeadDeliveryTone(lead)} key={lead.id}>
+                    <header className="delivery-sheet-lead-card-head">
+                      <div className="delivery-lead-identity">
+                        <span>Row {lead.row_number} · {clientLeadAgeText(lead)}</span>
+                        <strong>{deliveryLeadTitle(lead)}</strong>
+                        <small>{deliveryLeadSubtitle(lead)}</small>
+                      </div>
+                      <div className="delivery-status-cell">
+                        <span className="delivery-status-pill" data-tone={clientLeadDeliveryTone(lead)}>
+                          {humanize(lead.delivery_status || (lead.block_reason ? "blocked" : "pending"))}
+                        </span>
+                        <small>{deliveryStatusDetail(lead)}</small>
+                      </div>
+                    </header>
+
+                    {lead.notification_text ? (
+                      <p className="delivery-notification-preview">{truncate(lead.notification_text, 220)}</p>
                     ) : null}
-                    <button type="button" className="ct-btn ct-btn-ghost" onClick={() => onCopyLead(lead)}>
-                      <Copy size={14} weight="bold" />
-                      Copy
-                    </button>
-                    <button type="button" className="ct-btn ct-btn-ghost" disabled={copyBusy} onClick={() => onCopyLeadAll(lead)}>
-                      {copyBusy ? "Copying..." : "Copy all"}
-                    </button>
-                  </div>
-                </details>
-              </div>
-            </article>
-          );
-        })}
+
+                    {lead.last_delivery_error || lead.block_reason ? (
+                      <p className="delivery-lead-issue">{lead.last_delivery_error || lead.block_reason}</p>
+                    ) : null}
+
+                    <div className="delivery-sheet-lead-card-foot">
+                      <details className="delivery-raw-details">
+                        <summary>
+                          Source details
+                          <span>{rawFields.length} fields</span>
+                        </summary>
+                        <dl>
+                          {rawFields.map((field) => (
+                            <div key={field.label}>
+                              <dt>{field.label}</dt>
+                              <dd>{field.value || "-"}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                      </details>
+
+                      <div className="delivery-row-actions">
+                        {waLink ? (
+                          <a className="ct-btn ct-btn-ghost delivery-action-link" href={waLink} target="_blank" rel="noreferrer">
+                            <ArrowSquareOut size={14} weight="bold" />
+                            Chat
+                          </a>
+                        ) : (
+                          <button type="button" className="ct-btn ct-btn-ghost" onClick={() => onCopyLead(lead)}>
+                            <Copy size={14} weight="bold" />
+                            Copy
+                          </button>
+                        )}
+                        <details className="ct-action-menu delivery-row-menu">
+                          <summary className="ct-btn ct-btn-ghost">More</summary>
+                          <div className="ct-action-menu-panel">
+                            {waLink ? (
+                              <button type="button" className="ct-btn ct-btn-ghost" onClick={() => onCopyLead(lead)}>
+                                <Copy size={14} weight="bold" />
+                                Copy
+                              </button>
+                            ) : null}
+                            <button
+                              type="button"
+                              className="ct-btn ct-btn-ghost"
+                              disabled={copyBusy}
+                              onClick={() => onCopyLeadAll(lead)}
+                            >
+                              {copyBusy ? "Copying..." : "Copy all"}
+                            </button>
+                            {retryable ? (
+                              <button
+                                type="button"
+                                className="ct-btn ct-btn-ghost"
+                                disabled={retryBusy}
+                                onClick={() => onRetryLead(lead)}
+                              >
+                                <ArrowsClockwise size={14} weight="bold" />
+                                {retryBusy ? "Retrying..." : "Retry"}
+                              </button>
+                            ) : null}
+                          </div>
+                        </details>
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+        ))}
       </div>
     </section>
   );
@@ -7625,7 +7650,7 @@ function buildDeliveryContactGroups(sources: ClientLeadSource[]): DeliveryContac
 function buildDeliverySheetLeadSections(
   sources: ClientLeadSource[],
   visibleLeads: ClientLead[],
-  activeSheetFilter: string,
+  selectedSheetId: string,
 ): DeliverySheetLeadSection[] {
   const leadsBySource = new Map<string, ClientLead[]>();
   for (const lead of visibleLeads) {
@@ -7633,7 +7658,7 @@ function buildDeliverySheetLeadSections(
   }
 
   return sources
-    .filter((source) => activeSheetFilter === "all" || source.id === activeSheetFilter)
+    .filter((source) => selectedSheetId === "all" || source.id === selectedSheetId)
     .map((source) => {
       const sourceLeads = (leadsBySource.get(source.id) ?? []).slice().sort(compareClientLeads);
       return {
@@ -7669,7 +7694,7 @@ function deliveryContactSourceIdsFor(sources: ClientLeadSource[], selectedSource
   }
   const selected = sources.find((source) => source.id === selectedSourceId);
   if (!selected) {
-    return [selectedSourceId];
+    return [];
   }
   const key = deliveryContactKey(selected);
   return sources
