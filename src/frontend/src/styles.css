@@ -2056,14 +2056,12 @@ body {
 }
 
 #contadoresView .ct-lead-state-strip {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
   align-items: stretch;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
-  scrollbar-width: thin;
-  padding-bottom: 2px;
+  overflow: visible;
 }
 
 #contadoresView .ct-lead-view {
@@ -2072,10 +2070,9 @@ body {
   grid-template-columns: 1fr;
   align-content: center;
   gap: 5px;
-  flex: 0 0 88px;
-  min-width: 88px;
-  min-height: 58px;
-  padding: 8px 10px;
+  min-width: 0;
+  min-height: 62px;
+  padding: 9px 11px;
   border: 1px solid rgba(28, 38, 44, 0.12);
   border-radius: 10px;
   background:
@@ -2115,14 +2112,7 @@ body {
   color: var(--ct-ink-muted);
   font: 760 11px/1.12 var(--font-sans);
   min-width: 0;
-  overflow: hidden;
-  overflow-wrap: normal;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-#contadoresView .ct-lead-view[data-group="pipeline"] {
-  flex-basis: 96px;
+  overflow-wrap: anywhere;
 }
 
 #contadoresView .ct-lead-view.active .ct-lead-view-count,
@@ -6153,10 +6143,14 @@ body.ct-resizing {
     gap: 8px;
   }
 
+  #contadoresView .ct-lead-state-strip {
+    grid-template-columns: repeat(auto-fit, minmax(86px, 1fr));
+    gap: 6px;
+  }
+
   #contadoresView .ct-lead-view {
-    flex-basis: 86px;
-    min-width: 86px;
     min-height: 50px;
+    padding: 8px 9px;
   }
 
   #contadoresView .ct-filter-row {
