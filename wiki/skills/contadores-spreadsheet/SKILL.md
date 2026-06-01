@@ -7,6 +7,18 @@ description: Use when working with the Contadores Google Sheet that stores leads
 
 Use this skill when the task touches the Google Sheet used by the `contadores` project.
 
+## Credential Boundary
+
+Do not use CleverApply/Alejandro resources for Contadores Sheets, Calendar, or
+Google API work. Forbidden outside the CleverApply repo: `alejandro@cleverapply.com`,
+any `@cleverapply.com` account, `cleverapply-gws-20260519`, CleverApply Google
+Cloud/Workspace/OAuth/browser/1Password resources, quota projects, billing
+projects, temporary fallbacks, and read-only probes.
+
+Before using `gcloud`, a service account, OAuth credentials, or a connector,
+confirm the active account/project is owned by Contadores/Konecta or the user's
+personal scoped setup for this project. If not, stop and switch credentials.
+
 This sheet is the operational source of truth for Meta lead-form intake.
 Click-to-WhatsApp intake can bypass the sheet: the webhook `referral.source_id`
 is matched against the funnel config and creates/reuses a `whatsapp_ctwa` lead.

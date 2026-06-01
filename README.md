@@ -16,6 +16,13 @@ La arquitectura objetivo de plataforma completa vive en
 - `abogados/`: materiales, presentaciones y skills entrenadas del funnel de abogados.
 - `data/`: estado local persistente. No se commitea.
 
+## Credenciales
+
+Contadores/Konecta no usa recursos de CleverApply ni Alejandro: nada de
+`@cleverapply.com`, `cleverapply-gws-20260519`, quota/billing project, OAuth,
+browser profile, gcloud account, 1Password item, fallback temporal o prueba
+read-only. Si falta permiso, se crea o pide una credencial propia del proyecto.
+
 ## CRM portable por funnels
 
 El CRM debe poder levantarse en un server nuevo aunque todavia no exista un

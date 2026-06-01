@@ -12,6 +12,22 @@ Use this skill when the task touches deploy, server config, `main`, Docker Compo
 Contadores has no runtime mode switch. Do not reintroduce alternate runtime
 branches, synthetic leads, or source-mode fields.
 
+## Credential Boundary
+
+Never use CleverApply/Alejandro resources for Contadores or Konecta work. This
+includes `alejandro@cleverapply.com`, any `@cleverapply.com` account,
+`cleverapply-gws-20260519`, CleverApply Google Cloud/Workspace/Gmail/Drive/
+Calendar/Slack/GitHub/Railway resources, browser profiles, VPN/account setup,
+or 1Password items. The ban also covers quota projects, billing projects, OAuth
+clients, test users, temporary fallbacks, and read-only probes.
+
+Before `gcloud`, Google API, Meta API, OAuth, browser-login, or external live
+write work, verify the active account/project/env. If it contains
+`cleverapply`, `clever-apply`, or Alejandro outside
+`/Users/fgoiriz/private/repos/cleverapply`, stop and switch to a
+Contadores/Konecta-owned credential. If the right credential is missing, ask for
+that specific access instead of borrowing another client's resource.
+
 The multi-funnel config file stores funnel-specific sheet and WhatsApp routing:
 
 - `FUNNELS_SEED_CONFIG_PATH`, usually `config/default-funnels.json`

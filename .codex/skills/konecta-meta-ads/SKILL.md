@@ -61,6 +61,12 @@ Keep the access token only in local secrets (`.env`, bashrc, or 1Password). Do n
 write it in tracked docs or prompts. These IDs are defaults for the validated
 Konecta setup, not permission to invent IDs for another client/funnel.
 
+Credential boundary: never use CleverApply/Alejandro resources for Meta,
+Google, OAuth, browser-login, or quota/billing work in Konecta. If the active
+account/project/resource contains `cleverapply`, `clever-apply`,
+`alejandro@cleverapply.com`, or `cleverapply-gws-20260519`, stop and switch to
+Konecta/Contadores-owned credentials before making any external call.
+
 ## The 10/10 Pattern
 
 Use the Eliana v3 pattern:

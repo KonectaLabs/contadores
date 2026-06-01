@@ -7,6 +7,12 @@
 - Los funnels nuevos usan su propia `sheet_url` y `sheet_gid` en `data/funnels.json`.
 - No reintroducir leads sintéticos ni ramas de runtime alternativas.
 
+## Credenciales
+
+- En Contadores/Konecta nunca usar recursos de CleverApply, Alejandro, `@cleverapply.com`, `cleverapply-gws-20260519` ni ningun proyecto/cuenta/credential que contenga `cleverapply` o `clever-apply`.
+- Esto aplica tambien a quota project, billing project, OAuth client, browser profile, gcloud account, 1Password item, test user, fallback temporal y pruebas read-only.
+- Si falta permiso, pedir o crear credenciales propias de Contadores/Konecta. No tomar prestado acceso de otro cliente.
+
 ## Deploy
 
 - Este repo se trabaja pensando siempre en el server real.
