@@ -3191,7 +3191,7 @@ def test_contadores_followup_booked_stage_marks_converted_without_raw_booked(mon
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["stage"] == "booked"
+    assert payload["stage"] == "converted"
     assert payload["raw_stage"] == "awaiting_initial_reply"
     assert payload["pipeline_stage"] == "converted"
     assert payload["converted_at"] is not None
@@ -3833,7 +3833,7 @@ def test_active_offer_positive_reply_after_example_creates_solo_page_workstation
     assert workstation.automation_status == WorkstationAutomationStatus.INTAKE
     assert workstation.offer_price_usd == 29
     assert workstation.offer_currency == "USD"
-    assert detail.json()["lead"]["stage"] == "booked"
+    assert detail.json()["lead"]["stage"] == "converted"
     assert detail.json()["lead"]["automation_paused"] is True
     assert detail.json()["lead"]["automation_paused_reason"] == "workstation_solo_page_started"
     assert workstation_detail.status_code == 200
@@ -4242,7 +4242,7 @@ def test_mark_converted_action_sets_conversion_without_raw_booked_stage(monkeypa
 
     assert detail_response.status_code == 200
     lead_payload = detail_response.json()["lead"]
-    assert lead_payload["stage"] == "booked"
+    assert lead_payload["stage"] == "converted"
     assert lead_payload["raw_stage"] == "awaiting_initial_reply"
     assert lead_payload["pipeline_stage"] == "converted"
     assert lead_payload["booked_at"] is not None
@@ -4280,7 +4280,7 @@ def test_mark_converted_endpoint_is_canonical_and_bookings_endpoint_is_legacy_al
 
     assert converted_response.status_code == 200
     converted_payload = converted_response.json()
-    assert converted_payload["stage"] == "booked"
+    assert converted_payload["stage"] == "converted"
     assert converted_payload["raw_stage"] == "awaiting_initial_reply"
     assert converted_payload["pipeline_stage"] == "converted"
     assert converted_payload["attention_state"] == "converted"
@@ -4293,7 +4293,7 @@ def test_mark_converted_endpoint_is_canonical_and_bookings_endpoint_is_legacy_al
 
     assert legacy_response.status_code == 200
     legacy_payload = legacy_response.json()
-    assert legacy_payload["stage"] == "booked"
+    assert legacy_payload["stage"] == "converted"
     assert legacy_payload["raw_stage"] == "awaiting_initial_reply"
     assert legacy_payload["pipeline_stage"] == "converted"
     assert legacy_payload["converted_at"] is not None
@@ -4501,12 +4501,12 @@ def test_legacy_mark_booked_alias_keeps_converted_leads_out_of_pending_manual_pi
     assert pending_response.status_code == 200
     assert pending_response.json()["messages"] == []
     booked_payload = booked_response.json()["lead"]
-    assert booked_payload["stage"] == "booked"
+    assert booked_payload["stage"] == "converted"
     assert booked_payload["raw_stage"] == "needs_human"
     assert booked_payload["pipeline_stage"] == "converted"
     assert booked_payload["converted_at"] == booked_payload["booked_at"]
     manual_booked_payload = manual_booked_response.json()["lead"]
-    assert manual_booked_payload["stage"] == "booked"
+    assert manual_booked_payload["stage"] == "converted"
     assert manual_booked_payload["raw_stage"] == "awaiting_initial_reply"
     assert manual_booked_payload["pipeline_stage"] == "converted"
     assert manual_booked_payload["converted_at"] == manual_booked_payload["booked_at"]
@@ -4551,7 +4551,7 @@ def test_converted_leads_with_legacy_stage_do_not_expose_pending_delivery(monkey
     assert detail_response.status_code == 200
     lead_payload = detail_response.json()["lead"]
     assert lead_payload["raw_stage"] == "needs_human"
-    assert lead_payload["stage"] == "booked"
+    assert lead_payload["stage"] == "converted"
     assert lead_payload["pipeline_stage"] == "converted"
 
 
@@ -6987,7 +6987,7 @@ def test_contadores_overview_and_alerts_use_effective_stage(monkeypatch, tmp_pat
     assert booked_response.json()["metrics"]["converted"] == 1
     assert booked_response.json()["metrics"]["pipeline_converted"] == 1
     assert [item["id"] for item in booked_response.json()["leads"]] == [lead.id]
-    assert booked_response.json()["leads"][0]["stage"] == "booked"
+    assert booked_response.json()["leads"][0]["stage"] == "converted"
     assert booked_response.json()["leads"][0]["raw_stage"] == "needs_human"
     assert booked_response.json()["leads"][0]["pipeline_stage"] == "converted"
     assert booked_response.json()["leads"][0]["terminal_state"] == "open"
@@ -7304,7 +7304,7 @@ def test_workstation_conversion_is_idempotent_and_keeps_crm_link(monkeypatch, tm
     ]
     assert crm_detail.json()["lead"]["workstation_client_id"] == first_payload["client"]["id"]
     assert "workstation_status" not in crm_detail.json()["lead"]
-    assert crm_detail.json()["lead"]["stage"] == "booked"
+    assert crm_detail.json()["lead"]["stage"] == "converted"
     assert WorkstationClient.get_by_lead_id(lead.id) is not None
 
 
@@ -7339,7 +7339,7 @@ def test_solo_page_workstation_conversion_leaves_manual_attention(monkeypatch, t
         crm_detail = client.get(f"/api/contadores/leads/{lead.id}")
 
     assert conversion.status_code == 200
-    assert crm_detail.json()["lead"]["stage"] == "booked"
+    assert crm_detail.json()["lead"]["stage"] == "converted"
     assert crm_detail.json()["lead"]["raw_stage"] == "needs_human"
     assert manual_attention.json()["leads"] == []
     assert pending_alerts.json()["items"] == []

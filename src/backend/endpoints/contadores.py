@@ -1610,6 +1610,7 @@ def build_lead_summary(
     meeting_sent_at = format_timestamp_seconds(lead.calendly_sent_at)
     meeting_scheduled_at = format_timestamp_seconds(lead.meeting_scheduled_at)
     converted_at = format_timestamp_seconds(lead.booked_at)
+    public_stage = "converted" if effective_stage == ContadoresLeadStage.BOOKED else effective_stage.value
     return ContadoresLeadSummary(
         id=lead.id,
         funnel_id=lead.funnel_id,
@@ -1622,7 +1623,7 @@ def build_lead_summary(
         lead_status=lead.lead_status,
         tags=lead.tags,
         sheet_created_time=format_timestamp_seconds(lead.sheet_created_time),
-        stage=effective_stage.value,
+        stage=public_stage,
         raw_stage=lead.stage.value,
         pipeline_stage=pipeline_stage,
         queue_state=queue_state,
@@ -3890,8 +3891,8 @@ class ContadoresLeadSummary(BaseModel):
     lead_status: str | None = None
     tags: list[str] = Field(default_factory=list)
     sheet_created_time: str | None = None
-    stage: str
-    raw_stage: str
+    stage: str = Field(description="Operator-facing state. Converted leads use converted; raw_stage keeps the stored legacy stage.")
+    raw_stage: str = Field(description="Stored legacy stage value for compatibility and debugging.")
     pipeline_stage: str
     queue_state: str
     terminal_state: str

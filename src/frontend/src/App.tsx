@@ -8289,7 +8289,7 @@ function isLeadConverted(lead: LeadSummary | null | undefined): boolean {
   if (lead.pipeline_stage === "converted" || lead.converted_at) {
     return true;
   }
-  return Boolean(lead.booked_at);
+  return false;
 }
 
 function monogram(value: string): string {

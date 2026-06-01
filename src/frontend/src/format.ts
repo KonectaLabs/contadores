@@ -6,6 +6,7 @@ const stageLabels: Record<LeadStage, string> = {
   needs_human: "Operator queue",
   calendly_sent: "Meeting",
   booked: "Converted",
+  converted: "Converted",
   closed: "Closed",
   archived: "Archived",
 };

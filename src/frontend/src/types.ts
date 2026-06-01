@@ -4,6 +4,7 @@ export type LeadStage =
   | "needs_human"
   | "calendly_sent"
   | "booked"
+  | "converted"
   | "closed"
   | "archived";
 

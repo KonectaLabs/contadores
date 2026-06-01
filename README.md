@@ -717,7 +717,10 @@ Template manual de ping:
 
 Modelo de estado para UI/API:
 
-- `stage` y `raw_stage` siguen siendo el contrato legacy persistido.
+- `stage` en respuestas nuevas es el estado operator-facing; los leads
+  convertidos salen como `converted`, no como `booked`.
+- `raw_stage` conserva el `stage` persistido legacy para compatibilidad y
+  debug.
 - `pipeline_stage` separa el hito comercial: `new`, `contacted`,
   `offer_sent`, `meeting_sent`, `converted`, `closed`, `archived`.
 - `queue_state` separa quien tiene la proxima accion: `automation`, `operator`,
