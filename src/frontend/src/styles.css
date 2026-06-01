@@ -2966,65 +2966,35 @@ body.ct-resizing {
 
 #contadoresView .crm-message-eyebrow {
   min-width: 0;
-  display: grid;
-  gap: 6px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
   color: currentColor;
-  font: 500 11px/1 var(--font-mono);
+  font: 650 11px/1.15 var(--font-mono);
 }
 
 #contadoresView .crm-message-meta-chips {
   min-width: 0;
   display: flex;
   flex-wrap: wrap;
-  gap: 5px;
+  gap: 0;
 }
 
 #contadoresView .crm-message-meta-chips span {
-  max-width: 190px;
-  min-height: 19px;
-  padding: 3px 6px;
-  border: 1px solid rgba(92, 100, 112, 0.2);
-  border-radius: var(--ct-radius-sm);
-  background: rgba(255, 255, 255, 0.68);
-  color: var(--ct-ink-muted);
+  max-width: 170px;
+  min-width: 0;
+  color: currentColor;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  opacity: 1;
+  opacity: 0.62;
 }
 
-#contadoresView .crm-message-card.inbound .crm-message-meta-chips span,
-#contadoresView .crm-message-card.acknowledged .crm-message-meta-chips span {
-  border-color: var(--ct-line);
-  background: var(--ct-surface-2);
-}
-
-#contadoresView .crm-message-card.pending .crm-message-meta-chips span {
-  border-color: rgba(124, 106, 47, 0.18);
-  background: rgba(255, 255, 255, 0.64);
-}
-
-#contadoresView .crm-message-author {
-  display: inline-flex;
-  justify-self: start;
-  min-height: 20px;
-  align-items: center;
-  padding: 0 7px;
-  border-radius: 4px;
-  color: var(--ct-ink-muted);
-  font: 850 10px/1 var(--font-mono);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-#contadoresView .crm-message-author.outbound {
-  background: #dcefeb;
-  color: #315f58;
-}
-
-#contadoresView .crm-message-author.inbound {
-  background: var(--ct-surface-2);
-  color: var(--ct-ink-muted);
+#contadoresView .crm-message-meta-chips span + span::before {
+  content: "/";
+  margin: 0 6px;
+  opacity: 0.46;
 }
 
 #contadoresView .crm-message-error-icon {

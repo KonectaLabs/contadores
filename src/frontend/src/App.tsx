@@ -6742,12 +6742,12 @@ function MessageTimeline({
         const errorAcknowledged = Boolean(message.delivery_error_acknowledged_at);
         const needsDeliveryErrorAck = hasDeliveryError && !errorAcknowledged;
         const acknowledging = acknowledgingIds.includes(message.id);
+        const strategyLabel = message.strategy_label || message.strategy_id || message.sequence_step;
         const meta = [
           shortDate(message.created_at),
-          message.sequence_step,
-          message.strategy_label || (message.strategy_id ? formatStrategyLabel(message.strategy_id) : ""),
-          message.media_type,
-          message.from_me ? message.delivery_status : "",
+          strategyLabel ? formatStrategyLabel(strategyLabel) : "",
+          message.media_type ? humanize(message.media_type) : "",
+          message.from_me && message.delivery_status ? humanize(message.delivery_status) : "",
         ].filter(Boolean);
         return (
           <div className={`crm-message-shell ${direction}`} key={message.id}>
@@ -6761,7 +6761,6 @@ function MessageTimeline({
             >
               <div className="crm-message-meta">
                 <div className="crm-message-eyebrow">
-                  <span className={`crm-message-author ${direction}`}>{message.from_me ? "Operator" : "Lead"}</span>
                   <span className="crm-message-meta-chips">
                     {meta.map((item, index) => (
                       <span key={`${item}:${index}`}>{item}</span>
