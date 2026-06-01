@@ -61,7 +61,8 @@ across the lifecycle.
 - Scheduling: use Google Calendar `events.insert` with explicit attendees,
   start/end timezone, and send updates. The production path should target a
   dedicated calendar shared with the service account; delegated Workspace
-  authority is optional and only for writing as a user-owned calendar.
+  authority is optional and only for writing as a user-owned calendar that sends
+  Google attendee invites.
   Source: https://developers.google.com/workspace/calendar/api/v3/reference/events/insert
 - WhatsApp: keep production on WhatsApp Cloud API/templates/webhooks, with
   `wacli` only as a local/operator fallback. External sends must stay
@@ -181,7 +182,9 @@ Scheduling is agent-native and does not depend on the legacy scheduling-link UI:
 5. Live event creation requires explicit `live_writes_requested=true`,
    `PLATFORM_MEETING_CALENDAR_ID`, internal attendees, and a Google service
    account. The calendar should be dedicated to Konecta scheduling and shared
-   with the service account.
+   with the service account. Without delegated Workspace authority, Google gets
+   the event without attendees and the platform keeps attendees in its audit
+   payload.
 6. Successful writes store `calendar_event_id`, `calendar_event_link`, provider
    response, and an event in `platform_events`.
 

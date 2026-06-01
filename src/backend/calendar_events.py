@@ -88,6 +88,18 @@ def _delegated_user() -> str:
     return normalize_email(os.getenv("GOOGLE_CALENDAR_DELEGATED_USER") or os.getenv("GOOGLE_WORKSPACE_DELEGATED_USER"))
 
 
+def _google_insert_payload(event_payload: dict[str, Any], delegated_user: str) -> tuple[dict[str, Any], list[str]]:
+    """Return the payload Google Calendar can accept for the configured auth mode."""
+    if delegated_user or not event_payload.get("attendees"):
+        return event_payload, []
+    payload = dict(event_payload)
+    payload.pop("attendees", None)
+    return payload, [
+        "Google Calendar service-account writes cannot invite attendees without Domain-Wide Delegation; "
+        "inserted the event without Google attendees."
+    ]
+
+
 def _coerce_start(meeting: PlatformMeeting, timezone_name: str) -> datetime | None:
     if meeting.scheduled_at is None:
         return None
@@ -211,6 +223,7 @@ def _insert_google_calendar_event(
         credentials_path,
         scopes=["https://www.googleapis.com/auth/calendar.events"],
     )
+    event_payload, _warnings = _google_insert_payload(event_payload, delegated_user)
     if delegated_user:
         # Optional: only use Domain-Wide Delegation when writing as a Workspace user.
         credentials = credentials.with_subject(delegated_user)
@@ -277,9 +290,11 @@ def schedule_meeting_calendar_event(
     if live_writes_requested and not blocked and not existing_event_id:
         try:
             insert = calendar_insert or _insert_google_calendar_event
+            insert_payload, insert_warnings = _google_insert_payload(event_payload, _delegated_user())
+            warnings.extend(insert_warnings)
             provider_response = insert(
                 clean_calendar_id,
-                event_payload,
+                insert_payload,
                 send_updates,
                 1 if create_google_meet else 0,
             )

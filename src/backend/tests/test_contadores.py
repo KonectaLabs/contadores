@@ -1495,7 +1495,7 @@ def test_platform_meeting_calendar_gate_builds_and_creates_event(monkeypatch, tm
         assert calendar_id == "team-calendar@example.com"
         assert send_updates == "all"
         assert conference_data_version == 1
-        assert event_payload["attendees"][0]["email"] == "lead.calendar@example.com"
+        assert "attendees" not in event_payload
         insert_calls.append(event_payload)
         return {"id": "calendar-event-1", "htmlLink": "https://calendar.google.com/event?eid=1"}
 
@@ -1515,6 +1515,7 @@ def test_platform_meeting_calendar_gate_builds_and_creates_event(monkeypatch, tm
     assert live_result["ok"] is True
     assert live_result["result"]["calendar"]["status"] == "scheduled"
     assert live_result["result"]["calendar"]["calendar_event_id"] == "calendar-event-1"
+    assert "without Google attendees" in " ".join(live_result["result"]["calendar"]["warnings"])
     scheduled = PlatformMeeting.get_by_id(meeting_id)
     assert scheduled.status == "scheduled"
     assert scheduled.calendar_event_id == "calendar-event-1"
