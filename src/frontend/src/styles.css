@@ -941,9 +941,8 @@ body {
 
 #contadoresView .ops-toolbar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
-  gap: 14px;
   padding: 16px;
   border-radius: 18px;
   background: #10201c;
@@ -970,12 +969,6 @@ body {
   gap: 5px;
 }
 
-#contadoresView .ops-toolbar-side {
-  display: grid;
-  justify-items: end;
-  gap: 10px;
-}
-
 #contadoresView .ops-toolbar span,
 #contadoresView .ops-toolbar small {
   color: rgba(255, 255, 255, 0.64);
@@ -986,13 +979,6 @@ body {
   color: #ffffff;
   font: 800 34px/0.95 var(--font-sans);
   letter-spacing: 0;
-}
-
-#contadoresView .ops-toolbar .ct-btn {
-  flex: 0 0 auto;
-  border-color: rgba(255, 255, 255, 0.18);
-  background: rgba(255, 255, 255, 0.1);
-  color: #ffffff;
 }
 
 #contadoresView .ops-layout {
@@ -1020,10 +1006,19 @@ body {
   font: 800 12px/1 var(--font-sans);
 }
 
+#contadoresView .ops-deep-details > summary span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 #contadoresView .ops-deep-details > summary em {
+  flex: 0 0 auto;
   color: var(--ct-ink-muted);
   font: 700 11px/1 var(--font-mono);
   font-style: normal;
+  text-align: right;
 }
 
 #contadoresView .ops-deep-grid {
@@ -1347,7 +1342,6 @@ body {
   cursor: pointer;
   color: var(--ct-ink-muted);
   font: 800 10px/1.2 var(--font-mono);
-  text-transform: uppercase;
 }
 
 #contadoresView .ops-debug-details span,
@@ -5926,8 +5920,15 @@ body {
     align-items: stretch;
   }
 
-  #contadoresView .ops-toolbar-side {
-    justify-items: stretch;
+  #contadoresView .ops-deep-details > summary {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+
+  #contadoresView .ops-deep-details > summary span,
+  #contadoresView .ops-deep-details > summary em {
+    flex: 1 1 100%;
+    text-align: left;
   }
 
   #contadoresView .runner-command-center {

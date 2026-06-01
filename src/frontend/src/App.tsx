@@ -3520,8 +3520,8 @@ function PlatformOpsView({
 
       <details className="ops-deep-details">
         <summary>
-          <span>Details</span>
-          <em>{compactNumber(counts.recent_events)} events</em>
+          <span>Operational snapshot</span>
+          <em>{compactNumber(counts.recent_events)} recent events</em>
         </summary>
         <div className="ops-deep-grid">
           <OpsPanel eyebrow={<PaperPlaneTilt size={18} weight="fill" />} title="Meta readiness" meta={`${metaReadyCreatives.length} ready creatives`}>
@@ -3625,7 +3625,7 @@ function PlatformOpsView({
                       <span>{metaInventoryCounts(snapshot)}</span>
                       {technicalFields.length ? (
                         <details className="ops-debug-details">
-                          <summary>Technical details</summary>
+                          <summary>Raw context</summary>
                           {technicalFields.map((field) => (
                             <code key={field}>{field}</code>
                           ))}
@@ -3652,7 +3652,7 @@ function PlatformOpsView({
                       <span>{formatAgentRunContext(run)}</span>
                       {runDetail || run.prompt_version || run.context_path ? (
                         <details className="ops-debug-details">
-                          <summary>Technical details</summary>
+                          <summary>Raw context</summary>
                           <span>{runDetail ? truncate(runDetail, 180) : "No preview"}</span>
                           <code>{formatPlatformRef(run.target_type, run.target_id)}</code>
                           {run.prompt_version ? <code>Prompt {run.prompt_version}</code> : null}
@@ -3680,7 +3680,7 @@ function PlatformOpsView({
                       <span>{formatAgentToolContext(call)}</span>
                       {callDetail || call.idempotency_key ? (
                         <details className="ops-debug-details">
-                          <summary>Technical details</summary>
+                          <summary>Raw context</summary>
                           <span>{callDetail ? truncate(callDetail, 180) : "No preview"}</span>
                           <code>{formatPlatformRef(call.target_type, call.target_id)}</code>
                           <code>Run {truncate(call.run_id, 28)}</code>
@@ -3782,7 +3782,7 @@ function PlatformOpsView({
                   <strong>{formatOpsEventTitle(event)}</strong>
                   <p>{formatOpsEventDetail(event)}</p>
                   <details className="ops-debug-details">
-                    <summary>Technical details</summary>
+                    <summary>Raw context</summary>
                     <code>{formatPlatformRef(event.target_type, event.target_id)}</code>
                     <code>{event.event_type}</code>
                     {event.source ? <code>Source {humanize(event.source)}</code> : null}
