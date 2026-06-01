@@ -3665,6 +3665,24 @@ body {
   font: 600 12px/1.4 var(--font-sans);
 }
 
+#contadoresView .runner-technical-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 12px;
+}
+
+#contadoresView .runner-technical-meta code {
+  max-width: 100%;
+  padding: 5px 7px;
+  border: 1px solid var(--ct-line-soft);
+  border-radius: var(--ct-radius-sm);
+  background: var(--ct-surface-2);
+  color: var(--ct-ink-muted);
+  font: 700 10px/1.2 var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
 #contadoresView .runner-visual-feed {
   display: grid;
   gap: 9px;
@@ -7010,12 +7028,38 @@ body {
   top: calc(100% + 6px);
   right: 0;
   z-index: 30;
-  width: min(260px, calc(100vw - 48px));
-  padding: 6px;
+  width: min(288px, calc(100vw - 48px));
+  display: grid;
+  gap: 5px;
+  padding: 8px;
   border: 1px solid var(--ct-line);
   border-radius: var(--ct-radius);
   background: var(--ct-surface);
   box-shadow: 0 16px 34px rgba(32, 33, 36, 0.14);
+}
+
+#contadoresView .workstation-menu-group {
+  display: grid;
+  gap: 2px;
+  padding: 5px 0 7px;
+  border-top: 1px solid var(--ct-line-soft);
+}
+
+#contadoresView .workstation-menu-group:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+#contadoresView .workstation-menu-group:last-child {
+  padding-bottom: 0;
+}
+
+#contadoresView .workstation-menu-label {
+  padding: 4px 10px 3px;
+  color: var(--ct-ink-soft);
+  font: 800 10px/1 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 #contadoresView .workstation-action-popover button,

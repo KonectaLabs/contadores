@@ -5002,6 +5002,9 @@ async def list_contadores_leads(
         if normalized_stage == ContadoresLeadStage.CALENDLY_SENT:
             if not lead_counts_in_calendly_bucket(lead):
                 continue
+        elif normalized_stage == ContadoresLeadStage.BOOKED:
+            if lead_pipeline_stage != "converted":
+                continue
         elif normalized_stage is not None and effective_stage != normalized_stage:
             continue
         if normalized_pipeline_stage is not None and lead_pipeline_stage != normalized_pipeline_stage:

@@ -4171,6 +4171,7 @@ def test_mark_converted_endpoint_is_canonical_and_bookings_endpoint_is_legacy_al
             f"/api/contadores/bookings/mark?lead_id={legacy_lead.id}",
             json={"booked_at": legacy_at.isoformat()},
         )
+        stage_alias_response = client.get("/api/contadores/leads?stage=booked")
 
     assert converted_response.status_code == 200
     converted_payload = converted_response.json()
@@ -4181,6 +4182,9 @@ def test_mark_converted_endpoint_is_canonical_and_bookings_endpoint_is_legacy_al
     assert converted_payload["converted_at"] is not None
     assert converted_payload["converted_at"] == converted_payload["booked_at"]
     assert converted_payload["automation_paused_reason"] == "manual_converted"
+
+    assert stage_alias_response.status_code == 200
+    assert {item["id"] for item in stage_alias_response.json()["leads"]} == {converted_lead.id, legacy_lead.id}
 
     assert legacy_response.status_code == 200
     legacy_payload = legacy_response.json()
