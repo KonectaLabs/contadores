@@ -2578,14 +2578,38 @@ body {
   z-index: 50;
   top: calc(100% + 8px);
   right: 0;
-  width: min(260px, calc(100vw - 32px));
+  width: min(286px, calc(100vw - 32px));
   display: grid;
-  gap: 6px;
+  gap: 0;
   padding: 8px;
   border: 1px solid var(--ct-line);
   border-radius: var(--ct-radius);
   background: var(--ct-surface);
   box-shadow: var(--ct-shadow-popover);
+}
+
+#contadoresView .ct-action-menu-group {
+  display: grid;
+  gap: 3px;
+  padding: 6px 0 8px;
+  border-top: 1px solid var(--ct-line-soft);
+}
+
+#contadoresView .ct-action-menu-group:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+#contadoresView .ct-action-menu-group:last-child {
+  padding-bottom: 0;
+}
+
+#contadoresView .ct-action-menu-label {
+  padding: 3px 10px 4px;
+  color: var(--ct-ink-soft);
+  font: 800 10px/1 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 #contadoresView .ct-action-menu-panel .ct-btn,

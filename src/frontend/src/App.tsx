@@ -6289,7 +6289,7 @@ function LeadDetailHeader({
             onClick={() => onOpenWorkstation(lead.workstation_client_id || "")}
           >
             <FolderOpen size={15} weight="bold" />
-            Build
+            Open workspace
           </button>
         ) : showBuildPrimary ? (
           <button
@@ -6299,7 +6299,7 @@ function LeadDetailHeader({
             onClick={onConvert}
           >
             <Robot size={15} weight="bold" />
-            Build
+            Create workspace
           </button>
         ) : (
           <button type="button" className="ct-btn ct-btn-primary" disabled={!lead || crmOutboundBlocked || Boolean(actionBusy)} onClick={onOpenSend}>
@@ -6310,69 +6310,84 @@ function LeadDetailHeader({
         <details className="ct-action-menu">
           <summary className="ct-btn ct-btn-ghost">More</summary>
           <div className="ct-action-menu-panel">
-            {!showBuildPrimary ? (
-              <button
-                type="button"
-                className="ct-btn ct-btn-ghost"
-                disabled={!lead || closed || archived || Boolean(actionBusy)}
-                onClick={onConvert}
-              >
-                <CurrencyDollar size={15} weight="bold" />
-                Convert
+            <div className="ct-action-menu-group">
+              <span className="ct-action-menu-label">Client</span>
+              {!showBuildPrimary ? (
+                <button
+                  type="button"
+                  className="ct-btn ct-btn-ghost"
+                  disabled={!lead || closed || archived || Boolean(actionBusy)}
+                  onClick={onConvert}
+                >
+                  <CurrencyDollar size={15} weight="bold" />
+                  Start build
+                </button>
+              ) : null}
+              {!hasWorkstationClient ? (
+                <button
+                  type="button"
+                  className="ct-btn ct-btn-ghost"
+                  disabled={!lead || Boolean(actionBusy)}
+                  onClick={onStartSoloPage}
+                >
+                  <Robot size={15} weight="bold" />
+                  Start solo page
+                </button>
+              ) : null}
+              {!inboxMode && !convertedMilestone ? (
+                <button type="button" className="ct-btn ct-btn-ghost" disabled={!lead || closed || Boolean(actionBusy)} onClick={onMarkConverted}>
+                  <CheckCircle size={15} weight="bold" />
+                  Mark as converted
+                </button>
+              ) : null}
+            </div>
+
+            <div className="ct-action-menu-group">
+              <span className="ct-action-menu-label">Automation</span>
+              <label className="ct-codex-switch" title={codexEnabled ? "Codex enabled for this lead" : "Codex disabled for this lead"}>
+                <input
+                  type="checkbox"
+                  checked={codexEnabled}
+                  disabled={!lead || Boolean(actionBusy)}
+                  onChange={(event) => onToggleCodex(event.target.checked)}
+                />
+                <span>Codex agent</span>
+              </label>
+              {!inboxMode ? (
+                <button type="button" className="ct-btn ct-btn-ghost" disabled={!lead || closed || paused || Boolean(actionBusy)} onClick={onPauseAutomation}>
+                  <PauseCircle size={15} weight="bold" />
+                  Pause automation
+                </button>
+              ) : null}
+              {!inboxMode ? (
+                <button type="button" className="ct-btn ct-btn-ghost" disabled={!lead || closed || paused || Boolean(actionBusy)} onClick={onManualHandoff}>
+                  <NotePencil size={15} weight="bold" />
+                  Operator review
+                </button>
+              ) : null}
+              {canMarkAnswered && !inboxMode ? (
+                <button type="button" className="ct-btn ct-btn-ghost" disabled={Boolean(actionBusy)} onClick={onMarkAnswered}>
+                  <Check size={15} weight="bold" />
+                  Mark answered
+                </button>
+              ) : null}
+            </div>
+
+            <div className="ct-action-menu-group">
+              <span className="ct-action-menu-label">Utilities</span>
+              <button type="button" className="ct-btn ct-btn-ghost" disabled={!lead} onClick={onCopyContext} title="Copy context">
+                <Copy size={15} weight="bold" />
+                Copy context
               </button>
-            ) : null}
-            <label className="ct-codex-switch" title={codexEnabled ? "Codex enabled for this lead" : "Codex disabled for this lead"}>
-              <input
-                type="checkbox"
-                checked={codexEnabled}
-                disabled={!lead || Boolean(actionBusy)}
-                onChange={(event) => onToggleCodex(event.target.checked)}
-              />
-              <span>Codex</span>
-            </label>
-            <button type="button" className="ct-btn ct-btn-ghost" disabled={!lead} onClick={onCopyContext} title="Copy context">
-              <Copy size={15} weight="bold" />
-              Copy
-            </button>
-            {!hasWorkstationClient ? (
-              <button
-                type="button"
-                className="ct-btn ct-btn-ghost"
-                disabled={!lead || Boolean(actionBusy)}
-                onClick={onStartSoloPage}
-              >
-                <Robot size={15} weight="bold" />
-                Solo page
+            </div>
+
+            <div className="ct-action-menu-group">
+              <span className="ct-action-menu-label">Danger</span>
+              <button type="button" className={`ct-btn ct-btn-ghost ${closed ? "" : "btn-destructive"}`} disabled={!lead || Boolean(actionBusy)} onClick={onToggleClosed}>
+                {closed ? "Reopen lead" : "Close lead"}
               </button>
-            ) : null}
-            {!inboxMode ? (
-              <button type="button" className="ct-btn ct-btn-ghost" disabled={!lead || closed || convertedMilestone || Boolean(actionBusy)} onClick={onMarkConverted}>
-                <CheckCircle size={15} weight="bold" />
-                Mark converted
-              </button>
-            ) : null}
-            {!inboxMode ? (
-              <button type="button" className="ct-btn ct-btn-ghost" disabled={!lead || closed || paused || Boolean(actionBusy)} onClick={onPauseAutomation}>
-                <PauseCircle size={15} weight="bold" />
-                Pause
-              </button>
-            ) : null}
-            {!inboxMode ? (
-	              <button type="button" className="ct-btn ct-btn-ghost" disabled={!lead || closed || paused || Boolean(actionBusy)} onClick={onManualHandoff}>
-	                <NotePencil size={15} weight="bold" />
-	                Operator
-	              </button>
-            ) : null}
-            {canMarkAnswered && !inboxMode ? (
-              <button type="button" className="ct-btn ct-btn-ghost" disabled={Boolean(actionBusy)} onClick={onMarkAnswered}>
-                <Check size={15} weight="bold" />
-                Answered
-              </button>
-            ) : null}
-            <button type="button" className={`ct-btn ct-btn-ghost ${closed ? "" : "btn-destructive"}`} disabled={!lead || Boolean(actionBusy)} onClick={onToggleClosed}>
-              {closed ? "Reopen" : "Close"}
-            </button>
-            <button type="button" className="ct-btn ct-btn-ghost btn-destructive" disabled={!lead || Boolean(actionBusy)} onClick={onDelete}>Delete</button>
+              <button type="button" className="ct-btn ct-btn-ghost btn-destructive" disabled={!lead || Boolean(actionBusy)} onClick={onDelete}>Delete lead</button>
+            </div>
           </div>
         </details>
         {copyStatus ? <span className="ct-lead-copy-status" aria-live="polite">{copyStatus}</span> : null}
