@@ -353,7 +353,6 @@ const sendOptions = [
   { value: "send-calendly-link", title: "Meeting link only", help: "Send only the meeting link and mark meeting sent." },
 ] as const;
 
-type DetailTab = "messages" | "strategies";
 type SendKind = (typeof sendOptions)[number]["value"];
 type BulkSendKind = SendKind | "set-tags";
 type StrategyWeights = Record<string, Record<string, number>>;
@@ -446,7 +445,6 @@ export function App() {
   const [crmLeadsWidth, setCrmLeadsWidth] = useState(readStoredCrmLeadsWidth);
   const [tagFilter, setTagFilter] = useState("");
   const [strategyFilter, setStrategyFilter] = useState<{ step: string; strategyId: string }>({ step: "", strategyId: "" });
-  const [activeTab, setActiveTab] = useState<DetailTab>("messages");
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -742,7 +740,6 @@ export function App() {
     setStrategyFilter({ step: "", strategyId: "" });
     setTagFilter("");
     setSelectedLeadIds([]);
-    setActiveTab("messages");
   }, [selectedFunnelId]);
 
   useEffect(() => {
@@ -772,7 +769,6 @@ export function App() {
     setLeadViewFilter("all");
     setStrategyFilter({ step: "", strategyId: "" });
     setTagFilter("");
-    setActiveTab("messages");
   }, [isInboxFunnel]);
 
   useEffect(() => {
@@ -823,7 +819,6 @@ export function App() {
       setDetail(null);
       return;
     }
-    setActiveTab("messages");
     setDetail((current) => current?.lead.id === selectedLeadId ? current : null);
     loadDetail(selectedLeadId).catch((reason) => {
       setError(reason instanceof Error ? reason.message : "Could not load the lead.");
@@ -2034,7 +2029,6 @@ export function App() {
       setLeadViewFilter("attention:needs_reply");
       setSelectedLeadId(null);
       setSelectedLeadIds([]);
-      setActiveTab("messages");
       return;
     }
 
@@ -2042,7 +2036,6 @@ export function App() {
       setLeadViewFilter((current) => current === "attention:needs_reply" ? "all" : current);
       setSelectedLeadId(null);
       setSelectedLeadIds([]);
-      setActiveTab("messages");
     }
   }
 
@@ -2555,40 +2548,15 @@ export function App() {
               />
             ) : null}
 
-            {!isInboxFunnel ? (
-              <div className="ct-tabs" role="tablist" aria-label="Lead detail sections">
-                {(["messages", "strategies"] as DetailTab[]).map((tab) => (
-                  <button
-                    key={tab}
-                    type="button"
-                    className={`ct-tab ${activeTab === tab ? "active" : ""}`}
-                    role="tab"
-                    aria-selected={activeTab === tab}
-                    onClick={() => setActiveTab(tab)}
-                  >
-                    {humanize(tab)}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-
-            <div className="ct-panes">
-              <section className={`ct-pane ${isInboxFunnel || activeTab === "messages" ? "active" : ""}`}>
-                <MessageTimeline
-                  messages={selectedLeadDetail?.messages ?? []}
-                  loading={detailLoading}
-                  hasLead={Boolean(selectedLead)}
-                  acknowledgingIds={acknowledgingDeliveryErrorIds}
-                  onAcknowledgeDeliveryError={acknowledgeDeliveryError}
-                />
-              </section>
-
-              {!isInboxFunnel ? (
-                <section className={`ct-pane ${activeTab === "strategies" ? "active" : ""}`}>
-                  <LeadStrategies messages={selectedLeadDetail?.messages ?? []} loading={detailLoading} hasLead={Boolean(selectedLead)} />
-                </section>
-              ) : null}
-            </div>
+            <section className="ct-message-pane">
+              <MessageTimeline
+                messages={selectedLeadDetail?.messages ?? []}
+                loading={detailLoading}
+                hasLead={Boolean(selectedLead)}
+                acknowledgingIds={acknowledgingDeliveryErrorIds}
+                onAcknowledgeDeliveryError={acknowledgeDeliveryError}
+              />
+            </section>
 
             <details className="ct-manual-disclosure" open={Boolean(manualText.trim() || manualFiles.length)}>
               <summary>Operator message</summary>
@@ -6846,67 +6814,6 @@ function MessageMedia({ message }: { message: MessageItem }) {
       <span>{humanize(mediaType || "file")}</span>
       <strong>{filename}</strong>
     </a>
-  );
-}
-
-function LeadStrategies({ messages, loading, hasLead }: { messages: MessageItem[]; loading: boolean; hasLead: boolean }) {
-  if (!hasLead) {
-    return <CtEmptyState compact title="Select a lead" message="Strategy history will appear here." />;
-  }
-  if (loading && !messages.length) {
-    return <CtEmptyState compact loading title="Loading strategies" message="Reading strategy assignments." />;
-  }
-
-  const groups = new Map<string, { step: string; strategyId: string; strategyLabel: string; messages: MessageItem[] }>();
-  messages
-    .filter((message) => message.from_me && message.strategy_id)
-    .forEach((message) => {
-      const key = `${message.strategy_step || ""}:${message.strategy_id || ""}`;
-      const group = groups.get(key) ?? {
-        step: message.strategy_step || "",
-        strategyId: message.strategy_id || "",
-        strategyLabel: message.strategy_label || formatStrategyLabel(message.strategy_id),
-        messages: [],
-      };
-      group.messages.push(message);
-      groups.set(key, group);
-    });
-
-  if (!groups.size) {
-    return <CtEmptyState compact title="No strategy yet" message="Automation strategy assignments will appear here." />;
-  }
-
-  return (
-    <div className="ct-lead-strategies">
-      {[...groups.values()].map((group) => {
-        const sent = group.messages.filter((message) => ["sent", "delivered"].includes(String(message.delivery_status || "").toLowerCase())).length;
-        const delivered = group.messages.filter((message) => String(message.delivery_status || "").toLowerCase() === "delivered").length;
-        const mediaTypes = [...new Set(group.messages.map((message) => message.media_type).filter(Boolean))];
-        return (
-          <article className="ct-lead-strategy-card" key={`${group.step}:${group.strategyId}`}>
-            <div className="ct-lead-strategy-head">
-              <div>
-                <strong>{group.strategyLabel}</strong>
-                <span>{formatStrategyLabel(group.step)}</span>
-              </div>
-              <span className="ct-strategy-chip">{sent}/{group.messages.length} sent</span>
-            </div>
-            <div className="ct-lead-strategy-meta">
-              <span>{delivered} delivered</span>
-              {mediaTypes.map((mediaType) => <span key={mediaType}>{mediaType}</span>)}
-            </div>
-            <ul>
-              {group.messages.map((message) => (
-                <li key={message.id}>
-                  <span>{message.sequence_step || "message"}</span>
-                  <strong>{message.delivery_status || "pending"}</strong>
-                </li>
-              ))}
-            </ul>
-          </article>
-        );
-      })}
-    </div>
   );
 }
 
