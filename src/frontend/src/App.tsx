@@ -6304,10 +6304,8 @@ function LeadList({
       {leads.map((lead) => {
         const tone = leadTone(lead);
         const turn = manualTurn(lead);
-        const strategyTag = strategyTagForLead(lead);
         const checked = selectedLeadIds.includes(lead.id);
         const hasOutboundError = (lead.outbound_error_count || 0) > 0;
-        const hasSecondaryTags = (lead.tags ?? []).length > 0;
         return (
           <div
             className={`ct-lead-row ${lead.id === selectedLeadId ? "active" : ""} ${checked ? "selected" : ""} ${hasOutboundError ? "has-error" : ""}`}
@@ -6332,24 +6330,19 @@ function LeadList({
                   <h4 className="ct-lead-name">{lead.full_name || lead.phone || "Lead"}</h4>
                   <span className="ct-lead-time">{relativeTime(lastInteractionAt(lead))}</span>
                 </div>
-                <div className="ct-lead-status-line">
-                  <span className="ct-lead-stage" data-tone={tone}>{inboxMode ? "Inbox" : formatLeadStatusLabel(lead)}</span>
-                  {turn ? <span className={`ct-lead-turn ${turn}`}>{turn === "needs_reply" ? "Needs reply" : "Answered"}</span> : null}
-                  {hasOutboundError ? (
-                    <span className="ct-lead-delivery-error" title={lead.latest_outbound_error || "WhatsApp delivery failed"}>
-                      <WarningCircle size={13} weight="fill" />
-                      Send failed
-                    </span>
-                  ) : null}
-                </div>
-                <p className="ct-lead-preview">{leadPreview(lead)}</p>
+                {turn || hasOutboundError ? (
+                  <div className="ct-lead-status-line">
+                    {turn ? <span className={`ct-lead-turn ${turn}`}>{turn === "needs_reply" ? "Needs reply" : "Answered"}</span> : null}
+                    {hasOutboundError ? (
+                      <span className="ct-lead-delivery-error" title={lead.latest_outbound_error || "WhatsApp delivery failed"}>
+                        <WarningCircle size={13} weight="fill" />
+                        Send failed
+                      </span>
+                    ) : null}
+                  </div>
+                ) : null}
                 <div className="ct-lead-meta">
-                  <span className="ct-lead-meta-main">
-                    <PhoneCountryFlag phone={lead.phone || lead.normalized_phone} />
-                    <span>{lead.phone || "-"}</span>
-                  </span>
-                  {strategyTag ? <span className="ct-lead-context">{strategyTag}</span> : null}
-                  {hasSecondaryTags ? <span className="ct-lead-context">{lead.tags.length} tag{lead.tags.length === 1 ? "" : "s"}</span> : null}
+                  <LeadCountryLabel phone={lead.phone || lead.normalized_phone} />
                 </div>
               </div>
             </button>
@@ -8148,15 +8141,6 @@ function formatPipelineStageLabel(stage: string | null | undefined): string {
   return labels[String(stage || "")] ?? humanize(stage || "Lead");
 }
 
-function formatConversionType(type: LeadSummary["conversion_type"]): string {
-  const labels: Record<string, string> = {
-    manual: "operator mark",
-    meeting: "meeting link",
-    workstation: "Workstation",
-  };
-  return type ? labels[type] ?? humanize(type) : "conversion";
-}
-
 function formatLeadStatusLabel(lead: LeadSummary): string {
   if (isLeadClosed(lead)) {
     return "Closed";
@@ -8258,28 +8242,6 @@ function manualTurn(lead: LeadSummary): "" | "needs_reply" | "answered" {
   return "";
 }
 
-function strategyTagForLead(lead: LeadSummary): string {
-  const assignments = lead.strategy_assignments ?? [];
-  const loomAssignment = assignments.find((assignment) => assignment.step === "loom") ?? assignments[0];
-  return loomAssignment?.strategy_label || "";
-}
-
-function leadPreview(lead: LeadSummary): string {
-  if (isLeadClosed(lead)) {
-    return "Lead marked as closed.";
-  }
-  if (isLeadConverted(lead)) {
-    return `Converted by ${formatConversionType(lead.conversion_type)}.`;
-  }
-  if (lead.meeting_scheduled_at) {
-    return `Meeting scheduled ${relativeTime(lead.meeting_scheduled_at)}.`;
-  }
-  if (lead.last_classification_reason) {
-    return truncate(lead.last_classification_reason, 120);
-  }
-  return truncate(`${lead.platform || "-"} · ${lead.email || lead.phone || "-"}`, 120);
-}
-
 function buildLeadContextText({
   lead,
   funnel,
@@ -8346,6 +8308,20 @@ function PhoneCountryFlag({ phone }: { phone: string | null | undefined }) {
   return (
     <span className="ct-phone-flag" aria-label={country.name} title={country.name}>
       {countryFlag(country.iso2)}
+    </span>
+  );
+}
+
+function LeadCountryLabel({ phone }: { phone: string | null | undefined }) {
+  const country = phoneCountry(phone);
+  if (!country) {
+    return null;
+  }
+
+  return (
+    <span className="ct-lead-country" title={country.name}>
+      <span className="ct-phone-flag" aria-hidden="true">{countryFlag(country.iso2)}</span>
+      <span>{country.name}</span>
     </span>
   );
 }

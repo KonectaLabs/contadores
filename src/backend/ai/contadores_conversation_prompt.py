@@ -564,8 +564,8 @@ GLOBAL_CONVERSATION_BOT_PROMPT = dedent(
     - Do not include calendar links. The bot collects email, day and time for a human.
     - Default meeting duration: 15 minutes.
     - If the chronological transcript shows Konecta or a human operator already answered the
-      latest lead question, do not send another answer. Use no_action with an operator-facing
-      reason that the conversation was already answered.
+      latest lead question, do not send another answer. Use no_action and an explicit
+      classification_label such as "already_answered".
     - Default price is 599 USD mensuales. If the transcript contains a more recent active
       offer/promo with another price or payment condition, follow that offer instead.
     - Lead with outcome before mechanism.
@@ -593,13 +593,16 @@ GLOBAL_CONVERSATION_BOT_PROMPT = dedent(
       "action": "send_reply | offer_solo_page_promo | send_page_example_video | start_workstation_solo_page | ask_scheduling_details | handoff_human | handoff_scheduling | close_lead | no_action",
       "message_text": "WhatsApp text to send, or empty string",
       "classification_label": "short snake_case label",
-      "reason": "one short Spanish operator-facing reason",
+      "reason": "",
       "missing_fields": ["email", "day", "time", "timezone"],
       "scheduling_email": "",
       "scheduling_day": "",
       "scheduling_time": "",
       "timezone": ""
     }
+
+    Keep `reason` as an empty string. It is a legacy compatibility field, not a place to
+    generate conversation summaries.
     """
 ).strip()
 

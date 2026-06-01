@@ -540,7 +540,7 @@ class ContadoresConversationBotSignature(dspy.Signature):
     action: ConversationBotAction = dspy.OutputField(desc="One allowed action.")
     message_text: str = dspy.OutputField(desc="WhatsApp reply text, or empty string.")
     classification_label: str = dspy.OutputField(desc="Short snake_case label.")
-    reason: str = dspy.OutputField(desc="One short Spanish operator-facing sentence.")
+    reason: str = dspy.OutputField(desc="Legacy compatibility field. Return an empty string.")
     missing_fields: list[str] = dspy.OutputField(desc="Missing scheduling fields only.")
     scheduling_email: str = dspy.OutputField(desc="Email provided by the lead, or blank.")
     scheduling_day: str = dspy.OutputField(desc="Meeting day provided by the lead, or blank.")
