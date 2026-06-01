@@ -413,7 +413,7 @@ function useScrollChatToLatestMessage(messages: MessageItem[], hasLead: boolean)
 }
 
 function findScrollContainer(element: HTMLElement): HTMLElement {
-  let current = element.parentElement;
+  let current: HTMLElement | null = element;
 
   while (current) {
     const style = window.getComputedStyle(current);
@@ -6781,76 +6781,131 @@ function MessageTimeline({
 
   return (
     <div className="ct-timeline" ref={timelineRef}>
-      {messages.map((message) => {
+      {messages.map((message, index) => {
+        const previousMessage = messages[index - 1] ?? null;
+        const nextMessage = messages[index + 1] ?? null;
         const direction = message.from_me ? "outbound" : "inbound";
         const deliveryStatus = String(message.delivery_status || "").toLowerCase();
         const hasDeliveryError = message.from_me && deliveryStatus === "failed";
         const errorAcknowledged = Boolean(message.delivery_error_acknowledged_at);
         const needsDeliveryErrorAck = hasDeliveryError && !errorAcknowledged;
         const acknowledging = acknowledgingIds.includes(message.id);
-        const strategyLabel = message.strategy_label || message.strategy_id || message.sequence_step;
+        const showDateDivider = chatDayKey(previousMessage?.created_at) !== chatDayKey(message.created_at);
+        const groupedWithPrevious = Boolean(
+          previousMessage
+            && previousMessage.from_me === message.from_me
+            && !showDateDivider
+            && chatMinutesBetween(previousMessage.created_at, message.created_at) <= 8,
+        );
+        const groupedWithNext = Boolean(
+          nextMessage
+            && nextMessage.from_me === message.from_me
+            && chatDayKey(nextMessage.created_at) === chatDayKey(message.created_at)
+            && chatMinutesBetween(message.created_at, nextMessage.created_at) <= 8,
+        );
         const meta = [
-          shortDate(message.created_at),
-          strategyLabel ? formatStrategyLabel(strategyLabel) : "",
-          message.media_type ? humanize(message.media_type) : "",
-          message.from_me && message.delivery_status ? humanize(message.delivery_status) : "",
+          chatTimeLabel(message.created_at),
+          chatDeliveryLabel(message),
         ].filter(Boolean);
         return (
-          <div className={`crm-message-shell ${direction}`} key={message.id}>
-            <div className="crm-message-rail">
-              <span className={`crm-message-dot ${direction} ${deliveryStatus === "undelivered" ? "pending" : ""} ${needsDeliveryErrorAck ? "failed" : ""} ${errorAcknowledged ? "acknowledged" : ""}`} />
-            </div>
-            <article
-              className={`crm-message-card ${direction} ${deliveryStatus === "undelivered" ? "pending" : ""} ${needsDeliveryErrorAck ? "failed" : ""} ${errorAcknowledged ? "acknowledged" : ""}`}
-              data-clickable={needsDeliveryErrorAck ? "true" : undefined}
-              onClick={needsDeliveryErrorAck ? () => onAcknowledgeDeliveryError(message) : undefined}
-            >
-              <div className="crm-message-meta">
-                <div className="crm-message-eyebrow">
-                  <span className="crm-message-meta-chips">
-                    {meta.map((item, index) => (
-                      <span key={`${item}:${index}`}>{item}</span>
-                    ))}
-                  </span>
-                </div>
-                {needsDeliveryErrorAck ? (
-                  <button
-                    type="button"
-                    className="crm-message-ack"
-                    disabled={acknowledging}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onAcknowledgeDeliveryError(message);
-                    }}
-                  >
-                    <Check size={14} weight="bold" />
-                    {acknowledging ? "Marking..." : "Seen"}
-                  </button>
-                ) : hasDeliveryError ? (
-                  <span className="crm-message-ack-status">
-                    <Check size={14} weight="bold" />
-                    Seen
-                  </span>
-                ) : null}
-              </div>
-              <MessageMedia message={message} />
-              <p className="crm-message-body">{message.text || ""}</p>
-              {hasDeliveryError ? (
-                <details className="crm-message-error">
-                  <summary>Why it failed</summary>
-                  <p>{message.last_delivery_error || "WhatsApp reported a delivery failure without details."}</p>
-                  <span>{message.delivery_attempts ? `${message.delivery_attempts} send attempts` : "No retry metadata"}</span>
-                  {message.delivery_error_acknowledged_at ? (
-                    <span>Seen {relativeTime(message.delivery_error_acknowledged_at)}</span>
+          <div className="crm-message-group" key={message.id}>
+            {showDateDivider ? (
+              <div className="crm-message-date">{chatDayLabel(message.created_at)}</div>
+            ) : null}
+            <div className={`crm-message-shell ${direction} ${groupedWithPrevious ? "grouped-prev" : ""} ${groupedWithNext ? "grouped-next" : ""}`}>
+              <article
+                className={`crm-message-card ${direction} ${deliveryStatus === "undelivered" ? "pending" : ""} ${needsDeliveryErrorAck ? "failed" : ""} ${errorAcknowledged ? "acknowledged" : ""}`}
+              >
+                <MessageMedia message={message} />
+                {message.text ? <p className="crm-message-body">{message.text}</p> : null}
+                <footer className="crm-message-meta">
+                  <span className="crm-message-meta-line">{meta.join(" · ")}</span>
+                  {needsDeliveryErrorAck ? (
+                    <button
+                      type="button"
+                      className="crm-message-ack"
+                      disabled={acknowledging}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onAcknowledgeDeliveryError(message);
+                      }}
+                    >
+                      <Check size={14} weight="bold" />
+                      {acknowledging ? "Marking..." : "Seen"}
+                    </button>
+                  ) : hasDeliveryError ? (
+                    <span className="crm-message-ack-status">
+                      <Check size={14} weight="bold" />
+                      Seen
+                    </span>
                   ) : null}
-                </details>
-              ) : null}
-            </article>
+                </footer>
+                {hasDeliveryError ? (
+                  <details className="crm-message-error">
+                    <summary>Why it failed</summary>
+                    <p>{message.last_delivery_error || "WhatsApp reported a delivery failure without details."}</p>
+                    <span>{message.delivery_attempts ? `${message.delivery_attempts} send attempts` : "No retry metadata"}</span>
+                    {message.delivery_error_acknowledged_at ? (
+                      <span>Seen {relativeTime(message.delivery_error_acknowledged_at)}</span>
+                    ) : null}
+                  </details>
+                ) : null}
+              </article>
+            </div>
           </div>
         );
       })}
     </div>
   );
+}
+
+function chatDayKey(value: string | null | undefined): string {
+  if (!value) {
+    return "";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
+}
+
+function chatDayLabel(value: string | null | undefined): string {
+  if (!value) {
+    return "";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return new Intl.DateTimeFormat("en", { month: "short", day: "2-digit" }).format(date);
+}
+
+function chatTimeLabel(value: string | null | undefined): string {
+  if (!value) {
+    return "";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return shortDate(value);
+  }
+  return new Intl.DateTimeFormat("en", { hour: "numeric", minute: "2-digit" }).format(date);
+}
+
+function chatMinutesBetween(first: string | null | undefined, second: string | null | undefined): number {
+  const firstDate = first ? new Date(first) : null;
+  const secondDate = second ? new Date(second) : null;
+  if (!firstDate || !secondDate || Number.isNaN(firstDate.getTime()) || Number.isNaN(secondDate.getTime())) {
+    return Number.POSITIVE_INFINITY;
+  }
+  return Math.abs(secondDate.getTime() - firstDate.getTime()) / 60000;
+}
+
+function chatDeliveryLabel(message: MessageItem): string {
+  if (!message.from_me || !message.delivery_status) {
+    return "";
+  }
+  return humanize(message.delivery_status);
 }
 
 function MessageMedia({ message }: { message: MessageItem }) {
