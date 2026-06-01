@@ -118,7 +118,8 @@ Typical lead tools:
 - `update_lead_state`: update non-conversion stage or automation pause state.
   Do not pass `booked`; use `mark_converted` for conversions.
 - `mark_converted`: mark the lead converted through the canonical conversion
-  path. Storage may still show legacy `stage=booked`/`booked_at`.
+  path. Historical rows may still show legacy `stage=booked`; new conversions
+  leave raw `stage` unchanged and expose `converted_at`/`booked_at`.
 - `handoff_human`: pause automation and put a person in control.
 
 Typical Workstation tools:

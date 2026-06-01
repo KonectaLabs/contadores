@@ -3604,7 +3604,6 @@ def run_quick_action_for_lead(
             lead.id,
             automation_paused=True,
             automation_paused_reason=CONTADORES_LEAD_MANUAL_CONVERTED_REASON,
-            preserve_legacy_stage=normalized_action in {"mark-booked", "send-manual-booked"},
         )
         return updated or lead, []
     elif normalized_action in {"manual-handoff", "pause-ai-reply"}:
@@ -6240,7 +6239,6 @@ def build_mark_converted_response(
     *,
     lead_id: str,
     converted_at: datetime | None = None,
-    preserve_legacy_stage: bool = False,
 ) -> ContadoresLeadSummary:
     """Mark one lead converted and return the refreshed summary."""
     updated = ContadoresLead.mark_converted(
@@ -6248,7 +6246,6 @@ def build_mark_converted_response(
         converted_at=converted_at,
         automation_paused=True,
         automation_paused_reason=CONTADORES_LEAD_MANUAL_CONVERTED_REASON,
-        preserve_legacy_stage=preserve_legacy_stage,
     )
     if updated is None:
         raise HTTPException(status_code=404, detail="Lead not found")
@@ -6277,7 +6274,6 @@ async def mark_contadores_booked(
     return build_mark_converted_response(
         lead_id=lead_id,
         converted_at=command.effective_converted_at(),
-        preserve_legacy_stage=True,
     )
 
 

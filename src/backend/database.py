@@ -1831,14 +1831,11 @@ class ContadoresLead(SQLModel, table=True):
         converted_at: datetime | None = None,
         automation_paused: bool | None = None,
         automation_paused_reason: str | None = None,
-        preserve_legacy_stage: bool = False,
     ) -> Optional["ContadoresLead"]:
         """Record a completed conversion without making Booked the canonical write state."""
         flow_updates: dict[str, Any] = {
             "booked_at": converted_at or datetime.now(timezone.utc),
         }
-        if preserve_legacy_stage:
-            flow_updates["stage"] = ContadoresLeadStage.BOOKED
         if automation_paused is not None:
             flow_updates["automation_paused"] = automation_paused
         if automation_paused_reason is not None:

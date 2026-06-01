@@ -211,10 +211,11 @@ messages.
 
 The UI-facing conversion state is `Converted`. Use `mark-converted` or
 `/api/contadores/conversions/mark` as the canonical manual conversion path.
-Storage/API still keep legacy `stage=booked`, `booked_at`, `mark-booked`, and
-`send-manual-booked` as compatibility aliases. Marking a lead converted must
-not send any WhatsApp message; it only sets the legacy booked milestone and
-pauses automation.
+Storage/API still read historical `stage=booked`, and still expose `booked_at`,
+`mark-booked`, and `send-manual-booked` as compatibility aliases. New alias
+writes must not rewrite raw `stage` to `booked`; they only set conversion
+evidence and pause automation. Marking a lead converted must not send any
+WhatsApp message.
 
 ## Manual meeting actions
 
@@ -264,8 +265,9 @@ deterministic fast path before normal scheduling:
 - Once Workstation starts, the CRM lead is visible as `Converted`, automation is
   paused with `automation_paused_reason=workstation_solo_page_started`, and
   future replies are handled by `/api/workstation/automation/tick`. Legacy
-  storage may still expose `stage=booked`/`booked_at`, while API/UI callers
-  should prefer `pipeline_stage=converted` and `converted_at`.
+  rows may still expose historical `stage=booked`; new conversion writes should
+  leave raw `stage` unchanged and API/UI callers should prefer
+  `pipeline_stage=converted` and `converted_at`.
 - If an operator manually starts the same promo path from the CRM `Solo page`
   action, the backend creates `solo_pagina/pending_payment/intake`; Workstation
   may skip the first intake prompt only when the existing chat already includes

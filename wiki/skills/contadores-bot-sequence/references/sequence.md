@@ -128,9 +128,11 @@ be sent by automation ticks and must not replace the 24-hour opener follow-up.
 
 The UI-facing conversion state is `Converted`. Use `mark-converted` or
 `/api/contadores/conversions/mark` as the canonical manual conversion path.
-Storage/API still keep legacy `stage=booked`, `booked_at`, `mark-booked`, and
-`send-manual-booked` as compatibility aliases. Marking a lead converted must
-not send any WhatsApp message.
+Storage/API still read historical `stage=booked`, and still expose `booked_at`,
+`mark-booked`, and `send-manual-booked` as compatibility aliases. New alias
+writes must not rewrite raw `stage` to `booked`; they only set conversion
+evidence and pause automation. Marking a lead converted must not send any
+WhatsApp message.
 
 ## Scheduling handoff
 

@@ -705,12 +705,12 @@ Template manual de ping:
   `converted`; los unicos mensajes post-conversion permitidos son delivery de
   Workstation.
 - La ruta canonical para conversion manual es `/api/contadores/conversions/mark`,
-  la accion UI/API `mark-converted`, o la tool de agente `mark_converted`; el
-  storage/API legacy conserva `stage=booked`, `booked_at`, `mark-booked` y
-  `send-manual-booked` por compatibilidad. En la UI nueva eso se muestra como
-  `Converted`; marcar un lead convertido no envia WhatsApp y solo pausa la
-  automatizacion. Las tools de agente que editan `stage` no aceptan `booked`;
-  deben usar `mark_converted`.
+  la accion UI/API `mark-converted`, o la tool de agente `mark_converted`.
+  `mark-booked`, `send-manual-booked` y `/api/contadores/bookings/mark` quedan
+  como aliases legacy, pero ya no reescriben el `stage` crudo a `booked`: solo
+  guardan la evidencia de conversion en `booked_at`/`converted_at` y pausan la
+  automatizacion. En la UI nueva eso se muestra como `Converted`. Las tools de
+  agente que editan `stage` no aceptan `booked`; deben usar `mark_converted`.
 - Los payloads nuevos deben preferir `converted_at`, `meeting_sent_at`,
   `meeting_scheduled_at`, `meeting_url`, `converted=true` y las metricas
   canonicales de meeting/conversion aunque los aliases legacy sigan disponibles.
@@ -1132,7 +1132,7 @@ Al convertir:
 
 - se crea un registro en `workstation_clients`;
 - se marca el lead como `converted` en la proyeccion de UI, manteniendo el
-  milestone legacy `booked_at/stage=booked` cuando corresponde;
+  milestone legacy `booked_at` como alias de `converted_at`;
 - se pausa la automatizacion del lead;
 - se registra el evento `workstation_client_created`;
 - la media subida en Workstation se puede renombrar desde la UI sin cambiar el

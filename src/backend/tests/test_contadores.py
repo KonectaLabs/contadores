@@ -4294,11 +4294,15 @@ def test_mark_converted_endpoint_is_canonical_and_bookings_endpoint_is_legacy_al
     assert legacy_response.status_code == 200
     legacy_payload = legacy_response.json()
     assert legacy_payload["stage"] == "booked"
-    assert legacy_payload["raw_stage"] == "booked"
+    assert legacy_payload["raw_stage"] == "awaiting_initial_reply"
     assert legacy_payload["pipeline_stage"] == "converted"
     assert legacy_payload["converted_at"] is not None
     assert legacy_payload["converted_at"] == legacy_payload["booked_at"]
     assert legacy_payload["automation_paused_reason"] == "manual_converted"
+    legacy_row = ContadoresLead.get_by_id(legacy_lead.id)
+    assert legacy_row is not None
+    assert legacy_row.stage == ContadoresLeadStage.AWAITING_INITIAL_REPLY
+    assert legacy_row.booked_at is not None
 
 
 def test_lifecycle_v2_fields_are_persisted_after_flow_updates(monkeypatch, tmp_path) -> None:
@@ -4477,16 +4481,41 @@ def test_legacy_mark_booked_alias_keeps_converted_leads_out_of_pending_manual_pi
         phone="+5491888888878",
         full_name="Booked With Ping",
     )
+    manual_booked_lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-manual-booked-alias",
+        phone="+5491888888879",
+        full_name="Manual Booked Alias",
+    )
 
     with TestClient(app) as client:
         ping_response = client.post(f"/api/contadores/leads/{lead.id}/actions/send-manual-ping")
         booked_response = client.post(f"/api/contadores/leads/{lead.id}/actions/mark-booked")
+        manual_booked_response = client.post(
+            f"/api/contadores/leads/{manual_booked_lead.id}/actions/send-manual-booked"
+        )
         pending_response = client.get("/api/contadores/messages/pending-delivery")
 
     assert ping_response.status_code == 200
     assert booked_response.status_code == 200
+    assert manual_booked_response.status_code == 200
     assert pending_response.status_code == 200
     assert pending_response.json()["messages"] == []
+    booked_payload = booked_response.json()["lead"]
+    assert booked_payload["stage"] == "booked"
+    assert booked_payload["raw_stage"] == "needs_human"
+    assert booked_payload["pipeline_stage"] == "converted"
+    assert booked_payload["converted_at"] == booked_payload["booked_at"]
+    manual_booked_payload = manual_booked_response.json()["lead"]
+    assert manual_booked_payload["stage"] == "booked"
+    assert manual_booked_payload["raw_stage"] == "awaiting_initial_reply"
+    assert manual_booked_payload["pipeline_stage"] == "converted"
+    assert manual_booked_payload["converted_at"] == manual_booked_payload["booked_at"]
+    booked_row = ContadoresLead.get_by_id(lead.id)
+    manual_booked_row = ContadoresLead.get_by_id(manual_booked_lead.id)
+    assert booked_row is not None
+    assert manual_booked_row is not None
+    assert booked_row.stage == ContadoresLeadStage.NEEDS_HUMAN
+    assert manual_booked_row.stage == ContadoresLeadStage.AWAITING_INITIAL_REPLY
 
 
 def test_converted_leads_with_legacy_stage_do_not_expose_pending_delivery(monkeypatch, tmp_path) -> None:

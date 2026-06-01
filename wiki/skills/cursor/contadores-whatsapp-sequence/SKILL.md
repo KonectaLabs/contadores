@@ -181,7 +181,7 @@ email de alerta.
 - `Manual ping` masivo requiere confirmacion explicita en backend y debe quedar auditado como batch.
 - No se puede mandar ningun WhatsApp outbound a un lead `closed`; primero hay que reabrirlo.
 - La vista CRM muestra el hito como `Converted`. Storage/API todavia conservan
-  `stage=booked` y el alias legacy `send-manual-booked`; marcar `Converted`
+  `booked_at` y el alias legacy `send-manual-booked`; marcar `Converted`
   no envia WhatsApp y solo pausa automatizacion.
 - La vista CRM `Manual` muestra todos los manuales; el pipeline tiene un bloque
   `Needs answer` entre Manual y Closed para los manuales cuyo
