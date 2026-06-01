@@ -1428,6 +1428,7 @@ def test_platform_meeting_calendar_gate_builds_and_creates_event(monkeypatch, tm
     configure_contadores_db(monkeypatch, tmp_path)
     monkeypatch.delenv("GOOGLE_CALENDAR_SERVICE_ACCOUNT_FILE", raising=False)
     monkeypatch.delenv("GOOGLE_CALENDAR_DELEGATED_USER", raising=False)
+    monkeypatch.delenv("GOOGLE_CALENDAR_OAUTH_CREDENTIALS_FILE", raising=False)
     scheduled_at = datetime(2026, 7, 2, 18, 0, tzinfo=timezone.utc)
     lead = ContadoresLead.upsert(
         external_lead_id="sheet-row-platform-meeting",
@@ -1486,7 +1487,7 @@ def test_platform_meeting_calendar_gate_builds_and_creates_event(monkeypatch, tm
     )
     assert blocked_live["ok"] is True
     assert blocked_live["result"]["calendar"]["status"] == "calendar_blocked"
-    assert "GOOGLE_CALENDAR_SERVICE_ACCOUNT_FILE" in blocked_live["result"]["calendar"]["blocked_reasons"]
+    assert "GOOGLE_CALENDAR_CREDENTIALS" in blocked_live["result"]["calendar"]["blocked_reasons"]
     assert "GOOGLE_CALENDAR_DELEGATED_USER" not in blocked_live["result"]["calendar"]["blocked_reasons"]
 
     insert_calls: list[dict] = []

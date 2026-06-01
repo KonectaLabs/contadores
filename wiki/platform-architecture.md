@@ -180,11 +180,11 @@ Scheduling is agent-native and does not depend on the legacy scheduling-link UI:
 4. Dry-run is allowed without credentials and stores `calendar_ready` or
    `calendar_blocked` on the meeting.
 5. Live event creation requires explicit `live_writes_requested=true`,
-   `PLATFORM_MEETING_CALENDAR_ID`, internal attendees, and a Google service
-   account. The calendar should be dedicated to Konecta scheduling and shared
-   with the service account. Without delegated Workspace authority, Google gets
-   the event without attendees or Meet and the platform keeps attendees in its
-   audit payload.
+   `PLATFORM_MEETING_CALENDAR_ID`, internal attendees, and Google Calendar
+   credentials. OAuth credentials with the `calendar.events` scope create real
+   attendee invites and Meet links. Service-account writes stay scoped to the
+   dedicated calendar and omit attendees/Meet unless delegated Workspace
+   authority is configured.
 6. Successful writes store `calendar_event_id`, `calendar_event_link`, provider
    response, and an event in `platform_events`.
 

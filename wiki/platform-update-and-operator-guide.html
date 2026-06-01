@@ -650,15 +650,15 @@
                 <strong class="label">Google Calendar</strong>
                 <h3>Faltan env vars de calendario</h3>
                 <p>
-                  El scheduler esta preparado para dry-run y para guardar blockers,
-                  pero crear eventos reales requiere un calendario dedicado compartido
-                  con el service account. Sin delegated user, Google no envia
-                  invites de Calendar ni crea Meet.
+                  El scheduler esta preparado para dry-run y para guardar blockers.
+                  Para invites y Meet reales usa OAuth credentials con scope
+                  calendar.events.
                 </p>
                 <div class="kbd-list">
                   <span>PLATFORM_MEETING_CALENDAR_ID</span>
                   <span>PLATFORM_MEETING_INTERNAL_ATTENDEES</span>
                   <span>GOOGLE_CALENDAR_SERVICE_ACCOUNT_FILE</span>
+                  <span>GOOGLE_CALENDAR_OAUTH_CREDENTIALS_FILE</span>
                 </div>
               </article>
               <article class="card">

@@ -84,13 +84,28 @@ def _service_account_file() -> str:
     return ""
 
 
+def _oauth_credentials_file() -> str:
+    for env_name in [
+        "GOOGLE_CALENDAR_OAUTH_CREDENTIALS_FILE",
+        "GOOGLE_OAUTH_CREDENTIALS_FILE",
+    ]:
+        value = _clean(os.getenv(env_name))
+        if value:
+            return value
+    return ""
+
+
 def _delegated_user() -> str:
     return normalize_email(os.getenv("GOOGLE_CALENDAR_DELEGATED_USER") or os.getenv("GOOGLE_WORKSPACE_DELEGATED_USER"))
 
 
-def _google_insert_payload(event_payload: dict[str, Any], delegated_user: str) -> tuple[dict[str, Any], list[str]]:
+def _can_send_calendar_invites() -> bool:
+    return bool(_oauth_credentials_file() or _delegated_user())
+
+
+def _google_insert_payload(event_payload: dict[str, Any], can_send_invites: bool) -> tuple[dict[str, Any], list[str]]:
     """Return the payload Google Calendar can accept for the configured auth mode."""
-    if delegated_user:
+    if can_send_invites:
         return event_payload, []
     payload = dict(event_payload)
     warnings: list[str] = []
@@ -208,32 +223,53 @@ def build_meeting_calendar_event_payload(
     return payload, list(dict.fromkeys(blocked)), warnings
 
 
-def _insert_google_calendar_event(
-    calendar_id: str,
-    event_payload: dict[str, Any],
-    send_updates: str,
-    conference_data_version: int,
-) -> dict[str, Any]:
-    """Create one Google Calendar event using the configured service account."""
+def _calendar_credentials():
+    """Load the configured Google Calendar credentials."""
+    oauth_path = _oauth_credentials_file()
+    if oauth_path:
+        try:
+            from google.oauth2.credentials import Credentials
+        except ImportError as exc:
+            raise CalendarSchedulingError("google-auth is required for OAuth Calendar credentials") from exc
+        return Credentials.from_authorized_user_file(
+            oauth_path,
+            scopes=["https://www.googleapis.com/auth/calendar.events"],
+        )
+
     credentials_path = _service_account_file()
     delegated_user = _delegated_user()
     if not credentials_path:
         raise CalendarSchedulingError("GOOGLE_CALENDAR_SERVICE_ACCOUNT_FILE is required")
     try:
         from google.oauth2.service_account import Credentials
-        from googleapiclient.discovery import build
     except ImportError as exc:
-        raise CalendarSchedulingError("google-api-python-client and google-auth are required") from exc
+        raise CalendarSchedulingError("google-auth is required for service-account Calendar credentials") from exc
 
     credentials = Credentials.from_service_account_file(
         credentials_path,
         scopes=["https://www.googleapis.com/auth/calendar.events"],
     )
-    event_payload, _warnings = _google_insert_payload(event_payload, delegated_user)
-    conference_data_version = conference_data_version if event_payload.get("conferenceData") else 0
     if delegated_user:
         # Optional: only use Domain-Wide Delegation when writing as a Workspace user.
         credentials = credentials.with_subject(delegated_user)
+    return credentials
+
+
+def _insert_google_calendar_event(
+    calendar_id: str,
+    event_payload: dict[str, Any],
+    send_updates: str,
+    conference_data_version: int,
+) -> dict[str, Any]:
+    """Create one Google Calendar event using the configured credentials."""
+    try:
+        from googleapiclient.discovery import build
+    except ImportError as exc:
+        raise CalendarSchedulingError("google-api-python-client and google-auth are required") from exc
+
+    credentials = _calendar_credentials()
+    event_payload, _warnings = _google_insert_payload(event_payload, _can_send_calendar_invites())
+    conference_data_version = conference_data_version if event_payload.get("conferenceData") else 0
     service = build("calendar", "v3", credentials=credentials)
     return (
         service.events()
@@ -277,8 +313,8 @@ def schedule_meeting_calendar_event(
         existing_event_id = _clean(meeting.calendar_event_id)
         if existing_event_id:
             warnings.append("Meeting already has a Google Calendar event; skipped duplicate creation.")
-        if not existing_event_id and not _service_account_file() and calendar_insert is None:
-            blocked.append("GOOGLE_CALENDAR_SERVICE_ACCOUNT_FILE")
+        if not existing_event_id and not (_service_account_file() or _oauth_credentials_file()) and calendar_insert is None:
+            blocked.append("GOOGLE_CALENDAR_CREDENTIALS")
 
     blocked = list(dict.fromkeys(blocked))
     existing_event_id = _clean(meeting.calendar_event_id)
@@ -297,7 +333,7 @@ def schedule_meeting_calendar_event(
     if live_writes_requested and not blocked and not existing_event_id:
         try:
             insert = calendar_insert or _insert_google_calendar_event
-            insert_payload, insert_warnings = _google_insert_payload(event_payload, _delegated_user())
+            insert_payload, insert_warnings = _google_insert_payload(event_payload, _can_send_calendar_invites())
             warnings.extend(insert_warnings)
             provider_response = insert(
                 clean_calendar_id,

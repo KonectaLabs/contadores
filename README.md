@@ -1063,9 +1063,10 @@ Acciones manuales de Meeting:
   Calendar con el lead y los asistentes internos. El tool hace dry-run sin
   credenciales y guarda blockers; solo crea el evento real si
   `live_writes_requested=true`, hay un calendar ID dedicado compartido con el
-  service account y estan configurados los asistentes internos. Sin usuario
-  delegado, Google crea el evento en el calendario dedicado sin mandar invites
-  ni Meet; los asistentes quedan en el payload/auditoria de la plataforma.
+  service account u OAuth credentials, y estan configurados los asistentes
+  internos. Para invites/Meet reales usar `GOOGLE_CALENDAR_OAUTH_CREDENTIALS_FILE`
+  con scope `calendar.events`; sin OAuth/delegated user, Google crea el evento
+  sin invites ni Meet.
 - Si faltan datos o credenciales, el meeting queda `calendar_blocked` y el
   detalle aparece en Ops/`/api/platform/overview`.
 
