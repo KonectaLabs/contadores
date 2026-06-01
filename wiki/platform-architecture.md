@@ -62,7 +62,7 @@ across the lifecycle.
   start/end timezone, and send updates. The production path should target a
   dedicated calendar shared with the service account; delegated Workspace
   authority is optional and only for writing as a user-owned calendar that sends
-  Google attendee invites.
+  Google attendee invites and Meet links.
   Source: https://developers.google.com/workspace/calendar/api/v3/reference/events/insert
 - WhatsApp: keep production on WhatsApp Cloud API/templates/webhooks, with
   `wacli` only as a local/operator fallback. External sends must stay
@@ -183,8 +183,8 @@ Scheduling is agent-native and does not depend on the legacy scheduling-link UI:
    `PLATFORM_MEETING_CALENDAR_ID`, internal attendees, and a Google service
    account. The calendar should be dedicated to Konecta scheduling and shared
    with the service account. Without delegated Workspace authority, Google gets
-   the event without attendees and the platform keeps attendees in its audit
-   payload.
+   the event without attendees or Meet and the platform keeps attendees in its
+   audit payload.
 6. Successful writes store `calendar_event_id`, `calendar_event_link`, provider
    response, and an event in `platform_events`.
 

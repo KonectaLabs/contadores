@@ -90,14 +90,20 @@ def _delegated_user() -> str:
 
 def _google_insert_payload(event_payload: dict[str, Any], delegated_user: str) -> tuple[dict[str, Any], list[str]]:
     """Return the payload Google Calendar can accept for the configured auth mode."""
-    if delegated_user or not event_payload.get("attendees"):
+    if delegated_user:
         return event_payload, []
     payload = dict(event_payload)
-    payload.pop("attendees", None)
-    return payload, [
-        "Google Calendar service-account writes cannot invite attendees without Domain-Wide Delegation; "
-        "inserted the event without Google attendees."
-    ]
+    warnings: list[str] = []
+    if payload.pop("attendees", None):
+        warnings.append(
+            "Google Calendar service-account writes cannot invite attendees without Domain-Wide Delegation; "
+            "inserted the event without Google attendees."
+        )
+    if payload.pop("conferenceData", None):
+        warnings.append(
+            "Google Meet creation is disabled for scoped service-account writes; inserted the event without Meet."
+        )
+    return payload, warnings
 
 
 def _coerce_start(meeting: PlatformMeeting, timezone_name: str) -> datetime | None:
@@ -224,6 +230,7 @@ def _insert_google_calendar_event(
         scopes=["https://www.googleapis.com/auth/calendar.events"],
     )
     event_payload, _warnings = _google_insert_payload(event_payload, delegated_user)
+    conference_data_version = conference_data_version if event_payload.get("conferenceData") else 0
     if delegated_user:
         # Optional: only use Domain-Wide Delegation when writing as a Workspace user.
         credentials = credentials.with_subject(delegated_user)
@@ -296,7 +303,7 @@ def schedule_meeting_calendar_event(
                 clean_calendar_id,
                 insert_payload,
                 send_updates,
-                1 if create_google_meet else 0,
+                1 if insert_payload.get("conferenceData") else 0,
             )
             live_write_executed = True
             status = "scheduled"

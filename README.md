@@ -1065,7 +1065,7 @@ Acciones manuales de Meeting:
   `live_writes_requested=true`, hay un calendar ID dedicado compartido con el
   service account y estan configurados los asistentes internos. Sin usuario
   delegado, Google crea el evento en el calendario dedicado sin mandar invites
-  de Calendar; los asistentes quedan en el payload/auditoria de la plataforma.
+  ni Meet; los asistentes quedan en el payload/auditoria de la plataforma.
 - Si faltan datos o credenciales, el meeting queda `calendar_blocked` y el
   detalle aparece en Ops/`/api/platform/overview`.
 
