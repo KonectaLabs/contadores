@@ -1300,6 +1300,8 @@ def build_contadores_metrics(leads: list[ContadoresLead]) -> "ContadoresMetrics"
         attention_counts[lead_attention_state] += 1
         terminal_counts[lead_terminal_state] += 1
 
+    converted_count = pipeline_counts["converted"]
+
     return ContadoresMetrics(
         total=len(leads),
         awaiting_initial_reply=legacy_counts[ContadoresLeadStage.AWAITING_INITIAL_REPLY.value],
@@ -1307,15 +1309,15 @@ def build_contadores_metrics(leads: list[ContadoresLead]) -> "ContadoresMetrics"
         needs_human=legacy_counts[ContadoresLeadStage.NEEDS_HUMAN.value],
         calendly_sent=calendly_count,
         meeting_sent=calendly_count,
-        booked=legacy_counts[ContadoresLeadStage.BOOKED.value],
-        converted=pipeline_counts["converted"],
+        booked=converted_count,
+        converted=converted_count,
         closed=legacy_counts[ContadoresLeadStage.CLOSED.value],
         archived=legacy_counts[ContadoresLeadStage.ARCHIVED.value],
         pipeline_new=pipeline_counts["new"],
         pipeline_contacted=pipeline_counts["contacted"],
         pipeline_offer_sent=pipeline_counts["offer_sent"],
         pipeline_meeting_sent=pipeline_counts["meeting_sent"],
-        pipeline_converted=pipeline_counts["converted"],
+        pipeline_converted=converted_count,
         queue_operator=queue_counts["operator"],
         queue_paused=queue_counts["paused"],
         attention_needs_reply=attention_counts["needs_reply"],

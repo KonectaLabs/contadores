@@ -445,6 +445,7 @@ export function App() {
   const detailRequestId = useRef(0);
   const deliveryDraftSourceId = useRef<string | null>(null);
   const deliverySourcesRef = useRef<ClientLeadSource[]>([]);
+  const previousFunnelIdRef = useRef(selectedFunnelId);
   const debouncedQuery = useDebouncedValue(query, 250);
   const debouncedWorkstationQuery = useDebouncedValue(workstationQuery, 250);
 
@@ -662,6 +663,17 @@ export function App() {
 
   useEffect(() => {
     writeStoredValue(DASHBOARD_FUNNEL_STORAGE_KEY, selectedFunnelId);
+  }, [selectedFunnelId]);
+
+  useEffect(() => {
+    if (previousFunnelIdRef.current === selectedFunnelId) {
+      return;
+    }
+    previousFunnelIdRef.current = selectedFunnelId;
+    setStrategyFilter({ step: "", strategyId: "" });
+    setTagFilter("");
+    setSelectedLeadIds([]);
+    setActiveTab("messages");
   }, [selectedFunnelId]);
 
   useEffect(() => {
@@ -2191,25 +2203,31 @@ export function App() {
               <strong>{crmModeLabel}</strong>
               <span>{totalCount ? `${visibleCount}/${totalCount}` : "0"}</span>
             </div>
-            <section className="ct-lead-filter-bar" aria-label="Visible lead filters">
-              {leadViewFilters.map((filter) => {
-                const count = Number(metrics?.[filter.metric ?? "total"] ?? 0);
+            <section className="ct-lead-filter-bar" aria-labelledby="ctLeadStateLabel">
+              <div className="ct-lead-filter-head">
+                <span id="ctLeadStateLabel">State</span>
+                <strong>{leadViewFilters.find((filter) => filter.value === leadViewFilter)?.label ?? "All"}</strong>
+              </div>
+              <div className="ct-lead-filter-set" role="group" aria-label="Lead state filters">
+                {leadViewFilters.map((filter) => {
+                  const count = Number(metrics?.[filter.metric ?? "total"] ?? 0);
 
-                return (
-                  <button
-                    key={filter.value}
-                    type="button"
-                    className={`ct-lead-view ${leadViewFilter === filter.value ? "active" : ""}`}
-                    data-group={filter.group}
-                    data-tone={filter.tone}
-                    aria-pressed={leadViewFilter === filter.value}
-                    onClick={() => setLeadViewFilter(filter.value)}
-                  >
-                    <span className="ct-lead-view-count">{compactNumber(count)}</span>
-                    <span className="ct-lead-view-label">{filter.label}</span>
-                  </button>
-                );
-              })}
+                  return (
+                    <button
+                      key={filter.value}
+                      type="button"
+                      className={`ct-lead-view ${leadViewFilter === filter.value ? "active" : ""}`}
+                      data-group={filter.group}
+                      data-tone={filter.tone}
+                      aria-pressed={leadViewFilter === filter.value}
+                      onClick={() => setLeadViewFilter(filter.value)}
+                    >
+                      <span className="ct-lead-view-count">{compactNumber(count)}</span>
+                      <span className="ct-lead-view-label">{filter.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </section>
             {(strategyStats.length || tagOptions.length) ? (
               <section className="ct-filter-board" aria-label="Lead filters">
@@ -6463,8 +6481,12 @@ function MessageTimeline({
             >
               <div className="crm-message-meta">
                 <div className="crm-message-eyebrow">
-                  <span className={`crm-message-author ${direction}`}>{message.from_me ? "Bot / Operator" : "Lead"}</span>
-                  <span>{meta.join(" · ")}</span>
+                  <span className={`crm-message-author ${direction}`}>{message.from_me ? "Operator" : "Lead"}</span>
+                  <span className="crm-message-meta-chips">
+                    {meta.map((item, index) => (
+                      <span key={`${item}:${index}`}>{item}</span>
+                    ))}
+                  </span>
                 </div>
                 {needsDeliveryErrorAck ? (
                   <button
@@ -8195,8 +8217,7 @@ function isLeadConverted(lead: LeadSummary | null | undefined): boolean {
   return Boolean(
     lead?.pipeline_stage === "converted"
     || lead?.converted_at
-    || lead?.booked_at
-    || lead?.workstation_client_id,
+    || lead?.booked_at,
   );
 }
 
