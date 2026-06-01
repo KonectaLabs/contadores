@@ -2233,7 +2233,7 @@ export function App() {
             </div>
             <section className="ct-lead-filter-bar" aria-labelledby="ctLeadStateLabel">
               <div className="ct-lead-filter-head">
-                <span id="ctLeadStateLabel">State</span>
+                <span id="ctLeadStateLabel">Visible</span>
                 <strong>{leadViewFilters.find((filter) => filter.value === leadViewFilter)?.label ?? "All"}</strong>
               </div>
               <div className="ct-lead-filter-set" role="group" aria-label="Lead state filters">
