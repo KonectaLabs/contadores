@@ -298,7 +298,7 @@ const sendOptions = [
   { value: "send-accountant-page-example-video", title: "Pagina contador", help: "Send the accountant page example video." },
   { value: "send-lawyer-page-example-video", title: "Pagina abogado", help: "Send the lawyer page example video." },
   { value: "send-video-check", title: "Offer check", help: "Ask if they want to review the offer on a short call." },
-  { value: "send-calendly", title: "Meeting with intro", help: "Send the booking instructions and meeting link." },
+  { value: "send-calendly", title: "Meeting with intro", help: "Send the meeting details and meeting link." },
   { value: "send-calendly-link", title: "Meeting link only", help: "Send only the meeting link and mark meeting sent." },
 ] as const;
 
@@ -1902,6 +1902,25 @@ export function App() {
     setShowFunnelEditor(true);
   }
 
+  function selectOperation(section: ActiveSection) {
+    setActiveSection(section);
+
+    if (section === "crm") {
+      setLeadViewFilter("attention:needs_reply");
+      setSelectedLeadId(null);
+      setSelectedLeadIds([]);
+      setActiveTab("messages");
+      return;
+    }
+
+    if (section === "sell") {
+      setLeadViewFilter((current) => current === "attention:needs_reply" ? "all" : current);
+      setSelectedLeadId(null);
+      setSelectedLeadIds([]);
+      setActiveTab("messages");
+    }
+  }
+
   function toggleLeadSelection(leadId: string) {
     setSelectedLeadIds((current) => (
       current.includes(leadId)
@@ -1986,15 +2005,7 @@ export function App() {
                 className={isActive ? "active" : ""}
                 aria-label={badge ? `${operation.label}, ${badge} needs attention` : operation.label}
                 key={operation.section}
-                onClick={() => {
-                  setActiveSection(operation.section);
-                  if (operation.section === "crm") {
-                    setLeadViewFilter("attention:needs_reply");
-                  }
-                  if (operation.section === "sell" && leadViewFilter === "attention:needs_reply") {
-                    setLeadViewFilter("all");
-                  }
-                }}
+                onClick={() => selectOperation(operation.section)}
               >
                 <span className="ct-operation-icon" aria-hidden="true">{operation.icon}</span>
                 <span className="ct-operation-copy">
@@ -4281,7 +4292,7 @@ function RunnerEmpty({ tone, icon, title, text }: { tone: "clean" | "quiet"; ico
 
 function formatRunnerKind(value: string): string {
   const labels: Record<string, string> = {
-    booking_time_provided: "Booking intent",
+    booking_time_provided: "Meeting intent",
     new_reply: "New reply",
     delivery_changed: "Delivery",
     state_changed: "State",
@@ -8214,11 +8225,13 @@ function isLeadArchived(lead: LeadSummary | null | undefined): boolean {
 }
 
 function isLeadConverted(lead: LeadSummary | null | undefined): boolean {
-  return Boolean(
-    lead?.pipeline_stage === "converted"
-    || lead?.converted_at
-    || lead?.booked_at,
-  );
+  if (!lead) {
+    return false;
+  }
+  if (lead.pipeline_stage === "converted" || lead.converted_at) {
+    return true;
+  }
+  return Boolean(lead.booked_at);
 }
 
 function monogram(value: string): string {

@@ -4964,6 +4964,11 @@ async def list_contadores_leads(
         raise HTTPException(status_code=400, detail="Invalid terminal_state")
     if normalized_attention_state is not None and normalized_attention_state not in VALID_LEAD_ATTENTION_STATES:
         raise HTTPException(status_code=400, detail="Invalid attention_state")
+    if converted is not None and booked is not None and converted != booked:
+        raise HTTPException(
+            status_code=400,
+            detail="Use converted only; booked is a legacy alias and must match converted when supplied.",
+        )
     base_leads = ContadoresLead.list_recent(
         limit=1000,
         funnel_id=funnel_id,

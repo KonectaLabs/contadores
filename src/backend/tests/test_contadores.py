@@ -6906,6 +6906,51 @@ def test_contadores_overview_and_alerts_use_effective_stage(monkeypatch, tmp_pat
     assert alerts_response.json()["items"] == []
 
 
+def test_contadores_leads_converted_and_booked_alias_must_match(monkeypatch, tmp_path) -> None:
+    """The legacy booked query alias should match the canonical converted filter."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-converted-booked-alias",
+        phone="+5491555555571",
+        full_name="Converted Alias",
+    )
+    ContadoresLead.update_flow_state(lead.id, booked_at=now_utc())
+    open_lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-open-booked-alias",
+        phone="+5491555555572",
+        full_name="Open Alias",
+    )
+
+    with TestClient(app) as client:
+        converted_alias_response = client.get("/api/contadores/leads?converted=true&booked=true")
+        open_alias_response = client.get("/api/contadores/leads?converted=false&booked=false")
+
+    assert converted_alias_response.status_code == 200
+    assert [item["id"] for item in converted_alias_response.json()["leads"]] == [lead.id]
+
+    assert open_alias_response.status_code == 200
+    assert [item["id"] for item in open_alias_response.json()["leads"]] == [open_lead.id]
+
+
+def test_contadores_leads_converted_and_booked_conflict_rejected(monkeypatch, tmp_path) -> None:
+    """Contradictory converted/booked filters should fail instead of silently picking one."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    ContadoresLead.upsert(
+        external_lead_id="sheet-row-converted-booked-conflict",
+        phone="+5491555555573",
+        full_name="Converted Conflict",
+    )
+
+    with TestClient(app) as client:
+        converted_true_conflict = client.get("/api/contadores/leads?converted=true&booked=false")
+        converted_false_conflict = client.get("/api/contadores/leads?converted=false&booked=true")
+
+    assert converted_true_conflict.status_code == 400
+    assert "booked is a legacy alias" in converted_true_conflict.json()["detail"]
+    assert converted_false_conflict.status_code == 400
+    assert "booked is a legacy alias" in converted_false_conflict.json()["detail"]
+
+
 def test_contadores_calendly_bucket_includes_manual_post_calendly_leads(monkeypatch, tmp_path) -> None:
     """Calendly metrics should include leads that reached Calendly even if they later need manual follow-up."""
     configure_contadores_db(monkeypatch, tmp_path)
