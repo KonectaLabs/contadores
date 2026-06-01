@@ -167,17 +167,6 @@ type ClientLeadSourceMutationPayload = {
   context_field_mapping: Record<string, string>;
 };
 
-const leadViewGroups: Array<{
-  id: LeadViewGroupId;
-  label: string;
-  help: string;
-}> = [
-  { id: "overview", label: "Overview", help: "All visible leads" },
-  { id: "pipeline", label: "Progress", help: "Commercial milestone" },
-  { id: "action", label: "Action", help: "Human ownership" },
-  { id: "system", label: "System", help: "Automation and terminal" },
-];
-
 const leadViewFilters: LeadViewFilterOption[] = [
   { value: "all", label: "All", metric: "total", tone: "all", group: "overview" },
   { value: "pipeline:new", label: "New", metric: "pipeline_new", tone: "neutral", group: "pipeline" },
@@ -540,7 +529,7 @@ export function App() {
     if (!activeIsInbox && strategyFilter.strategyId) {
       params.set("strategy_id", strategyFilter.strategyId);
     }
-    if (tagFilter) {
+    if (!activeIsInbox && tagFilter) {
       params.set("tag", tagFilter);
     }
     if (debouncedQuery.trim()) {
@@ -697,6 +686,7 @@ export function App() {
     }
     setLeadViewFilter("all");
     setStrategyFilter({ step: "", strategyId: "" });
+    setTagFilter("");
     setActiveTab("messages");
   }, [isInboxFunnel]);
 
@@ -2197,40 +2187,27 @@ export function App() {
         ) : null}
         {!isInboxFunnel ? (
           <div className="ct-queue-bar">
-            <div>
+            <div className="ct-queue-summary">
               <strong>{crmModeLabel}</strong>
               <span>{totalCount ? `${visibleCount}/${totalCount}` : "0"}</span>
             </div>
-            <section className="ct-pipeline" aria-label="Lead views">
-              {leadViewGroups.map((group) => {
-                const filters = leadViewFilters.filter((filter) => filter.group === group.id);
+            <section className="ct-lead-filter-bar" aria-label="Visible lead filters">
+              {leadViewFilters.map((filter) => {
+                const count = Number(metrics?.[filter.metric ?? "total"] ?? 0);
 
                 return (
-                  <div className="ct-lead-view-group" data-group={group.id} key={group.id}>
-                    <div className="ct-lead-view-group-head">
-                      <span>{group.label}</span>
-                      <em>{group.help}</em>
-                    </div>
-                    <div className="ct-lead-view-group-strip" role="group" aria-label={`${group.label} lead views`}>
-                      {filters.map((filter) => {
-                        const count = Number(metrics?.[filter.metric ?? "total"] ?? 0);
-
-                        return (
-                          <button
-                            key={filter.value}
-                            type="button"
-                            className={`ct-lead-view ${leadViewFilter === filter.value ? "active" : ""}`}
-                            data-tone={filter.tone}
-                            aria-pressed={leadViewFilter === filter.value}
-                            onClick={() => setLeadViewFilter(filter.value)}
-                          >
-                            <span className="ct-lead-view-count">{compactNumber(count)}</span>
-                            <span className="ct-lead-view-label">{filter.label}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
+                  <button
+                    key={filter.value}
+                    type="button"
+                    className={`ct-lead-view ${leadViewFilter === filter.value ? "active" : ""}`}
+                    data-group={filter.group}
+                    data-tone={filter.tone}
+                    aria-pressed={leadViewFilter === filter.value}
+                    onClick={() => setLeadViewFilter(filter.value)}
+                  >
+                    <span className="ct-lead-view-count">{compactNumber(count)}</span>
+                    <span className="ct-lead-view-label">{filter.label}</span>
+                  </button>
                 );
               })}
             </section>
