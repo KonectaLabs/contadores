@@ -19,6 +19,7 @@ const readableLabels: Record<string, string> = {
   calendly_link: "Meeting link",
   calendly_sent: "Meeting",
   calendly_url: "Meeting link",
+  booking_details_collected: "Meeting details collected",
   closed: "Closed",
   converted: "Converted",
   delivered: "Delivered",

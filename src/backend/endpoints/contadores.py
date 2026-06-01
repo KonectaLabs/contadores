@@ -4969,6 +4969,20 @@ async def list_contadores_leads(
             status_code=400,
             detail="Use converted only; booked is a legacy alias and must match converted when supplied.",
         )
+    converted_filter = converted if converted is not None else booked
+    legacy_stage_converted_filter = normalized_stage == ContadoresLeadStage.BOOKED
+    if legacy_stage_converted_filter:
+        if normalized_pipeline_stage is not None and normalized_pipeline_stage != "converted":
+            raise HTTPException(
+                status_code=400,
+                detail="stage=booked is a legacy alias for converted and cannot be combined with another pipeline_stage.",
+            )
+        if converted_filter is False:
+            raise HTTPException(
+                status_code=400,
+                detail="stage=booked is a legacy alias for converted and cannot be combined with converted=false.",
+            )
+        converted_filter = True
     base_leads = ContadoresLead.list_recent(
         limit=1000,
         funnel_id=funnel_id,
@@ -5018,7 +5032,7 @@ async def list_contadores_leads(
         if normalized_stage == ContadoresLeadStage.CALENDLY_SENT:
             if not lead_counts_in_calendly_bucket(lead):
                 continue
-        elif normalized_stage == ContadoresLeadStage.BOOKED:
+        elif legacy_stage_converted_filter:
             if lead_pipeline_stage != "converted":
                 continue
         elif normalized_stage is not None and effective_stage != normalized_stage:
@@ -5031,7 +5045,6 @@ async def list_contadores_leads(
             continue
         if normalized_attention_state is not None and lead_attention_state != normalized_attention_state:
             continue
-        converted_filter = converted if converted is not None else booked
         if converted_filter is True and lead_pipeline_stage != "converted":
             continue
         if converted_filter is False and lead_pipeline_stage == "converted":

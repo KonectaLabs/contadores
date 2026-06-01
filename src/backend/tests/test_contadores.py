@@ -6951,6 +6951,31 @@ def test_contadores_leads_converted_and_booked_conflict_rejected(monkeypatch, tm
     assert "booked is a legacy alias" in converted_false_conflict.json()["detail"]
 
 
+def test_contadores_leads_stage_booked_alias_rejects_conflicting_canonical_filters(monkeypatch, tmp_path) -> None:
+    """The old stage=booked alias should fail loudly when it disagrees with canonical state filters."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    converted_lead = ContadoresLead.upsert(
+        external_lead_id="sheet-row-stage-booked-alias-conflict",
+        phone="+5491555555574",
+        full_name="Stage Booked Alias",
+    )
+    ContadoresLead.update_flow_state(converted_lead.id, booked_at=now_utc())
+
+    with TestClient(app) as client:
+        stage_alias_response = client.get("/api/contadores/leads?stage=booked")
+        converted_false_conflict = client.get("/api/contadores/leads?stage=booked&converted=false")
+        pipeline_conflict = client.get("/api/contadores/leads?stage=booked&pipeline_stage=meeting_sent")
+
+    assert stage_alias_response.status_code == 200
+    assert [item["id"] for item in stage_alias_response.json()["leads"]] == [converted_lead.id]
+    assert stage_alias_response.json()["leads"][0]["pipeline_stage"] == "converted"
+
+    assert converted_false_conflict.status_code == 400
+    assert "stage=booked is a legacy alias" in converted_false_conflict.json()["detail"]
+    assert pipeline_conflict.status_code == 400
+    assert "stage=booked is a legacy alias" in pipeline_conflict.json()["detail"]
+
+
 def test_contadores_calendly_bucket_includes_manual_post_calendly_leads(monkeypatch, tmp_path) -> None:
     """Calendly metrics should include leads that reached Calendly even if they later need manual follow-up."""
     configure_contadores_db(monkeypatch, tmp_path)

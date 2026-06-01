@@ -424,6 +424,7 @@ export function App() {
   const [professionalPhotoContext, setProfessionalPhotoContext] = useState("");
   const [professionalPhotoEditPrompts, setProfessionalPhotoEditPrompts] = useState<Record<string, string>>({});
   const [professionalPhotoJob, setProfessionalPhotoJob] = useState<WorkstationProfessionalPhotoJobResponse | null>(null);
+  const [workstationListLoading, setWorkstationListLoading] = useState(false);
   const [workstationLoading, setWorkstationLoading] = useState(false);
   const [deliverySources, setDeliverySources] = useState<ClientLeadSource[]>([]);
   const [deliveryLeads, setDeliveryLeads] = useState<ClientLead[]>([]);
@@ -564,14 +565,19 @@ export function App() {
       params.set("query", debouncedWorkstationQuery.trim());
     }
 
-    const payload = await apiFetch<WorkstationClientListResponse>(`/api/workstation/clients?${params.toString()}`);
-    setWorkstationList(payload);
-    setSelectedWorkstationClientId((current) => {
-      if (current && payload.clients.some((client) => client.id === current)) {
-        return current;
-      }
-      return payload.clients[0]?.id ?? null;
-    });
+    setWorkstationListLoading(true);
+    try {
+      const payload = await apiFetch<WorkstationClientListResponse>(`/api/workstation/clients?${params.toString()}`);
+      setWorkstationList(payload);
+      setSelectedWorkstationClientId((current) => {
+        if (current && payload.clients.some((client) => client.id === current)) {
+          return current;
+        }
+        return payload.clients[0]?.id ?? null;
+      });
+    } finally {
+      setWorkstationListLoading(false);
+    }
   }, [debouncedWorkstationQuery, selectedFunnelId]);
 
   const loadDeliverySources = useCallback(async () => {
@@ -2117,6 +2123,7 @@ export function App() {
           detail={workstationDetail}
           funnel={selectedFunnel}
           selectedClientId={selectedWorkstationClientId}
+          listLoading={workstationListLoading}
           loading={workstationLoading}
           actionBusy={actionBusy}
           notesDraft={workstationNotesDraft}
@@ -4391,6 +4398,7 @@ function WorkstationView({
   detail,
   funnel,
   selectedClientId,
+  listLoading,
   loading,
   actionBusy,
   notesDraft,
@@ -4430,6 +4438,7 @@ function WorkstationView({
   detail: WorkstationClientDetailResponse | null;
   funnel: FunnelDefinition | null;
   selectedClientId: string | null;
+  listLoading: boolean;
   loading: boolean;
   actionBusy: string | null;
   notesDraft: string;
@@ -4501,11 +4510,11 @@ function WorkstationView({
   const showStartCodexPrimary = canStartSoloPageWork;
   const showSteerCodexPrimary = !showStartCodexPrimary && canStopSoloPageWork;
   const showNotesPrimary = !showStartCodexPrimary && !showSteerCodexPrimary && !publicPage;
-  const clientListLoading = loading && clients.length === 0;
+  const clientListLoading = listLoading && clients.length === 0;
   const clientSummaryText = clientListLoading
     ? `Loading converted clients in ${funnelLabel}`
     : clients.length
-      ? `${clients.length} ${clients.length === 1 ? "client" : "clients"} in ${funnelLabel}`
+      ? `${clients.length} ${clients.length === 1 ? "client" : "clients"} in ${funnelLabel}${listLoading ? " · refreshing" : ""}`
       : `No converted clients in ${funnelLabel} yet`;
   const workstationStateIsReady = (automationState?.label ?? "").toLowerCase().includes("ready");
   const workstationHasMissingLiveProcess = automationState && (activeClient?.automation_status === "drafting" || activeClient?.automation_status === "revision_requested")
@@ -6353,6 +6362,23 @@ function LeadDetailHeader({
   );
 }
 
+function leadPauseDetail(lead: LeadSummary): string {
+  const reason = (lead.automation_paused_reason || "").trim();
+  if (!reason) {
+    return "The bot won't send anything while automation is paused.";
+  }
+  if (reason === "booking_details_collected") {
+    return "Meeting details collected. Operator should confirm the invite.";
+  }
+  if (reason === "meeting_scheduled") {
+    return "Meeting scheduled. CRM follow-up is paused.";
+  }
+  if (reason.startsWith("manual_")) {
+    return `Paused by operator (${humanize(reason)}).`;
+  }
+  return `Waiting for operator (${humanize(reason)}).`;
+}
+
 function PausedBanner({ lead }: {
   lead: LeadSummary | null;
 }) {
@@ -6369,9 +6395,7 @@ function PausedBanner({ lead }: {
         <span>
           {closed
             ? `Closed ${lead.closed_at ? relativeTime(lead.closed_at) : "just now"}. Reopen to continue with this lead.`
-            : lead.automation_paused_reason
-              ? `Paused by operator (${humanize(lead.automation_paused_reason)}).`
-              : "The bot won't send anything while automation is paused."}
+            : leadPauseDetail(lead)}
         </span>
       </div>
     </div>

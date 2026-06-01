@@ -129,6 +129,7 @@ body {
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 0;
 }
 
 #contadoresView .ct-brand-mark,
@@ -155,10 +156,14 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
 }
 
 #contadoresView .ct-brand-word {
   margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--ct-ink);
   font-size: 17px;
   line-height: 1;
@@ -169,6 +174,10 @@ body {
 #contadoresView .ct-sync-badge {
   display: inline-flex;
   align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   padding: 3px 10px;
   border: 1px solid var(--ct-line);
   border-radius: var(--ct-radius-sm);
@@ -5788,6 +5797,19 @@ body {
     grid-template-columns: auto 1fr;
     padding: 12px 16px;
     min-width: 0;
+  }
+
+  #contadoresView .ct-topbar-brand {
+    grid-column: 1 / -1;
+  }
+
+  #contadoresView .ct-brand-copy {
+    flex-wrap: wrap;
+    row-gap: 5px;
+  }
+
+  #contadoresView .ct-sync-badge {
+    max-width: 100%;
   }
 
   #contadoresView .ct-section-switch,
