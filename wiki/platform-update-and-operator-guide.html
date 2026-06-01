@@ -651,13 +651,13 @@
                 <h3>Faltan env vars de calendario</h3>
                 <p>
                   El scheduler esta preparado para dry-run y para guardar blockers,
-                  pero crear eventos reales requiere estas variables.
+                  pero crear eventos reales requiere un calendario dedicado compartido
+                  con el service account.
                 </p>
                 <div class="kbd-list">
                   <span>PLATFORM_MEETING_CALENDAR_ID</span>
                   <span>PLATFORM_MEETING_INTERNAL_ATTENDEES</span>
-                  <span>GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON</span>
-                  <span>GOOGLE_CALENDAR_DELEGATED_USER</span>
+                  <span>GOOGLE_CALENDAR_SERVICE_ACCOUNT_FILE</span>
                 </div>
               </article>
               <article class="card">

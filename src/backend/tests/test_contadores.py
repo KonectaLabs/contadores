@@ -1487,7 +1487,7 @@ def test_platform_meeting_calendar_gate_builds_and_creates_event(monkeypatch, tm
     assert blocked_live["ok"] is True
     assert blocked_live["result"]["calendar"]["status"] == "calendar_blocked"
     assert "GOOGLE_CALENDAR_SERVICE_ACCOUNT_FILE" in blocked_live["result"]["calendar"]["blocked_reasons"]
-    assert "GOOGLE_CALENDAR_DELEGATED_USER" in blocked_live["result"]["calendar"]["blocked_reasons"]
+    assert "GOOGLE_CALENDAR_DELEGATED_USER" not in blocked_live["result"]["calendar"]["blocked_reasons"]
 
     insert_calls: list[dict] = []
 
@@ -1500,7 +1500,6 @@ def test_platform_meeting_calendar_gate_builds_and_creates_event(monkeypatch, tm
         return {"id": "calendar-event-1", "htmlLink": "https://calendar.google.com/event?eid=1"}
 
     monkeypatch.setenv("GOOGLE_CALENDAR_SERVICE_ACCOUNT_FILE", str(tmp_path / "service-account.json"))
-    monkeypatch.setenv("GOOGLE_CALENDAR_DELEGATED_USER", "scheduler@example.com")
     monkeypatch.setattr(calendar_events_module, "_insert_google_calendar_event", fake_insert)
     live_result = call_tool(
         run_id="agent-run-calendar",

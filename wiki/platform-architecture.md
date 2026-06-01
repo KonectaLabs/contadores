@@ -59,9 +59,9 @@ across the lifecycle.
   a stable source for row values by spreadsheet ID and range.
   Source: https://developers.google.com/workspace/sheets/api/guides/values
 - Scheduling: use Google Calendar `events.insert` with explicit attendees,
-  start/end timezone, and send updates. Service-account attendee writes require
-  delegated Workspace authority, so the platform keeps a dry-run gate when
-  credentials are missing.
+  start/end timezone, and send updates. The production path should target a
+  dedicated calendar shared with the service account; delegated Workspace
+  authority is optional and only for writing as a user-owned calendar.
   Source: https://developers.google.com/workspace/calendar/api/v3/reference/events/insert
 - WhatsApp: keep production on WhatsApp Cloud API/templates/webhooks, with
   `wacli` only as a local/operator fallback. External sends must stay
@@ -179,9 +179,9 @@ Scheduling is agent-native and does not depend on the legacy scheduling-link UI:
 4. Dry-run is allowed without credentials and stores `calendar_ready` or
    `calendar_blocked` on the meeting.
 5. Live event creation requires explicit `live_writes_requested=true`,
-   `PLATFORM_MEETING_CALENDAR_ID`, internal attendees, a Google service account,
-   and a delegated Workspace user because Calendar attendees require delegated
-   authority for service-account writes.
+   `PLATFORM_MEETING_CALENDAR_ID`, internal attendees, and a Google service
+   account. The calendar should be dedicated to Konecta scheduling and shared
+   with the service account.
 6. Successful writes store `calendar_event_id`, `calendar_event_link`, provider
    response, and an event in `platform_events`.
 

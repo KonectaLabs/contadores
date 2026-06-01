@@ -201,8 +201,6 @@ def _insert_google_calendar_event(
     delegated_user = _delegated_user()
     if not credentials_path:
         raise CalendarSchedulingError("GOOGLE_CALENDAR_SERVICE_ACCOUNT_FILE is required")
-    if event_payload.get("attendees") and not delegated_user:
-        raise CalendarSchedulingError("GOOGLE_CALENDAR_DELEGATED_USER is required when inviting attendees")
     try:
         from google.oauth2.service_account import Credentials
         from googleapiclient.discovery import build
@@ -214,6 +212,7 @@ def _insert_google_calendar_event(
         scopes=["https://www.googleapis.com/auth/calendar.events"],
     )
     if delegated_user:
+        # Optional: only use Domain-Wide Delegation when writing as a Workspace user.
         credentials = credentials.with_subject(delegated_user)
     service = build("calendar", "v3", credentials=credentials)
     return (
@@ -260,8 +259,6 @@ def schedule_meeting_calendar_event(
             warnings.append("Meeting already has a Google Calendar event; skipped duplicate creation.")
         if not existing_event_id and not _service_account_file() and calendar_insert is None:
             blocked.append("GOOGLE_CALENDAR_SERVICE_ACCOUNT_FILE")
-        if not existing_event_id and event_payload.get("attendees") and not _delegated_user() and calendar_insert is None:
-            blocked.append("GOOGLE_CALENDAR_DELEGATED_USER")
 
     blocked = list(dict.fromkeys(blocked))
     existing_event_id = _clean(meeting.calendar_event_id)

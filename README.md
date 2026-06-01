@@ -1060,8 +1060,8 @@ Acciones manuales de Meeting:
   `schedule_platform_meeting` para armar y persistir el payload de Google
   Calendar con el lead y los asistentes internos. El tool hace dry-run sin
   credenciales y guarda blockers; solo crea el evento real si
-  `live_writes_requested=true` y hay calendar ID, service account y usuario
-  delegado configurados.
+  `live_writes_requested=true`, hay un calendar ID dedicado compartido con el
+  service account y estan configurados los asistentes internos.
 - Si faltan datos o credenciales, el meeting queda `calendar_blocked` y el
   detalle aparece en Ops/`/api/platform/overview`.
 
