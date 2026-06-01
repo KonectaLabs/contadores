@@ -3232,6 +3232,17 @@ body {
   text-align: center;
 }
 
+#contadoresView .ct-empty-state.compact {
+  min-height: 92px;
+  margin: 8px 0;
+  padding: 14px;
+}
+
+#contadoresView .ct-empty-state-icon {
+  color: var(--ct-teal);
+  animation: workstation-spin 900ms linear infinite;
+}
+
 #contadoresView .ct-empty-state strong {
   color: var(--ct-ink);
   font: 760 14px/1.15 var(--font-sans);

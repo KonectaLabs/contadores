@@ -188,7 +188,8 @@ const leadViewFilterGroups: { group: LeadViewFilterOption["group"]; label: strin
 ];
 
 const validLeadViewFilterValues = new Set<LeadViewFilterValue>(leadViewFilters.map((filter) => filter.value));
-const legacyLeadViewFilterValues: Record<string, LeadViewFilterValue> = {
+// Compat-only aliases for localStorage values written by the old stage filter.
+const legacyLeadViewFilterAliases: Record<string, LeadViewFilterValue> = {
   awaiting_initial_reply: "pipeline:new",
   awaiting_video_reply: "pipeline:offer_sent",
   calendly_sent: "pipeline:meeting_sent",
@@ -224,7 +225,30 @@ function readStoredLeadViewFilter(): LeadViewFilterValue {
   if (validLeadViewFilterValues.has(value as LeadViewFilterValue)) {
     return value as LeadViewFilterValue;
   }
-  return legacyLeadViewFilterValues[value || ""] ?? "all";
+  return legacyLeadViewFilterAliases[value || ""] ?? "all";
+}
+
+function CtEmptyState({
+  title,
+  message,
+  action,
+  compact = false,
+  loading = false,
+}: {
+  title: string;
+  message: string;
+  action?: ReactNode;
+  compact?: boolean;
+  loading?: boolean;
+}) {
+  return (
+    <div className={`ct-empty-state ${compact ? "compact" : ""}`} role="status" aria-live="polite">
+      {loading ? <SpinnerGap className="ct-empty-state-icon" size={18} weight="bold" aria-hidden="true" /> : null}
+      <strong>{title}</strong>
+      <span>{message}</span>
+      {action}
+    </div>
+  );
 }
 
 function applyLeadViewFilter(params: URLSearchParams, filter: LeadViewFilterValue) {
@@ -2697,7 +2721,7 @@ function ClientLeadDeliveryView({
           </div>
           <div className="ct-leads-list delivery-source-list">
             {loading && !contactGroups.length ? (
-              <p className="ct-empty">Loading delivery contacts...</p>
+              <CtEmptyState compact loading title="Loading contacts" message="Checking Delivery sources." />
             ) : contactGroups.length ? contactGroups.map((group) => {
               const active = editorMode === "edit" && group.sources.some((source) => source.id === selectedSourceId);
               return (
@@ -2731,7 +2755,7 @@ function ClientLeadDeliveryView({
                 </button>
               );
             }) : (
-              <p className="ct-empty">Create a contact to pull sheet leads and deliver notifications.</p>
+              <CtEmptyState compact title="No contacts yet" message="Add a Delivery contact to pull sheet leads." />
             )}
           </div>
         </aside>
@@ -2856,7 +2880,7 @@ function ClientLeadDeliveryView({
                 </div>
 
                 {recipientChatLoading && !recipientMessages.length ? (
-                  <p className="ct-empty">Loading sent messages...</p>
+                  <CtEmptyState compact loading title="Loading sent chat" message="Fetching recipient messages." />
                 ) : recipientMessages.length ? (
                   <div className="delivery-recipient-messages">
                     {recipientMessages.map((message) => (
@@ -2880,7 +2904,7 @@ function ClientLeadDeliveryView({
                     ))}
                   </div>
                 ) : (
-                  <p className="ct-empty">No sent Delivery messages to this recipient yet.</p>
+                  <CtEmptyState compact title="No sent chat yet" message="Delivery messages will appear here." />
                 )}
               </section>
             ) : null}
@@ -2900,9 +2924,9 @@ function ClientLeadDeliveryView({
               </summary>
 
               {!isExisting ? (
-                <p className="ct-empty">Pick a Delivery contact to inspect the sheet leads.</p>
+                <CtEmptyState compact title="Select a contact" message="Pick a Delivery contact to inspect rows." />
               ) : leadsLoading && !visibleLeads.length ? (
-                <p className="ct-empty">Loading contact leads...</p>
+                <CtEmptyState compact loading title="Loading rows" message="Fetching sheet leads." />
               ) : visibleLeads.length ? (
                 <div className="delivery-sheet-sections">
                   {visibleSheetSections.map((section) => (
@@ -3019,7 +3043,7 @@ function ClientLeadDeliveryView({
                   ))}
                 </div>
               ) : (
-                <p className="ct-empty">No leads loaded for this contact yet.</p>
+                <CtEmptyState compact title="No rows loaded" message="Rows will appear after the next sync." />
               )}
             </details>
           </div>
@@ -4885,20 +4909,20 @@ function WorkstationView({
                 </div>
               </button>
             )) : clientListLoading ? (
-              <p className="ct-empty">Loading converted clients...</p>
+              <CtEmptyState compact loading title="Loading clients" message="Fetching converted workspaces." />
             ) : (
-              <p className="ct-empty">Convert a paid lead from CRM to open a client workspace.</p>
+              <CtEmptyState compact title="No clients yet" message="Convert a paid lead to open Build." />
             )}
           </div>
         </aside>
 
         <section className="ct-detail workstation-detail">
           {clientDetailLoading ? (
-            <p className="empty-note">Loading client workspace.</p>
+            <CtEmptyState loading title="Loading workspace" message="Fetching client details." />
           ) : !activeClient && clientListLoading ? (
-            <p className="empty-note">Loading converted clients.</p>
+            <CtEmptyState loading title="Loading clients" message="Fetching converted workspaces." />
           ) : !activeClient ? (
-            <p className="empty-note">Select a converted client.</p>
+            <CtEmptyState title="Select a client" message="Choose a converted client to build." />
           ) : (
             <>
               <header className="ct-detail-head workstation-head">
@@ -5277,7 +5301,7 @@ function WorkstationView({
                       </div>
                     </article>
                   )) : (
-                    <p className="empty-note">No media uploaded for this client yet.</p>
+                    <CtEmptyState compact title="No media yet" message="Upload logos, photos, or references." />
                   )}
                 </div>
               </details>
@@ -5341,9 +5365,12 @@ function WorkstationView({
                       </div>
                     </article>
                   )) : (
-                    <p className="empty-note">
-                      {professionalPhotoJobBusy ? "Waiting for the first result." : "No professional photo yet."}
-                    </p>
+                    <CtEmptyState
+                      compact
+                      loading={professionalPhotoJobBusy}
+                      title={professionalPhotoJobBusy ? "Waiting first result" : "No portrait yet"}
+                      message={professionalPhotoJobBusy ? "The generated photo will appear here." : "Create a professional photo from client media."}
+                    />
                   )}
                 </div>
               </details>
@@ -5683,7 +5710,7 @@ function ProfessionalPhotoModal({
                   </button>
                 );
               }) : (
-                <p className="empty-note">No image media available.</p>
+                <CtEmptyState compact title="No images available" message="Upload image media before creating a photo." />
               )}
             </div>
           </section>
@@ -5714,7 +5741,7 @@ function FunnelSetupView({
   if (!funnel) {
     return (
       <div className="ct-funnel-setup">
-        <p className="ct-empty">No funnel selected.</p>
+        <CtEmptyState compact title="No funnel selected" message="Pick a funnel to review setup." />
       </div>
     );
   }
@@ -6251,10 +6278,7 @@ function LeadList({
   if (loading && !leads.length) {
     return (
       <div className="ct-leads-list">
-        <div className="ct-empty-state">
-          <strong>Loading leads</strong>
-          <span>Fetching the current queue.</span>
-        </div>
+        <CtEmptyState loading title="Loading leads" message="Fetching the current queue." />
       </div>
     );
   }
@@ -6262,15 +6286,15 @@ function LeadList({
   if (!leads.length) {
     return (
       <div className="ct-leads-list">
-        <div className="ct-empty-state">
-          <strong>{hasActiveFilters ? "No visible leads" : "No leads loaded"}</strong>
-          <span>{hasActiveFilters ? "Clear filters to return to the full queue." : "Refresh after the next sheet sync."}</span>
-          {hasActiveFilters ? (
+        <CtEmptyState
+          title={hasActiveFilters ? "No visible leads" : "No leads loaded"}
+          message={hasActiveFilters ? "Clear filters to return to the full queue." : "Refresh after the next sheet sync."}
+          action={hasActiveFilters ? (
             <button type="button" className="ct-btn ct-btn-ghost" onClick={onClearFilters}>
               Clear filters
             </button>
           ) : null}
-        </div>
+        />
       </div>
     );
   }
@@ -6634,13 +6658,13 @@ function MessageTimeline({
   const timelineRef = useScrollChatToLatestMessage(messages, hasLead);
 
   if (!hasLead) {
-    return <p className="empty-note">Select a lead from the list.</p>;
+    return <CtEmptyState compact title="Select a lead" message="Pick a lead to see the conversation." />;
   }
   if (loading && !messages.length) {
-    return <p className="empty-note">Loading messages...</p>;
+    return <CtEmptyState compact loading title="Loading messages" message="Fetching WhatsApp history." />;
   }
   if (!messages.length) {
-    return <p className="empty-note">No messages for this lead yet.</p>;
+    return <CtEmptyState compact title="No messages yet" message="Conversation history will appear here." />;
   }
 
   return (
@@ -6762,10 +6786,10 @@ function MessageMedia({ message }: { message: MessageItem }) {
 
 function LeadStrategies({ messages, loading, hasLead }: { messages: MessageItem[]; loading: boolean; hasLead: boolean }) {
   if (!hasLead) {
-    return <p className="empty-note">Strategies will appear when you select a lead.</p>;
+    return <CtEmptyState compact title="Select a lead" message="Strategy history will appear here." />;
   }
   if (loading && !messages.length) {
-    return <p className="empty-note">Loading strategies...</p>;
+    return <CtEmptyState compact loading title="Loading strategies" message="Reading strategy assignments." />;
   }
 
   const groups = new Map<string, { step: string; strategyId: string; strategyLabel: string; messages: MessageItem[] }>();
@@ -6784,7 +6808,7 @@ function LeadStrategies({ messages, loading, hasLead }: { messages: MessageItem[
     });
 
   if (!groups.size) {
-    return <p className="empty-note">No strategy assignment for this lead yet.</p>;
+    return <CtEmptyState compact title="No strategy yet" message="Automation strategy assignments will appear here." />;
   }
 
   return (

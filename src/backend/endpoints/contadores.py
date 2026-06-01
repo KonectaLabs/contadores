@@ -1159,6 +1159,10 @@ VALID_LEAD_PIPELINE_STAGES = CONTADORES_LEAD_PIPELINE_STAGES
 VALID_LEAD_QUEUE_STATES = CONTADORES_LEAD_QUEUE_STATES
 VALID_LEAD_TERMINAL_STATES = CONTADORES_LEAD_TERMINAL_STATES
 VALID_LEAD_ATTENTION_STATES = CONTADORES_LEAD_ATTENTION_STATES
+CANONICAL_CONVERTED_PIPELINE_STAGE = "converted"
+LEGACY_BOOKED_STAGE = "booked"
+BOOKED_COMPAT_ACTIONS = {"mark-booked", "send-manual-booked"}
+CONVERSION_ACTIONS = {"mark-converted", *BOOKED_COMPAT_ACTIONS}
 
 
 def derive_lead_terminal_state(
@@ -1610,7 +1614,7 @@ def build_lead_summary(
     meeting_sent_at = format_timestamp_seconds(lead.calendly_sent_at)
     meeting_scheduled_at = format_timestamp_seconds(lead.meeting_scheduled_at)
     converted_at = format_timestamp_seconds(lead.booked_at)
-    public_stage = "converted" if effective_stage == ContadoresLeadStage.BOOKED else effective_stage.value
+    public_stage = CANONICAL_CONVERTED_PIPELINE_STAGE if effective_stage == ContadoresLeadStage.BOOKED else effective_stage.value
     return ContadoresLeadSummary(
         id=lead.id,
         funnel_id=lead.funnel_id,
@@ -1873,7 +1877,7 @@ def build_followup_lead_snapshot(
     )
     effective_stage = derive_effective_lead_stage(lead)
     converted_at = format_timestamp_seconds(lead.booked_at)
-    public_stage = "converted" if effective_stage == ContadoresLeadStage.BOOKED else effective_stage.value
+    public_stage = CANONICAL_CONVERTED_PIPELINE_STAGE if effective_stage == ContadoresLeadStage.BOOKED else effective_stage.value
     return ContadoresFollowupLeadSnapshot(
         id=lead.id,
         funnel_id=lead.funnel_id,
@@ -3601,7 +3605,7 @@ def run_quick_action_for_lead(
         if not resolve_funnel(lead.funnel_id).manual_ping_template_name:
             raise HTTPException(status_code=400, detail="Manual ping template is not configured")
         queued_rows = send_manual_ping_template(lead=lead)
-    elif normalized_action in {"mark-converted", "mark-booked", "send-manual-booked"}:
+    elif normalized_action in CONVERSION_ACTIONS:
         updated = ContadoresLead.mark_converted(
             lead.id,
             automation_paused=True,
@@ -4973,15 +4977,15 @@ async def list_contadores_leads(
     converted_filter = converted if converted is not None else booked
     legacy_stage_converted_filter = normalized_stage == ContadoresLeadStage.BOOKED
     if legacy_stage_converted_filter:
-        if normalized_pipeline_stage is not None and normalized_pipeline_stage != "converted":
+        if normalized_pipeline_stage is not None and normalized_pipeline_stage != CANONICAL_CONVERTED_PIPELINE_STAGE:
             raise HTTPException(
                 status_code=400,
-                detail="stage=booked is a legacy alias for converted and cannot be combined with another pipeline_stage.",
+                detail=f"stage={LEGACY_BOOKED_STAGE} is a legacy alias for converted and cannot be combined with another pipeline_stage.",
             )
         if converted_filter is False:
             raise HTTPException(
                 status_code=400,
-                detail="stage=booked is a legacy alias for converted and cannot be combined with converted=false.",
+                detail=f"stage={LEGACY_BOOKED_STAGE} is a legacy alias for converted and cannot be combined with converted=false.",
             )
         converted_filter = True
     base_leads = ContadoresLead.list_recent(
@@ -5034,7 +5038,7 @@ async def list_contadores_leads(
             if not lead_counts_in_calendly_bucket(lead):
                 continue
         elif legacy_stage_converted_filter:
-            if lead_pipeline_stage != "converted":
+            if lead_pipeline_stage != CANONICAL_CONVERTED_PIPELINE_STAGE:
                 continue
         elif normalized_stage is not None and effective_stage != normalized_stage:
             continue
@@ -5046,9 +5050,9 @@ async def list_contadores_leads(
             continue
         if normalized_attention_state is not None and lead_attention_state != normalized_attention_state:
             continue
-        if converted_filter is True and lead_pipeline_stage != "converted":
+        if converted_filter is True and lead_pipeline_stage != CANONICAL_CONVERTED_PIPELINE_STAGE:
             continue
-        if converted_filter is False and lead_pipeline_stage == "converted":
+        if converted_filter is False and lead_pipeline_stage == CANONICAL_CONVERTED_PIPELINE_STAGE:
             continue
         if needs_human is True and effective_stage != ContadoresLeadStage.NEEDS_HUMAN:
             continue
