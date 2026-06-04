@@ -26,6 +26,9 @@ dependencies = [
     "typer>=0.21.1",
 ]
 
+[project.scripts]
+contadores-agent = "backend.agent_cli:app"
+
 [project.optional-dependencies]
 messenger = [
     "google-auth>=2.48.0",

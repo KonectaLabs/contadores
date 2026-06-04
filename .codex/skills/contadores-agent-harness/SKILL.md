@@ -16,15 +16,42 @@ approved CLI tools to make it happen. You may call zero, one, or many tools.
 Finish only after the useful side effects are done, a future heartbeat is
 scheduled, or you have a clear reason to do nothing.
 
-## Tool Runner
+## Agent API And CLI
 
-The prompt gives the exact command:
+Prefer the decoupled HTTP CLI when a profile is available:
+
+```bash
+contadores-agent queues needs-attention --limit 20
+contadores-agent conversations get LEAD_ID
+contadores-agent messages LEAD_ID
+contadores-agent send LEAD_ID "..."
+contadores-agent action LEAD_ID mark-answered
+contadores-agent tool call get_lead_context --json '{"lead_id":"..."}'
+```
+
+Run `contadores-agent --help` and subcommand `--help` when exploring. The CLI
+talks to `/api/agent` over HTTP and stores browser-login credentials outside
+the repo in `~/.config/contadores-agent/profiles.json`.
+
+First login, when needed:
+
+```bash
+contadores-agent login https://crm.fgoiriz.com
+```
+
+For server automations or rollout verification, `/api/agent` also accepts
+`X-Internal-Token`.
+
+## Internal Tool Runner
+
+Backend-controlled autonomous turns may still receive the exact local command:
 
 ```bash
 uv run python -m backend.ai.codex_agent_runtime call --run-id RUN_ID --tool TOOL_NAME --arguments-json 'JSON_OBJECT'
 ```
 
-Use it directly. Tool calls are audited in the database and in
+Use it directly when the prompt provides it or when no HTTP CLI profile is
+available. Tool calls are audited in the database and in
 `data/agent-runs/RUN_ID/tool_calls.jsonl`.
 
 ## Operating Loop

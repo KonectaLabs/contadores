@@ -75,6 +75,35 @@ funnels de campaña habilitados, los funnels con sheet lista y los problemas de
 setup. Un funnel incompleto no rompe el server; simplemente aparece como
 pendiente de configurar.
 
+### Agent API y CLI
+
+El contrato agent-native publico del producto vive en `/api/agent`. La CLI
+`contadores-agent` es un cliente HTTP desacoplado: no importa DB ni helpers del
+backend para operaciones normales. Ver la referencia compacta en
+`wiki/agent-api-cli.md`.
+
+Login por navegador:
+
+```bash
+contadores-agent login https://crm.fgoiriz.com
+contadores-agent status
+```
+
+Operar necesidades de atencion:
+
+```bash
+contadores-agent queues needs-attention --limit 20
+contadores-agent conversations get LEAD_ID
+contadores-agent messages LEAD_ID
+contadores-agent send LEAD_ID "..."
+contadores-agent action LEAD_ID mark-answered
+contadores-agent tool call get_lead_context --json '{"lead_id":"..."}'
+```
+
+El token de CLI queda fuera del repo en
+`~/.config/contadores-agent/profiles.json` con permisos `0600`. Para
+automaciones de servidor, `/api/agent` tambien acepta `X-Internal-Token`.
+
 ### Configurar sin UI, agent-native
 
 Los agentes autonomos no tienen que pedirle al operador que abra la UI para
@@ -620,15 +649,19 @@ incluir tambien inboxes/funnels fuera de Contadores y Abogados.
 En el snapshot, `stage` sigue el contrato operator-facing nuevo y devuelve
 `converted` para conversiones; `raw_stage` conserva el valor legacy persistido.
 
-Acciones internas para automations de follow-up:
+Acciones internas para automations de follow-up via Agent API:
 
-- `POST /api/contadores/followup/leads/{lead_id}/messages` con
-  `{"text":"...", "dedupe_hours":24}` encola un mensaje manual si la ventana de
-  WhatsApp esta abierta.
-- `POST /api/contadores/followup/leads/{lead_id}/actions` con
+- `GET /api/agent/queues/needs-attention` lee conversaciones que requieren
+  respuesta.
+- `POST /api/agent/conversations/{lead_id}/messages` con
+  `{"text":"...", "idempotency_key":"..."}` encola un mensaje si la ventana de
+  WhatsApp o el template permitido lo deja.
+- `POST /api/agent/conversations/{lead_id}/actions` con
   `{"action":"send-manual-ping"}` corre una accion existente del CRM.
-- `PATCH /api/contadores/followup/leads/{lead_id}` cambia stage,
+- `PATCH /api/agent/conversations/{lead_id}` cambia stage,
   clasificacion, tags o estado manual. No envia WhatsApp.
+- `contadores-agent --help` expone la misma superficie como CLI HTTP
+  desacoplada.
 
 Runner horario de follow-up:
 

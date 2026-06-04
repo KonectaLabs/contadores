@@ -155,7 +155,9 @@ LOGIN_PAGE_HTML = """<!doctype html>
           } catch {}
           throw new Error(detail);
         }
-        window.location.replace("/");
+        const next = new URLSearchParams(window.location.search).get("next") || "/";
+        const redirectPath = next.startsWith("/") && !next.startsWith("//") ? next : "/";
+        window.location.replace(redirectPath);
       } catch (error) {
         errorText.textContent = error && error.message ? error.message : "Login failed";
       } finally {
@@ -350,6 +352,17 @@ class PrimitiveAuthManager:
             self._prune_revoked_sessions(now)
             self._revoked_sessions[session_token] = expires_at
 
+    def session_expires_at(self, session_token: str | None) -> datetime | None:
+        """Return a valid session token expiry without extending it."""
+        if not session_token:
+            return None
+        with self._lock:
+            signing_key = self._signing_key
+        payload = self._decode_signed_token(session_token, signing_key)
+        if not payload:
+            return None
+        return self._coerce_expiry(payload.get("e"))
+
     def _is_session_revoked(self, session_token: str, now: datetime) -> bool:
         """Return True when logout already revoked this exact token."""
         with self._lock:
@@ -481,3 +494,82 @@ class PrimitiveAuthManager:
 
 
 auth_manager = PrimitiveAuthManager()
+
+
+class CliLoginTicketManager:
+    """Short-lived one-time browser-login codes for CLI sessions."""
+
+    def __init__(
+        self,
+        session_manager: PrimitiveAuthManager,
+        *,
+        code_duration: timedelta = timedelta(minutes=5),
+    ) -> None:
+        self._session_manager = session_manager
+        self._code_duration = code_duration
+        self._codes: dict[str, dict[str, object]] = {}
+        self._lock = Lock()
+
+    def create_code(self, user: str) -> dict[str, object]:
+        """Create one exchange code bound to a signed CLI session token."""
+        clean_user = _normalize_user(user)
+        session_token = self._session_manager.create_session(clean_user)
+        now = datetime.now(UTC)
+        code = secrets.token_urlsafe(32)
+        session_expires_at = self._session_manager.session_expires_at(session_token)
+        entry = {
+            "code": code,
+            "user": clean_user,
+            "session_token": session_token,
+            "expires_at": now + self._code_duration,
+            "session_expires_at": session_expires_at,
+        }
+        with self._lock:
+            self._prune(now)
+            self._codes[code] = entry
+        return entry
+
+    def exchange_code(self, code: str) -> dict[str, object] | None:
+        """Consume a one-time login code and return its session payload."""
+        clean_code = (code or "").strip()
+        if not clean_code:
+            return None
+        now = datetime.now(UTC)
+        with self._lock:
+            self._prune(now)
+            entry = self._codes.pop(clean_code, None)
+        if entry is None:
+            return None
+        expires_at = entry.get("expires_at")
+        if not isinstance(expires_at, datetime) or expires_at <= now:
+            self._session_manager.revoke_session(str(entry.get("session_token") or ""))
+            return None
+        session_token = str(entry.get("session_token") or "")
+        user = self._session_manager.resolve_session(session_token)
+        if not user:
+            return None
+        return {
+            "authenticated": True,
+            "user": user,
+            "session_token": session_token,
+            "expires_at": _iso_datetime(entry.get("session_expires_at")),
+        }
+
+    def _prune(self, now: datetime) -> None:
+        expired_codes = [
+            code
+            for code, entry in self._codes.items()
+            if not isinstance(entry.get("expires_at"), datetime) or entry["expires_at"] <= now
+        ]
+        for code in expired_codes:
+            self._codes.pop(code, None)
+
+
+def _iso_datetime(value: object) -> str | None:
+    """Serialize aware datetimes for API responses."""
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return None
+
+
+cli_login_manager = CliLoginTicketManager(auth_manager)

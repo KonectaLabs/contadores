@@ -116,12 +116,37 @@ Also read these skills when relevant:
 
 ## Production API Contract
 
-Every request below must include:
+Preferred live-action surface:
+
+```bash
+contadores-agent queues needs-attention --limit 20
+contadores-agent conversations list --attention-state needs_reply --limit 200
+contadores-agent conversations get LEAD_ID
+contadores-agent messages LEAD_ID
+contadores-agent send LEAD_ID "..." --idempotency-key UNIQUE_KEY
+contadores-agent action LEAD_ID mark-answered
+contadores-agent tags append LEAD_ID followup
+contadores-agent note add LEAD_ID "Contexto para el proximo run."
+contadores-agent followup schedule LEAD_ID --minutes 60 --instruction "Revisar si respondio."
+contadores-agent tool call get_lead_context --json '{"lead_id":"..."}'
+```
+
+For shell HTTP calls, every production request below must include:
 
 - `Host: crm.fgoiriz.com`
 - `X-Internal-Token: <INTERNAL_API_TOKEN>`
 
-Read current CRM state:
+Read current CRM state through the agent API:
+
+```text
+GET http://149.50.136.121/api/agent/queues/needs-attention?limit=200&messages_per_lead=12
+GET http://149.50.136.121/api/agent/conversations?limit=20000&messages_per_lead=12
+GET http://149.50.136.121/api/agent/conversations/{lead_id}
+GET http://149.50.136.121/api/agent/conversations/{lead_id}/messages
+```
+
+The legacy snapshot remains useful for bulk read-only hourly analysis and CSV
+exports:
 
 ```text
 GET http://149.50.136.121/api/contadores/followup/snapshot?limit=20000&messages_per_lead=12
@@ -131,14 +156,14 @@ GET http://149.50.136.121/api/contadores/followup/snapshot.csv?limit=20000&messa
 Queue one custom message inside the open WhatsApp 24-hour window:
 
 ```text
-POST http://149.50.136.121/api/contadores/followup/leads/{lead_id}/messages
-{"text":"...", "dedupe_hours":24}
+POST http://149.50.136.121/api/agent/conversations/{lead_id}/messages
+{"text":"...", "idempotency_key":"crm-followup-..."}
 ```
 
 Run an existing CRM action:
 
 ```text
-POST http://149.50.136.121/api/contadores/followup/leads/{lead_id}/actions
+POST http://149.50.136.121/api/agent/conversations/{lead_id}/actions
 {"action":"send-manual-ping"}
 ```
 
@@ -151,7 +176,7 @@ Allowed action values are the existing quick actions, including
 Update one lead's classification/stage:
 
 ```text
-PATCH http://149.50.136.121/api/contadores/followup/leads/{lead_id}
+PATCH http://149.50.136.121/api/agent/conversations/{lead_id}
 {"stage":"needs_human", "classification_label":"needs_human", "classification_reason":"...", "manual_reply_status":"answered"}
 ```
 

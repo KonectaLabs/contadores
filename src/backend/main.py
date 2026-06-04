@@ -6,6 +6,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
@@ -22,6 +23,7 @@ from backend.client_lead_config import sync_client_lead_sources_from_config
 from backend.database import init_db
 from backend.endpoints import (
     auth_router,
+    agent_router,
     client_lead_deliveries_router,
     client_leads_actions_router,
     client_leads_router,
@@ -74,6 +76,7 @@ PUBLIC_PATHS_WITHOUT_SESSION = {
     "/api/auth/login",
     "/api/auth/logout",
     "/api/meta-leads/webhook",
+    "/api/agent/auth/cli/exchange",
 }
 
 
@@ -81,6 +84,7 @@ def is_internal_bot_api_path(path: str) -> bool:
     """Return True when a path belongs to internal machine-consumed APIs."""
     return (
         path.startswith("/api/contadores/")
+        or path.startswith("/api/agent/")
         or path.startswith("/api/client-lead-sources")
         or path.startswith("/api/client-lead-deliveries")
         or path.startswith("/api/meta-leads")
@@ -89,6 +93,33 @@ def is_internal_bot_api_path(path: str) -> bool:
         or path == "/api/runtime"
         or path == "/api/funnels"
     )
+
+
+def safe_local_redirect_path(value: str | None, *, default: str = "/") -> str:
+    """Return a same-origin redirect path."""
+    clean_value = (value or "").strip()
+    if clean_value.startswith("/") and not clean_value.startswith("//"):
+        return clean_value
+    return default
+
+
+def login_redirect_for_request(request: Request) -> RedirectResponse:
+    """Redirect a browser request to login and preserve the local target path."""
+    target = request.url.path
+    if request.url.query:
+        target = f"{target}?{request.url.query}"
+    return RedirectResponse(
+        url=f"/login?next={quote(safe_local_redirect_path(target), safe='')}",
+        status_code=303,
+    )
+
+
+def resolve_bearer_session_user(header_value: str | None) -> str | None:
+    """Resolve an Authorization bearer session token for CLI clients."""
+    scheme, _, token = (header_value or "").partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        return None
+    return auth_manager.resolve_session(token.strip())
 
 
 def build_internal_auth_error() -> JSONResponse:
@@ -135,6 +166,10 @@ app = FastAPI(
     lifespan=lifespan,
     openapi_tags=[
         {
+            "name": "agent",
+            "description": "Agent-ready HTTP contract and CLI/browser-login session endpoints.",
+        },
+        {
             "name": "auth",
             "description": "User/password login backed by TOML credentials and HttpOnly cookie sessions.",
         },
@@ -174,6 +209,7 @@ if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 app.include_router(auth_router)
+app.include_router(agent_router)
 app.include_router(public_workstation_router)
 app.include_router(contadores_router)
 app.include_router(client_leads_router)
@@ -193,11 +229,20 @@ async def enforce_primitive_auth(request: Request, call_next):
 
     path = request.url.path
     internal_token_valid = has_valid_internal_api_token(request.headers.get(INTERNAL_API_TOKEN_HEADER))
+    if path.startswith("/api/agent/"):
+        bearer_user = resolve_bearer_session_user(request.headers.get("Authorization"))
+        if bearer_user:
+            request.state.authenticated_user = bearer_user
+            request.state.auth_source = "cli"
+            return await call_next(request)
 
     if path == "/login":
         session_user = auth_manager.resolve_session(request.cookies.get(SESSION_COOKIE_NAME))
         if session_user:
-            return RedirectResponse(url="/", status_code=303)
+            return RedirectResponse(
+                url=safe_local_redirect_path(request.query_params.get("next")),
+                status_code=303,
+            )
         return await call_next(request)
 
     if path in PUBLIC_PATHS_WITHOUT_SESSION or path == "/p" or path.startswith("/p/"):
@@ -205,15 +250,19 @@ async def enforce_primitive_auth(request: Request, call_next):
 
     if is_internal_bot_api_path(path) and internal_token_valid:
         request.state.authenticated_user = "internal-bot"
+        request.state.auth_source = "internal-token"
         return await call_next(request)
 
     session_user = auth_manager.resolve_session(request.cookies.get(SESSION_COOKIE_NAME))
     if not session_user:
+        if path == "/api/agent/auth/cli/start":
+            return login_redirect_for_request(request)
         if path.startswith("/api/"):
             return JSONResponse(status_code=401, content={"detail": "Authentication required."})
-        return RedirectResponse(url="/login", status_code=303)
+        return login_redirect_for_request(request)
 
     request.state.authenticated_user = session_user
+    request.state.auth_source = "browser-session"
     return await call_next(request)
 
 
