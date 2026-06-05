@@ -39,9 +39,13 @@ the repo in `~/.config/contadores-agent/profiles.json`.
 First login, when needed:
 
 ```bash
-contadores-agent login https://crm.fgoiriz.com
+contadores-agent login
 ```
 
+The CLI defaults to `https://crm.fgoiriz.com`. Use
+`contadores-agent --base-url URL ...`, `contadores-agent login --base-url URL`,
+or `CONTADORES_AGENT_BASE_URL` only when intentionally targeting another
+origin.
 For server automations or rollout verification, `/api/agent` also accepts
 `X-Internal-Token`.
 

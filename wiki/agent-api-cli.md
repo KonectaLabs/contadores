@@ -5,7 +5,7 @@ This is the agent-facing contract for operating the CRM without the frontend.
 ## Quickstart
 
 ```bash
-contadores-agent login https://crm.fgoiriz.com
+contadores-agent login
 contadores-agent queues needs-attention --limit 20
 contadores-agent conversations get LEAD_ID
 contadores-agent messages LEAD_ID
@@ -31,7 +31,7 @@ Supported auth:
 
 CLI login:
 
-1. `contadores-agent login https://crm.fgoiriz.com` starts a localhost callback.
+1. `contadores-agent login` starts a localhost callback against the default CRM origin.
 2. The browser opens `/api/agent/auth/cli/start`.
 3. If needed, the site sends the browser through the normal login page.
 4. The backend redirects to the localhost callback with a one-time code.
@@ -39,11 +39,15 @@ CLI login:
 6. The signed session token is stored in `~/.config/contadores-agent/profiles.json` with mode `0600`.
 
 Local callback URLs must use `localhost`, `127.0.0.1`, or `::1`. Login codes are short-lived and single-use.
+The CLI defaults to `https://crm.fgoiriz.com`; pass
+`contadores-agent --base-url URL ...`, `contadores-agent login --base-url URL`,
+or set `CONTADORES_AGENT_BASE_URL` only when intentionally targeting another
+origin.
 
 Env fallback for agents or rollout verification:
 
 ```bash
-CONTADORES_AGENT_BASE_URL=https://crm.fgoiriz.com
+CONTADORES_AGENT_BASE_URL=https://crm.fgoiriz.com  # optional override
 CONTADORES_AGENT_TOKEN=...
 CONTADORES_AGENT_INTERNAL_TOKEN=...
 CONTADORES_AGENT_CONFIG=~/.config/contadores-agent/profiles.json

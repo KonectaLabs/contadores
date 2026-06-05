@@ -140,6 +140,30 @@ def test_login_stores_profile_outside_repo_and_profile_commands_work(
     }
 
 
+def test_login_uses_default_base_url_without_argument(
+    monkeypatch: pytest.MonkeyPatch,
+    config_path: Path,
+) -> None:
+    """The common browser login path should not require passing the CRM URL."""
+
+    def fake_receive_login_code(**kwargs: object) -> tuple[str, str]:
+        assert kwargs["base_url"] == agent_cli.DEFAULT_BASE_URL
+        assert kwargs["open_browser"] is False
+        return "login-code", "http://127.0.0.1:51234/callback"
+
+    fake_http = FakeHttp([(200, {"session_token": "token-default"})])
+    monkeypatch.setattr(agent_cli, "receive_login_code", fake_receive_login_code)
+    monkeypatch.setattr(agent_cli.httpx, "request", fake_http)
+
+    result = runner.invoke(agent_cli.app, ["login", "--no-open-browser"])
+
+    assert result.exit_code == 0, result.output
+    stored = json.loads(config_path.read_text(encoding="utf-8"))
+    assert stored["current_profile"] == "default"
+    assert stored["profiles"]["default"]["base_url"] == agent_cli.DEFAULT_BASE_URL
+    assert fake_http.calls[0]["url"] == f"{agent_cli.DEFAULT_BASE_URL}/api/agent/auth/cli/exchange"
+
+
 def test_auth_url_uses_cli_start_and_local_callback_state() -> None:
     """Login URL uses the backend CLI start endpoint and carries state."""
     url = agent_cli.auth_url("https://crm.example", "http://127.0.0.1:1234/callback", "state-1")
@@ -175,6 +199,40 @@ def test_status_uses_env_fallback_headers_and_pretty_json(
         "Authorization": "Bearer bearer-token",
         "X-Internal-Token": "internal-token",
     }
+
+
+def test_status_uses_default_base_url_when_env_only_has_token(
+    monkeypatch: pytest.MonkeyPatch,
+    config_path: Path,
+) -> None:
+    """Env-token automation can omit the base URL and still hit production."""
+    fake_http = FakeHttp([(200, {"ok": True})])
+    monkeypatch.setattr(agent_cli.httpx, "request", fake_http)
+    monkeypatch.setenv(agent_cli.TOKEN_ENV, "bearer-token")
+
+    result = runner.invoke(agent_cli.app, ["status"])
+
+    assert result.exit_code == 0, result.output
+    assert fake_http.calls[0]["url"] == f"{agent_cli.DEFAULT_BASE_URL}/api/agent/me"
+    assert fake_http.calls[0]["headers"] == {
+        "Accept": "application/json",
+        "Authorization": "Bearer bearer-token",
+    }
+
+
+def test_global_base_url_overrides_default(
+    monkeypatch: pytest.MonkeyPatch,
+    config_path: Path,
+) -> None:
+    """Operators can target another origin explicitly without changing profiles."""
+    fake_http = FakeHttp([(200, {"ok": True})])
+    monkeypatch.setattr(agent_cli.httpx, "request", fake_http)
+    monkeypatch.setenv(agent_cli.TOKEN_ENV, "bearer-token")
+
+    result = runner.invoke(agent_cli.app, ["--base-url", "https://crm.override", "status"])
+
+    assert result.exit_code == 0, result.output
+    assert fake_http.calls[0]["url"] == "https://crm.override/api/agent/me"
 
 
 def test_agent_commands_call_expected_methods_paths_and_bodies(

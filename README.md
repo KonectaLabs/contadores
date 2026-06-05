@@ -85,7 +85,7 @@ backend para operaciones normales. Ver la referencia compacta en
 Login por navegador:
 
 ```bash
-contadores-agent login https://crm.fgoiriz.com
+contadores-agent login
 contadores-agent status
 ```
 
@@ -102,6 +102,8 @@ contadores-agent tool call get_lead_context --json '{"lead_id":"..."}'
 
 El token de CLI queda fuera del repo en
 `~/.config/contadores-agent/profiles.json` con permisos `0600`. Para
+sobreescribir el origen default usar `contadores-agent --base-url URL ...`,
+`contadores-agent login --base-url URL` o `CONTADORES_AGENT_BASE_URL`. Para
 automaciones de servidor, `/api/agent` tambien acepta `X-Internal-Token`.
 
 Campañas, clientes convertidos y formularios owned:

@@ -19,6 +19,7 @@ import typer
 
 
 CONFIG_ENV = "CONTADORES_AGENT_CONFIG"
+DEFAULT_BASE_URL = "https://crm.fgoiriz.com"
 BASE_URL_ENV = "CONTADORES_AGENT_BASE_URL"
 TOKEN_ENV = "CONTADORES_AGENT_TOKEN"
 INTERNAL_TOKEN_ENV = "CONTADORES_AGENT_INTERNAL_TOKEN"
@@ -45,6 +46,7 @@ class RuntimeOptions:
 
     profile: str | None
     pretty: bool
+    base_url: str | None
 
 
 @dataclass(frozen=True)
@@ -109,7 +111,7 @@ def runtime_options() -> RuntimeOptions:
     """Return Typer context options for formatting/profile selection."""
     ctx = click.get_current_context(silent=True)
     if ctx is None or ctx.obj is None:
-        return RuntimeOptions(profile=None, pretty=False)
+        return RuntimeOptions(profile=None, pretty=False, base_url=None)
     return ctx.obj
 
 
@@ -138,6 +140,24 @@ def clean_url(value: str) -> str:
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise AgentCliError("Use an absolute CRM base URL, for example https://crm.fgoiriz.com.")
     return cleaned
+
+
+def resolve_base_url(
+    *values: str | None,
+    include_env: bool = True,
+    include_default: bool = True,
+) -> str:
+    """Return the first configured API origin, falling back to production."""
+    candidates = list(values)
+    if include_env:
+        candidates.append(os.getenv(BASE_URL_ENV, ""))
+    if include_default:
+        candidates.append(DEFAULT_BASE_URL)
+    for value in candidates:
+        cleaned = (value or "").strip()
+        if cleaned:
+            return clean_url(cleaned)
+    raise AgentCliError("No Agent API base URL is configured.")
 
 
 def clean_params(params: dict[str, Any]) -> dict[str, Any]:
@@ -169,11 +189,22 @@ def parse_json_object(value: str) -> dict[str, Any]:
     return parsed
 
 
-def profile_from_payload(name: str, payload: dict[str, Any], *, fallback_base_url: str = "") -> AgentProfile:
+def profile_from_payload(
+    name: str,
+    payload: dict[str, Any],
+    *,
+    override_base_url: str = "",
+    fallback_base_url: str = "",
+) -> AgentProfile:
     """Build one profile from stored JSON plus env fallbacks."""
     return AgentProfile(
         name=name,
-        base_url=clean_url(str(payload.get("base_url") or fallback_base_url)),
+        base_url=resolve_base_url(
+            override_base_url,
+            str(payload.get("base_url") or ""),
+            fallback_base_url,
+            include_env=False,
+        ),
         token=str(payload.get("token") or payload.get("session_token") or ""),
         internal_token=str(payload.get("internal_token") or ""),
     )
@@ -195,17 +226,20 @@ def resolve_profile() -> AgentProfile:
     profile_payload = profiles.get(selected_name) if selected_name else None
 
     if profile_payload is None:
-        if not env_base_url:
-            raise AgentCliError(f"No Agent API profile is selected and {BASE_URL_ENV} is not set.")
         return AgentProfile(
             name="env",
-            base_url=clean_url(env_base_url),
+            base_url=resolve_base_url(options.base_url, env_base_url, include_env=False),
             token=env_token,
             internal_token=env_internal_token,
             from_env=True,
         )
 
-    profile = profile_from_payload(str(selected_name), profile_payload, fallback_base_url=env_base_url)
+    profile = profile_from_payload(
+        str(selected_name),
+        profile_payload,
+        override_base_url=options.base_url or "",
+        fallback_base_url=env_base_url,
+    )
     return AgentProfile(
         name=profile.name,
         base_url=profile.base_url,
@@ -357,16 +391,21 @@ def token_from_login_response(payload: Any) -> tuple[str, str]:
 def main(
     ctx: typer.Context,
     profile: str | None = typer.Option(None, "--profile", "-p", help="Local profile name to use."),
+    base_url: str | None = typer.Option(
+        None,
+        "--base-url",
+        help=f"Override the CRM base URL. Defaults to {DEFAULT_BASE_URL}.",
+    ),
     pretty: bool = typer.Option(False, "--pretty", help="Print indented JSON."),
 ) -> None:
     """Configure shared CLI options."""
-    ctx.obj = RuntimeOptions(profile=profile, pretty=pretty)
+    ctx.obj = RuntimeOptions(profile=profile, pretty=pretty, base_url=base_url)
 
 
 @app.command()
 def login(
-    url: str | None = typer.Argument(None, help="CRM base URL, normally https://crm.fgoiriz.com."),
-    base_url: str | None = typer.Option(None, "--base-url", help="Fallback CRM base URL."),
+    url: str | None = typer.Argument(None, help=f"Optional CRM base URL. Defaults to {DEFAULT_BASE_URL}."),
+    base_url: str | None = typer.Option(None, "--base-url", help="Override the default CRM base URL."),
     name: str | None = typer.Option(None, "--name", help="Profile name to store."),
     callback_host: str = typer.Option("127.0.0.1", "--callback-host"),
     callback_port: int = typer.Option(0, "--callback-port", min=0),
@@ -379,8 +418,12 @@ def login(
         profile_name = name or options.profile or "default"
         config = load_config()
         existing = config["profiles"].get(profile_name, {})
-        selected_base_url = url or base_url or existing.get("base_url") or os.getenv(BASE_URL_ENV, "")
-        clean_base_url = clean_url(str(selected_base_url))
+        clean_base_url = resolve_base_url(
+            url,
+            base_url,
+            options.base_url,
+            existing.get("base_url") if isinstance(existing, dict) else "",
+        )
         state = secrets.token_urlsafe(24)
         code, _callback_url = receive_login_code(
             base_url=clean_base_url,
