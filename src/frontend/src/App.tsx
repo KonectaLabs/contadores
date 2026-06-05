@@ -79,23 +79,14 @@ const CRM_DETAIL_MIN_WIDTH = 440;
 const CRM_STACKED_LAYOUT_WIDTH = 1180;
 
 type LeadViewFilterValue =
+  | LeadStage
   | "all"
-  | "pipeline:new"
-  | "pipeline:contacted"
-  | "pipeline:offer_sent"
-  | "pipeline:meeting_sent"
-  | "pipeline:converted"
-  | "attention:needs_reply"
-  | "queue:operator"
-  | "queue:paused"
-  | "terminal:closed";
-type LeadViewGroupId = "overview" | "pipeline" | "action" | "system";
+  | "manual_attention";
 type LeadViewFilterOption = {
   value: LeadViewFilterValue;
   label: string;
   metric?: keyof ContadoresMetrics;
   tone: "all" | "neutral" | "accent" | "success" | "warn" | "muted";
-  group: LeadViewGroupId;
 };
 type ActiveSection = "crm" | "campaigns" | "workstation" | "delivery";
 type LoadWorkstationDetailOptions = {
@@ -161,35 +152,28 @@ type ClientLeadSourceMutationPayload = {
 };
 
 const leadViewFilters: LeadViewFilterOption[] = [
-  { value: "all", label: "All", metric: "total", tone: "all", group: "overview" },
-  { value: "pipeline:new", label: "New", metric: "pipeline_new", tone: "neutral", group: "pipeline" },
-  { value: "pipeline:contacted", label: "Contacted", metric: "pipeline_contacted", tone: "neutral", group: "pipeline" },
-  { value: "pipeline:offer_sent", label: "Offer", metric: "pipeline_offer_sent", tone: "neutral", group: "pipeline" },
-  { value: "pipeline:meeting_sent", label: "Meeting", metric: "pipeline_meeting_sent", tone: "accent", group: "pipeline" },
-  { value: "pipeline:converted", label: "Converted", metric: "pipeline_converted", tone: "success", group: "pipeline" },
-  { value: "queue:operator", label: "Operator", metric: "queue_operator", tone: "warn", group: "action" },
-  { value: "attention:needs_reply", label: "Needs reply", metric: "attention_needs_reply", tone: "warn", group: "action" },
-  { value: "queue:paused", label: "Paused", metric: "queue_paused", tone: "warn", group: "system" },
-  { value: "terminal:closed", label: "Closed", metric: "terminal_closed", tone: "muted", group: "system" },
-];
-
-const leadViewFilterGroups: { group: LeadViewFilterOption["group"]; label: string }[] = [
-  { group: "overview", label: "Overview" },
-  { group: "pipeline", label: "Pipeline" },
-  { group: "action", label: "Action" },
-  { group: "system", label: "System" },
+  { value: "all", label: "All", metric: "total", tone: "all" },
+  { value: "awaiting_initial_reply", label: "Opener sent", metric: "awaiting_initial_reply", tone: "neutral" },
+  { value: "awaiting_video_reply", label: "Offer sent", metric: "awaiting_video_reply", tone: "neutral" },
+  { value: "calendly_sent", label: "Meeting sent", metric: "calendly_sent", tone: "accent" },
+  { value: "booked", label: "Booked", metric: "booked", tone: "success" },
+  { value: "needs_human", label: "Manual", metric: "needs_human", tone: "warn" },
+  { value: "manual_attention", label: "Needs answer", metric: "attention_needs_reply", tone: "warn" },
+  { value: "closed", label: "Closed", metric: "closed", tone: "muted" },
 ];
 
 const validLeadViewFilterValues = new Set<LeadViewFilterValue>(leadViewFilters.map((filter) => filter.value));
-// Compat-only aliases for localStorage values written by the old stage filter.
+// Compat-only aliases for localStorage values written by the grouped filter.
 const legacyLeadViewFilterAliases: Record<string, LeadViewFilterValue> = {
-  awaiting_initial_reply: "pipeline:new",
-  awaiting_video_reply: "pipeline:offer_sent",
-  calendly_sent: "pipeline:meeting_sent",
-  booked: "pipeline:converted",
-  needs_human: "queue:operator",
-  manual_attention: "attention:needs_reply",
-  closed: "terminal:closed",
+  "pipeline:new": "awaiting_initial_reply",
+  "pipeline:contacted": "awaiting_initial_reply",
+  "pipeline:offer_sent": "awaiting_video_reply",
+  "pipeline:meeting_sent": "calendly_sent",
+  "pipeline:converted": "booked",
+  "attention:needs_reply": "manual_attention",
+  "queue:operator": "needs_human",
+  "queue:paused": "all",
+  "terminal:closed": "closed",
 };
 
 function readStoredValue(storageKey: string): string | null {
@@ -262,19 +246,15 @@ function applyLeadViewFilter(params: URLSearchParams, filter: LeadViewFilterValu
   if (filter === "all") {
     return;
   }
-  const [scope, value] = filter.split(":");
-  if (!scope || !value) {
+
+  if (filter === "manual_attention") {
+    params.set("stage", "needs_human");
+    params.set("manual_reply_status", "needs_reply");
+    params.set("needs_human", "true");
     return;
   }
-  if (scope === "pipeline") {
-    params.set("pipeline_stage", value);
-  } else if (scope === "queue") {
-    params.set("queue_state", value);
-  } else if (scope === "terminal") {
-    params.set("terminal_state", value);
-  } else if (scope === "attention") {
-    params.set("attention_state", value);
-  }
+
+  params.set("stage", filter);
 }
 
 function readStoredActiveSection(): ActiveSection {
@@ -471,6 +451,7 @@ export function App() {
   const [acknowledgingDeliveryErrorIds, setAcknowledgingDeliveryErrorIds] = useState<number[]>([]);
   const [leadContextCopyStatus, setLeadContextCopyStatus] = useState("");
   const detailRequestId = useRef(0);
+  const dashboardRequestId = useRef(0);
   const workstationDetailRequestId = useRef(0);
   const workstationLoadingRequestId = useRef(0);
   const deliveryDraftSourceId = useRef<string | null>(null);
@@ -487,7 +468,7 @@ export function App() {
   const selectedFunnelSetupIssues = buildFunnelSetupIssues(selectedFunnel);
   const isCrmWorkspace = activeSection === "crm";
   const crmModeLabel = "CRM";
-  const crmLeadListTitle = "Needs attention";
+  const crmLeadListTitle = "Leads";
   const crmLeadListSummary = "Reply, unblock, or route";
   const isContadoresFunnel = true;
   const isInboxFunnel = selectedFunnel?.kind === "inbox";
@@ -504,9 +485,11 @@ export function App() {
   }, [detail, leadList, selectedLeadId]);
   const selectedLeadDetail = detail?.lead.id === selectedLeadId ? detail : null;
   const visibleLeadIds = useMemo(() => (leadList?.leads ?? []).map((lead) => lead.id), [leadList]);
+  const visibleLeadIdSet = useMemo(() => new Set(visibleLeadIds), [visibleLeadIds]);
+  const selectedLeadIdSet = useMemo(() => new Set(selectedLeadIds), [selectedLeadIds]);
   const selectedVisibleLeads = useMemo(
-    () => (leadList?.leads ?? []).filter((lead) => selectedLeadIds.includes(lead.id)),
-    [leadList, selectedLeadIds],
+    () => (leadList?.leads ?? []).filter((lead) => selectedLeadIdSet.has(lead.id)),
+    [leadList, selectedLeadIdSet],
   );
   const selectedVisibleLeadIds = useMemo(() => selectedVisibleLeads.map((lead) => lead.id), [selectedVisibleLeads]);
   const selectedLeadCustomBlockReason = customMessageBlockReason(selectedLead);
@@ -530,11 +513,18 @@ export function App() {
 
   const loadDashboard = useCallback(async () => {
     setError(null);
+    const requestId = dashboardRequestId.current + 1;
+    dashboardRequestId.current = requestId;
+
     const [runtimePayload, funnelPayload, attentionCountsPayload] = await Promise.all([
       apiFetch<RuntimeSettings>("/api/runtime"),
       apiFetch<FunnelListResponse>("/api/funnels"),
       apiFetch<ManualAttentionCountsResponse>("/api/contadores/manual-attention-counts"),
     ]);
+
+    if (dashboardRequestId.current !== requestId) {
+      return;
+    }
 
     setRuntime(runtimePayload);
     setFunnels(funnelPayload.funnels ?? []);
@@ -571,18 +561,21 @@ export function App() {
       apiFetch<StrategyStatsResponse>(`/api/contadores/strategy-stats?funnel_id=${encodeURIComponent(activeFunnelId)}`),
     ]);
 
+    if (dashboardRequestId.current !== requestId) {
+      return;
+    }
+
     setLeadList(leadsPayload);
     setStrategyStats(strategyPayload.items ?? []);
 
     setSelectedLeadId((current) => {
       const currentLeadIsVisible = Boolean(current && leadsPayload.leads.some((lead) => lead.id === current));
-      const currentLeadIsOpen = Boolean(current && detail?.lead.id === current);
-      if (currentLeadIsVisible || currentLeadIsOpen) {
+      if (currentLeadIsVisible) {
         return current;
       }
       return leadsPayload.leads[0]?.id ?? null;
     });
-  }, [debouncedQuery, detail?.lead.id, selectedFunnelId, leadViewFilter, strategyFilter.step, strategyFilter.strategyId, tagFilter]);
+  }, [debouncedQuery, selectedFunnelId, leadViewFilter, strategyFilter.step, strategyFilter.strategyId, tagFilter]);
 
   const loadWorkstation = useCallback(async () => {
     const params = new URLSearchParams({ limit: "500" });
@@ -722,8 +715,11 @@ export function App() {
   }, [crmLeadsWidth]);
 
   useEffect(() => {
-    setSelectedLeadIds((current) => current.filter((leadId) => visibleLeadIds.includes(leadId)));
-  }, [visibleLeadIds]);
+    setSelectedLeadIds((current) => {
+      const next = current.filter((leadId) => visibleLeadIdSet.has(leadId));
+      return next.length === current.length ? current : next;
+    });
+  }, [visibleLeadIdSet]);
 
   useEffect(() => {
     if (!isInboxFunnel) {
@@ -1926,13 +1922,6 @@ export function App() {
 
   function selectOperation(section: ActiveSection) {
     setActiveSection(section);
-
-    if (section === "crm") {
-      setLeadViewFilter("attention:needs_reply");
-      setSelectedLeadId(null);
-      setSelectedLeadIds([]);
-      return;
-    }
   }
 
   function toggleLeadSelection(leadId: string) {
@@ -1957,9 +1946,9 @@ export function App() {
     Boolean(query.trim()),
   ].filter(Boolean).length;
   const crmHeroMetrics = [
-    { label: "Needs reply", value: metrics?.attention_needs_reply ?? 0 },
-    { label: "Operator", value: metrics?.queue_operator ?? 0 },
-    { label: "New", value: metrics?.pipeline_new ?? 0 },
+    { label: "Needs answer", value: metrics?.attention_needs_reply ?? 0 },
+    { label: "Manual", value: metrics?.needs_human ?? 0 },
+    { label: "Opener", value: metrics?.awaiting_initial_reply ?? 0 },
   ];
   const crmHeroTitle = "Clear the queue";
   const crmHeroDetail = totalCount
@@ -2293,7 +2282,6 @@ export function App() {
                       key={filter.value}
                       type="button"
                       className={`ct-lead-view ${isActiveFilter ? "active" : ""}`}
-                      data-group={filter.group}
                       data-tone={filter.tone}
                       aria-pressed={isActiveFilter}
                       onClick={() => setLeadViewFilter(filter.value)}
@@ -5601,6 +5589,8 @@ function LeadList({
   onSelect: (leadId: string) => void;
   onToggleSelected: (leadId: string) => void;
 }) {
+  const selectedLeadIdSet = useMemo(() => new Set(selectedLeadIds), [selectedLeadIds]);
+
   if (loading && !leads.length) {
     return (
       <div className="ct-leads-list">
@@ -5630,7 +5620,7 @@ function LeadList({
       {leads.map((lead) => {
         const tone = leadTone(lead);
         const turn = manualTurn(lead);
-        const checked = selectedLeadIds.includes(lead.id);
+        const checked = selectedLeadIdSet.has(lead.id);
         const hasOutboundError = (lead.outbound_error_count || 0) > 0;
         return (
           <div

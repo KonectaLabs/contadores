@@ -4953,6 +4953,19 @@ async def list_contadores_leads(
     metric_leads: list[ContadoresLead] = []
     visible_leads: list[ContadoresLead] = []
     query_value = normalize_lead_search_text(query)
+    needs_pipeline_filter = (
+        normalized_pipeline_stage is not None
+        or converted_filter is not None
+        or legacy_stage_converted_filter
+    )
+    needs_queue_filter = normalized_queue_state is not None
+    needs_terminal_filter = normalized_terminal_state is not None
+    needs_attention_filter = normalized_attention_state is not None
+    needs_manual_reply_filter = (
+        manual_reply_status is not None
+        or needs_queue_filter
+        or needs_attention_filter
+    )
 
     for lead in base_leads:
         if not lead_matches_search_query(lead, query_value):
@@ -4969,45 +4982,62 @@ async def list_contadores_leads(
 
         metric_leads.append(lead)
         effective_stage = derive_effective_lead_stage(lead)
-        lead_manual_reply_status = derive_manual_reply_status(lead, effective_stage=effective_stage)
-        lead_pipeline_stage = derive_lead_pipeline_stage(
-            lead,
-            effective_stage=effective_stage,
-        )
-        lead_queue_state = derive_lead_queue_state(
-            lead,
-            effective_stage=effective_stage,
-            manual_reply_status=lead_manual_reply_status,
-        )
-        lead_terminal_state = derive_lead_terminal_state(
-            lead,
-            effective_stage=effective_stage,
-        )
-        lead_attention_state = derive_lead_attention_state(
-            lead,
-            effective_stage=effective_stage,
-            manual_reply_status=lead_manual_reply_status,
-        )
+        lead_manual_reply_status: str | None = None
+        lead_pipeline_stage: str | None = None
         if normalized_stage == ContadoresLeadStage.CALENDLY_SENT:
             if not lead_counts_in_calendly_bucket(lead):
                 continue
         elif legacy_stage_converted_filter:
+            lead_pipeline_stage = derive_lead_pipeline_stage(
+                lead,
+                effective_stage=effective_stage,
+            )
             if lead_pipeline_stage != CANONICAL_CONVERTED_PIPELINE_STAGE:
                 continue
         elif normalized_stage is not None and effective_stage != normalized_stage:
             continue
-        if normalized_pipeline_stage is not None and lead_pipeline_stage != normalized_pipeline_stage:
-            continue
-        if normalized_queue_state is not None and lead_queue_state != normalized_queue_state:
-            continue
-        if normalized_terminal_state is not None and lead_terminal_state != normalized_terminal_state:
-            continue
-        if normalized_attention_state is not None and lead_attention_state != normalized_attention_state:
-            continue
-        if converted_filter is True and lead_pipeline_stage != CANONICAL_CONVERTED_PIPELINE_STAGE:
-            continue
-        if converted_filter is False and lead_pipeline_stage == CANONICAL_CONVERTED_PIPELINE_STAGE:
-            continue
+        if needs_pipeline_filter:
+            lead_pipeline_stage = lead_pipeline_stage or derive_lead_pipeline_stage(
+                lead,
+                effective_stage=effective_stage,
+            )
+            if (
+                normalized_pipeline_stage is not None
+                and lead_pipeline_stage != normalized_pipeline_stage
+            ):
+                continue
+            if converted_filter is True and lead_pipeline_stage != CANONICAL_CONVERTED_PIPELINE_STAGE:
+                continue
+            if converted_filter is False and lead_pipeline_stage == CANONICAL_CONVERTED_PIPELINE_STAGE:
+                continue
+        if needs_manual_reply_filter:
+            lead_manual_reply_status = derive_manual_reply_status(
+                lead,
+                effective_stage=effective_stage,
+            )
+        if needs_queue_filter:
+            lead_queue_state = derive_lead_queue_state(
+                lead,
+                effective_stage=effective_stage,
+                manual_reply_status=lead_manual_reply_status,
+            )
+            if lead_queue_state != normalized_queue_state:
+                continue
+        if needs_terminal_filter:
+            lead_terminal_state = derive_lead_terminal_state(
+                lead,
+                effective_stage=effective_stage,
+            )
+            if lead_terminal_state != normalized_terminal_state:
+                continue
+        if needs_attention_filter:
+            lead_attention_state = derive_lead_attention_state(
+                lead,
+                effective_stage=effective_stage,
+                manual_reply_status=lead_manual_reply_status,
+            )
+            if lead_attention_state != normalized_attention_state:
+                continue
         if needs_human is True and effective_stage != ContadoresLeadStage.NEEDS_HUMAN:
             continue
         if needs_human is False and effective_stage == ContadoresLeadStage.NEEDS_HUMAN:

@@ -1151,6 +1151,10 @@ Promo solo pagina:
 
 Vista Manual del backoffice:
 
+- El CRM usa filtros rapidos y simples por stage: `All`, `Opener sent`,
+  `Offer sent`, `Meeting sent`, `Booked`, `Manual`, `Needs answer` y `Closed`.
+  Esos botones consultan `stage`, salvo `Needs answer`, que usa
+  `stage=needs_human`, `manual_reply_status=needs_reply` y `needs_human=true`.
 - `Manual` muestra todos los leads manuales.
 - `Needs answer` aparece como un bloque del pipeline entre `Manual` y `Closed`.
 - Al marcarlos como respondidos, salen de `Needs answer` y siguen quedando en `Manual`.
