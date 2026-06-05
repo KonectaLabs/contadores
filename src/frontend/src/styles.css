@@ -4050,6 +4050,236 @@ body.ct-resizing {
   min-width: 0;
 }
 
+#contadoresView .delivery-operation-stack {
+  display: grid;
+  align-content: start;
+  gap: 16px;
+  min-width: 0;
+}
+
+#contadoresView .campaign-manager-surface {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+#contadoresView .campaign-manager-head,
+#contadoresView .campaign-manager-actions,
+#contadoresView .campaign-detail-actions,
+#contadoresView .campaign-detail-controls,
+#contadoresView .campaign-create-actions,
+#contadoresView .campaign-form-builder-head,
+#contadoresView .campaign-submissions-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#contadoresView .campaign-manager-head {
+  justify-content: space-between;
+}
+
+#contadoresView .campaign-manager-actions,
+#contadoresView .campaign-detail-actions,
+#contadoresView .campaign-create-actions,
+#contadoresView .campaign-submissions-head {
+  justify-content: flex-end;
+}
+
+#contadoresView .campaign-manager-metrics {
+  flex: 1 1 auto;
+  justify-content: flex-end;
+}
+
+#contadoresView .campaign-create-panel {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--ct-line);
+  border-radius: var(--ct-radius);
+  background: var(--ct-surface-2);
+}
+
+#contadoresView .campaign-form-builder {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+#contadoresView .campaign-form-builder-head {
+  justify-content: space-between;
+}
+
+#contadoresView .campaign-form-builder-head strong,
+#contadoresView .campaign-submissions-head strong {
+  color: var(--ct-ink);
+  font: 800 13px/1.2 var(--font-sans);
+}
+
+#contadoresView .campaign-field-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 1.1fr) minmax(120px, .7fr) minmax(150px, 1fr) auto auto;
+  gap: 8px;
+  align-items: end;
+  min-width: 0;
+}
+
+#contadoresView .campaign-required-toggle {
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--ct-ink-muted);
+  font: 750 11px/1 var(--font-mono);
+}
+
+#contadoresView .campaign-required-toggle input {
+  width: 16px;
+  height: 16px;
+}
+
+#contadoresView .campaign-manager-grid {
+  display: grid;
+  grid-template-columns: minmax(240px, 340px) minmax(0, 1fr);
+  gap: 12px;
+  min-width: 0;
+}
+
+#contadoresView .campaign-list,
+#contadoresView .campaign-detail-panel,
+#contadoresView .campaign-submissions,
+#contadoresView .campaign-submission-list {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+}
+
+#contadoresView .campaign-card {
+  width: 100%;
+  min-height: 86px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: start;
+  padding: 12px;
+  border: 1px solid var(--ct-line-soft);
+  border-left: 4px solid #64748b;
+  border-radius: var(--ct-radius);
+  background: var(--ct-surface);
+  color: var(--ct-ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+#contadoresView .campaign-card:hover,
+#contadoresView .campaign-card.active {
+  border-color: rgba(15, 118, 110, 0.32);
+  border-left-color: var(--ct-accent);
+  background: #f8fdfb;
+}
+
+#contadoresView .campaign-card div,
+#contadoresView .campaign-detail-head div,
+#contadoresView .campaign-submission-row div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+#contadoresView .campaign-card strong,
+#contadoresView .campaign-detail-head strong,
+#contadoresView .campaign-submission-row strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ct-ink);
+  font: 800 14px/1.2 var(--font-sans);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#contadoresView .campaign-card span,
+#contadoresView .campaign-card small,
+#contadoresView .campaign-detail-head span,
+#contadoresView .campaign-submission-row span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ct-ink-muted);
+  font: 750 11px/1.25 var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#contadoresView .campaign-card small {
+  grid-column: 1 / -1;
+}
+
+#contadoresView .campaign-detail-panel {
+  padding: 14px;
+  border: 1px solid var(--ct-line);
+  border-radius: var(--ct-radius);
+  background: var(--ct-surface);
+}
+
+#contadoresView .campaign-detail-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+}
+
+#contadoresView .campaign-detail-head a {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ct-accent-strong);
+  font: 750 11px/1.2 var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#contadoresView .campaign-detail-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+#contadoresView .campaign-detail-metrics span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid var(--ct-line-soft);
+  border-radius: var(--ct-radius-sm);
+  background: var(--ct-surface-2);
+  color: var(--ct-ink-muted);
+  font: 800 9px/1.1 var(--font-mono);
+  text-transform: uppercase;
+}
+
+#contadoresView .campaign-detail-metrics strong {
+  color: var(--ct-ink);
+  font: 800 14px/1 var(--font-sans);
+  text-transform: none;
+}
+
+#contadoresView .campaign-detail-controls {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+#contadoresView .campaign-submission-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--ct-line-soft);
+  border-radius: var(--ct-radius-sm);
+  background: var(--ct-surface-2);
+}
+
 #contadoresView .delivery-client-summary span,
 #contadoresView .delivery-sheet-metrics span {
   display: inline-flex;
@@ -5816,6 +6046,22 @@ body.ct-resizing {
     grid-template-columns: 1fr;
   }
 
+  #contadoresView .campaign-manager-grid {
+    grid-template-columns: 1fr;
+  }
+
+  #contadoresView .campaign-field-row {
+    grid-template-columns: minmax(0, 1fr) minmax(120px, .7fr) auto;
+  }
+
+  #contadoresView .campaign-field-row .ct-field:nth-child(3) {
+    grid-column: 1 / -1;
+  }
+
+  #contadoresView .campaign-detail-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   #contadoresView .ct-leads {
     max-height: 40dvh;
   }
@@ -5923,6 +6169,25 @@ body.ct-resizing {
 
   #contadoresView .ct-simple-metrics {
     justify-content: flex-start;
+  }
+
+  #contadoresView .campaign-manager-head,
+  #contadoresView .campaign-manager-actions,
+  #contadoresView .campaign-detail-controls,
+  #contadoresView .campaign-create-actions,
+  #contadoresView .campaign-submissions-head {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  #contadoresView .campaign-field-row,
+  #contadoresView .campaign-submission-row,
+  #contadoresView .campaign-detail-head {
+    grid-template-columns: 1fr;
+  }
+
+  #contadoresView .campaign-detail-metrics {
+    grid-template-columns: 1fr;
   }
 
   #contadoresView .ct-lead-filter-bar {

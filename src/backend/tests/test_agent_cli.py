@@ -59,6 +59,8 @@ def test_help_lists_agent_cli_groups() -> None:
     assert "profile" in root.output
     assert "queues" in root.output
     assert "conversations" in root.output
+    assert "campaigns" in root.output
+    assert "clients" in root.output
     assert "messages" in root.output
     assert queues.exit_code == 0
     assert "needs-attention" in queues.output
@@ -275,6 +277,76 @@ def test_agent_commands_call_expected_methods_paths_and_bodies(
             ["tool", "list"],
             "GET",
             "/api/agent/tools",
+            None,
+            None,
+        ),
+        (
+            ["clients", "list", "--query", "ana"],
+            "GET",
+            "/api/agent/clients",
+            {"query": "ana"},
+            None,
+        ),
+        (
+            ["clients", "create", "--name", "Cliente Uno", "--whatsapp", "+5491111111111", "--dry-run"],
+            "POST",
+            "/api/agent/clients/converted",
+            None,
+            {"name": "Cliente Uno", "whatsapp": "+5491111111111", "funnel_id": "contadores", "work_type": "pagina_ads", "status": "paid", "dry_run": True},
+        ),
+        (
+            ["campaigns", "list", "--status", "active"],
+            "GET",
+            "/api/agent/campaigns",
+            {"status": "active"},
+            None,
+        ),
+        (
+            ["campaigns", "get", "campaign-1"],
+            "GET",
+            "/api/agent/campaigns/campaign-1",
+            None,
+            None,
+        ),
+        (
+            [
+                "campaigns",
+                "create",
+                "--name",
+                "Campania",
+                "--client-id",
+                "client-1",
+                "--status",
+                "active",
+                "--form-schema-json",
+                '{"fields":[{"id":"full_name","label":"Nombre","type":"text","required":true}]}',
+                "--dry-run",
+            ],
+            "POST",
+            "/api/agent/campaigns",
+            None,
+            {
+                "name": "Campania",
+                "client_id": "client-1",
+                "status": "active",
+                "campaign_info": {},
+                "form_schema": {"fields": [{"id": "full_name", "label": "Nombre", "type": "text", "required": True}]},
+                "thank_you_title": "Gracias",
+                "thank_you_body": "Recibimos tus datos. Te vamos a contactar por WhatsApp.",
+                "dry_run": True,
+            },
+        ),
+        (
+            ["campaigns", "submissions", "campaign-1", "--limit", "5"],
+            "GET",
+            "/api/agent/campaigns/campaign-1/submissions",
+            {"limit": 5},
+            None,
+        ),
+        (
+            ["campaigns", "delivery-source", "campaign-1"],
+            "POST",
+            "/api/agent/campaigns/campaign-1/delivery-source",
             None,
             None,
         ),

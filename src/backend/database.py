@@ -2959,6 +2959,532 @@ class ClientLeadDelivery(SQLModel, table=True):
             return row
 
 
+LEAD_CAPTURE_DEFAULT_FIELD_TYPES = {
+    "text",
+    "textarea",
+    "email",
+    "phone",
+    "yes_no",
+    "select",
+    "multi_select",
+}
+
+
+def normalize_lead_capture_slug(value: str | None) -> str:
+    """Return a public-safe lead capture slug."""
+    normalized = re.sub(r"[^a-zA-Z0-9]+", "-", value or "").strip("-").lower()
+    return normalized[:96] or uuid.uuid4().hex[:12]
+
+
+def default_lead_capture_form_schema() -> dict[str, Any]:
+    """Return the default mobile form schema for owned lead capture."""
+    return {
+        "fields": [
+            {
+                "id": "full_name",
+                "label": "Nombre",
+                "type": "text",
+                "required": True,
+                "placeholder": "Tu nombre",
+            },
+            {
+                "id": "phone",
+                "label": "WhatsApp",
+                "type": "phone",
+                "required": True,
+                "placeholder": "+54 9 ...",
+            },
+            {
+                "id": "email",
+                "label": "Email",
+                "type": "email",
+                "required": False,
+                "placeholder": "tu@email.com",
+            },
+        ],
+        "layout": "multi_step",
+    }
+
+
+def normalize_lead_capture_form_schema(value: dict[str, Any] | None) -> dict[str, Any]:
+    """Normalize a public form schema into the compact contract the app serves."""
+    raw_fields = (value or {}).get("fields")
+    if not isinstance(raw_fields, list) or not raw_fields:
+        return default_lead_capture_form_schema()
+
+    fields: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for index, raw_field in enumerate(raw_fields, start=1):
+        if not isinstance(raw_field, dict):
+            continue
+        field_id = normalize_lead_capture_slug(str(raw_field.get("id") or raw_field.get("label") or f"field_{index}"))
+        field_id = field_id.replace("-", "_")
+        if not field_id or field_id in seen_ids:
+            field_id = f"field_{index}"
+        seen_ids.add(field_id)
+        field_type = str(raw_field.get("type") or "text").strip().lower()
+        if field_type not in LEAD_CAPTURE_DEFAULT_FIELD_TYPES:
+            field_type = "text"
+        options = raw_field.get("options") if isinstance(raw_field.get("options"), list) else []
+        fields.append(
+            {
+                "id": field_id[:80],
+                "label": " ".join(str(raw_field.get("label") or field_id).split()).strip()[:120],
+                "type": field_type,
+                "required": bool(raw_field.get("required")),
+                "placeholder": " ".join(str(raw_field.get("placeholder") or "").split()).strip()[:160],
+                "options": [
+                    " ".join(str(option).split()).strip()[:120]
+                    for option in options
+                    if " ".join(str(option).split()).strip()
+                ][:30],
+            }
+        )
+
+    if not fields:
+        return default_lead_capture_form_schema()
+    return {
+        "fields": fields,
+        "layout": str((value or {}).get("layout") or "multi_step").strip() or "multi_step",
+    }
+
+
+def default_lead_capture_form_schema_json() -> str:
+    """Return the default owned-campaign form schema as JSON."""
+    return json.dumps(default_lead_capture_form_schema(), ensure_ascii=False)
+
+
+class LeadCaptureCampaign(SQLModel, table=True):
+    """Owned public lead-capture campaign linked to one converted client."""
+
+    __tablename__ = "lead_capture_campaigns"
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    client_id: str = Field(default="", index=True)
+    client_lead_source_id: str = Field(default="", index=True)
+    platform_ad_campaign_id: str = Field(default="", index=True)
+    funnel_id: str = Field(default="contadores", index=True)
+    name: str = Field(index=True)
+    status: str = Field(default="draft", index=True)
+    public_slug: str = Field(sa_column=Column(String, unique=True, index=True, nullable=False))
+    daily_budget_usd: int | None = Field(default=None, index=True)
+    budget_currency: str = Field(default="USD")
+    location: str = Field(default="")
+    campaign_info_json: str = Field(default="{}")
+    creative_brief: str = Field(default="")
+    form_schema_json: str = Field(default_factory=default_lead_capture_form_schema_json)
+    thank_you_title: str = Field(default="Gracias")
+    thank_you_body: str = Field(default="Recibimos tus datos. Te vamos a contactar por WhatsApp.")
+    destination_url: str = Field(default="")
+    meta_pixel_id: str = Field(default="", index=True)
+    meta_event_name: str = Field(default="Lead")
+    meta_events_enabled: bool = Field(default=False, index=True)
+    meta_test_event_code: str = Field(default="")
+    meta_campaign_id: str = Field(default="", index=True)
+    meta_adset_id: str = Field(default="", index=True)
+    meta_ad_id: str = Field(default="", index=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
+
+    @classmethod
+    def unique_slug(cls, value: str) -> str:
+        """Return a slug that does not already exist."""
+        base_slug = normalize_lead_capture_slug(value)
+        slug = base_slug
+        suffix = 2
+        with Session(engine) as session:
+            while session.exec(select(cls).where(cls.public_slug == slug).limit(1)).first() is not None:
+                slug = f"{base_slug[:84]}-{suffix}"
+                suffix += 1
+        return slug
+
+    @classmethod
+    def add(
+        cls,
+        *,
+        client_id: str = "",
+        client_lead_source_id: str = "",
+        platform_ad_campaign_id: str = "",
+        funnel_id: str = "contadores",
+        name: str,
+        status: str = "draft",
+        public_slug: str | None = None,
+        daily_budget_usd: int | None = None,
+        budget_currency: str = "USD",
+        location: str = "",
+        campaign_info: dict[str, Any] | None = None,
+        creative_brief: str = "",
+        form_schema: dict[str, Any] | None = None,
+        thank_you_title: str = "Gracias",
+        thank_you_body: str = "Recibimos tus datos. Te vamos a contactar por WhatsApp.",
+        destination_url: str = "",
+        meta_pixel_id: str = "",
+        meta_event_name: str = "Lead",
+        meta_events_enabled: bool = False,
+        meta_test_event_code: str = "",
+        meta_campaign_id: str = "",
+        meta_adset_id: str = "",
+        meta_ad_id: str = "",
+    ) -> "LeadCaptureCampaign":
+        """Create one owned lead-capture campaign."""
+        clean_name = " ".join((name or "").split()).strip()
+        if not clean_name:
+            raise ValueError("name is required")
+        now = datetime.now(timezone.utc)
+        with Session(engine) as session:
+            row = cls(
+                client_id=(client_id or "").strip(),
+                client_lead_source_id=(client_lead_source_id or "").strip(),
+                platform_ad_campaign_id=(platform_ad_campaign_id or "").strip(),
+                funnel_id=(funnel_id or "").strip() or "contadores",
+                name=clean_name,
+                status=(status or "draft").strip().lower() or "draft",
+                public_slug=cls.unique_slug(public_slug or clean_name),
+                daily_budget_usd=daily_budget_usd if daily_budget_usd and daily_budget_usd > 0 else None,
+                budget_currency=((budget_currency or "USD").strip().upper()[:12] or "USD"),
+                location=" ".join((location or "").split()).strip(),
+                campaign_info_json=_json_dumps(campaign_info or {}),
+                creative_brief=str(creative_brief or "").strip(),
+                form_schema_json=_json_dumps(normalize_lead_capture_form_schema(form_schema)),
+                thank_you_title=" ".join((thank_you_title or "Gracias").split()).strip()[:160] or "Gracias",
+                thank_you_body=str(thank_you_body or "").strip()[:1000],
+                destination_url=(destination_url or "").strip(),
+                meta_pixel_id=(meta_pixel_id or "").strip(),
+                meta_event_name=(meta_event_name or "Lead").strip() or "Lead",
+                meta_events_enabled=bool(meta_events_enabled),
+                meta_test_event_code=(meta_test_event_code or "").strip(),
+                meta_campaign_id=(meta_campaign_id or "").strip(),
+                meta_adset_id=(meta_adset_id or "").strip(),
+                meta_ad_id=(meta_ad_id or "").strip(),
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            session.expunge(row)
+            return row
+
+    @classmethod
+    def get_by_id(cls, campaign_id: str) -> Optional["LeadCaptureCampaign"]:
+        """Return one lead-capture campaign."""
+        with Session(engine) as session:
+            row = session.get(cls, campaign_id)
+            if row is not None:
+                session.expunge(row)
+            return row
+
+    @classmethod
+    def get_by_slug(cls, slug: str) -> Optional["LeadCaptureCampaign"]:
+        """Return one public campaign by slug."""
+        clean_slug = normalize_lead_capture_slug(slug)
+        with Session(engine) as session:
+            row = session.exec(select(cls).where(cls.public_slug == clean_slug).limit(1)).first()
+            if row is not None:
+                session.expunge(row)
+            return row
+
+    @classmethod
+    def list_recent(
+        cls,
+        *,
+        client_id: str | None = None,
+        status: str | None = None,
+        query: str | None = None,
+        limit: int = 100,
+    ) -> list["LeadCaptureCampaign"]:
+        """List owned campaigns."""
+        clean_limit = max(1, min(int(limit or 100), 500))
+        with Session(engine) as session:
+            statement = select(cls)
+            if client_id:
+                statement = statement.where(cls.client_id == client_id.strip())
+            if status:
+                statement = statement.where(cls.status == status.strip().lower())
+            clean_query = (query or "").strip().lower()
+            if clean_query:
+                like_value = f"%{clean_query}%"
+                statement = statement.where(
+                    or_(
+                        cls.name.ilike(like_value),
+                        cls.public_slug.ilike(like_value),
+                        cls.location.ilike(like_value),
+                    )
+                )
+            statement = statement.order_by(cls.updated_at.desc(), cls.created_at.desc(), cls.id.desc()).limit(clean_limit)
+            rows = list(session.exec(statement).all())
+            for row in rows:
+                session.expunge(row)
+            return rows
+
+    @classmethod
+    def update(
+        cls,
+        campaign_id: str,
+        **updates: Any,
+    ) -> Optional["LeadCaptureCampaign"]:
+        """Patch one lead-capture campaign."""
+        with Session(engine) as session:
+            row = session.get(cls, campaign_id)
+            if row is None:
+                return None
+            if "name" in updates and updates["name"] is not None:
+                row.name = " ".join(str(updates["name"]).split()).strip() or row.name
+            if "status" in updates and updates["status"] is not None:
+                row.status = str(updates["status"]).strip().lower() or row.status
+            if "public_slug" in updates and updates["public_slug"] is not None:
+                next_slug = normalize_lead_capture_slug(str(updates["public_slug"]))
+                if next_slug != row.public_slug:
+                    existing = session.exec(select(cls).where(cls.public_slug == next_slug).limit(1)).first()
+                    if existing is not None and existing.id != row.id:
+                        raise ValueError("public_slug is already in use")
+                    row.public_slug = next_slug
+            simple_strings = [
+                "client_id",
+                "client_lead_source_id",
+                "platform_ad_campaign_id",
+                "funnel_id",
+                "location",
+                "creative_brief",
+                "thank_you_title",
+                "thank_you_body",
+                "destination_url",
+                "meta_pixel_id",
+                "meta_event_name",
+                "meta_test_event_code",
+                "meta_campaign_id",
+                "meta_adset_id",
+                "meta_ad_id",
+            ]
+            for field_name in simple_strings:
+                if field_name in updates and updates[field_name] is not None:
+                    value = str(updates[field_name] or "").strip()
+                    if field_name == "budget_currency":
+                        value = value.upper()[:12] or "USD"
+                    setattr(row, field_name, value)
+            if "daily_budget_usd" in updates:
+                value = updates["daily_budget_usd"]
+                row.daily_budget_usd = value if value and int(value) > 0 else None
+            if "budget_currency" in updates and updates["budget_currency"] is not None:
+                row.budget_currency = str(updates["budget_currency"] or "USD").strip().upper()[:12] or "USD"
+            if "campaign_info" in updates and updates["campaign_info"] is not None:
+                row.campaign_info_json = _json_dumps(updates["campaign_info"])
+            if "form_schema" in updates and updates["form_schema"] is not None:
+                row.form_schema_json = _json_dumps(normalize_lead_capture_form_schema(updates["form_schema"]))
+            if "meta_events_enabled" in updates and updates["meta_events_enabled"] is not None:
+                row.meta_events_enabled = bool(updates["meta_events_enabled"])
+            row.updated_at = datetime.now(timezone.utc)
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            session.expunge(row)
+            return row
+
+    @property
+    def campaign_info(self) -> dict[str, Any]:
+        """Return parsed campaign metadata."""
+        return _json_object(self.campaign_info_json)
+
+    @property
+    def form_schema(self) -> dict[str, Any]:
+        """Return parsed public form schema."""
+        return normalize_lead_capture_form_schema(_json_object(self.form_schema_json))
+
+
+class LeadCaptureSubmission(SQLModel, table=True):
+    """One public owned-campaign lead capture submission."""
+
+    __tablename__ = "lead_capture_submissions"
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    campaign_id: str = Field(foreign_key="lead_capture_campaigns.id", index=True)
+    client_id: str = Field(default="", index=True)
+    client_lead_delivery_id: str = Field(default="", index=True)
+    idempotency_key: str | None = Field(default=None, sa_column=Column(String, unique=True, index=True, nullable=True))
+    full_name: str | None = Field(default=None, index=True)
+    phone: str = Field(default="")
+    normalized_phone: str = Field(default="", index=True)
+    email: str | None = Field(default=None, index=True)
+    answers_json: str = Field(default="{}")
+    tracking_json: str = Field(default="{}")
+    meta_event_id: str = Field(default="", index=True)
+    meta_event_status: str = Field(default="", index=True)
+    meta_event_response_json: str = Field(default="{}")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
+
+    @classmethod
+    def get_by_id(cls, submission_id: str) -> Optional["LeadCaptureSubmission"]:
+        """Return one submission by id."""
+        with Session(engine) as session:
+            row = session.get(cls, submission_id)
+            if row is not None:
+                session.expunge(row)
+            return row
+
+    @classmethod
+    def get_by_idempotency_key(cls, idempotency_key: str | None) -> Optional["LeadCaptureSubmission"]:
+        """Return one submission by idempotency key."""
+        clean_key = (idempotency_key or "").strip()
+        if not clean_key:
+            return None
+        with Session(engine) as session:
+            row = session.exec(select(cls).where(cls.idempotency_key == clean_key).limit(1)).first()
+            if row is not None:
+                session.expunge(row)
+            return row
+
+    @classmethod
+    def get_latest_by_campaign_phone(
+        cls,
+        campaign_id: str,
+        phone: str,
+    ) -> Optional["LeadCaptureSubmission"]:
+        """Return the latest submission for one campaign and normalized phone."""
+        clean_campaign_id = (campaign_id or "").strip()
+        normalized_phone = normalize_phone(phone)
+        if not clean_campaign_id or not normalized_phone:
+            return None
+        with Session(engine) as session:
+            row = session.exec(
+                select(cls)
+                .where(cls.campaign_id == clean_campaign_id)
+                .where(cls.normalized_phone == normalized_phone)
+                .order_by(cls.created_at.desc(), cls.id.desc())
+                .limit(1)
+            ).first()
+            if row is not None:
+                session.expunge(row)
+            return row
+
+    @classmethod
+    def add(
+        cls,
+        *,
+        campaign_id: str,
+        client_id: str = "",
+        client_lead_delivery_id: str = "",
+        idempotency_key: str | None = None,
+        full_name: str | None,
+        phone: str,
+        email: str | None = None,
+        answers: dict[str, Any] | None = None,
+        tracking: dict[str, Any] | None = None,
+        meta_event_id: str = "",
+        meta_event_status: str = "",
+        meta_event_response: dict[str, Any] | None = None,
+    ) -> "LeadCaptureSubmission":
+        """Persist one public campaign submission."""
+        clean_key = (idempotency_key or "").strip() or None
+        if clean_key:
+            existing = cls.get_by_idempotency_key(clean_key)
+            if existing is not None:
+                return existing
+        normalized_phone = normalize_phone(phone)
+        if not normalized_phone:
+            raise ValueError("phone is invalid")
+        now = datetime.now(timezone.utc)
+        with Session(engine) as session:
+            row = cls(
+                campaign_id=(campaign_id or "").strip(),
+                client_id=(client_id or "").strip(),
+                client_lead_delivery_id=(client_lead_delivery_id or "").strip(),
+                idempotency_key=clean_key,
+                full_name=" ".join((full_name or "").split()).strip() or None,
+                phone=(phone or "").strip(),
+                normalized_phone=normalized_phone,
+                email=(normalize_email(email) or None) if email else None,
+                answers_json=_json_dumps(answers or {}),
+                tracking_json=_json_dumps(tracking or {}),
+                meta_event_id=(meta_event_id or "").strip(),
+                meta_event_status=(meta_event_status or "").strip(),
+                meta_event_response_json=_json_dumps(meta_event_response or {}),
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            session.expunge(row)
+            return row
+
+    @classmethod
+    def update_delivery_and_meta(
+        cls,
+        submission_id: str,
+        *,
+        client_lead_delivery_id: str | None = None,
+        meta_event_id: str | None = None,
+        meta_event_status: str | None = None,
+        meta_event_response: dict[str, Any] | None = None,
+    ) -> Optional["LeadCaptureSubmission"]:
+        """Attach Delivery and Meta event results after async-safe side effects."""
+        with Session(engine) as session:
+            row = session.get(cls, submission_id)
+            if row is None:
+                return None
+            if client_lead_delivery_id is not None:
+                row.client_lead_delivery_id = (client_lead_delivery_id or "").strip()
+            if meta_event_id is not None:
+                row.meta_event_id = (meta_event_id or "").strip()
+            if meta_event_status is not None:
+                row.meta_event_status = (meta_event_status or "").strip()
+            if meta_event_response is not None:
+                row.meta_event_response_json = _json_dumps(meta_event_response)
+            row.updated_at = datetime.now(timezone.utc)
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            session.expunge(row)
+            return row
+
+    @classmethod
+    def list_by_campaign(
+        cls,
+        campaign_id: str,
+        *,
+        limit: int = 500,
+    ) -> list["LeadCaptureSubmission"]:
+        """List submissions for one campaign."""
+        clean_limit = max(1, min(int(limit or 500), 1000))
+        with Session(engine) as session:
+            statement = (
+                select(cls)
+                .where(cls.campaign_id == campaign_id)
+                .order_by(cls.created_at.desc(), cls.id.desc())
+                .limit(clean_limit)
+            )
+            rows = list(session.exec(statement).all())
+            for row in rows:
+                session.expunge(row)
+            return rows
+
+    @classmethod
+    def count_by_campaign(cls) -> dict[str, int]:
+        """Return submission counts per campaign."""
+        with Session(engine) as session:
+            rows = session.exec(select(cls.campaign_id)).all()
+        counts: dict[str, int] = {}
+        for campaign_id in rows:
+            counts[campaign_id] = counts.get(campaign_id, 0) + 1
+        return counts
+
+    @property
+    def answers(self) -> dict[str, Any]:
+        """Return parsed form answers."""
+        return _json_object(self.answers_json)
+
+    @property
+    def tracking(self) -> dict[str, Any]:
+        """Return parsed tracking metadata."""
+        return _json_object(self.tracking_json)
+
+    @property
+    def meta_event_response(self) -> dict[str, Any]:
+        """Return parsed Meta CAPI response."""
+        return _json_object(self.meta_event_response_json)
+
+
 class AgentRun(SQLModel, table=True):
     """One autonomous Codex employee run and its audited outcome."""
 

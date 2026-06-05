@@ -11,6 +11,9 @@ contadores-agent conversations get LEAD_ID
 contadores-agent messages LEAD_ID
 contadores-agent send LEAD_ID "..."
 contadores-agent action LEAD_ID mark-answered
+contadores-agent clients create --name "Cliente" --whatsapp "+549..."
+contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --status active
+contadores-agent campaigns get CAMPAIGN_ID
 contadores-agent tool call get_lead_context --json '{"lead_id":"..."}'
 ```
 
@@ -94,6 +97,41 @@ include_archived
 
 Useful queues include `needs-attention`, `operator`, `automation`, `paused`, `workstation`, `failed-delivery`, `converted`, `closed`, `archived`, and `all-open`.
 
+## Campaign And Capture API
+
+CRM-owned campaigns let an agent create a converted client, attach a campaign to
+that CRM user, publish a simple public form, and route submissions through the
+normal Delivery pipeline.
+
+```text
+GET   /api/agent/clients
+POST  /api/agent/clients/converted
+GET   /api/agent/campaigns
+POST  /api/agent/campaigns
+GET   /api/agent/campaigns/{campaign_id}
+PATCH /api/agent/campaigns/{campaign_id}
+GET   /api/agent/campaigns/{campaign_id}/submissions
+POST  /api/agent/campaigns/{campaign_id}/delivery-source
+```
+
+The operator API exposes the same product surface under `/api/campaigns`.
+Public lead capture is intentionally smaller:
+
+```text
+GET  /c/{public_slug}
+GET  /api/public/campaigns/{public_slug}
+POST /api/public/campaigns/{public_slug}/submissions
+```
+
+Converted client creation requires `name` and `whatsapp`; `email` and
+`extra_info` are optional. Campaigns can link to an existing client with
+`client_id` or create one inline with `client_name` and `client_whatsapp`.
+
+Submissions dedupe on `idempotency_key`, record the raw answers, queue Client
+Lead Delivery with existing helpers, and track Meta CAPI only when both the
+campaign has `meta_events_enabled=true` and the existing
+`META_MARKETING_LIVE_WRITES_ENABLED` gate allows live writes.
+
 ## CLI Commands
 
 ```bash
@@ -113,6 +151,13 @@ contadores-agent tags set LEAD_ID caliente prioridad
 contadores-agent tags append LEAD_ID llamar
 contadores-agent note add LEAD_ID "Contexto para el proximo agente."
 contadores-agent followup schedule LEAD_ID --minutes 60 --instruction "Revisar si respondio."
+contadores-agent clients list --query Cliente
+contadores-agent clients create --name "Cliente" --whatsapp "+549..." --email cliente@example.com
+contadores-agent campaigns list --status active
+contadores-agent campaigns get CAMPAIGN_ID
+contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --status active
+contadores-agent campaigns submissions CAMPAIGN_ID --limit 20
+contadores-agent campaigns delivery-source CAMPAIGN_ID
 contadores-agent tool list
 contadores-agent tool call get_lead_context --json '{"lead_id":"..."}'
 ```
@@ -122,3 +167,7 @@ Every mutating convenience endpoint accepts `dry_run`. Outbound message and foll
 ## Safety
 
 Writes do not insert messages or mutate lead lifecycle rows directly from the API handler unless wrapped by an audit row and an existing CRM helper. Normal sends go through `call_tool()` and `send_whatsapp_text`, which reuses `enqueue_lead_outbound` and preserves WhatsApp 24-hour window/template checks. Lead and Workstation tools keep `codex_enabled` enforcement through the existing tool guard.
+
+Public campaign forms expose only active campaign form schema and thank-you
+copy. They do not expose CRM notes, token material, Delivery config, Meta
+credentials, or Workstation internals.

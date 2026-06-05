@@ -104,6 +104,23 @@ El token de CLI queda fuera del repo en
 `~/.config/contadores-agent/profiles.json` con permisos `0600`. Para
 automaciones de servidor, `/api/agent` tambien acepta `X-Internal-Token`.
 
+Campañas, clientes convertidos y formularios owned:
+
+```bash
+contadores-agent clients create --name "Cliente" --whatsapp "+549..."
+contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --status active
+contadores-agent campaigns get CAMPAIGN_ID
+contadores-agent campaigns delivery-source CAMPAIGN_ID
+contadores-agent campaigns submissions CAMPAIGN_ID --limit 20
+```
+
+El CRM tambien expone `/api/campaigns` para operadores autenticados y
+`/c/{public_slug}` para el formulario publico mobile-first. Las submissions
+entran al flujo normal de Client Lead Delivery; no se insertan mensajes ni se
+saltean helpers. Meta CAPI usa el pixel de la campaña solo si la campaña lo
+tiene habilitado y el gate existente `META_MARKETING_LIVE_WRITES_ENABLED` esta
+activo.
+
 ### Configurar sin UI, agent-native
 
 Los agentes autonomos no tienen que pedirle al operador que abra la UI para

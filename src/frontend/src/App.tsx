@@ -2306,38 +2306,41 @@ export function App() {
           onEditProfessionalPhoto={(version) => editProfessionalPhoto(version)}
         />
         ) : activeSection === "delivery" ? (
-        <ClientLeadDeliveryView
-          sources={deliverySources}
-          contactGroups={deliveryContactGroups}
-          leads={deliveryLeads}
-          selectedSource={selectedDeliverySource}
-          selectedSourceId={selectedDeliverySourceId}
-          editorMode={deliveryEditorMode}
-          draft={deliverySourceDraft}
-          loading={deliveryLoading}
-          leadsLoading={deliveryLeadsLoading}
-          recipientChat={deliveryRecipientChat}
-          recipientChatLoading={deliveryRecipientChatLoading}
-          actionBusy={actionBusy}
-          copyStatus={deliveryCopyStatus}
-          sourceEditorError={deliverySourceEditorError}
-          onSelectSource={(sourceId) => {
-            setDeliverySourceEditorError("");
-            setDeliveryEditorMode("edit");
-            setSelectedDeliverySourceId(sourceId);
-          }}
-          onNewSource={startNewDeliverySource}
-          onDraftChange={(nextDraft) => {
-            setDeliverySourceEditorError("");
-            setDeliverySourceDraft(nextDraft);
-          }}
-          onSaveSource={saveDeliverySource}
-          onDeleteSource={deleteDeliverySource}
-          onCopyLead={copyClientLeadInfo}
-          onCopyLeadAll={copyClientLeadAll}
-          onRetryLead={retryClientLeadNotification}
-          onOpenCrmLead={openCrmLeadFromDelivery}
-        />
+        <div className="delivery-operation-stack">
+          <CampaignsPanel onError={(message) => setError(message)} />
+          <ClientLeadDeliveryView
+            sources={deliverySources}
+            contactGroups={deliveryContactGroups}
+            leads={deliveryLeads}
+            selectedSource={selectedDeliverySource}
+            selectedSourceId={selectedDeliverySourceId}
+            editorMode={deliveryEditorMode}
+            draft={deliverySourceDraft}
+            loading={deliveryLoading}
+            leadsLoading={deliveryLeadsLoading}
+            recipientChat={deliveryRecipientChat}
+            recipientChatLoading={deliveryRecipientChatLoading}
+            actionBusy={actionBusy}
+            copyStatus={deliveryCopyStatus}
+            sourceEditorError={deliverySourceEditorError}
+            onSelectSource={(sourceId) => {
+              setDeliverySourceEditorError("");
+              setDeliveryEditorMode("edit");
+              setSelectedDeliverySourceId(sourceId);
+            }}
+            onNewSource={startNewDeliverySource}
+            onDraftChange={(nextDraft) => {
+              setDeliverySourceEditorError("");
+              setDeliverySourceDraft(nextDraft);
+            }}
+            onSaveSource={saveDeliverySource}
+            onDeleteSource={deleteDeliverySource}
+            onCopyLead={copyClientLeadInfo}
+            onCopyLeadAll={copyClientLeadAll}
+            onRetryLead={retryClientLeadNotification}
+            onOpenCrmLead={openCrmLeadFromDelivery}
+          />
+        </div>
         ) : selectedFunnelNeedsSetup ? (
         <FunnelSetupView
           funnel={selectedFunnel}
@@ -2653,6 +2656,538 @@ export function App() {
           onSubmit={submitConfirmDialog}
         />
       ) : null}
+    </section>
+  );
+}
+
+type CampaignClientItem = {
+  id: string;
+  display_name: string;
+  lead?: {
+    full_name?: string | null;
+    phone?: string | null;
+    email?: string | null;
+  } | null;
+};
+
+type LeadCaptureCampaignItem = {
+  id: string;
+  name: string;
+  status: string;
+  public_url: string;
+  public_slug: string;
+  client_id: string;
+  client?: CampaignClientItem | null;
+  submission_count: number;
+  daily_budget_usd: number | null;
+  location: string;
+  creative_brief: string;
+  form_schema: { fields?: CampaignFormField[] };
+  delivery_source?: ClientLeadSource | null;
+  meta_pixel_id: string;
+  meta_events_enabled: boolean;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+type LeadCaptureSubmissionItem = {
+  id: string;
+  full_name: string | null;
+  phone: string;
+  email: string | null;
+  answers: Record<string, unknown>;
+  delivery_status: string;
+  meta_event_status: string;
+  created_at: string | null;
+};
+
+type CampaignFormField = {
+  id: string;
+  label: string;
+  type: string;
+  required?: boolean;
+  placeholder?: string;
+  options?: string[];
+};
+
+type CampaignFieldDraft = CampaignFormField & {
+  optionsText: string;
+};
+
+const campaignFieldTypes = [
+  { value: "text", label: "Text" },
+  { value: "textarea", label: "Long text" },
+  { value: "email", label: "Email" },
+  { value: "phone", label: "Phone" },
+  { value: "yes_no", label: "Yes / No" },
+  { value: "select", label: "Choice" },
+  { value: "multi_select", label: "Multiple" },
+];
+
+function defaultCampaignFields(): CampaignFieldDraft[] {
+  return [
+    { id: "full_name", label: "Nombre", type: "text", required: true, placeholder: "Tu nombre", optionsText: "" },
+    { id: "phone", label: "WhatsApp", type: "phone", required: true, placeholder: "+54 9 ...", optionsText: "" },
+    { id: "email", label: "Email", type: "email", required: false, placeholder: "tu@email.com", optionsText: "" },
+    { id: "necesidad", label: "Que necesitas?", type: "textarea", required: true, placeholder: "", optionsText: "" },
+  ];
+}
+
+function campaignFieldId(value: string, index: number): string {
+  const normalized = value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toLowerCase();
+  return normalized || `field_${index + 1}`;
+}
+
+function campaignFormSchema(fields: CampaignFieldDraft[]): { fields: CampaignFormField[]; layout: string } {
+  return {
+    layout: "multi_step",
+    fields: fields.map((field, index) => {
+      const options = field.optionsText
+        .split(/[\n,]/)
+        .map((option) => option.trim())
+        .filter(Boolean);
+      return {
+        id: campaignFieldId(field.id || field.label, index),
+        label: field.label.trim() || `Field ${index + 1}`,
+        type: field.type,
+        required: Boolean(field.required),
+        placeholder: field.placeholder?.trim() || "",
+        options,
+      };
+    }),
+  };
+}
+
+function campaignClientLabel(client: CampaignClientItem): string {
+  const lead = client.lead;
+  return [
+    client.display_name || lead?.full_name || client.id,
+    lead?.phone,
+    lead?.email,
+  ].filter(Boolean).join(" · ");
+}
+
+function CampaignsPanel({ onError }: { onError: (message: string) => void }) {
+  const [campaigns, setCampaigns] = useState<LeadCaptureCampaignItem[]>([]);
+  const [clients, setClients] = useState<CampaignClientItem[]>([]);
+  const [selectedCampaignId, setSelectedCampaignId] = useState<string | null>(null);
+  const [submissions, setSubmissions] = useState<LeadCaptureSubmissionItem[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [submissionsLoading, setSubmissionsLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [campaignName, setCampaignName] = useState("");
+  const [campaignStatus, setCampaignStatus] = useState("draft");
+  const [existingClientId, setExistingClientId] = useState("");
+  const [newClientName, setNewClientName] = useState("");
+  const [newClientWhatsapp, setNewClientWhatsapp] = useState("");
+  const [newClientEmail, setNewClientEmail] = useState("");
+  const [newClientExtraInfo, setNewClientExtraInfo] = useState("");
+  const [dailyBudget, setDailyBudget] = useState("");
+  const [location, setLocation] = useState("");
+  const [creativeBrief, setCreativeBrief] = useState("");
+  const [metaPixelId, setMetaPixelId] = useState("");
+  const [metaEventsEnabled, setMetaEventsEnabled] = useState(false);
+  const [fields, setFields] = useState<CampaignFieldDraft[]>(defaultCampaignFields);
+
+  const selectedCampaign = campaigns.find((campaign) => campaign.id === selectedCampaignId) ?? campaigns[0] ?? null;
+
+  async function loadCampaignSubmissions(campaignId: string) {
+    setSubmissionsLoading(true);
+    try {
+      const payload = await apiFetch<{ submissions: LeadCaptureSubmissionItem[] }>(
+        `/api/campaigns/${encodeURIComponent(campaignId)}/submissions?limit=20`,
+      );
+      setSubmissions(payload.submissions ?? []);
+    } finally {
+      setSubmissionsLoading(false);
+    }
+  }
+
+  async function loadCampaigns() {
+    setLoading(true);
+    try {
+      const [campaignPayload, clientPayload] = await Promise.all([
+        apiFetch<{ campaigns: LeadCaptureCampaignItem[] }>("/api/campaigns?limit=120"),
+        apiFetch<{ clients: CampaignClientItem[] }>("/api/campaigns/clients?limit=300"),
+      ]);
+      const nextCampaigns = campaignPayload.campaigns ?? [];
+      setCampaigns(nextCampaigns);
+      setClients(clientPayload.clients ?? []);
+      const nextSelected = selectedCampaignId && nextCampaigns.some((campaign) => campaign.id === selectedCampaignId)
+        ? selectedCampaignId
+        : nextCampaigns[0]?.id ?? null;
+      setSelectedCampaignId(nextSelected);
+      if (nextSelected) {
+        await loadCampaignSubmissions(nextSelected);
+      } else {
+        setSubmissions([]);
+      }
+    } catch (reason) {
+      onError(reason instanceof Error ? reason.message : "Could not load campaigns.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadCampaigns();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function selectCampaign(campaignId: string) {
+    setSelectedCampaignId(campaignId);
+    try {
+      await loadCampaignSubmissions(campaignId);
+    } catch (reason) {
+      onError(reason instanceof Error ? reason.message : "Could not load campaign submissions.");
+    }
+  }
+
+  function updateField(index: number, patch: Partial<CampaignFieldDraft>) {
+    setFields((current) => current.map((field, fieldIndex) => fieldIndex === index ? { ...field, ...patch } : field));
+  }
+
+  function addField() {
+    setFields((current) => [
+      ...current,
+      { id: `field_${current.length + 1}`, label: "Pregunta", type: "text", required: false, placeholder: "", optionsText: "" },
+    ]);
+  }
+
+  function removeField(index: number) {
+    setFields((current) => current.filter((_, fieldIndex) => fieldIndex !== index));
+  }
+
+  async function createCampaign(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const cleanName = campaignName.trim();
+    if (!cleanName) {
+      onError("Campaign name is required.");
+      return;
+    }
+    const client = existingClientId ? null : {
+      name: newClientName.trim(),
+      whatsapp: newClientWhatsapp.trim(),
+      email: newClientEmail.trim() || null,
+      extra_info: newClientExtraInfo.trim() || null,
+    };
+    if (!existingClientId && (!client?.name || !client.whatsapp)) {
+      onError("Client name and WhatsApp are required.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const body = {
+        name: cleanName,
+        client_id: existingClientId || null,
+        client,
+        status: campaignStatus,
+        daily_budget_usd: dailyBudget ? Number(dailyBudget) : null,
+        location: location.trim() || null,
+        creative_brief: creativeBrief.trim() || null,
+        form_schema: campaignFormSchema(fields),
+        meta_pixel_id: metaPixelId.trim() || null,
+        meta_events_enabled: metaEventsEnabled,
+      };
+      const payload = await apiFetch<{ campaign: LeadCaptureCampaignItem }>("/api/campaigns", {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      setCampaignName("");
+      setDailyBudget("");
+      setLocation("");
+      setCreativeBrief("");
+      setMetaPixelId("");
+      setMetaEventsEnabled(false);
+      setNewClientName("");
+      setNewClientWhatsapp("");
+      setNewClientEmail("");
+      setNewClientExtraInfo("");
+      setFields(defaultCampaignFields());
+      setCreateOpen(false);
+      await loadCampaigns();
+      await selectCampaign(payload.campaign.id);
+    } catch (reason) {
+      onError(reason instanceof Error ? reason.message : "Could not create campaign.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function patchCampaignStatus(campaign: LeadCaptureCampaignItem, status: string) {
+    setSaving(true);
+    try {
+      const payload = await apiFetch<{ campaign: LeadCaptureCampaignItem }>(
+        `/api/campaigns/${encodeURIComponent(campaign.id)}`,
+        { method: "PATCH", body: JSON.stringify({ status }) },
+      );
+      setCampaigns((current) => current.map((item) => item.id === campaign.id ? payload.campaign : item));
+    } catch (reason) {
+      onError(reason instanceof Error ? reason.message : "Could not update campaign.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function refreshDeliverySource(campaign: LeadCaptureCampaignItem) {
+    setSaving(true);
+    try {
+      await apiFetch(`/api/campaigns/${encodeURIComponent(campaign.id)}/delivery-source`, { method: "POST" });
+      await loadCampaigns();
+    } catch (reason) {
+      onError(reason instanceof Error ? reason.message : "Could not refresh campaign delivery.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function copyCampaignUrl(campaign: LeadCaptureCampaignItem) {
+    await navigator.clipboard.writeText(campaign.public_url);
+  }
+
+  return (
+    <section className="ct-surface campaign-manager-surface">
+      <div className="ct-simple-head campaign-manager-head">
+        <div className="ct-simple-title">
+          <span>Campaigns</span>
+          <strong>{campaigns.length ? `${compactNumber(campaigns.length)} forms` : "No forms yet"}</strong>
+          <small>{selectedCampaign ? selectedCampaign.name : "Owned lead capture"}</small>
+        </div>
+        <div className="ct-simple-metrics campaign-manager-metrics">
+          <span><strong>{compactNumber(campaigns.reduce((total, campaign) => total + (campaign.submission_count || 0), 0))}</strong>Leads</span>
+          <span><strong>{compactNumber(campaigns.filter((campaign) => campaign.status === "active").length)}</strong>Active</span>
+          <span><strong>{compactNumber(clients.length)}</strong>Clients</span>
+        </div>
+        <div className="campaign-manager-actions">
+          <button type="button" className="ct-btn ct-btn-ghost" onClick={() => void loadCampaigns()} disabled={loading}>
+            <ArrowsClockwise size={14} weight="bold" />
+            Refresh
+          </button>
+          <button type="button" className="ct-btn" onClick={() => setCreateOpen((current) => !current)}>
+            <Plus size={14} weight="bold" />
+            Campaign
+          </button>
+        </div>
+      </div>
+
+      {createOpen ? (
+        <form className="campaign-create-panel" onSubmit={createCampaign}>
+          <div className="ct-field-grid">
+            <label className="ct-field">
+              <span>Name</span>
+              <input value={campaignName} onChange={(event) => setCampaignName(event.target.value)} required />
+            </label>
+            <label className="ct-field">
+              <span>Status</span>
+              <select value={campaignStatus} onChange={(event) => setCampaignStatus(event.target.value)}>
+                <option value="draft">Draft</option>
+                <option value="active">Active</option>
+                <option value="paused">Paused</option>
+              </select>
+            </label>
+            <label className="ct-field">
+              <span>Daily budget</span>
+              <input value={dailyBudget} onChange={(event) => setDailyBudget(event.target.value)} inputMode="numeric" placeholder="15" />
+            </label>
+            <label className="ct-field">
+              <span>Location</span>
+              <input value={location} onChange={(event) => setLocation(event.target.value)} placeholder="Buenos Aires" />
+            </label>
+          </div>
+
+          <div className="ct-field-grid">
+            <label className="ct-field">
+              <span>Existing client</span>
+              <select value={existingClientId} onChange={(event) => setExistingClientId(event.target.value)}>
+                <option value="">New converted client</option>
+                {clients.map((client) => (
+                  <option key={client.id} value={client.id}>{campaignClientLabel(client)}</option>
+                ))}
+              </select>
+            </label>
+            {!existingClientId ? (
+              <>
+                <label className="ct-field">
+                  <span>Client name</span>
+                  <input value={newClientName} onChange={(event) => setNewClientName(event.target.value)} />
+                </label>
+                <label className="ct-field">
+                  <span>Client WhatsApp</span>
+                  <input value={newClientWhatsapp} onChange={(event) => setNewClientWhatsapp(event.target.value)} inputMode="tel" />
+                </label>
+                <label className="ct-field">
+                  <span>Client email</span>
+                  <input value={newClientEmail} onChange={(event) => setNewClientEmail(event.target.value)} type="email" />
+                </label>
+              </>
+            ) : null}
+          </div>
+          {!existingClientId ? (
+            <label className="ct-field">
+              <span>Extra info</span>
+              <textarea value={newClientExtraInfo} onChange={(event) => setNewClientExtraInfo(event.target.value)} rows={3} />
+            </label>
+          ) : null}
+
+          <label className="ct-field">
+            <span>Creative brief</span>
+            <textarea value={creativeBrief} onChange={(event) => setCreativeBrief(event.target.value)} rows={3} />
+          </label>
+
+          <div className="campaign-form-builder">
+            <div className="campaign-form-builder-head">
+              <strong>Form fields</strong>
+              <button type="button" className="ct-btn ct-btn-ghost" onClick={addField}>
+                <Plus size={13} weight="bold" />
+                Field
+              </button>
+            </div>
+            {fields.map((field, index) => {
+              const locked = field.id === "full_name" || field.id === "phone";
+              return (
+                <div className="campaign-field-row" key={`${field.id}-${index}`}>
+                  <label className="ct-field">
+                    <span>Label</span>
+                    <input value={field.label} onChange={(event) => updateField(index, { label: event.target.value, id: locked ? field.id : campaignFieldId(event.target.value, index) })} />
+                  </label>
+                  <label className="ct-field">
+                    <span>Type</span>
+                    <select value={field.type} onChange={(event) => updateField(index, { type: event.target.value })} disabled={locked}>
+                      {campaignFieldTypes.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
+                    </select>
+                  </label>
+                  {(field.type === "select" || field.type === "multi_select") ? (
+                    <label className="ct-field">
+                      <span>Options</span>
+                      <input value={field.optionsText} onChange={(event) => updateField(index, { optionsText: event.target.value })} placeholder="Opcion 1, Opcion 2" />
+                    </label>
+                  ) : null}
+                  <label className="campaign-required-toggle">
+                    <input type="checkbox" checked={Boolean(field.required)} onChange={(event) => updateField(index, { required: event.target.checked })} disabled={locked} />
+                    <span>Required</span>
+                  </label>
+                  <button type="button" className="ct-icon-btn" onClick={() => removeField(index)} disabled={locked || fields.length <= 2} aria-label="Remove field">
+                    <Trash size={14} weight="bold" />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="ct-field-grid">
+            <label className="ct-field">
+              <span>Meta pixel</span>
+              <input value={metaPixelId} onChange={(event) => setMetaPixelId(event.target.value)} />
+            </label>
+            <label className="ct-field ct-field-toggle">
+              <input type="checkbox" checked={metaEventsEnabled} onChange={(event) => setMetaEventsEnabled(event.target.checked)} />
+              <span>Send Meta event</span>
+            </label>
+          </div>
+
+          <div className="campaign-create-actions">
+            <button type="button" className="ct-btn ct-btn-ghost" onClick={() => setCreateOpen(false)}>Cancel</button>
+            <button type="submit" className="ct-btn" disabled={saving}>{saving ? "Saving..." : "Create"}</button>
+          </div>
+        </form>
+      ) : null}
+
+      <div className="campaign-manager-grid">
+        <div className="campaign-list">
+          {loading && !campaigns.length ? (
+            <CtEmptyState compact loading title="Loading campaigns" message="Checking owned forms." />
+          ) : campaigns.length ? campaigns.map((campaign) => (
+            <button
+              type="button"
+              className={`campaign-card ${selectedCampaign?.id === campaign.id ? "active" : ""}`}
+              key={campaign.id}
+              onClick={() => void selectCampaign(campaign.id)}
+            >
+              <div>
+                <strong>{campaign.name}</strong>
+                <span>{campaign.client?.display_name || "No client"} · {campaign.location || "No location"}</span>
+              </div>
+              <span className="delivery-status-pill" data-tone={campaign.status === "active" ? "success" : campaign.status === "paused" ? "warn" : "muted"}>
+                {humanize(campaign.status)}
+              </span>
+              <small>{compactNumber(campaign.submission_count)} leads</small>
+            </button>
+          )) : (
+            <CtEmptyState compact title="No campaign forms yet" message="Create the first owned form." />
+          )}
+        </div>
+
+        <div className="campaign-detail-panel">
+          {selectedCampaign ? (
+            <>
+              <div className="campaign-detail-head">
+                <div>
+                  <span>Public form</span>
+                  <strong>{selectedCampaign.name}</strong>
+                  <a href={selectedCampaign.public_url} target="_blank" rel="noreferrer">{selectedCampaign.public_url}</a>
+                </div>
+                <div className="campaign-detail-actions">
+                  <button type="button" className="ct-icon-btn" onClick={() => void copyCampaignUrl(selectedCampaign)} title="Copy public URL" aria-label="Copy public URL">
+                    <Copy size={14} weight="bold" />
+                  </button>
+                  <button type="button" className="ct-icon-btn" onClick={() => window.open(selectedCampaign.public_url, "_blank", "noopener,noreferrer")} title="Open public form" aria-label="Open public form">
+                    <ArrowSquareOut size={14} weight="bold" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="campaign-detail-metrics">
+                <span><strong>{compactNumber(selectedCampaign.submission_count)}</strong>Submissions</span>
+                <span><strong>{selectedCampaign.daily_budget_usd ? `$${selectedCampaign.daily_budget_usd}` : "-"}</strong>Daily</span>
+                <span><strong>{selectedCampaign.delivery_source ? "Ready" : "Missing"}</strong>Delivery</span>
+                <span><strong>{selectedCampaign.meta_events_enabled ? "On" : "Off"}</strong>Meta</span>
+              </div>
+
+              <div className="campaign-detail-controls">
+                <button type="button" className="ct-btn ct-btn-ghost" disabled={saving || selectedCampaign.status === "active"} onClick={() => void patchCampaignStatus(selectedCampaign, "active")}>Activate</button>
+                <button type="button" className="ct-btn ct-btn-ghost" disabled={saving || selectedCampaign.status === "paused"} onClick={() => void patchCampaignStatus(selectedCampaign, "paused")}>Pause</button>
+                <button type="button" className="ct-btn ct-btn-ghost" disabled={saving} onClick={() => void refreshDeliverySource(selectedCampaign)}>Delivery source</button>
+              </div>
+
+              <div className="campaign-submissions">
+                <div className="campaign-submissions-head">
+                  <strong>Submissions</strong>
+                  <button type="button" className="ct-btn ct-btn-ghost" disabled={submissionsLoading} onClick={() => void loadCampaignSubmissions(selectedCampaign.id)}>
+                    <ArrowsClockwise size={13} weight="bold" />
+                    Refresh
+                  </button>
+                </div>
+                {submissionsLoading && !submissions.length ? (
+                  <CtEmptyState compact loading title="Loading submissions" message="Checking captured leads." />
+                ) : submissions.length ? (
+                  <div className="campaign-submission-list">
+                    {submissions.map((submission) => (
+                      <article className="campaign-submission-row" key={submission.id}>
+                        <div>
+                          <strong>{submission.full_name || submission.phone}</strong>
+                          <span>{submission.phone}{submission.email ? ` · ${submission.email}` : ""}</span>
+                        </div>
+                        <span>{submission.created_at ? relativeTime(submission.created_at) : "-"}</span>
+                        <span className="delivery-status-pill" data-tone={submission.delivery_status === "pending" ? "warn" : "muted"}>{humanize(submission.delivery_status || "queued")}</span>
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <CtEmptyState compact title="No submissions yet" message="Captured leads will appear here." />
+                )}
+              </div>
+            </>
+          ) : (
+            <CtEmptyState compact title="No selected campaign" message="Create or select a campaign form." />
+          )}
+        </div>
+      </div>
     </section>
   );
 }

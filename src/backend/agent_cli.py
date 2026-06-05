@@ -34,6 +34,8 @@ tags_app = typer.Typer(no_args_is_help=True, help="Set or append conversation ta
 note_app = typer.Typer(no_args_is_help=True, help="Add conversation notes.")
 followup_app = typer.Typer(no_args_is_help=True, help="Schedule future agent follow-ups.")
 tool_app = typer.Typer(no_args_is_help=True, help="List and call audited tools.")
+clients_app = typer.Typer(no_args_is_help=True, help="Create and list converted clients.")
+campaigns_app = typer.Typer(no_args_is_help=True, help="Manage owned campaign forms.")
 
 
 @dataclass(frozen=True)
@@ -693,6 +695,173 @@ def followup_schedule(
     )
 
 
+@clients_app.command("list")
+def clients_list(
+    query: str | None = typer.Option(None, "--query"),
+    limit: int | None = typer.Option(None, "--limit", min=1),
+) -> None:
+    """List converted clients available for campaign linking."""
+    run_api_call(
+        lambda client: client.request(
+            "GET",
+            api_path("clients"),
+            params=clean_params({"query": query, "limit": limit}),
+        )
+    )
+
+
+@clients_app.command("create")
+def clients_create(
+    name: str = typer.Option(..., "--name", help="Converted client display name."),
+    whatsapp: str = typer.Option(..., "--whatsapp", help="Client WhatsApp number."),
+    email: str | None = typer.Option(None, "--email"),
+    extra_info: str | None = typer.Option(None, "--extra-info"),
+    funnel_id: str = typer.Option("contadores", "--funnel-id"),
+    work_type: str = typer.Option("pagina_ads", "--work-type"),
+    status: str = typer.Option("paid", "--status"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+) -> None:
+    """Create or reuse one converted client."""
+    run_api_call(
+        lambda client: client.request(
+            "POST",
+            api_path("clients", "converted"),
+            json_body=clean_params(
+                {
+                    "name": name,
+                    "whatsapp": whatsapp,
+                    "email": email,
+                    "extra_info": extra_info,
+                    "funnel_id": funnel_id,
+                    "work_type": work_type,
+                    "status": status,
+                    "dry_run": dry_run if dry_run else None,
+                }
+            ),
+        )
+    )
+
+
+@campaigns_app.command("list")
+def campaigns_list(
+    client_id: str | None = typer.Option(None, "--client-id"),
+    status: str | None = typer.Option(None, "--status"),
+    query: str | None = typer.Option(None, "--query"),
+    limit: int | None = typer.Option(None, "--limit", min=1),
+) -> None:
+    """List owned lead-capture campaigns."""
+    run_api_call(
+        lambda client: client.request(
+            "GET",
+            api_path("campaigns"),
+            params=clean_params({"client_id": client_id, "status": status, "query": query, "limit": limit}),
+        )
+    )
+
+
+@campaigns_app.command("get")
+def campaigns_get(campaign_id: str) -> None:
+    """Fetch one campaign with recent submissions."""
+    run_api_call(lambda client: client.request("GET", api_path("campaigns", campaign_id)))
+
+
+@campaigns_app.command("create")
+def campaigns_create(
+    name: str = typer.Option(..., "--name", help="Campaign name."),
+    client_id: str | None = typer.Option(None, "--client-id", help="Existing converted client id."),
+    client_name: str | None = typer.Option(None, "--client-name", help="Create/link a converted client by name."),
+    client_whatsapp: str | None = typer.Option(None, "--client-whatsapp", help="Converted client WhatsApp."),
+    client_email: str | None = typer.Option(None, "--client-email"),
+    client_extra_info: str | None = typer.Option(None, "--client-extra-info"),
+    status: str = typer.Option("draft", "--status"),
+    public_slug: str | None = typer.Option(None, "--public-slug"),
+    daily_budget_usd: int | None = typer.Option(None, "--daily-budget-usd", min=1),
+    location: str | None = typer.Option(None, "--location"),
+    creative_brief: str | None = typer.Option(None, "--creative-brief"),
+    campaign_info_json: str = typer.Option("{}", "--campaign-info-json", help="Campaign metadata JSON object."),
+    form_schema_json: str = typer.Option("{}", "--form-schema-json", help="Public form schema JSON object."),
+    thank_you_title: str = typer.Option("Gracias", "--thank-you-title"),
+    thank_you_body: str = typer.Option(
+        "Recibimos tus datos. Te vamos a contactar por WhatsApp.",
+        "--thank-you-body",
+    ),
+    meta_pixel_id: str | None = typer.Option(None, "--meta-pixel-id"),
+    meta_events_enabled: bool = typer.Option(False, "--meta-events-enabled"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+) -> None:
+    """Create one owned public campaign form."""
+    try:
+        campaign_info = parse_json_object(campaign_info_json)
+        form_schema = parse_json_object(form_schema_json)
+    except AgentCliError as error:
+        exit_with_error(error)
+
+    linked_client: dict[str, Any] | None = None
+    if client_name or client_whatsapp or client_email or client_extra_info:
+        if not client_name or not client_whatsapp:
+            exit_with_error(AgentCliError("--client-name and --client-whatsapp are required when creating a client."))
+        linked_client = clean_params(
+            {
+                "name": client_name,
+                "whatsapp": client_whatsapp,
+                "email": client_email,
+                "extra_info": client_extra_info,
+            }
+        )
+
+    run_api_call(
+        lambda client: client.request(
+            "POST",
+            api_path("campaigns"),
+            json_body=clean_params(
+                {
+                    "name": name,
+                    "client_id": client_id,
+                    "client": linked_client,
+                    "status": status,
+                    "public_slug": public_slug,
+                    "daily_budget_usd": daily_budget_usd,
+                    "location": location,
+                    "creative_brief": creative_brief,
+                    "campaign_info": campaign_info,
+                    "form_schema": form_schema,
+                    "thank_you_title": thank_you_title,
+                    "thank_you_body": thank_you_body,
+                    "meta_pixel_id": meta_pixel_id,
+                    "meta_events_enabled": meta_events_enabled if meta_events_enabled else None,
+                    "dry_run": dry_run if dry_run else None,
+                }
+            ),
+        )
+    )
+
+
+@campaigns_app.command("submissions")
+def campaigns_submissions(
+    campaign_id: str,
+    limit: int | None = typer.Option(None, "--limit", min=1),
+) -> None:
+    """List submissions captured by one campaign."""
+    run_api_call(
+        lambda client: client.request(
+            "GET",
+            api_path("campaigns", campaign_id, "submissions"),
+            params=clean_params({"limit": limit}),
+        )
+    )
+
+
+@campaigns_app.command("delivery-source")
+def campaigns_delivery_source(campaign_id: str) -> None:
+    """Create or refresh the campaign Delivery source."""
+    run_api_call(
+        lambda client: client.request(
+            "POST",
+            api_path("campaigns", campaign_id, "delivery-source"),
+        )
+    )
+
+
 @tool_app.command("list")
 def tool_list() -> None:
     """List tools exposed by the Agent API."""
@@ -727,6 +896,8 @@ app.add_typer(conversations_app, name="conversations")
 app.add_typer(tags_app, name="tags")
 app.add_typer(note_app, name="note")
 app.add_typer(followup_app, name="followup")
+app.add_typer(clients_app, name="clients")
+app.add_typer(campaigns_app, name="campaigns")
 app.add_typer(tool_app, name="tool")
 
 

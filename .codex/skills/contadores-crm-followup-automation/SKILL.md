@@ -131,6 +131,19 @@ contadores-agent followup schedule LEAD_ID --minutes 60 --instruction "Revisar s
 contadores-agent tool call get_lead_context --json '{"lead_id":"..."}'
 ```
 
+If a follow-up run needs to connect campaign work to CRM users, stay on the
+HTTP CLI/API contract:
+
+```bash
+contadores-agent clients create --name "Cliente" --whatsapp "+549..." --email cliente@example.com
+contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --status active
+contadores-agent campaigns submissions CAMPAIGN_ID --limit 20
+```
+
+Manual converted clients require only `name` and `whatsapp`; `email` and
+`extra_info` are optional. Owned campaign form submissions queue through Client
+Lead Delivery instead of direct message writes.
+
 For shell HTTP calls, every production request below must include:
 
 - `Host: crm.fgoiriz.com`

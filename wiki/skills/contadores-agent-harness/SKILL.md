@@ -26,6 +26,9 @@ contadores-agent conversations get LEAD_ID
 contadores-agent messages LEAD_ID
 contadores-agent send LEAD_ID "..."
 contadores-agent action LEAD_ID mark-answered
+contadores-agent clients create --name "Cliente" --whatsapp "+549..."
+contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --status active
+contadores-agent campaigns get CAMPAIGN_ID
 contadores-agent tool call get_lead_context --json '{"lead_id":"..."}'
 ```
 
@@ -41,6 +44,24 @@ contadores-agent login https://crm.fgoiriz.com
 
 For server automations or rollout verification, `/api/agent` also accepts
 `X-Internal-Token`.
+
+Use the campaign CLI/API instead of the frontend when the job is to create a
+converted CRM client, link a campaign to that client, publish the owned public
+form, or inspect submissions:
+
+```bash
+contadores-agent clients list --query Cliente
+contadores-agent clients create --name "Cliente" --whatsapp "+549..." --email cliente@example.com
+contadores-agent campaigns list --status active
+contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --status active
+contadores-agent campaigns delivery-source CAMPAIGN_ID
+contadores-agent campaigns submissions CAMPAIGN_ID --limit 20
+```
+
+Owned campaign submissions are routed through Client Lead Delivery helpers. Meta
+CAPI events are attempted only when the campaign has a pixel, the campaign has
+Meta events enabled, and `META_MARKETING_LIVE_WRITES_ENABLED` permits live
+writes.
 
 ## Internal Tool Runner
 

@@ -22,8 +22,23 @@ from backend.database import (
     ContadoresLead,
     ContadoresLeadStage,
     ContadoresMessage,
+    LeadCaptureCampaign,
+    LeadCaptureSubmission,
+    WorkstationClient,
     engine,
     normalize_contadores_tags,
+    normalize_phone,
+)
+from backend.endpoints.campaigns import (
+    ConvertedClientCommand,
+    LeadCaptureCampaignCommand,
+    LeadCaptureCampaignPatchCommand,
+    _campaign_payload,
+    _client_payload,
+    _submission_payload,
+    create_campaign as create_owned_campaign,
+    create_or_reuse_converted_client,
+    refresh_campaign_delivery_source as refresh_owned_campaign_delivery_source,
 )
 from backend.endpoints.contadores import (
     CANONICAL_CONVERTED_PIPELINE_STAGE,
@@ -180,6 +195,24 @@ class AgentTagsCommand(BaseModel):
     tags: list[str] = Field(default_factory=list, min_length=1, max_length=20)
     mode: Literal["set", "append"] = "set"
     run_id: str | None = Field(default=None, max_length=160)
+    dry_run: bool = False
+
+
+class AgentConvertedClientCommand(ConvertedClientCommand):
+    """Agent wrapper for manual converted-client creation."""
+
+    dry_run: bool = False
+
+
+class AgentCampaignCreateCommand(LeadCaptureCampaignCommand):
+    """Agent wrapper for owned campaign creation."""
+
+    dry_run: bool = False
+
+
+class AgentCampaignPatchCommand(LeadCaptureCampaignPatchCommand):
+    """Agent wrapper for owned campaign patching."""
+
     dry_run: bool = False
 
 
@@ -702,10 +735,23 @@ async def get_agent_capabilities() -> dict[str, Any]:
             "include_archived",
         ],
         "quick_actions": QUICK_ACTIONS,
+        "campaigns": {
+            "endpoints": [
+                "GET /api/agent/clients",
+                "POST /api/agent/clients/converted",
+                "GET /api/agent/campaigns",
+                "POST /api/agent/campaigns",
+                "GET /api/agent/campaigns/{campaign_id}",
+                "PATCH /api/agent/campaigns/{campaign_id}",
+                "GET /api/agent/campaigns/{campaign_id}/submissions",
+                "POST /api/agent/campaigns/{campaign_id}/delivery-source",
+            ],
+            "public_form": "/c/{public_slug}/",
+        },
         "mutations": {
             "dry_run": True,
             "idempotency_key": True,
-            "audited_tables": ["agent_runs", "agent_tool_calls"],
+            "audited_tables": ["agent_runs", "agent_tool_calls", "platform_events"],
         },
     }
 
@@ -715,6 +761,120 @@ async def list_agent_tools() -> dict[str, Any]:
     """List audited product tools exposed to agents."""
     tools = _tool_manifest()
     return {"count": len(tools), "tools": tools}
+
+
+@agent_router.get("/clients")
+async def list_agent_clients(
+    query: str | None = None,
+    limit: int = Query(default=200, ge=1, le=500),
+) -> dict[str, Any]:
+    """List converted clients available for owned campaigns."""
+    clean_query = (query or "").strip().lower()
+    clients = []
+    for client in WorkstationClient.list_recent(limit=limit):
+        payload = _client_payload(client)
+        if clean_query and clean_query not in json.dumps(payload, ensure_ascii=False).lower():
+            continue
+        clients.append(payload)
+    return {"count": len(clients), "clients": clients}
+
+
+@agent_router.post("/clients/converted")
+async def create_agent_converted_client(command: AgentConvertedClientCommand) -> dict[str, Any]:
+    """Create or reuse a converted client from minimal contact data."""
+    if command.dry_run:
+        normalized_phone = normalize_phone(command.whatsapp)
+        return {
+            "ok": True,
+            "dry_run": True,
+            "would_create_or_reuse": True,
+            "normalized_phone": normalized_phone,
+            "client": command.model_dump(exclude={"dry_run"}, mode="json"),
+        }
+    return create_or_reuse_converted_client(command)
+
+
+@agent_router.get("/campaigns")
+async def list_agent_campaigns(
+    request: Request,
+    client_id: str | None = None,
+    status: str | None = None,
+    query: str | None = None,
+    limit: int = Query(default=100, ge=1, le=500),
+) -> dict[str, Any]:
+    """List owned lead-capture campaigns."""
+    campaigns = LeadCaptureCampaign.list_recent(client_id=client_id, status=status, query=query, limit=limit)
+    return {
+        "count": len(campaigns),
+        "campaigns": [_campaign_payload(campaign, request=request) for campaign in campaigns],
+    }
+
+
+@agent_router.post("/campaigns")
+async def create_agent_campaign(request: Request, command: AgentCampaignCreateCommand) -> dict[str, Any]:
+    """Create one owned lead-capture campaign."""
+    if command.dry_run:
+        return {
+            "ok": True,
+            "dry_run": True,
+            "would_create": True,
+            "campaign": command.model_dump(exclude={"dry_run"}, mode="json"),
+        }
+    return await create_owned_campaign(request, command)
+
+
+@agent_router.get("/campaigns/{campaign_id}")
+async def get_agent_campaign(request: Request, campaign_id: str) -> dict[str, Any]:
+    """Return one owned lead-capture campaign and recent submissions."""
+    campaign = LeadCaptureCampaign.get_by_id(campaign_id)
+    if campaign is None:
+        raise HTTPException(status_code=404, detail="Campaign not found.")
+    return {"campaign": _campaign_payload(campaign, request=request, include_submissions=True)}
+
+
+@agent_router.patch("/campaigns/{campaign_id}")
+async def patch_agent_campaign(
+    request: Request,
+    campaign_id: str,
+    command: AgentCampaignPatchCommand,
+) -> dict[str, Any]:
+    """Patch one owned lead-capture campaign."""
+    campaign = LeadCaptureCampaign.get_by_id(campaign_id)
+    if campaign is None:
+        raise HTTPException(status_code=404, detail="Campaign not found.")
+    if command.dry_run:
+        return {
+            "ok": True,
+            "dry_run": True,
+            "campaign_id": campaign_id,
+            "would_patch": command.model_dump(exclude={"dry_run"}, exclude_unset=True, mode="json"),
+        }
+    from backend.endpoints.campaigns import patch_campaign as patch_owned_campaign
+
+    return await patch_owned_campaign(request, campaign_id, command)
+
+
+@agent_router.get("/campaigns/{campaign_id}/submissions")
+async def list_agent_campaign_submissions(
+    campaign_id: str,
+    limit: int = Query(default=500, ge=1, le=1000),
+) -> dict[str, Any]:
+    """List submissions captured by one owned campaign form."""
+    campaign = LeadCaptureCampaign.get_by_id(campaign_id)
+    if campaign is None:
+        raise HTTPException(status_code=404, detail="Campaign not found.")
+    submissions = LeadCaptureSubmission.list_by_campaign(campaign.id, limit=limit)
+    return {
+        "campaign_id": campaign.id,
+        "count": len(submissions),
+        "submissions": [_submission_payload(submission) for submission in submissions],
+    }
+
+
+@agent_router.post("/campaigns/{campaign_id}/delivery-source")
+async def refresh_agent_campaign_delivery_source(request: Request, campaign_id: str) -> dict[str, Any]:
+    """Create or refresh the Delivery source for one owned campaign."""
+    return await refresh_owned_campaign_delivery_source(request, campaign_id)
 
 
 @agent_router.post("/runs")

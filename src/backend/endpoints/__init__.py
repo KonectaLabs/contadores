@@ -2,6 +2,7 @@
 
 from backend.endpoints.auth import auth_router
 from backend.endpoints.agent import agent_router
+from backend.endpoints.campaigns import campaigns_router, public_campaigns_router
 from backend.endpoints.client_leads import (
     client_lead_deliveries_router,
     client_leads_actions_router,
@@ -16,6 +17,7 @@ from backend.endpoints.workstation import public_workstation_router, workstation
 __all__ = [
     "auth_router",
     "agent_router",
+    "campaigns_router",
     "client_lead_deliveries_router",
     "client_leads_actions_router",
     "client_leads_router",
@@ -23,6 +25,7 @@ __all__ = [
     "funnels_router",
     "meta_leads_router",
     "platform_router",
+    "public_campaigns_router",
     "public_workstation_router",
     "workstation_router",
 ]

@@ -24,6 +24,7 @@ from backend.database import init_db
 from backend.endpoints import (
     auth_router,
     agent_router,
+    campaigns_router,
     client_lead_deliveries_router,
     client_leads_actions_router,
     client_leads_router,
@@ -31,6 +32,7 @@ from backend.endpoints import (
     funnels_router,
     meta_leads_router,
     platform_router,
+    public_campaigns_router,
     public_workstation_router,
     workstation_router,
 )
@@ -87,6 +89,7 @@ def is_internal_bot_api_path(path: str) -> bool:
         or path.startswith("/api/agent/")
         or path.startswith("/api/client-lead-sources")
         or path.startswith("/api/client-lead-deliveries")
+        or path.startswith("/api/campaigns")
         or path.startswith("/api/meta-leads")
         or path.startswith("/api/workstation/automation/")
         or path.startswith("/api/platform/")
@@ -210,6 +213,7 @@ if STATIC_DIR.exists():
 
 app.include_router(auth_router)
 app.include_router(agent_router)
+app.include_router(public_campaigns_router)
 app.include_router(public_workstation_router)
 app.include_router(contadores_router)
 app.include_router(client_leads_router)
@@ -218,6 +222,7 @@ app.include_router(client_leads_actions_router)
 app.include_router(funnels_router)
 app.include_router(meta_leads_router)
 app.include_router(platform_router)
+app.include_router(campaigns_router)
 app.include_router(workstation_router)
 
 
@@ -245,7 +250,14 @@ async def enforce_primitive_auth(request: Request, call_next):
             )
         return await call_next(request)
 
-    if path in PUBLIC_PATHS_WITHOUT_SESSION or path == "/p" or path.startswith("/p/"):
+    if (
+        path in PUBLIC_PATHS_WITHOUT_SESSION
+        or path == "/p"
+        or path.startswith("/p/")
+        or path == "/c"
+        or path.startswith("/c/")
+        or path.startswith("/api/public/campaigns/")
+    ):
         return await call_next(request)
 
     if is_internal_bot_api_path(path) and internal_token_valid:

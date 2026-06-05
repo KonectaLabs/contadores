@@ -1287,6 +1287,14 @@ async def sync_client_lead_source(source_id: str) -> ClientLeadSyncResponse:
     if not source.enabled:
         source = ClientLeadSource.mark_sync(source.id, status="disabled", note="source disabled") or source
         return ClientLeadSyncResponse(status="disabled", source=build_source_response(source))
+    if source.id.startswith("campaign-") and not source.sheet_url.strip():
+        source = ClientLeadSource.mark_sync(
+            source.id,
+            status="ok",
+            note="owned campaign form source; submissions arrive directly",
+        ) or source
+        counts = ClientLeadDelivery.count_by_status_for_sources()
+        return ClientLeadSyncResponse(status="ok", source=build_source_response(source, counts))
     try:
         records = await fetch_sheet_records(source)
     except Exception as exc:
