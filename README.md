@@ -116,12 +116,14 @@ contadores-agent meta readiness
 contadores-agent meta inventory --limit 20
 ```
 
-El CRM tambien expone `/api/campaigns` para operadores autenticados y
-`/c/{public_slug}` para el formulario publico mobile-first. Las submissions
-entran al flujo normal de Client Lead Delivery; no se insertan mensajes ni se
-saltean helpers. Meta CAPI usa el pixel de la campaña solo si la campaña lo
-tiene habilitado y el gate existente `META_MARKETING_LIVE_WRITES_ENABLED` esta
-activo.
+El CRM tambien expone la pestaña `Ads` para crear campañas owned desde la UI:
+cliente existente o cliente convertido nuevo, presupuesto, ubicacion, brief,
+campos del formulario y Pixel/CAPI opcional. La API de operadores es
+`/api/campaigns`, y cada campaña publica `/c/{public_slug}` como formulario
+mobile-first. Las submissions entran al flujo normal de Client Lead Delivery;
+no se insertan mensajes ni se saltean helpers. Meta CAPI usa el pixel de la
+campaña solo si la campaña lo tiene habilitado y el gate existente
+`META_MARKETING_LIVE_WRITES_ENABLED` esta activo.
 
 ### Configurar sin UI, agent-native
 

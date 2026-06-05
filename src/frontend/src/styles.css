@@ -4050,13 +4050,6 @@ body.ct-resizing {
   min-width: 0;
 }
 
-#contadoresView .delivery-operation-stack {
-  display: grid;
-  align-content: start;
-  gap: 16px;
-  min-width: 0;
-}
-
 #contadoresView .campaign-manager-surface {
   display: grid;
   gap: 14px;

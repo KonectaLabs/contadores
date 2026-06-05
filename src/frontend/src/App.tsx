@@ -16,6 +16,7 @@ import {
   FolderOpen,
   GearSix,
   ListChecks,
+  Megaphone,
   NotePencil,
   PaperPlaneTilt,
   PauseCircle,
@@ -110,7 +111,7 @@ type LeadViewFilterOption = {
   tone: "all" | "neutral" | "accent" | "success" | "warn" | "muted";
   group: LeadViewGroupId;
 };
-type ActiveSection = "crm" | "workstation" | "delivery" | "ops";
+type ActiveSection = "crm" | "campaigns" | "workstation" | "delivery" | "ops";
 type LoadWorkstationDetailOptions = {
   syncNotes?: boolean;
   showLoading?: boolean;
@@ -295,7 +296,7 @@ function readStoredActiveSection(): ActiveSection {
   if (value === "runner") {
     return "ops";
   }
-  if (value === "workstation" || value === "delivery" || value === "ops") {
+  if (value === "campaigns" || value === "workstation" || value === "delivery" || value === "ops") {
     return value;
   }
   return "crm";
@@ -310,6 +311,11 @@ const operations: Array<{
     section: "crm",
     label: "CRM",
     icon: <ListChecks size={16} weight="bold" />,
+  },
+  {
+    section: "campaigns",
+    label: "Ads",
+    icon: <Megaphone size={16} weight="bold" />,
   },
   {
     section: "workstation",
@@ -486,6 +492,7 @@ export function App() {
   const [runnerLoading, setRunnerLoading] = useState(false);
   const [platformOverview, setPlatformOverview] = useState<PlatformOverviewResponse | null>(null);
   const [platformLoading, setPlatformLoading] = useState(false);
+  const [campaignRefreshSignal, setCampaignRefreshSignal] = useState(0);
   const [acknowledgingDeliveryErrorIds, setAcknowledgingDeliveryErrorIds] = useState<number[]>([]);
   const [leadContextCopyStatus, setLeadContextCopyStatus] = useState("");
   const detailRequestId = useRef(0);
@@ -1095,6 +1102,10 @@ export function App() {
       setPlatformLoading(false);
       setRunnerLoading(false);
     }
+  }
+
+  function refreshCampaigns() {
+    setCampaignRefreshSignal((current) => current + 1);
   }
 
   async function copySelectedLeadContext() {
@@ -2081,6 +2092,8 @@ export function App() {
       ? workstationTitle
       : activeSection === "delivery"
         ? "Deliver"
+        : activeSection === "campaigns"
+          ? "Ads"
         : "CRM";
   const syncStatus = activeSection === "ops"
     ? platformOverview
@@ -2090,6 +2103,8 @@ export function App() {
         : "Observe loading"
     : activeSection === "workstation"
     ? `${workstationClients.length} converted ${workstationClients.length === 1 ? "client" : "clients"}`
+    : activeSection === "campaigns"
+    ? "Owned forms"
     : activeSection === "delivery"
     ? `${deliveryContactGroups.length} ${deliveryContactGroups.length === 1 ? "contact" : "contacts"} · ${compactNumber(deliveryLeadTotal)} leads${deliverySourceIssueCount ? ` · ${deliverySourceIssueCount} issue${deliverySourceIssueCount === 1 ? "" : "s"}` : ""}`
     : config?.last_sheet_sync_status
@@ -2101,7 +2116,9 @@ export function App() {
     ? deliverySourceIssueCount === 0
     : activeSection === "ops"
       ? (platformOverview?.counts.active_blockers ?? 0) === 0
-    : config?.last_sheet_sync_status === "ok";
+      : activeSection === "campaigns"
+        ? true
+        : config?.last_sheet_sync_status === "ok";
 
   return (
     <section id="contadoresView" className="contadores-view" data-app="contadores">
@@ -2217,9 +2234,9 @@ export function App() {
           <button
             type="button"
             className="ct-icon-btn"
-            title={activeSection === "ops" ? "Refresh Observe" : "Refresh"}
-            aria-label={activeSection === "ops" ? "Refresh Observe" : "Refresh"}
-            onClick={activeSection === "ops" ? refreshObserve : refreshAll}
+            title={activeSection === "ops" ? "Refresh Observe" : activeSection === "campaigns" ? "Refresh Ads" : "Refresh"}
+            aria-label={activeSection === "ops" ? "Refresh Observe" : activeSection === "campaigns" ? "Refresh Ads" : "Refresh"}
+            onClick={activeSection === "ops" ? refreshObserve : activeSection === "campaigns" ? refreshCampaigns : refreshAll}
             disabled={activeSection === "ops" ? platformLoading || runnerLoading : loading || deliveryLoading || platformLoading}
           >
             <ArrowsClockwise size={15} weight="bold" />
@@ -2249,6 +2266,8 @@ export function App() {
           runnerStatus={runnerStatus}
           runnerLoading={runnerLoading}
         />
+        ) : activeSection === "campaigns" ? (
+        <CampaignsPanel refreshSignal={campaignRefreshSignal} onError={(message) => setError(message)} />
         ) : activeSection === "workstation" ? (
         <WorkstationView
           clients={workstationClients}
@@ -2306,8 +2325,6 @@ export function App() {
           onEditProfessionalPhoto={(version) => editProfessionalPhoto(version)}
         />
         ) : activeSection === "delivery" ? (
-        <div className="delivery-operation-stack">
-          <CampaignsPanel onError={(message) => setError(message)} />
           <ClientLeadDeliveryView
             sources={deliverySources}
             contactGroups={deliveryContactGroups}
@@ -2340,7 +2357,6 @@ export function App() {
             onRetryLead={retryClientLeadNotification}
             onOpenCrmLead={openCrmLeadFromDelivery}
           />
-        </div>
         ) : selectedFunnelNeedsSetup ? (
         <FunnelSetupView
           funnel={selectedFunnel}
@@ -2772,7 +2788,7 @@ function campaignClientLabel(client: CampaignClientItem): string {
   ].filter(Boolean).join(" · ");
 }
 
-function CampaignsPanel({ onError }: { onError: (message: string) => void }) {
+function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onError: (message: string) => void }) {
   const [campaigns, setCampaigns] = useState<LeadCaptureCampaignItem[]>([]);
   const [clients, setClients] = useState<CampaignClientItem[]>([]);
   const [selectedCampaignId, setSelectedCampaignId] = useState<string | null>(null);
@@ -2838,7 +2854,7 @@ function CampaignsPanel({ onError }: { onError: (message: string) => void }) {
   useEffect(() => {
     void loadCampaigns();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [refreshSignal]);
 
   async function selectCampaign(campaignId: string) {
     setSelectedCampaignId(campaignId);
