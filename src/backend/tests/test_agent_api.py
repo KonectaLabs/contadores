@@ -14,6 +14,7 @@ from backend.database import (
     ContadoresLead,
     ContadoresLeadStage,
     ContadoresMessage,
+    PlatformMetaInventorySnapshot,
 )
 from backend.main import app
 from backend.tests.test_contadores import add_recent_inbound, configure_contadores_db
@@ -211,3 +212,74 @@ def test_closed_send_and_unknown_tool_are_rejected(monkeypatch, tmp_path) -> Non
         json={"arguments": {}},
     )
     assert unknown_tool.status_code == 404
+
+
+def test_agent_meta_readiness_and_inventory_sync(monkeypatch, tmp_path) -> None:
+    """Agent API should expose Meta readiness and read-only inventory sync directly."""
+    configure_agent_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("META_MARKETING_API_VERSION", "v25.0")
+    monkeypatch.setenv("META_MARKETING_ACCESS_TOKEN", "secret-token")
+    monkeypatch.setenv("META_AD_ACCOUNT_ID", "act_env")
+    monkeypatch.setenv("META_BUSINESS_ID", "business_env")
+    monkeypatch.setenv("META_PAGE_ID", "page_env")
+    monkeypatch.setenv("META_MARKETING_LIVE_WRITES_ENABLED", "false")
+    PlatformMetaInventorySnapshot.add(
+        status="partial",
+        source="test",
+        actor="tester",
+        ad_account_id="act_env",
+        business_id="business_env",
+        api_version="v25.0",
+        inventory={"campaigns": [{"id": "campaign_1"}], "pixels": []},
+        errors=["page_env/leadgen_forms: 403"],
+    )
+
+    class FakeResult:
+        status = "ready"
+
+        def model_dump(self, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "status": "ready",
+                "ad_account_id": "act_env",
+                "business_id": "business_env",
+                "inventory": {"campaigns": [{"id": "campaign_2"}]},
+                "errors": [],
+            }
+
+    def fake_sync_meta_inventory(**kwargs: object) -> tuple[PlatformMetaInventorySnapshot, FakeResult]:
+        assert kwargs["ad_account_id"] == ""
+        assert kwargs["business_id"] == ""
+        assert kwargs["page_ids"] == []
+        assert kwargs["limit"] == 10
+        assert kwargs["source"] == "agent_api"
+        snapshot = PlatformMetaInventorySnapshot.add(
+            status="ready",
+            source="agent_api",
+            actor="agent",
+            ad_account_id="act_env",
+            business_id="business_env",
+            api_version="v25.0",
+            inventory={"campaigns": [{"id": "campaign_2"}]},
+            errors=[],
+        )
+        return snapshot, FakeResult()
+
+    monkeypatch.setattr(agent_endpoints, "sync_meta_inventory", fake_sync_meta_inventory)
+    client = TestClient(app)
+
+    readiness = client.get("/api/agent/meta/readiness")
+    assert readiness.status_code == 200
+    readiness_payload = readiness.json()
+    assert readiness_payload["configured"]["credentials_present"] is True
+    assert readiness_payload["configured"]["page_ids"] == ["page_env"]
+    assert readiness_payload["required_permissions"]["native_lead_forms"] == ["leads_retrieval", "pages_manage_ads"]
+    assert readiness_payload["latest_snapshot"]["inventory_counts"]["campaigns"] == 1
+
+    sync = client.post("/api/agent/meta/inventory/sync", json={"limit": 10})
+    assert sync.status_code == 200
+    payload = sync.json()
+    assert payload["saved"] is True
+    assert payload["result"]["status"] == "ready"
+    assert payload["snapshot"]["source"] == "agent_api"
+    assert payload["snapshot"]["inventory_counts"]["campaigns"] == 1

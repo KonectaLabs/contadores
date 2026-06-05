@@ -36,6 +36,7 @@ followup_app = typer.Typer(no_args_is_help=True, help="Schedule future agent fol
 tool_app = typer.Typer(no_args_is_help=True, help="List and call audited tools.")
 clients_app = typer.Typer(no_args_is_help=True, help="Create and list converted clients.")
 campaigns_app = typer.Typer(no_args_is_help=True, help="Manage owned campaign forms.")
+meta_app = typer.Typer(no_args_is_help=True, help="Inspect Meta API readiness and inventory.")
 
 
 @dataclass(frozen=True)
@@ -862,6 +863,42 @@ def campaigns_delivery_source(campaign_id: str) -> None:
     )
 
 
+@meta_app.command("readiness")
+def meta_readiness() -> None:
+    """Show configured Meta API readiness and latest inventory summary."""
+    run_api_call(lambda client: client.request("GET", api_path("meta", "readiness")))
+
+
+@meta_app.command("inventory")
+def meta_inventory(
+    ad_account_id: str = typer.Option("", "--ad-account-id"),
+    business_id: str = typer.Option("", "--business-id"),
+    page_ids: list[str] = typer.Option([], "--page-id"),
+    include_campaigns: bool = typer.Option(True, "--campaigns/--no-campaigns"),
+    include_lead_forms: bool = typer.Option(True, "--lead-forms/--no-lead-forms"),
+    include_pixels: bool = typer.Option(True, "--pixels/--no-pixels"),
+    include_whatsapp: bool = typer.Option(True, "--whatsapp/--no-whatsapp"),
+    limit: int = typer.Option(50, "--limit", min=1, max=200),
+) -> None:
+    """Run read-only Meta inventory sync through the Agent API."""
+    run_api_call(
+        lambda client: client.request(
+            "POST",
+            api_path("meta", "inventory", "sync"),
+            json_body={
+                "ad_account_id": ad_account_id,
+                "business_id": business_id,
+                "page_ids": page_ids,
+                "include_campaigns": include_campaigns,
+                "include_lead_forms": include_lead_forms,
+                "include_pixels": include_pixels,
+                "include_whatsapp": include_whatsapp,
+                "limit": limit,
+            },
+        )
+    )
+
+
 @tool_app.command("list")
 def tool_list() -> None:
     """List tools exposed by the Agent API."""
@@ -898,6 +935,7 @@ app.add_typer(note_app, name="note")
 app.add_typer(followup_app, name="followup")
 app.add_typer(clients_app, name="clients")
 app.add_typer(campaigns_app, name="campaigns")
+app.add_typer(meta_app, name="meta")
 app.add_typer(tool_app, name="tool")
 
 

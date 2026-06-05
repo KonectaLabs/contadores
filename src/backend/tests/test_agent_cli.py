@@ -61,6 +61,7 @@ def test_help_lists_agent_cli_groups() -> None:
     assert "conversations" in root.output
     assert "campaigns" in root.output
     assert "clients" in root.output
+    assert "meta" in root.output
     assert "messages" in root.output
     assert queues.exit_code == 0
     assert "needs-attention" in queues.output
@@ -349,6 +350,40 @@ def test_agent_commands_call_expected_methods_paths_and_bodies(
             "/api/agent/campaigns/campaign-1/delivery-source",
             None,
             None,
+        ),
+        (
+            ["meta", "readiness"],
+            "GET",
+            "/api/agent/meta/readiness",
+            None,
+            None,
+        ),
+        (
+            [
+                "meta",
+                "inventory",
+                "--ad-account-id",
+                "act_1",
+                "--business-id",
+                "business_1",
+                "--page-id",
+                "page_1",
+                "--limit",
+                "10",
+            ],
+            "POST",
+            "/api/agent/meta/inventory/sync",
+            None,
+            {
+                "ad_account_id": "act_1",
+                "business_id": "business_1",
+                "page_ids": ["page_1"],
+                "include_campaigns": True,
+                "include_lead_forms": True,
+                "include_pixels": True,
+                "include_whatsapp": True,
+                "limit": 10,
+            },
         ),
         (
             ["tool", "call", "schedule_followup", "--run-id", "run-1", "--json", '{"lead_id":"lead-1"}'],

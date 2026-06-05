@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from collections import Counter
 from datetime import datetime, timezone
@@ -24,11 +25,13 @@ from backend.database import (
     ContadoresMessage,
     LeadCaptureCampaign,
     LeadCaptureSubmission,
+    PlatformMetaInventorySnapshot,
     WorkstationClient,
     engine,
     normalize_contadores_tags,
     normalize_phone,
 )
+from backend.meta_ads_inventory import sync_meta_inventory
 from backend.endpoints.campaigns import (
     ConvertedClientCommand,
     LeadCaptureCampaignCommand,
@@ -107,6 +110,15 @@ QUICK_ACTIONS = [
     "archive",
     "unarchive",
 ]
+
+META_REQUIRED_PERMISSIONS = [
+    "ads_read",
+    "ads_management",
+    "business_management",
+    "whatsapp_business_management",
+    "whatsapp_business_messaging",
+]
+META_NATIVE_LEAD_FORM_PERMISSIONS = ["leads_retrieval", "pages_manage_ads"]
 
 
 class CliExchangeCommand(BaseModel):
@@ -216,6 +228,19 @@ class AgentCampaignPatchCommand(LeadCaptureCampaignPatchCommand):
     dry_run: bool = False
 
 
+class AgentMetaInventorySyncCommand(BaseModel):
+    """Read Meta inventory through configured Marketing API credentials."""
+
+    ad_account_id: str = ""
+    business_id: str = ""
+    page_ids: list[str] = Field(default_factory=list)
+    include_campaigns: bool = True
+    include_lead_forms: bool = True
+    include_pixels: bool = True
+    include_whatsapp: bool = True
+    limit: int = Field(default=50, ge=1, le=200)
+
+
 def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -253,6 +278,80 @@ def _tool_manifest() -> list[dict[str, Any]]:
 
 def _allowed_tool_names() -> set[str]:
     return {item["name"] for item in _tool_manifest()}
+
+
+def _env_truthy(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_list(*names: str) -> list[str]:
+    values: list[str] = []
+    seen: set[str] = set()
+    for name in names:
+        for raw_item in os.getenv(name, "").replace("\n", ",").split(","):
+            clean_item = raw_item.strip()
+            if clean_item and clean_item not in seen:
+                values.append(clean_item)
+                seen.add(clean_item)
+    return values
+
+
+def _inventory_counts(inventory: dict[str, Any]) -> dict[str, int]:
+    return {key: len(value) for key, value in inventory.items() if isinstance(value, list)}
+
+
+def _meta_inventory_snapshot_payload(snapshot: PlatformMetaInventorySnapshot | None) -> dict[str, Any] | None:
+    if snapshot is None:
+        return None
+    inventory = snapshot.inventory()
+    return {
+        "id": snapshot.id,
+        "status": snapshot.status,
+        "source": snapshot.source,
+        "actor": snapshot.actor,
+        "ad_account_id": snapshot.ad_account_id,
+        "business_id": snapshot.business_id,
+        "api_version": snapshot.api_version,
+        "created_at": format_timestamp_seconds(snapshot.created_at),
+        "inventory_counts": _inventory_counts(inventory),
+        "inventory": inventory,
+        "errors": snapshot.errors(),
+    }
+
+
+def _meta_readiness_payload() -> dict[str, Any]:
+    latest_snapshot = next(iter(PlatformMetaInventorySnapshot.list_recent(limit=1)), None)
+    return {
+        "configured": {
+            "api_version": os.getenv("META_MARKETING_API_VERSION", "").strip(),
+            "credentials_present": bool(
+                os.getenv("META_MARKETING_ACCESS_TOKEN", "").strip()
+                or os.getenv("META_ACCESS_TOKEN", "").strip()
+            ),
+            "ad_account_id": os.getenv("META_AD_ACCOUNT_ID", "").strip(),
+            "business_id": os.getenv("META_BUSINESS_ID", "").strip(),
+            "page_ids": _env_list("META_PAGE_IDS", "META_PAGE_ID"),
+            "whatsapp_business_account_ids": _env_list(
+                "META_WHATSAPP_BUSINESS_ACCOUNT_IDS",
+                "META_WHATSAPP_BUSINESS_ACCOUNT_ID",
+            ),
+            "whatsapp_phone_number_ids": _env_list(
+                "META_WHATSAPP_PHONE_NUMBER_IDS",
+                "META_WHATSAPP_PHONE_NUMBER_ID",
+            ),
+            "live_writes_enabled": _env_truthy("META_MARKETING_LIVE_WRITES_ENABLED"),
+        },
+        "required_permissions": {
+            "ads_whatsapp_inventory": META_REQUIRED_PERMISSIONS,
+            "native_lead_forms": META_NATIVE_LEAD_FORM_PERMISSIONS,
+        },
+        "safe_defaults": {
+            "owned_campaign_forms_require_meta_lead_forms": False,
+            "inventory_sync_is_read_only": True,
+            "live_writes_require_meta_marketing_live_writes_enabled": True,
+        },
+        "latest_snapshot": _meta_inventory_snapshot_payload(latest_snapshot),
+    }
 
 
 def _serialize_run(run: AgentRun) -> dict[str, Any]:
@@ -748,6 +847,17 @@ async def get_agent_capabilities() -> dict[str, Any]:
             ],
             "public_form": "/c/{public_slug}/",
         },
+        "meta": {
+            "endpoints": [
+                "GET /api/agent/meta/readiness",
+                "POST /api/agent/meta/inventory/sync",
+            ],
+            "required_permissions": {
+                "ads_whatsapp_inventory": META_REQUIRED_PERMISSIONS,
+                "native_lead_forms": META_NATIVE_LEAD_FORM_PERMISSIONS,
+            },
+            "live_writes_gated_by": "META_MARKETING_LIVE_WRITES_ENABLED",
+        },
         "mutations": {
             "dry_run": True,
             "idempotency_key": True,
@@ -875,6 +985,34 @@ async def list_agent_campaign_submissions(
 async def refresh_agent_campaign_delivery_source(request: Request, campaign_id: str) -> dict[str, Any]:
     """Create or refresh the Delivery source for one owned campaign."""
     return await refresh_owned_campaign_delivery_source(request, campaign_id)
+
+
+@agent_router.get("/meta/readiness")
+async def get_agent_meta_readiness() -> dict[str, Any]:
+    """Return configured Meta readiness and the latest inventory snapshot."""
+    return _meta_readiness_payload()
+
+
+@agent_router.post("/meta/inventory/sync")
+async def sync_agent_meta_inventory(command: AgentMetaInventorySyncCommand) -> dict[str, Any]:
+    """Run a read-only Meta inventory sync using configured defaults when omitted."""
+    snapshot, result = sync_meta_inventory(
+        ad_account_id=command.ad_account_id,
+        business_id=command.business_id,
+        page_ids=command.page_ids,
+        include_campaigns=command.include_campaigns,
+        include_lead_forms=command.include_lead_forms,
+        include_pixels=command.include_pixels,
+        include_whatsapp=command.include_whatsapp,
+        limit=command.limit,
+        source="agent_api",
+        actor="agent",
+    )
+    return {
+        "saved": True,
+        "snapshot": _meta_inventory_snapshot_payload(snapshot),
+        "result": result.model_dump(mode="json"),
+    }
 
 
 @agent_router.post("/runs")

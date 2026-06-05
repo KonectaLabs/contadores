@@ -112,6 +112,8 @@ contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --stat
 contadores-agent campaigns get CAMPAIGN_ID
 contadores-agent campaigns delivery-source CAMPAIGN_ID
 contadores-agent campaigns submissions CAMPAIGN_ID --limit 20
+contadores-agent meta readiness
+contadores-agent meta inventory --limit 20
 ```
 
 El CRM tambien expone `/api/campaigns` para operadores autenticados y

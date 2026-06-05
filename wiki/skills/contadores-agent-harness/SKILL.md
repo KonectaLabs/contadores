@@ -56,6 +56,8 @@ contadores-agent campaigns list --status active
 contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --status active
 contadores-agent campaigns delivery-source CAMPAIGN_ID
 contadores-agent campaigns submissions CAMPAIGN_ID --limit 20
+contadores-agent meta readiness
+contadores-agent meta inventory --limit 20
 ```
 
 Owned campaign submissions are routed through Client Lead Delivery helpers. Meta

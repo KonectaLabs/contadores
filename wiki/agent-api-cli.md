@@ -114,6 +114,18 @@ GET   /api/agent/campaigns/{campaign_id}/submissions
 POST  /api/agent/campaigns/{campaign_id}/delivery-source
 ```
 
+Meta readiness and inventory are direct agent endpoints:
+
+```text
+GET  /api/agent/meta/readiness
+POST /api/agent/meta/inventory/sync
+```
+
+`/api/agent/meta/inventory/sync` is read-only against Meta and falls back to
+configured server IDs. It persists the same audited inventory snapshot as the
+`sync_meta_inventory` tool. Native Meta lead forms require Meta
+`pages_manage_ads`; CRM-owned public forms do not.
+
 The operator API exposes the same product surface under `/api/campaigns`.
 Public lead capture is intentionally smaller:
 
@@ -158,6 +170,8 @@ contadores-agent campaigns get CAMPAIGN_ID
 contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --status active
 contadores-agent campaigns submissions CAMPAIGN_ID --limit 20
 contadores-agent campaigns delivery-source CAMPAIGN_ID
+contadores-agent meta readiness
+contadores-agent meta inventory --limit 20
 contadores-agent tool list
 contadores-agent tool call get_lead_context --json '{"lead_id":"..."}'
 ```
