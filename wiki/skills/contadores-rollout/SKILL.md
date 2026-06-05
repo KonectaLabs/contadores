@@ -164,8 +164,8 @@ Contadores frontend work should keep the platform clean, calm, and sparse. Do
 not turn the backoffice into a feature wall or expose internal complexity just
 because the backend has the data.
 
-- Keep top-level navigation to four primary operations at most: CRM, Build,
-  Deliver, and Observe. Existing code names can differ, but the UI should
+- Keep top-level navigation to four primary operations: CRM, Ads, Build, and
+  Deliver. Existing code names can differ, but the UI should
   feel like those few understandable jobs.
 - Each surface should have one dominant job and one obvious next action.
 - Default views should show the important few: what needs attention, what is
