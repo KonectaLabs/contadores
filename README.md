@@ -738,15 +738,14 @@ open data/reports/contadores-crm-followup-dashboard.html
   acciones humanas. Despues muestra el ultimo run, historial acumulado como
   Markdown renderizado, timeline y un panel para copiar un prompt o comando
   `codex exec` con el contexto del run.
-- Vista visual remota: entrar al backoffice y abrir la seccion `Runner`. La UI lee
-  `GET /api/contadores/followup/runner/status` y muestra primero el delta
-  estructurado, despues el ultimo resumen, historial acumulado y timeline.
-  Los logs/stdout quedan colapsados como detalles tecnicos. Esta ruta
-  queda protegida por sesion o `X-Internal-Token`; no es publica.
+- Estado remoto por API: `GET /api/contadores/followup/runner/status` devuelve
+  el delta estructurado, ultimo resumen, historial acumulado, timeline y logs
+  tecnicos. Esta ruta queda protegida por sesion o `X-Internal-Token`; no es
+  publica. Ya no hay una vista visual de Runner en el backoffice.
 - El LaunchAgent local tambien sincroniza su ultimo estado al server real con
   `POST /api/contadores/followup/runner/status`, usando `INTERNAL_API_TOKEN`.
-  Asi el backoffice desplegado puede mostrar el ultimo resumen/log tail aunque
-  la ejecucion haya corrido en la Mac.
+  Asi el server real conserva el ultimo resumen/log tail aunque la ejecucion
+  haya corrido en la Mac.
 
 Verificar API de funnels:
 
@@ -826,7 +825,7 @@ Entrada Click-to-WhatsApp:
 
 Client Lead Delivery:
 
-- Delivery es una superficie separada del CRM, Workstation y Runner para leads que
+- Delivery es una superficie separada del CRM, Ads y Workstation para leads que
   se generan para clientes de Konecta.
 - Cada fuente guarda URL/GID del Google Sheet, intervalo de polling, destinatario
   WhatsApp, mapping de columnas, campos de contexto, template Meta y, cuando

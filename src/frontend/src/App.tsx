@@ -3,7 +3,6 @@ import type { CSSProperties, ClipboardEvent, DragEvent, FormEvent, KeyboardEvent
 import {
   ArrowsClockwise,
   ArrowSquareOut,
-  BellRinging,
   Camera,
   CaretDown,
   ChatCircleText,
@@ -24,13 +23,11 @@ import {
   Pulse,
   Robot,
   SpinnerGap,
-  TrendUp,
   Trash,
   UploadSimple,
   WarningCircle,
   X,
 } from "@phosphor-icons/react";
-import { marked } from "marked";
 import { apiFetch } from "./api";
 import { compactNumber, humanize, lastInteractionAt, relativeTime, shortDate } from "./format";
 import type {
@@ -53,18 +50,7 @@ import type {
   LeadSummary,
   ManualAttentionCountsResponse,
   MessageItem,
-  PlatformAdCampaignItem,
-  PlatformCreativeAssetItem,
-  PlatformAgentRunItem,
-  PlatformAgentToolCallItem,
-  PlatformEventItem,
-  PlatformHumanQuestionItem,
-  PlatformMetaInventorySnapshotItem,
-  PlatformMetaPublishAttemptItem,
-  PlatformOverviewResponse,
   QuickActionResponse,
-  RunnerDeltaEvent,
-  RunnerStatusResponse,
   RuntimeSettings,
   StrategyStatsItem,
   StrategyStatsResponse,
@@ -111,7 +97,7 @@ type LeadViewFilterOption = {
   tone: "all" | "neutral" | "accent" | "success" | "warn" | "muted";
   group: LeadViewGroupId;
 };
-type ActiveSection = "crm" | "campaigns" | "workstation" | "delivery" | "ops";
+type ActiveSection = "crm" | "campaigns" | "workstation" | "delivery";
 type LoadWorkstationDetailOptions = {
   syncNotes?: boolean;
   showLoading?: boolean;
@@ -294,9 +280,9 @@ function applyLeadViewFilter(params: URLSearchParams, filter: LeadViewFilterValu
 function readStoredActiveSection(): ActiveSection {
   const value = readStoredValue(DASHBOARD_SECTION_STORAGE_KEY);
   if (value === "runner") {
-    return "ops";
+    return "crm";
   }
-  if (value === "campaigns" || value === "workstation" || value === "delivery" || value === "ops") {
+  if (value === "campaigns" || value === "workstation" || value === "delivery") {
     return value;
   }
   return "crm";
@@ -326,11 +312,6 @@ const operations: Array<{
     section: "delivery",
     label: "Deliver",
     icon: <PaperPlaneTilt size={16} weight="bold" />,
-  },
-  {
-    section: "ops",
-    label: "Observe",
-    icon: <Pulse size={16} weight="bold" />,
   },
 ];
 
@@ -488,10 +469,6 @@ export function App() {
   const [deliveryRecipientChat, setDeliveryRecipientChat] = useState<ClientLeadRecipientChatResponse | null>(null);
   const [deliveryRecipientChatLoading, setDeliveryRecipientChatLoading] = useState(false);
   const [deliveryCopyStatus, setDeliveryCopyStatus] = useState("");
-  const [runnerStatus, setRunnerStatus] = useState<RunnerStatusResponse | null>(null);
-  const [runnerLoading, setRunnerLoading] = useState(false);
-  const [platformOverview, setPlatformOverview] = useState<PlatformOverviewResponse | null>(null);
-  const [platformLoading, setPlatformLoading] = useState(false);
   const [campaignRefreshSignal, setCampaignRefreshSignal] = useState(0);
   const [acknowledgingDeliveryErrorIds, setAcknowledgingDeliveryErrorIds] = useState<number[]>([]);
   const [leadContextCopyStatus, setLeadContextCopyStatus] = useState("");
@@ -672,18 +649,6 @@ export function App() {
     setDeliveryRecipientChat(payload);
   }, []);
 
-  const loadRunnerStatus = useCallback(async () => {
-    const payload = await apiFetch<RunnerStatusResponse>(
-      "/api/contadores/followup/runner/status?log_tail_lines=160&log_limit=12",
-    );
-    setRunnerStatus(payload);
-  }, []);
-
-  const loadPlatformOverview = useCallback(async () => {
-    const payload = await apiFetch<PlatformOverviewResponse>("/api/platform/overview?limit=120");
-    setPlatformOverview(payload);
-  }, []);
-
   const loadDetail = useCallback(async (leadId: string) => {
     const requestId = detailRequestId.current + 1;
     detailRequestId.current = requestId;
@@ -802,17 +767,13 @@ export function App() {
             loaders.push(loadDeliveryRecipientChat(selectedDeliverySourceId));
           }
         }
-        if (activeSection === "ops") {
-          loaders.push(loadPlatformOverview());
-          loaders.push(loadRunnerStatus());
-        }
         Promise.all(loaders).catch((reason) => {
           setError(reason instanceof Error ? reason.message : "Automatic refresh failed.");
         });
       }
     }, REFRESH_MS);
     return () => window.clearInterval(timer);
-  }, [activeSection, loadDashboard, loadDeliveryLeadsForSources, loadDeliveryRecipientChat, loadDeliverySources, loadPlatformOverview, loadRunnerStatus, selectedDeliverySourceId]);
+  }, [activeSection, loadDashboard, loadDeliveryLeadsForSources, loadDeliveryRecipientChat, loadDeliverySources, selectedDeliverySourceId]);
 
   useEffect(() => {
     if (!selectedLeadId || !isContadoresFunnel) {
@@ -906,30 +867,6 @@ export function App() {
       cancelled = true;
     };
   }, [activeSection, deliveryEditorMode, deliverySources, loadDeliveryLeadsForSources, loadDeliveryRecipientChat, selectedDeliverySourceId]);
-
-  useEffect(() => {
-    if (activeSection !== "ops") {
-      return;
-    }
-    let cancelled = false;
-    setPlatformLoading(true);
-    setRunnerLoading(true);
-    Promise.all([loadPlatformOverview(), loadRunnerStatus()])
-      .catch((reason) => {
-        if (!cancelled) {
-          setError(reason instanceof Error ? reason.message : "Could not load observability.");
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setPlatformLoading(false);
-          setRunnerLoading(false);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [activeSection, loadPlatformOverview, loadRunnerStatus]);
 
   useEffect(() => {
     if (!selectedWorkstationClientId) {
@@ -1069,8 +1006,6 @@ export function App() {
     try {
       await loadDashboard();
       await loadWorkstation();
-      await loadRunnerStatus();
-      await loadPlatformOverview();
       if (selectedLeadId && isContadoresFunnel) {
         await loadDetail(selectedLeadId);
       }
@@ -1088,19 +1023,6 @@ export function App() {
       setError(reason instanceof Error ? reason.message : "Could not refresh funnels.");
     } finally {
       setLoading(false);
-    }
-  }
-
-  async function refreshObserve() {
-    setPlatformLoading(true);
-    setRunnerLoading(true);
-    try {
-      await Promise.all([loadPlatformOverview(), loadRunnerStatus()]);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not refresh Observe.");
-    } finally {
-      setPlatformLoading(false);
-      setRunnerLoading(false);
     }
   }
 
@@ -2086,22 +2008,14 @@ export function App() {
   const workstationTitle = selectedFunnel
     ? `Build · ${selectedFunnel.label}`
     : "Build";
-  const activeTitle = activeSection === "ops"
-    ? "Observe"
-    : activeSection === "workstation"
+  const activeTitle = activeSection === "workstation"
       ? workstationTitle
       : activeSection === "delivery"
         ? "Deliver"
         : activeSection === "campaigns"
           ? "Ads"
         : "CRM";
-  const syncStatus = activeSection === "ops"
-    ? platformOverview
-      ? `${compactNumber(platformOverview.counts.active_blockers)} blockers · ${relativeTime(platformOverview.generated_at)}`
-      : runnerStatus?.running
-        ? "Runner running"
-        : "Observe loading"
-    : activeSection === "workstation"
+  const syncStatus = activeSection === "workstation"
     ? `${workstationClients.length} converted ${workstationClients.length === 1 ? "client" : "clients"}`
     : activeSection === "campaigns"
     ? "Owned forms"
@@ -2114,9 +2028,7 @@ export function App() {
       : "Sync idle";
   const syncBadgeIsOk = activeSection === "delivery"
     ? deliverySourceIssueCount === 0
-    : activeSection === "ops"
-      ? (platformOverview?.counts.active_blockers ?? 0) === 0
-      : activeSection === "campaigns"
+    : activeSection === "campaigns"
         ? true
         : config?.last_sheet_sync_status === "ok";
 
@@ -2138,9 +2050,7 @@ export function App() {
             const isActive = activeSection === operation.section;
             const badge = operation.section === "crm" && showGlobalCrmAttentionBadge
               ? totalManualAttentionCount
-              : operation.section === "ops" && platformOverview && platformOverview.counts.active_blockers > 0
-                ? platformOverview.counts.active_blockers
-                : 0;
+              : 0;
 
             return (
               <button
@@ -2234,10 +2144,10 @@ export function App() {
           <button
             type="button"
             className="ct-icon-btn"
-            title={activeSection === "ops" ? "Refresh Observe" : activeSection === "campaigns" ? "Refresh Ads" : "Refresh"}
-            aria-label={activeSection === "ops" ? "Refresh Observe" : activeSection === "campaigns" ? "Refresh Ads" : "Refresh"}
-            onClick={activeSection === "ops" ? refreshObserve : activeSection === "campaigns" ? refreshCampaigns : refreshAll}
-            disabled={activeSection === "ops" ? platformLoading || runnerLoading : loading || deliveryLoading || platformLoading}
+            title={activeSection === "campaigns" ? "Refresh Ads" : "Refresh"}
+            aria-label={activeSection === "campaigns" ? "Refresh Ads" : "Refresh"}
+            onClick={activeSection === "campaigns" ? refreshCampaigns : refreshAll}
+            disabled={loading || deliveryLoading}
           >
             <ArrowsClockwise size={15} weight="bold" />
             <span className="ct-toolbar-label">Refresh</span>
@@ -2259,14 +2169,7 @@ export function App() {
           </div>
         ) : null}
 
-        {activeSection === "ops" ? (
-        <PlatformOpsView
-          overview={platformOverview}
-          loading={platformLoading}
-          runnerStatus={runnerStatus}
-          runnerLoading={runnerLoading}
-        />
-        ) : activeSection === "campaigns" ? (
+        {activeSection === "campaigns" ? (
         <CampaignsPanel refreshSignal={campaignRefreshSignal} onError={(message) => setError(message)} />
         ) : activeSection === "workstation" ? (
         <WorkstationView
@@ -3977,1177 +3880,6 @@ function DeliverySheetRows({
   );
 }
 
-type OpsActionTone = "danger" | "warn";
-type OpsActionItem = {
-  id: string;
-  tone: OpsActionTone;
-  area: string;
-  title: string;
-  detail: string;
-  debugLines?: string[];
-  action: string;
-  status: string;
-  updatedAt: string | null;
-};
-type OpsReadinessStatus = "ready" | "partial" | "blocked" | "missing" | string;
-type OpsReadinessItem = {
-  label: string;
-  status: OpsReadinessStatus;
-  detail: string;
-};
-type OpsMode = "loading" | "missing" | "blocked" | "review" | "clean";
-
-function PlatformOpsView({
-  overview,
-  loading,
-  runnerStatus,
-  runnerLoading,
-}: {
-  overview: PlatformOverviewResponse | null;
-  loading: boolean;
-  runnerStatus: RunnerStatusResponse | null;
-  runnerLoading: boolean;
-}) {
-  const defaultCounts = {
-    active_blockers: 0,
-    open_human_questions: 0,
-    blocked_meta_attempts: 0,
-    blocked_meta_inventory: 0,
-    pending_campaigns: 0,
-    meetings: 0,
-    campaigns: 0,
-    creative_assets: 0,
-    meta_inventory_snapshots: 0,
-    client_updates: 0,
-    agent_runs: 0,
-    failed_agent_runs: 0,
-    agent_tool_calls: 0,
-    failed_agent_tool_calls: 0,
-    recent_events: 0,
-  };
-  const counts = { ...defaultCounts, ...(overview?.counts ?? {}) };
-  const questions = overview?.human_questions ?? [];
-  const metaAttempts = overview?.meta_publish_attempts ?? [];
-  const campaigns = overview?.ad_campaigns ?? [];
-  const updates = overview?.client_updates ?? [];
-  const meetings = overview?.meetings ?? [];
-  const events = overview?.events ?? [];
-  const profiles = overview?.client_profiles ?? [];
-  const creatives = overview?.creative_assets ?? [];
-  const inventorySnapshots = overview?.meta_inventory_snapshots ?? [];
-  const agentRuns = overview?.agent_runs ?? [];
-  const agentToolCalls = overview?.agent_tool_calls ?? [];
-  const openQuestions = questions.filter(isOpenPlatformQuestion);
-  const blockedAttempts = metaAttempts.filter(isBlockedPlatformAttempt);
-  const updatesWithBlockers = updates.filter((update) => update.blockers.length > 0);
-  const metaReadyCreatives = creatives.filter(isMetaReadyCreative);
-  const uploadBlockedCreatives = creatives.filter((creative) => ["upload_blocked", "upload_failed"].includes(creative.status));
-  const failedAgentRuns = agentRuns.filter((run) => ["failed", "error", "blocked"].includes(run.status));
-  const failedAgentToolCalls = agentToolCalls.filter((call) => call.status === "failed");
-  const latestInventory = inventorySnapshots[0] ?? null;
-  const latestInventoryBlocked = latestInventory
-    ? latestInventory.status === "missing_credentials" || latestInventory.status === "partial" || latestInventory.errors.length > 0
-    : false;
-  const inventoryBlockers = latestInventory && latestInventoryBlocked ? [latestInventory] : [];
-  const metaCredentialsPendingAction: OpsActionItem[] = !latestInventory ? [{
-    id: "setup:meta-credentials",
-    tone: "warn",
-    area: "Setup",
-    title: "Meta credentials not connected",
-    detail: "Meta access is missing.",
-    action: "Add token, ad account, and live-write approval.",
-    status: "missing",
-    updatedAt: overview?.generated_at ?? null,
-  }] : [];
-  const rawOperatorActions: OpsActionItem[] = [
-    ...openQuestions.map((question) => ({
-      id: `question:${question.id}`,
-      tone: "warn" as const,
-      area: "Question",
-      title: question.question,
-      detail: question.trying_to_do || question.context_summary || question.workflow || "Operator answer needed.",
-      debugLines: [
-        formatPlatformRef(question.target_type, question.target_id),
-        question.default_action ? `Default action: ${question.default_action}` : "",
-      ],
-      action: question.default_action || "Answer or choose the safe default.",
-      status: question.status,
-      updatedAt: question.updated_at,
-    })),
-    ...blockedAttempts.map((attempt) => ({
-      id: `meta:${attempt.id}`,
-      tone: "danger" as const,
-      area: "Meta",
-      title: platformCampaignNameFromAttempt(attempt) || "Meta publish blocked",
-      detail: "Meta publish needs operator review.",
-      debugLines: [
-        attempt.error,
-        formatPlatformRef("attempt", attempt.id),
-        formatPlatformRef("campaign", attempt.campaign_id),
-        formatMissingMetaFields(attempt),
-      ],
-      action: "Complete missing fields, credentials, or approval before live publish.",
-      status: metaPublishStatusValue(attempt),
-      updatedAt: attempt.updated_at,
-    })),
-    ...inventoryBlockers.map((snapshot) => ({
-      id: `inventory:${snapshot.id}`,
-      tone: "danger" as const,
-      area: "Inventory",
-      title: "Meta inventory needs access",
-      detail: snapshot.errors.length ? "Meta inventory access is blocked." : metaInventoryCounts(snapshot),
-      debugLines: [
-        snapshot.errors.length ? formatUnknownList(snapshot.errors) : "",
-        ...metaInventoryTechnicalFields(snapshot),
-      ],
-      action: "Add Meta credentials or ask Alan for the missing access.",
-      status: snapshot.status,
-      updatedAt: snapshot.created_at,
-    })),
-    ...metaCredentialsPendingAction,
-    ...updatesWithBlockers.map((update) => ({
-      id: `update:${update.id}`,
-      tone: "warn" as const,
-      area: "Client update",
-      title: update.summary_text || "Client update blocked",
-      detail: "Resolve blockers before the next update.",
-      debugLines: [
-        formatUnknownList(update.blockers),
-        formatPlatformRef("client", update.client_id),
-        formatPlatformRef("campaign", update.campaign_id),
-      ],
-      action: update.next_action || "Resolve blockers before sending update.",
-      status: update.status,
-      updatedAt: update.updated_at,
-    })),
-    ...uploadBlockedCreatives.map((creative) => ({
-      id: `creative:${creative.id}`,
-      tone: "warn" as const,
-      area: "Creative",
-      title: creative.file_path ? truncate(creative.file_path.split("/").pop() || creative.file_path, 54) : humanize(creative.asset_type || "Creative"),
-      detail: creative.failure_reason ? "Creative upload needs review." : metaCreativeDetail(creative),
-      debugLines: [creative.failure_reason, formatPlatformRef("creative", creative.id), formatPlatformRef("campaign", creative.campaign_id)],
-      action: "Upload to Meta after credentials and file readiness are confirmed.",
-      status: creative.status,
-      updatedAt: creative.updated_at,
-    })),
-    ...failedAgentRuns.map((run) => ({
-      id: `run:${run.id}`,
-      tone: "danger" as const,
-      area: "Agent",
-      title: run.agent_kind || "Agent run failed",
-      detail: run.error_preview ? "Agent run failed." : run.final_response_preview ? "Agent run needs review." : "Agent target needs review.",
-      debugLines: [run.error_preview, run.final_response_preview, formatPlatformRef(run.target_type, run.target_id)],
-      action: "Inspect the run context before retrying.",
-      status: run.status,
-      updatedAt: run.finished_at || run.started_at,
-    })),
-    ...failedAgentToolCalls.map((call) => ({
-      id: `tool:${call.id}`,
-      tone: "danger" as const,
-      area: "Tool",
-      title: call.tool_name,
-      detail: call.error_preview ? "Tool call failed." : call.arguments_preview ? "Tool input needs review." : "Tool target needs review.",
-      debugLines: [call.error_preview, call.arguments_preview, formatPlatformRef(call.target_type, call.target_id)],
-      action: "Fix the input or provider blocker, then rerun the tool.",
-      status: call.status,
-      updatedAt: call.created_at,
-    })),
-  ];
-  const overviewLoading = loading && !overview;
-  const overviewMissing = !loading && !overview;
-  const operatorActions = [...rawOperatorActions].sort(compareOpsActions);
-  const primaryAction = operatorActions[0] ?? null;
-  const hasDangerAction = operatorActions.some((item) => item.tone === "danger");
-  let opsMode: OpsMode = "clean";
-  if (overviewLoading) {
-    opsMode = "loading";
-  } else if (overviewMissing) {
-    opsMode = "missing";
-  } else if (counts.active_blockers > 0 || hasDangerAction) {
-    opsMode = "blocked";
-  } else if (operatorActions.length > 0) {
-    opsMode = "review";
-  }
-
-  let opsHero = {
-    label: "State",
-    title: "Clean",
-    detail: "No active platform blockers.",
-  };
-  if (opsMode === "loading") {
-    opsHero = {
-      label: "State",
-      title: "Loading",
-      detail: "Reading platform status before showing blockers.",
-    };
-  } else if (opsMode === "missing") {
-    opsHero = {
-      label: "State",
-      title: "No data",
-      detail: "Refresh platform status before trusting this view.",
-    };
-  } else if (opsMode === "blocked") {
-    opsHero = {
-      label: "Next",
-      title: primaryAction ? truncate(primaryAction.title, 64) : "Resolve blockers first",
-      detail: primaryAction ? truncate(primaryAction.action, 72) : "Clear the blocked queue.",
-    };
-  } else if (opsMode === "review") {
-    opsHero = {
-      label: "Next",
-      title: primaryAction ? truncate(primaryAction.title, 64) : "Review pending work",
-      detail: primaryAction ? truncate(primaryAction.action, 72) : "Clear the open queue.",
-    };
-  }
-  const metaReadiness: OpsReadinessItem[] = [
-    {
-      label: "Credentials",
-      status: inventoryBlockers.length ? "blocked" : latestInventory ? latestInventory.status : "missing",
-      detail: inventoryBlockers.length ? "Meta access missing or partial" : latestInventory ? metaInventoryCounts(latestInventory) : "No inventory sync yet",
-    },
-    {
-      label: "Campaign brief",
-      status: campaigns.length ? "ready" : "missing",
-      detail: campaigns.length ? `${campaigns.length} staged` : "Stage campaign after client profile",
-    },
-    {
-      label: "Creative batch",
-      status: metaReadyCreatives.length ? "ready" : creatives.length ? "partial" : "missing",
-      detail: `${creatives.length} assets · ${metaReadyCreatives.length} Meta-ready`,
-    },
-    {
-      label: "Publish plan",
-      status: metaAttempts.length ? (blockedAttempts.length ? "blocked" : "ready") : "missing",
-      detail: metaAttempts.length ? `${metaAttempts.length} attempts · ${blockedAttempts.length} blocked` : "No Meta plan staged",
-    },
-    {
-      label: "Approval gate",
-      status: metaAttempts.some((attempt) => attempt.approval_status === "approved" || attempt.response_payload.schema_version === "konecta.meta_publish_execution.v1") ? "ready" : "missing",
-      detail: "Needs explicit approval before live writes",
-    },
-  ];
-  const runnerNeedsAction = runnerStatus?.delta?.metrics.needs_action ?? 0;
-  const runnerReplies = runnerStatus?.delta?.metrics.new_replies ?? 0;
-  const runnerTone = runnerStatus?.running
-    ? "blue"
-    : runnerNeedsAction > 0
-      ? "danger"
-      : "ok";
-
-  return (
-    <div className="ct-surface ops-surface">
-      <section className="ops-toolbar" data-mode={opsMode} aria-label="Platform lifecycle status">
-        <div className="ops-toolbar-main">
-          <span>{opsHero.label}</span>
-          <strong>{opsHero.title}</strong>
-          <small>{opsHero.detail}</small>
-        </div>
-      </section>
-
-      <section className="runner-command-center ops-signal-grid" aria-label="Platform signals">
-        <RunnerSignal icon={<WarningCircle size={30} weight="fill" />} label="Blockers" value={counts.active_blockers} tone={counts.active_blockers > 0 ? "danger" : "ok"} />
-        <RunnerSignal icon={<ChatCircleText size={30} weight="fill" />} label="Questions" value={counts.open_human_questions} tone={counts.open_human_questions > 0 ? "warn" : "neutral"} />
-        <RunnerSignal icon={<Pulse size={30} weight="fill" />} label="Runner" value={runnerNeedsAction} tone={runnerTone} />
-        <RunnerSignal icon={<PaperPlaneTilt size={30} weight="fill" />} label="Meta" value={counts.blocked_meta_attempts + counts.blocked_meta_inventory} tone={counts.blocked_meta_attempts + counts.blocked_meta_inventory > 0 ? "danger" : "neutral"} />
-      </section>
-
-      <section className="ops-layout">
-        <div className="ops-main-column">
-          <OpsPanel eyebrow={<ListChecks size={18} weight="fill" />} title="Action queue" meta={`${operatorActions.length}`}>
-            {overviewLoading ? (
-              <OpsEmpty title="Loading platform state" value="..." />
-            ) : overviewMissing ? (
-              <OpsEmpty title="No platform data" value="-" />
-            ) : operatorActions.length ? (
-              <div className="ops-action-queue">
-                {operatorActions.slice(0, 5).map((item) => (
-                  <OpsActionCard item={item} key={item.id} />
-                ))}
-              </div>
-            ) : (
-              <OpsEmpty title="No open actions" value="0" />
-            )}
-          </OpsPanel>
-        </div>
-
-        <aside className="ops-side-column">
-          <ObserveRunnerPanel
-            status={runnerStatus}
-            loading={runnerLoading}
-            needsAction={runnerNeedsAction}
-            replies={runnerReplies}
-          />
-        </aside>
-      </section>
-
-      <details className="ops-deep-details">
-        <summary>
-          <span>Operational snapshot</span>
-          <em>{compactNumber(counts.recent_events)} recent events</em>
-        </summary>
-        <div className="ops-deep-grid">
-          <OpsPanel eyebrow={<PaperPlaneTilt size={18} weight="fill" />} title="Meta readiness" meta={`${metaReadyCreatives.length} ready creatives`}>
-            <div className="ops-readiness-lane">
-              {metaReadiness.map((step) => (
-                <OpsReadinessStep step={step} key={step.label} />
-              ))}
-            </div>
-          </OpsPanel>
-
-          <OpsPanel eyebrow={<ListChecks size={18} weight="fill" />} title="Blockers" meta={`${openQuestions.length + blockedAttempts.length + updatesWithBlockers.length}`}>
-            <div className="ops-list">
-              {openQuestions.map((question) => (
-                <article className="ops-item" data-tone="warn" key={question.id}>
-                  <div className="ops-item-topline">
-                    <OpsStatus value={question.status} />
-                    <time>{relativeTime(question.updated_at)}</time>
-                  </div>
-                  <strong>{question.question}</strong>
-                  <p>{question.trying_to_do || question.context_summary || question.workflow}</p>
-                  <div className="ops-item-meta">
-                    {question.default_action ? <span>{question.default_action}</span> : <span>Operator input needed</span>}
-                  </div>
-                  <OpsDebugDetails lines={[formatPlatformRef(question.target_type, question.target_id)]} />
-                </article>
-              ))}
-              {blockedAttempts.map((attempt) => (
-                <article className="ops-item" data-tone="danger" key={attempt.id}>
-                  <div className="ops-item-topline">
-                    <OpsStatus value={attempt.approval_status || attempt.status} />
-                    <time>{relativeTime(attempt.updated_at)}</time>
-                  </div>
-                  <strong>{platformCampaignNameFromAttempt(attempt) || "Meta publish"}</strong>
-                  <p>Meta publish is blocked until required fields, credentials, or approval are ready.</p>
-                  <div className="ops-item-meta">
-                    <span>{formatMissingMetaFields(attempt)}</span>
-                  </div>
-                  <OpsDebugDetails lines={[attempt.error, formatPlatformRef("attempt", attempt.id), formatPlatformRef("campaign", attempt.campaign_id)]} />
-                </article>
-              ))}
-              {updatesWithBlockers.map((update) => (
-                <article className="ops-item" data-tone="warn" key={update.id}>
-                  <div className="ops-item-topline">
-                    <OpsStatus value={update.status} />
-                    <time>{relativeTime(update.updated_at)}</time>
-                  </div>
-                  <strong>{update.summary_text || "Client update blocked"}</strong>
-                  <p>Resolve blockers before sending the next client update.</p>
-                  <div className="ops-item-meta">
-                    <span>{update.next_action || "-"}</span>
-                  </div>
-                  <OpsDebugDetails lines={[formatUnknownList(update.blockers), formatPlatformRef("client", update.client_id), formatPlatformRef("campaign", update.campaign_id)]} />
-                </article>
-              ))}
-              {!openQuestions.length && !blockedAttempts.length && !updatesWithBlockers.length ? (
-                <OpsEmpty title="Clean" value="0" />
-              ) : null}
-            </div>
-          </OpsPanel>
-
-          <OpsPanel eyebrow={<TrendUp size={18} weight="fill" />} title="Campaigns" meta={`${campaigns.length}`}>
-            <div className="ops-table-list">
-              {campaigns.slice(0, 8).map((campaign) => (
-                <div className="ops-table-row" key={campaign.id}>
-                  <div>
-                    <strong>{campaign.objective || "Campaign"}</strong>
-                    <span>{campaignBudgetLabel(campaign)}</span>
-                    <OpsDebugDetails lines={[formatPlatformRef("campaign", campaign.id), formatPlatformRef("client", campaign.client_id)]} />
-                  </div>
-                  <OpsStatus value={campaign.approval_status || campaign.status} />
-                  <time>{relativeTime(campaign.updated_at)}</time>
-                </div>
-              ))}
-              {!campaigns.length ? <OpsEmpty title="No campaigns" value="0" /> : null}
-            </div>
-          </OpsPanel>
-
-          <OpsPanel eyebrow={<PaperPlaneTilt size={18} weight="fill" />} title="Meta publish" meta={`${metaAttempts.length}`}>
-            <div className="ops-table-list">
-              {metaAttempts.slice(0, 8).map((attempt) => (
-                <div className="ops-table-row" key={attempt.id}>
-                  <div>
-                    <strong>{platformCampaignNameFromAttempt(attempt) || humanize(attempt.status)}</strong>
-                    <span>{formatMetaPublishDetail(attempt)}</span>
-                    <OpsDebugDetails lines={[formatPlatformRef("attempt", attempt.id), formatPlatformRef("campaign", attempt.campaign_id), attempt.error]} />
-                  </div>
-                  <OpsStatus value={metaPublishStatusValue(attempt)} />
-                  <time>{relativeTime(attempt.updated_at)}</time>
-                </div>
-              ))}
-              {!metaAttempts.length ? <OpsEmpty title="No attempts" value="0" /> : null}
-            </div>
-          </OpsPanel>
-
-          <OpsPanel eyebrow={<ListChecks size={18} weight="fill" />} title="Meta inventory" meta={`${inventorySnapshots.length}`}>
-            <div className="ops-table-list">
-              {inventorySnapshots.slice(0, 5).map((snapshot) => {
-                const technicalFields = metaInventoryTechnicalFields(snapshot);
-                return (
-                  <div className="ops-table-row" key={snapshot.id}>
-                    <div>
-                      <strong>{metaInventoryLabel(snapshot)}</strong>
-                      <span>{metaInventoryCounts(snapshot)}</span>
-                      {technicalFields.length ? (
-                        <details className="ops-debug-details">
-                          <summary>Raw context</summary>
-                          {technicalFields.map((field) => (
-                            <code key={field}>{field}</code>
-                          ))}
-                        </details>
-                      ) : null}
-                    </div>
-                    <OpsStatus value={snapshot.status} />
-                    <time>{relativeTime(snapshot.created_at)}</time>
-                  </div>
-                );
-              })}
-              {!inventorySnapshots.length ? <OpsEmpty title="No inventory" value="0" /> : null}
-            </div>
-          </OpsPanel>
-
-          <OpsPanel eyebrow={<GearSix size={18} weight="fill" />} title="Agent activity" meta={`${agentRuns.length} runs · ${agentToolCalls.length} calls`}>
-            <div className="ops-table-list">
-              {agentRuns.slice(0, 6).map((run) => {
-                const runDetail = run.error_preview || run.final_response_preview;
-                return (
-                  <div className="ops-table-row" key={run.id}>
-                    <div>
-                      <strong>{formatAgentRunTitle(run)}</strong>
-                      <span>{formatAgentRunContext(run)}</span>
-                      {runDetail || run.prompt_version || run.context_path ? (
-                        <details className="ops-debug-details">
-                          <summary>Raw context</summary>
-                          <span>{runDetail ? truncate(runDetail, 180) : "No preview"}</span>
-                          <code>{formatPlatformRef(run.target_type, run.target_id)}</code>
-                          {run.prompt_version ? <code>Prompt {run.prompt_version}</code> : null}
-                          {run.context_path ? <code>{truncate(run.context_path, 90)}</code> : null}
-                        </details>
-                      ) : null}
-                    </div>
-                    <OpsStatus value={run.status} />
-                    <time>{relativeTime(run.finished_at || run.started_at)}</time>
-                  </div>
-                );
-              })}
-              {!agentRuns.length ? <OpsEmpty title="No runs" value="0" /> : null}
-            </div>
-            {failedAgentRuns.length ? (
-              <p className="ops-panel-note">{compactNumber(failedAgentRuns.length)} failed agent run{failedAgentRuns.length === 1 ? "" : "s"}.</p>
-            ) : null}
-            <div className="ops-table-list">
-              {agentToolCalls.slice(0, 6).map((call) => {
-                const callDetail = call.error_preview || call.result_preview || call.arguments_preview;
-                return (
-                  <div className="ops-table-row" key={call.id}>
-                    <div>
-                      <strong>{humanize(call.tool_name || "tool call")}</strong>
-                      <span>{formatAgentToolContext(call)}</span>
-                      {callDetail || call.idempotency_key ? (
-                        <details className="ops-debug-details">
-                          <summary>Raw context</summary>
-                          <span>{callDetail ? truncate(callDetail, 180) : "No preview"}</span>
-                          <code>{formatPlatformRef(call.target_type, call.target_id)}</code>
-                          <code>Run {truncate(call.run_id, 28)}</code>
-                          {call.idempotency_key ? <code>{truncate(call.idempotency_key, 80)}</code> : null}
-                        </details>
-                      ) : null}
-                    </div>
-                    <OpsStatus value={call.status} />
-                    <time>{relativeTime(call.created_at)}</time>
-                  </div>
-                );
-              })}
-            </div>
-            {failedAgentToolCalls.length ? (
-              <p className="ops-panel-note">{compactNumber(failedAgentToolCalls.length)} failed tool call{failedAgentToolCalls.length === 1 ? "" : "s"}.</p>
-            ) : null}
-          </OpsPanel>
-
-          <OpsPanel eyebrow={<ClockCountdown size={18} weight="fill" />} title="Meetings" meta={`${meetings.length}`}>
-            <div className="ops-list compact">
-              {meetings.slice(0, 6).map((meeting) => (
-                <article className="ops-item" key={meeting.id}>
-                  <div className="ops-item-topline">
-                    <OpsStatus value={meeting.status} />
-                    <time>{relativeTime(meeting.updated_at)}</time>
-                  </div>
-                  <strong>{meeting.lead_email || "Lead meeting"}</strong>
-                  <p>{[meeting.requested_day, meeting.requested_time, meeting.timezone].filter(Boolean).join(" · ") || meeting.context_summary || "-"}</p>
-                  {meeting.calendar_event_link ? (
-                    <a href={meeting.calendar_event_link} target="_blank" rel="noreferrer">
-                      Calendar event
-                    </a>
-                  ) : meeting.calendar_error ? (
-                    <>
-                      <p>Calendar sync needs review.</p>
-                      <OpsDebugDetails lines={[meeting.calendar_error, formatPlatformRef("lead", meeting.lead_id)]} />
-                    </>
-                  ) : null}
-                </article>
-              ))}
-              {!meetings.length ? <OpsEmpty title="No meetings" value="0" /> : null}
-            </div>
-          </OpsPanel>
-
-          <OpsPanel eyebrow={<ChatCircleText size={18} weight="fill" />} title="Client updates" meta={`${updates.length}`}>
-            <div className="ops-list compact">
-              {updates.slice(0, 6).map((update) => (
-                <article className="ops-item" key={update.id}>
-                  <div className="ops-item-topline">
-                    <OpsStatus value={update.status} />
-                    <time>{relativeTime(update.updated_at)}</time>
-                  </div>
-                  <strong>{update.summary_text || "Client update"}</strong>
-                  <p>{`${compactNumber(update.leads_count)} leads · ${update.next_action || "-"}`}</p>
-                  <OpsDebugDetails lines={[formatPlatformRef("client", update.client_id), formatPlatformRef("campaign", update.campaign_id)]} />
-                </article>
-              ))}
-              {!updates.length ? <OpsEmpty title="No updates" value="0" /> : null}
-            </div>
-          </OpsPanel>
-
-          <OpsPanel eyebrow={<Robot size={18} weight="fill" />} title="Assets" meta={`${profiles.length + creatives.length}`}>
-            <div className="ops-asset-grid">
-              <div>
-                <strong>{compactNumber(profiles.length)}</strong>
-                <span>Profiles</span>
-              </div>
-              <div>
-                <strong>{compactNumber(creatives.length)}</strong>
-                <span>Creatives</span>
-              </div>
-              <div>
-                <strong>{compactNumber(metaReadyCreatives.length)}</strong>
-                <span>Meta-ready</span>
-              </div>
-            </div>
-            <div className="ops-table-list">
-              {creatives.slice(0, 5).map((creative) => (
-                <div className="ops-table-row" key={creative.id}>
-                  <div>
-                    <strong>{creative.file_path ? truncate(creative.file_path.split("/").pop() || creative.file_path, 42) : humanize(creative.asset_type || "Creative")}</strong>
-                    <span>{metaCreativeDetail(creative)}</span>
-                    <OpsDebugDetails lines={[formatPlatformRef("creative", creative.id), formatPlatformRef("campaign", creative.campaign_id), creative.file_path, creative.failure_reason]} />
-                  </div>
-                  <OpsStatus value={creative.status} />
-                  <time>{relativeTime(creative.updated_at)}</time>
-                </div>
-              ))}
-              {!creatives.length ? <OpsEmpty title="No creatives" value="0" /> : null}
-            </div>
-            {uploadBlockedCreatives.length ? (
-              <p className="ops-panel-note">{compactNumber(uploadBlockedCreatives.length)} creative upload blocker{uploadBlockedCreatives.length === 1 ? "" : "s"}.</p>
-            ) : null}
-          </OpsPanel>
-
-          <OpsPanel eyebrow={<Pulse size={18} weight="fill" />} title="Event stream" meta={`${events.length}`}>
-            <div className="ops-event-stream">
-              {events.slice(0, 14).map((event) => (
-                <article className="ops-item ops-event-card" data-tone={opsEventTone(event)} key={event.id}>
-                  <div className="ops-item-topline">
-                    <span>{formatOpsEventStage(event)}</span>
-                    <time>{relativeTime(event.created_at)}</time>
-                  </div>
-                  <strong>{formatOpsEventTitle(event)}</strong>
-                  <p>{formatOpsEventDetail(event)}</p>
-                  <details className="ops-debug-details">
-                    <summary>Raw context</summary>
-                    <code>{formatPlatformRef(event.target_type, event.target_id)}</code>
-                    <code>{event.event_type}</code>
-                    {event.source ? <code>Source {humanize(event.source)}</code> : null}
-                    {event.actor ? <code>Actor {humanize(event.actor)}</code> : null}
-                    {event.correlation_id ? <code>{truncate(event.correlation_id, 80)}</code> : null}
-                  </details>
-                </article>
-              ))}
-              {!events.length ? <OpsEmpty title="No events" value="0" /> : null}
-            </div>
-          </OpsPanel>
-        </div>
-      </details>
-    </div>
-  );
-}
-
-function ObserveRunnerPanel({
-  status,
-  loading,
-  needsAction,
-  replies,
-}: {
-  status: RunnerStatusResponse | null;
-  loading: boolean;
-  needsAction: number;
-  replies: number;
-}) {
-  const delta = status?.delta ?? null;
-  const attentionEvents = delta?.attention_events ?? [];
-  const mode = loading
-    ? "loading"
-    : status?.running
-      ? "running"
-      : needsAction > 0
-        ? "review"
-        : "clean";
-  const title = mode === "loading" ? "Loading" : mode === "running" ? "Running" : mode === "review" ? "Review" : "Clean";
-  const updated = status?.latest_summary_updated_at ? relativeTime(status.latest_summary_updated_at) : "No run";
-
-  return (
-    <OpsPanel eyebrow={<Pulse size={18} weight="fill" />} title="Runner" meta={updated}>
-      <div className="observe-runner" data-mode={mode}>
-        <div className="observe-runner-main">
-          <div className="observe-runner-icon" aria-hidden="true">
-            {mode === "running" || mode === "loading" ? (
-              <Pulse size={24} weight="fill" />
-            ) : mode === "review" ? (
-              <WarningCircle size={24} weight="fill" />
-            ) : (
-              <CheckCircle size={24} weight="fill" />
-            )}
-          </div>
-          <div>
-            <strong>{title}</strong>
-            <span>{compactNumber(needsAction)} action · {compactNumber(replies)} replies</span>
-          </div>
-        </div>
-
-        {attentionEvents.length ? (
-          <div className="observe-runner-list">
-            {attentionEvents.slice(0, 3).map((event) => (
-              <RunnerCompactEvent event={event} key={`${event.kind}:${event.lead_id}:${event.occurred_at || ""}`} />
-            ))}
-          </div>
-        ) : (
-          <OpsEmpty title="No runner actions" value="0" />
-        )}
-
-        <details className="runner-history-details">
-          <summary>Runner details</summary>
-          <div className="runner-disclosure-row">
-            <details className="runner-history-details">
-              <summary>Last run</summary>
-              <MarkdownBlock markdown={status?.latest_summary || "No run summary has been written yet."} className="runner-last-markdown" />
-            </details>
-            <details className="runner-history-details">
-              <summary>Counts</summary>
-              <RunnerDeltaTable
-                bucketDeltas={delta?.bucket_deltas ?? []}
-                failureDeltas={delta?.failure_deltas ?? []}
-                exclusionDeltas={delta?.exclusion_deltas ?? []}
-              />
-            </details>
-            <details className="runner-technical">
-              <summary>Technical logs</summary>
-              <p className="runner-technical-note">Use these only when the human status above is not enough to debug the runner or LaunchAgent.</p>
-              <div className="runner-technical-meta" aria-label="Runner process details">
-                <code>{status?.running ? "Process running" : "Process stopped"}</code>
-                {typeof status?.pid === "number" ? <code>pid {status.pid}</code> : null}
-                {status?.started_at ? <code>Started {relativeTime(status.started_at)}</code> : null}
-                {typeof status?.lock_age_seconds === "number" ? <code>Lock {compactNumber(Math.round(status.lock_age_seconds))}s</code> : null}
-              </div>
-              <div className="runner-tail-grid" aria-label="Runner log tails">
-                <RunnerTail title="Latest run tail" text={status?.latest_log_tail || ""} />
-                <RunnerTail title="LaunchAgent stdout" text={status?.launchd_out_tail || ""} />
-                <RunnerTail title="LaunchAgent stderr" text={status?.launchd_err_tail || ""} />
-              </div>
-            </details>
-          </div>
-        </details>
-      </div>
-    </OpsPanel>
-  );
-}
-
-function OpsPanel({
-  eyebrow,
-  title,
-  meta,
-  children,
-}: {
-  eyebrow: ReactNode;
-  title: string;
-  meta: string;
-  children: ReactNode;
-}) {
-  return (
-    <section className="ops-panel">
-      <div className="runner-panel-head">
-        <div>
-          <span>{eyebrow}</span>
-          <strong>{title}</strong>
-        </div>
-        {meta ? <em>{meta}</em> : null}
-      </div>
-      {children}
-    </section>
-  );
-}
-
-function OpsActionCard({ item }: { item: OpsActionItem }) {
-  return (
-    <article className="ops-action-card" data-tone={item.tone}>
-      <div className="ops-action-marker">
-        {item.tone === "danger" ? <WarningCircle size={18} weight="fill" /> : <ClockCountdown size={18} weight="fill" />}
-      </div>
-      <div className="ops-action-copy">
-        <div className="ops-action-topline">
-          <span>{item.area}</span>
-          <time>{relativeTime(item.updatedAt)}</time>
-        </div>
-        <strong>{truncate(item.title, 72)}</strong>
-        <p>{truncate(item.detail, 90)}</p>
-        <em>{truncate(item.action, 90)}</em>
-        <OpsDebugDetails lines={item.debugLines ?? []} />
-      </div>
-      <OpsStatus value={item.status} />
-    </article>
-  );
-}
-
-function OpsDebugDetails({ lines }: { lines: Array<string | null | undefined> }) {
-  const visibleLines = lines.map((line) => (line ?? "").trim()).filter(Boolean);
-  if (!visibleLines.length) {
-    return null;
-  }
-  return (
-    <details className="ops-debug-details">
-      <summary>Raw context</summary>
-      {visibleLines.map((line, index) => (
-        <span key={`${line}:${index}`}>{truncate(line, 180)}</span>
-      ))}
-    </details>
-  );
-}
-
-function OpsReadinessStep({ step }: { step: OpsReadinessItem }) {
-  const tone = opsReadinessTone(step.status);
-  return (
-    <article className="ops-readiness-step" data-tone={tone}>
-      <span className="ops-readiness-dot" aria-hidden="true" />
-      <div>
-        <strong>{step.label}</strong>
-        <p>{step.detail}</p>
-      </div>
-      <OpsStatus value={step.status} />
-    </article>
-  );
-}
-
-function OpsStatus({ value }: { value: string }) {
-  const tone = opsStatusTone(value);
-  return <span className="ops-status" data-tone={tone}>{humanize(value)}</span>;
-}
-
-function OpsEmpty({ title, value }: { title: string; value: string }) {
-  return (
-    <div className="ops-empty">
-      <CheckCircle size={30} weight="fill" />
-      <strong>{title}</strong>
-      <span>{value}</span>
-    </div>
-  );
-}
-
-function isOpenPlatformQuestion(question: PlatformHumanQuestionItem): boolean {
-  return !["answered", "closed", "resolved", "cancelled"].includes(question.status);
-}
-
-function isBlockedPlatformAttempt(attempt: PlatformMetaPublishAttemptItem): boolean {
-  return (
-    ["blocked", "failed", "error", "partial_failed"].includes(attempt.status)
-    || ["needs_preflight", "rejected"].includes(attempt.approval_status)
-  );
-}
-
-function campaignBudgetLabel(campaign: PlatformAdCampaignItem): string {
-  if (campaign.budget_daily_usd !== null) {
-    return `${campaign.budget_currency} ${campaign.budget_daily_usd}/day`;
-  }
-  if (campaign.budget_total_usd !== null) {
-    return `${campaign.budget_currency} ${campaign.budget_total_usd} total`;
-  }
-  return "No budget";
-}
-
-function isMetaReadyCreative(creative: PlatformCreativeAssetItem): boolean {
-  return Boolean(creative.meta_creative_id || creative.image_hash || creative.video_id);
-}
-
-function metaCreativeDetail(creative: PlatformCreativeAssetItem): string {
-  if (creative.meta_creative_id) {
-    return "Meta creative ready";
-  }
-  if (creative.image_hash) {
-    return "Image uploaded to Meta";
-  }
-  if (creative.video_id) {
-    return "Video uploaded to Meta";
-  }
-  if (creative.failure_reason) {
-    return "Upload needs review";
-  }
-  return [humanize(creative.asset_type), creative.dimensions || "No dimensions"].filter(Boolean).join(" · ");
-}
-
-function opsStatusTone(value: string): "danger" | "warn" | "ok" | "neutral" {
-  const normalized = value.toLowerCase();
-  if (["failed", "error", "blocked", "rejected", "partial_failed", "upload_failed"].includes(normalized)) {
-    return "danger";
-  }
-  if (["missing_credentials", "partial", "upload_blocked"].includes(normalized)) {
-    return "danger";
-  }
-  if (["pending", "needs_preflight", "not_requested", "draft", "staged"].includes(normalized)) {
-    return "warn";
-  }
-  if (["answered", "approved", "published", "submitted", "already_submitted", "sent", "delivered", "completed", "ready", "uploaded", "uploaded_to_meta"].includes(normalized)) {
-    return "ok";
-  }
-  return "neutral";
-}
-
-function opsReadinessTone(value: string): "danger" | "warn" | "ok" | "neutral" {
-  const normalized = value.toLowerCase();
-  if (["blocked", "failed", "error", "missing_credentials"].includes(normalized)) {
-    return "danger";
-  }
-  if (["missing", "partial", "pending", "staged", "not_requested"].includes(normalized)) {
-    return "warn";
-  }
-  if (["ready", "approved", "uploaded", "published", "completed"].includes(normalized)) {
-    return "ok";
-  }
-  return "neutral";
-}
-
-function compareOpsActions(a: OpsActionItem, b: OpsActionItem): number {
-  const toneDifference = opsActionToneRank(a.tone) - opsActionToneRank(b.tone);
-  if (toneDifference !== 0) {
-    return toneDifference;
-  }
-  return timestampValue(b.updatedAt) - timestampValue(a.updatedAt);
-}
-
-function opsActionToneRank(tone: OpsActionTone): number {
-  return tone === "danger" ? 0 : 1;
-}
-
-function timestampValue(value: string | null): number {
-  const parsed = Date.parse(value ?? "");
-  return Number.isNaN(parsed) ? 0 : parsed;
-}
-
-function formatPlatformRef(type: string, id: string): string {
-  if (!id) {
-    return humanize(type || "item");
-  }
-  return `${humanize(type)} · ${truncate(id, 18)}`;
-}
-
-function formatPlatformTargetLabel(type: string, id: string): string {
-  const label = platformTargetLabel(type);
-  return id ? `${label} record` : label;
-}
-
-function platformTargetLabel(type: string): string {
-  const normalized = type.toLowerCase();
-  const labels: Record<string, string> = {
-    ad_campaign: "Campaign",
-    agent_run: "Agent run",
-    client: "Client",
-    client_lead_source: "Delivery source",
-    creative: "Creative",
-    creative_asset: "Creative",
-    funnel: "Funnel",
-    human_question: "Operator question",
-    lead: "Lead",
-    meeting: "Meeting",
-    meta_inventory: "Meta inventory",
-    meta_publish_attempt: "Meta publish",
-    recipient: "Recipient",
-    workstation_client: "Workstation client",
-  };
-  return labels[normalized] || humanize(type || "Item");
-}
-
-function formatAgentRunTitle(run: PlatformAgentRunItem): string {
-  return `${humanize(run.agent_kind || "agent")} run`;
-}
-
-function formatAgentRunContext(run: PlatformAgentRunItem): string {
-  return `${formatPlatformTargetLabel(run.target_type, run.target_id)} · ${agentOutcomeLabel(run.status)}`;
-}
-
-function formatAgentToolContext(call: PlatformAgentToolCallItem): string {
-  return `${formatPlatformTargetLabel(call.target_type, call.target_id)} · ${agentOutcomeLabel(call.status)}`;
-}
-
-function agentOutcomeLabel(status: string): string {
-  const normalized = status.toLowerCase();
-  if (["failed", "error", "blocked"].includes(normalized)) {
-    return "Needs review";
-  }
-  if (["running", "queued", "pending"].includes(normalized)) {
-    return "In progress";
-  }
-  if (["completed", "complete", "success", "succeeded"].includes(normalized)) {
-    return "Completed";
-  }
-  return humanize(status || "status pending");
-}
-
-function formatOpsEventStage(event: PlatformEventItem): string {
-  return humanize(event.lifecycle_stage || event.severity || "event");
-}
-
-function formatOpsEventTitle(event: PlatformEventItem): string {
-  return event.summary || `${humanize(event.event_type || event.lifecycle_stage || "platform event")} update`;
-}
-
-function formatOpsEventDetail(event: PlatformEventItem): string {
-  const parts = [formatPlatformTargetLabel(event.target_type, event.target_id)];
-  if (event.actor && event.actor !== event.source) {
-    parts.push(`by ${humanize(event.actor)}`);
-  }
-  if (event.source) {
-    parts.push(`from ${humanize(event.source)}`);
-  }
-  return parts.join(" · ");
-}
-
-function opsEventTone(event: PlatformEventItem): "danger" | "warn" | undefined {
-  const signal = `${event.severity} ${event.lifecycle_stage} ${event.event_type}`.toLowerCase();
-  if (/(failed|failure|error|blocked|critical|danger)/.test(signal)) {
-    return "danger";
-  }
-  if (/(warn|warning|missing|pending|partial)/.test(signal)) {
-    return "warn";
-  }
-  return undefined;
-}
-
-function formatUnknownList(items: unknown[]): string {
-  if (!items.length) {
-    return "-";
-  }
-  return items.map((item) => typeof item === "string" ? item : JSON.stringify(item)).join(" · ");
-}
-
-function platformCampaignNameFromAttempt(attempt: PlatformMetaPublishAttemptItem): string {
-  const campaign = attempt.request_payload.campaign;
-  if (campaign && typeof campaign === "object" && "name" in campaign) {
-    const name = (campaign as { name?: unknown }).name;
-    return typeof name === "string" ? name : "";
-  }
-  const campaignName = attempt.request_payload.campaign_name;
-  return typeof campaignName === "string" ? campaignName : "";
-}
-
-function formatMissingMetaFields(attempt: PlatformMetaPublishAttemptItem): string {
-  const missing = attempt.request_payload.required_before_live_publish;
-  if (Array.isArray(missing) && missing.length) {
-    return `${missing.length} missing`;
-  }
-  return attempt.idempotency_key ? truncate(attempt.idempotency_key, 28) : "Ready";
-}
-
-function formatMetaPublishDetail(attempt: PlatformMetaPublishAttemptItem): string {
-  const execution = attempt.response_payload;
-  if (execution.schema_version === "konecta.meta_publish_execution.v1") {
-    const results = Array.isArray(execution.operation_results) ? execution.operation_results : [];
-    const executed = results.filter((item) => {
-      return typeof item === "object" && item !== null && (item as { status?: unknown }).status === "executed";
-    }).length;
-    const failed = results.filter((item) => {
-      return typeof item === "object" && item !== null && (item as { status?: unknown }).status === "failed";
-    }).length;
-    if (failed > 0) {
-      return `${failed} failed · ${executed} executed`;
-    }
-    if (results.length > 0) {
-      return `${results.length} Meta ops`;
-    }
-  }
-  return formatMissingMetaFields(attempt);
-}
-
-function metaPublishStatusValue(attempt: PlatformMetaPublishAttemptItem): string {
-  if (attempt.response_payload.schema_version === "konecta.meta_publish_execution.v1") {
-    return attempt.status;
-  }
-  return attempt.approval_status || attempt.status;
-}
-
-function metaInventoryLabel(snapshot: PlatformMetaInventorySnapshotItem): string {
-  return snapshot.status === "missing_credentials" ? "Meta inventory needs access" : "Meta inventory";
-}
-
-function metaInventoryTechnicalFields(snapshot: PlatformMetaInventorySnapshotItem): string[] {
-  return [
-    snapshot.ad_account_id ? `Ad account ${truncate(snapshot.ad_account_id, 32)}` : "",
-    snapshot.business_id ? `Business ${truncate(snapshot.business_id, 32)}` : "",
-    snapshot.api_version ? `API ${snapshot.api_version}` : "",
-  ].filter(Boolean);
-}
-
-function metaInventoryArrayCount(snapshot: PlatformMetaInventorySnapshotItem, key: string): number {
-  const value = snapshot.inventory[key];
-  return Array.isArray(value) ? value.length : 0;
-}
-
-function metaInventoryCounts(snapshot: PlatformMetaInventorySnapshotItem): string {
-  if (snapshot.errors.length > 0) {
-    return `${snapshot.errors.length} blocker${snapshot.errors.length === 1 ? "" : "s"}`;
-  }
-  const parts = [
-    `${metaInventoryArrayCount(snapshot, "ad_accounts")} accounts`,
-    `${metaInventoryArrayCount(snapshot, "pages")} pages`,
-    `${metaInventoryArrayCount(snapshot, "lead_forms")} forms`,
-    `${metaInventoryArrayCount(snapshot, "whatsapp_phone_numbers")} WA numbers`,
-  ];
-  return parts.join(" · ");
-}
-
-function RunnerSignal({
-  icon,
-  label,
-  value,
-  tone,
-}: {
-  icon: ReactNode;
-  label: string;
-  value: number;
-  tone: "danger" | "warn" | "blue" | "green" | "violet" | "ok" | "neutral";
-}) {
-  return (
-    <div className="runner-signal" data-tone={tone} aria-label={`${label}: ${value}`}>
-      <div className="runner-signal-icon" aria-hidden="true">{icon}</div>
-      <span>{label}</span>
-      <strong>{compactNumber(value)}</strong>
-    </div>
-  );
-}
-
-function RunnerCompactEvent({ event }: { event: RunnerDeltaEvent }) {
-  return (
-    <div className="runner-compact-event" data-severity={event.severity}>
-      <span className="runner-compact-icon" aria-hidden="true">{runnerKindIcon(event.kind)}</span>
-      <div>
-        <strong>{event.full_name || event.title}</strong>
-        <p>{formatRunnerKind(event.kind)}</p>
-      </div>
-      <time>{event.occurred_at ? relativeTime(event.occurred_at) : "-"}</time>
-    </div>
-  );
-}
-
-function RunnerDeltaTable({
-  bucketDeltas,
-  failureDeltas,
-  exclusionDeltas,
-}: {
-  bucketDeltas: Array<{ key: string; previous: number; current: number; delta: number }>;
-  failureDeltas: Array<{ key: string; previous: number; current: number; delta: number }>;
-  exclusionDeltas: Array<{ key: string; previous: number; current: number; delta: number }>;
-}) {
-  const rows = [
-    ...bucketDeltas.map((row) => ({ ...row, group: "Bucket" })),
-    ...failureDeltas.map((row) => ({ ...row, group: "Provider" })),
-    ...exclusionDeltas.map((row) => ({ ...row, group: "Excluded" })),
-  ].slice(0, 14);
-
-  if (!rows.length) {
-    return <RunnerEmpty tone="quiet" icon={<CheckCircle size={34} weight="fill" />} title="Stable" text="0" />;
-  }
-
-  return (
-    <div className="runner-delta-table">
-      {rows.map((row) => (
-        <div className="runner-delta-row" key={`${row.group}:${row.key}`}>
-          <span>{row.group}</span>
-          <strong>{humanize(row.key)}</strong>
-          <code>{`${row.previous} -> ${row.current}`}</code>
-          <em data-positive={row.delta > 0}>{row.delta > 0 ? `+${row.delta}` : row.delta}</em>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function RunnerEmpty({ tone, icon, title, text }: { tone: "clean" | "quiet"; icon: ReactNode; title: string; text: string }) {
-  return (
-    <div className="runner-empty-state" data-tone={tone}>
-      <div aria-hidden="true">{icon}</div>
-      <strong>{title}</strong>
-      <p>{text}</p>
-    </div>
-  );
-}
-
-function formatRunnerKind(value: string): string {
-  const labels: Record<string, string> = {
-    booking_time_provided: "Meeting intent",
-    new_reply: "New reply",
-    delivery_changed: "Delivery",
-    state_changed: "State",
-    due_next_step: "Due",
-    outbound_sent: "Outbound",
-    new_exclusion: "Excluded",
-    new_lead: "New lead",
-  };
-  return labels[value] ?? humanize(value);
-}
-
-function runnerKindIcon(value: string): ReactNode {
-  if (value === "booking_time_provided" || value === "due_next_step") {
-    return <ClockCountdown size={18} weight="fill" />;
-  }
-  if (value === "new_reply") {
-    return <ChatCircleText size={18} weight="fill" />;
-  }
-  if (value === "delivery_changed") {
-    return <Pulse size={18} weight="fill" />;
-  }
-  if (value === "outbound_sent") {
-    return <PaperPlaneTilt size={18} weight="fill" />;
-  }
-  if (value === "state_changed") {
-    return <ListChecks size={18} weight="fill" />;
-  }
-  if (value === "new_exclusion") {
-    return <WarningCircle size={18} weight="fill" />;
-  }
-  return <TrendUp size={18} weight="fill" />;
-}
-
-function MarkdownBlock({ markdown, className = "" }: { markdown: string; className?: string }) {
-  const html = useMemo(() => {
-    const escapedMarkdown = escapeMarkdownHtml(neutralizeMarkdownImages(markdown || ""));
-    return marked.parse(escapedMarkdown, { async: false, breaks: true }) as string;
-  }, [markdown]);
-
-  return (
-    <div
-      className={`runner-markdown ${className}`}
-      dangerouslySetInnerHTML={{ __html: html || "<p>No notes yet.</p>" }}
-    />
-  );
-}
-
-function neutralizeMarkdownImages(value: string): string {
-  return value
-    .replace(/!\[([^\]]*)\]\(([^)]*)\)/g, "[$1]($2)")
-    .replace(/!\[([^\]]*)\]/g, "$1");
-}
-
-function escapeMarkdownHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
 async function copyTextToClipboard(value: string): Promise<void> {
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(value);
@@ -5165,20 +3897,6 @@ async function copyTextToClipboard(value: string): Promise<void> {
   if (!copied) {
     throw new Error("clipboard unavailable");
   }
-}
-
-function RunnerTail({ title, text }: { title: string; text: string }) {
-  return (
-    <section className="workstation-panel runner-tail-panel">
-      <div className="workstation-panel-head">
-        <div>
-          <span>Technical tail</span>
-          <strong>{title}</strong>
-        </div>
-      </div>
-      <pre className="runner-pre">{text || "No lines yet."}</pre>
-    </section>
-  );
 }
 
 function WorkstationView({
