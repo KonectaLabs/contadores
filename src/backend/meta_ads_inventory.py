@@ -219,7 +219,7 @@ def sync_meta_inventory(
         page_payload = _try_read(
             graph_get=getter,
             path=page_id,
-            params={"fields": "id,name,tasks,instagram_business_account"},
+            params={"fields": "id,name"},
             errors=errors,
         )
         _append_unique_by_id(pages, page_payload)
