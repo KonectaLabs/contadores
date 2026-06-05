@@ -5,7 +5,7 @@
 Copy this into Codex Goal mode when you want the frontend sprint to run:
 
 ```text
-/goal Work on the Contadores frontend/UI until the new frontend concept has been applied end-to-end across the platform. Make it elegant, calm, uncluttered, and easier to operate. The goal is not "more UI"; it is fewer visible main operations, each done very well: CRM/triage, selling conversations, Workstation/build, Delivery, and Ops/Runner observability. First research how excellent CRM and productivity products are designed, then define the Contadores frontend concept and apply it to every visible surface and reusable component. This is completion-based, not time-boxed: keep working until the app shell, navigation, primary views, setup/config surfaces, repeated component patterns, states, logs, drawers, modals, tables, forms, mobile layouts, and all five operations have received a deliberate pass under the new concept. Stop only after the app is stable, verified, and reported with a clear component coverage ledger.
+/goal Work on the Contadores frontend/UI until the new frontend concept has been applied end-to-end across the platform. Make it elegant, calm, uncluttered, and easier to operate. The goal is not "more UI"; it is fewer visible main operations, each done very well: CRM, Build, Deliver, and Observe. First research how excellent CRM and productivity products are designed, then define the Contadores frontend concept and apply it to every visible surface and reusable component. This is completion-based, not time-boxed: keep working until the app shell, navigation, primary views, setup/config surfaces, repeated component patterns, states, logs, drawers, modals, tables, forms, mobile layouts, and all four operations have received a deliberate pass under the new concept. Stop only after the app is stable, verified, and reported with a clear component coverage ledger.
 ```
 
 ## Non-negotiable direction
@@ -21,15 +21,14 @@ Copy this into Codex Goal mode when you want the frontend sprint to run:
 
 ## Main operations
 
-Design around five main operations maximum:
+Design around four main operations maximum:
 
-1. `Triage`: leads, replies, manual attention, urgency, next best action.
-2. `Sell`: WhatsApp conversation state, sequence progress, meeting path, conversion controls.
-3. `Build`: Workstation clients, assets, notes, Codex work, delivery artifacts.
-4. `Deliver`: client lead sheets, WhatsApp delivery, retries, copy/audit.
-5. `Observe`: Ops, Runner, blockers, agents, Meta readiness, human-readable logs.
+1. `CRM`: leads, replies, WhatsApp conversation state, sequence progress, manual attention, urgency, next best action, meeting path, and conversion controls.
+2. `Build`: Workstation clients, assets, notes, Codex work, delivery artifacts.
+3. `Deliver`: client lead sheets, WhatsApp delivery, retries, copy/audit.
+4. `Observe`: Ops, Runner, blockers, agents, Meta readiness, human-readable logs.
 
-The current code may still use `crm`, `workstation`, `delivery`, `ops`, and `runner`, but the UI should feel like these five understandable operations.
+The current code may still use `crm`, `workstation`, `delivery`, `ops`, and `runner`, but the UI should feel like these four understandable operations.
 
 ## Completion boundary
 
@@ -37,7 +36,7 @@ This mission is not done because a timer expired. It is done only when the new f
 
 Before broad edits, define the concept in plain terms:
 
-- operating model: what the five operations are and how an operator moves through them
+- operating model: what the four operations are and how an operator moves through them
 - visual system: type, spacing, color roles, icons, density, surface rules, and motion rules
 - component language: how buttons, tabs, pills, tables, panels, drawers, modals, forms, logs, empty states, loading states, and error states should look and behave
 - mobile model: how the same concept reflows without horizontal overflow, clipped controls, or hidden primary actions
@@ -45,7 +44,7 @@ Before broad edits, define the concept in plain terms:
 Then apply that concept across all current frontend surfaces:
 
 - app shell, navigation, section headers, command/action areas, and global error/status presentation
-- Triage and Sell: lead queues, lead cards/rows, chat timeline, message states, conversion controls, Workstation handoff, and sequence/follow-up context
+- CRM: lead queues, lead cards/rows, chat timeline, message states, conversion controls, Workstation handoff, and sequence/follow-up context
 - Build: Workstation client list, client detail, assets/media, notes, generated artifacts, Codex actions, professional photo flow, solo-page/photo modals, drawers, and CRM/Delivery links
 - Deliver: delivery contact groups, source editor, sheet lead tables, delivery status pills, copy controls, retry/audit context, and recipient chat context
 - Observe: action queue, Runner panel, Meta readiness, blockers, campaigns, inventory, agent activity, meetings, client updates, assets, event stream, and raw log disclosure
@@ -183,7 +182,7 @@ Raw logs, markdown history, payloads, traces, and full error bodies should be be
 
 ## UI rules
 
-- Top-level navigation should have no more than five primary operations.
+- Top-level navigation should have no more than four primary operations.
 - Default views should not start with more than five major blocks.
 - Prefer icon buttons with tooltips for familiar actions.
 - Use words only where words reduce ambiguity.
@@ -222,11 +221,11 @@ Raw logs, markdown history, payloads, traces, and full error bodies should be be
 
 1. Research first and write the research ledger.
 2. Inspect the current frontend live and in code.
-3. Capture baseline screenshots for Triage, Sell, Build, Deliver, Observe, setup/config drawers, send/bulk send modals, Workstation modals, and mobile.
+3. Capture baseline screenshots for CRM, Build, Deliver, Observe, setup/config drawers, send/bulk send modals, Workstation modals, and mobile.
 4. Audit clutter: too many visible controls, duplicated actions, weak hierarchy, noisy copy, raw logs, unhelpful metrics, card overuse, text clipping, mobile overflow.
 5. Define the design system before broad edits: type, spacing, color roles, icon rules, buttons, status, tables, drawers, modals, empty states, log rows.
 6. Improve the app shell and top-level operation model first.
-7. Improve the five operations in priority order: Triage/Sell, Build, Deliver, Observe, then setup/config and send surfaces.
+7. Improve the four operations in priority order: CRM, Build, Deliver, Observe, then setup/config and send surfaces.
 8. After each covered surface, run the app, inspect in Browser, click the relevant flow, capture evidence, and fix visible issues before moving on.
 9. Keep a progress ledger: focus, source inspiration, change shipped, screenshot/command evidence, remaining risk.
 10. Keep iterating until the component coverage ledger shows that every current frontend surface and reusable pattern received a deliberate pass under the new concept.
@@ -234,13 +233,13 @@ Raw logs, markdown history, payloads, traces, and full error bodies should be be
 
 ## Success criteria
 
-- The platform has five or fewer visible main operations.
+- The platform has four or fewer visible main operations.
 - Each operation has one clear job and one obvious next action.
 - Default screens show less information but more meaning.
 - Important information is visible; secondary information is expandable.
 - Logs are readable in human language by default.
 - Raw logs and technical details are still available but hidden behind disclosure.
-- Triage, Sell, Build, Deliver, Observe, shared shell, drawers, modals, tables, timelines, forms, and responsive layouts share one visual system.
+- CRM, Build, Deliver, Observe, shared shell, drawers, modals, tables, timelines, forms, and responsive layouts share one visual system.
 - App shell, navigation, primary views, repeated component patterns, and UI states share the same frontend concept.
 - Every current frontend surface has a component coverage ledger entry.
 - Text is shorter and more operational.

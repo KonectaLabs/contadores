@@ -1996,10 +1996,6 @@ body {
   background: linear-gradient(135deg, #17352f, #111916);
 }
 
-#contadoresView .ct-crm-hero[data-mode="sell"] {
-  background: linear-gradient(135deg, #182b3a, #102620);
-}
-
 #contadoresView .ct-crm-hero .ct-simple-title span,
 #contadoresView .ct-crm-hero .ct-simple-title small {
   color: rgba(247, 251, 248, 0.72);

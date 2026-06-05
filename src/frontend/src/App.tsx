@@ -110,7 +110,7 @@ type LeadViewFilterOption = {
   tone: "all" | "neutral" | "accent" | "success" | "warn" | "muted";
   group: LeadViewGroupId;
 };
-type ActiveSection = "crm" | "sell" | "workstation" | "delivery" | "ops";
+type ActiveSection = "crm" | "workstation" | "delivery" | "ops";
 type LoadWorkstationDetailOptions = {
   syncNotes?: boolean;
   showLoading?: boolean;
@@ -295,7 +295,7 @@ function readStoredActiveSection(): ActiveSection {
   if (value === "runner") {
     return "ops";
   }
-  if (value === "sell" || value === "workstation" || value === "delivery" || value === "ops") {
+  if (value === "workstation" || value === "delivery" || value === "ops") {
     return value;
   }
   return "crm";
@@ -308,13 +308,8 @@ const operations: Array<{
 }> = [
   {
     section: "crm",
-    label: "Triage",
+    label: "CRM",
     icon: <ListChecks size={16} weight="bold" />,
-  },
-  {
-    section: "sell",
-    label: "Sell",
-    icon: <ChatCircleText size={16} weight="bold" />,
   },
   {
     section: "workstation",
@@ -508,12 +503,10 @@ export function App() {
   const config = leadList?.config ?? detail?.config ?? null;
   const selectedFunnel = funnels.find((funnel) => funnel.id === selectedFunnelId) ?? funnels[0] ?? null;
   const selectedFunnelSetupIssues = buildFunnelSetupIssues(selectedFunnel);
-  const isCrmWorkspace = activeSection === "crm" || activeSection === "sell";
-  const crmModeLabel = activeSection === "sell" ? "Sell" : "Triage";
-  const crmLeadListTitle = activeSection === "sell" ? "Selling conversations" : "Needs attention";
-  const crmLeadListSummary = activeSection === "sell"
-    ? "Move the active conversation forward"
-    : "Reply, unblock, or route";
+  const isCrmWorkspace = activeSection === "crm";
+  const crmModeLabel = "CRM";
+  const crmLeadListTitle = "Needs attention";
+  const crmLeadListSummary = "Reply, unblock, or route";
   const isContadoresFunnel = true;
   const isInboxFunnel = selectedFunnel?.kind === "inbox";
   const canEditLegacyRuntimeConfig = selectedFunnel?.id === "contadores";
@@ -2032,11 +2025,6 @@ export function App() {
       return;
     }
 
-    if (section === "sell") {
-      setLeadViewFilter((current) => current === "attention:needs_reply" ? "all" : current);
-      setSelectedLeadId(null);
-      setSelectedLeadIds([]);
-    }
   }
 
   function toggleLeadSelection(leadId: string) {
@@ -2060,18 +2048,12 @@ export function App() {
     Boolean(tagFilter),
     Boolean(query.trim()),
   ].filter(Boolean).length;
-  const crmHeroMetrics = activeSection === "sell"
-    ? [
-        { label: "Offer", value: metrics?.pipeline_offer_sent ?? 0 },
-        { label: "Meeting", value: metrics?.pipeline_meeting_sent ?? 0 },
-        { label: "Converted", value: metrics?.pipeline_converted ?? 0 },
-      ]
-    : [
-        { label: "Needs reply", value: metrics?.attention_needs_reply ?? 0 },
-        { label: "Operator", value: metrics?.queue_operator ?? 0 },
-        { label: "New", value: metrics?.pipeline_new ?? 0 },
-      ];
-  const crmHeroTitle = activeSection === "sell" ? "Move deals forward" : "Clear the queue";
+  const crmHeroMetrics = [
+    { label: "Needs reply", value: metrics?.attention_needs_reply ?? 0 },
+    { label: "Operator", value: metrics?.queue_operator ?? 0 },
+    { label: "New", value: metrics?.pipeline_new ?? 0 },
+  ];
+  const crmHeroTitle = "Clear the queue";
   const crmHeroDetail = totalCount
     ? `${compactNumber(visibleCount)}/${compactNumber(totalCount)} visible · ${activeLeadView.label}`
     : "No leads in this view";
@@ -2099,9 +2081,7 @@ export function App() {
       ? workstationTitle
       : activeSection === "delivery"
         ? "Deliver"
-        : activeSection === "sell"
-          ? "Sell"
-          : "Triage";
+        : "CRM";
   const syncStatus = activeSection === "ops"
     ? platformOverview
       ? `${compactNumber(platformOverview.counts.active_blockers)} blockers · ${relativeTime(platformOverview.generated_at)}`
@@ -2365,7 +2345,7 @@ export function App() {
           onEdit={openEditFunnel}
         />
         ) : (
-        <div className="ct-surface" data-crm-mode={activeSection === "sell" ? "sell" : "triage"}>
+        <div className="ct-surface" data-crm-mode="crm">
         {selectedFunnel && selectedFunnel.kind === "campaign" && selectedFunnelSetupIssues.length ? (
           <FunnelSetupBanner
             setupIssues={selectedFunnelSetupIssues}
@@ -2373,9 +2353,9 @@ export function App() {
           />
         ) : null}
         {!isInboxFunnel ? (
-          <section className="ct-simple-head ct-crm-hero" data-mode={activeSection === "sell" ? "sell" : "triage"}>
+          <section className="ct-simple-head ct-crm-hero" data-mode="crm">
             <div className="ct-simple-title">
-              <span>{activeSection === "sell" ? "Sell" : "Triage"}</span>
+              <span>CRM</span>
               <strong>{crmHeroTitle}</strong>
               <small>{crmHeroDetail}</small>
             </div>
