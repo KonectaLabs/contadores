@@ -358,8 +358,6 @@ type QuickActionName =
   | "send-calendly-link"
   | "manual-handoff"
   | "pause-automation"
-  | "enable-codex"
-  | "disable-codex"
   | "mark-answered"
   | "mark-converted"
   | "close"
@@ -1615,28 +1613,6 @@ export function App() {
     }
   }
 
-  async function toggleLeadCodex(lead: LeadSummary | null | undefined, enabled: boolean) {
-    if (!lead?.id) {
-      return;
-    }
-    const action: QuickActionName = enabled ? "enable-codex" : "disable-codex";
-    setActionBusy(action);
-    try {
-      await apiFetch<QuickActionResponse>(`/api/contadores/leads/${lead.id}/actions/${action}`, {
-        method: "POST",
-      });
-      await loadDashboard();
-      await loadDetail(lead.id);
-      if (selectedWorkstationClientId) {
-        await loadWorkstationDetail(selectedWorkstationClientId);
-      }
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not update Codex switch.");
-    } finally {
-      setActionBusy(null);
-    }
-  }
-
   async function submitSendModal(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const leadId = selectedLead?.id ?? selectedLeadId;
@@ -1957,7 +1933,6 @@ export function App() {
       setSelectedLeadIds([]);
       return;
     }
-
   }
 
   function toggleLeadSelection(leadId: string) {
@@ -2222,7 +2197,6 @@ export function App() {
           onStartSoloPageCodexWork={startSoloPageCodexWork}
           onStopSoloPageCodexWork={stopSoloPageCodexWork}
           onSteerSoloPageCodexWork={steerSoloPageCodexWork}
-          onToggleLeadCodex={toggleLeadCodex}
           onCloseWorkstationClient={closeWorkstationClient}
           onProfessionalPhotoEditPromptChange={updateProfessionalPhotoEditPrompt}
           onEditProfessionalPhoto={(version) => editProfessionalPhoto(version)}
@@ -2459,7 +2433,6 @@ export function App() {
               onDelete={deleteLead}
               onConvert={convertLeadToWorkstation}
               onStartSoloPage={startSoloPageWorkstation}
-              onToggleCodex={(enabled) => toggleLeadCodex(selectedLead, enabled)}
               onCopyContext={copySelectedLeadContext}
               onOpenWorkstation={openWorkstationClient}
               copyStatus={leadContextCopyStatus}
@@ -3935,7 +3908,6 @@ function WorkstationView({
   onStartSoloPageCodexWork,
   onStopSoloPageCodexWork,
   onSteerSoloPageCodexWork,
-  onToggleLeadCodex,
   onCloseWorkstationClient,
   onProfessionalPhotoEditPromptChange,
   onEditProfessionalPhoto,
@@ -3975,7 +3947,6 @@ function WorkstationView({
   onStartSoloPageCodexWork: (operatorPrompt: string) => boolean | Promise<boolean>;
   onStopSoloPageCodexWork: () => void | Promise<void>;
   onSteerSoloPageCodexWork: (message: string) => boolean | Promise<boolean>;
-  onToggleLeadCodex: (lead: LeadSummary | null | undefined, enabled: boolean) => void | Promise<void>;
   onCloseWorkstationClient: () => void | Promise<void>;
   onProfessionalPhotoEditPromptChange: (version: string, prompt: string) => void;
   onEditProfessionalPhoto: (version: string) => void;
@@ -4011,8 +3982,7 @@ function WorkstationView({
   const professionalPhotoJobBusy = currentProfessionalPhotoJob?.status === "queued" || currentProfessionalPhotoJob?.status === "running";
   const soloPageBusy = actionBusy === "solo-page-work" || Boolean(automationState?.is_live_working);
   const canStopSoloPageWork = activeClient?.work_type === "solo_pagina" && Boolean(automationState?.is_live_working);
-  const codexEnabled = Boolean(selectedLead?.codex_enabled);
-  const canStartSoloPageWork = activeClient?.work_type === "solo_pagina" && codexEnabled && !soloPageBusy && !workstationClosed;
+  const canStartSoloPageWork = activeClient?.work_type === "solo_pagina" && !soloPageBusy && !workstationClosed;
   const showStartCodexPrimary = canStartSoloPageWork;
   const showSteerCodexPrimary = !showStartCodexPrimary && canStopSoloPageWork;
   const showNotesPrimary = !showStartCodexPrimary && !showSteerCodexPrimary && !publicPage;
@@ -4321,7 +4291,7 @@ function WorkstationView({
                       type="button"
                       className="ct-btn ct-btn-primary"
                       onClick={openSoloPageSteerModal}
-                      disabled={!codexEnabled || actionBusy === "solo-page-steer"}
+                      disabled={actionBusy === "solo-page-steer"}
                     >
                       <PaperPlaneTilt size={15} weight="bold" />
                       Steer Codex
@@ -4354,18 +4324,6 @@ function WorkstationView({
                     <div className="ct-action-menu-panel workstation-action-popover">
                       <div className="workstation-menu-group">
                         <span className="workstation-menu-label">Build controls</span>
-                        <label
-                          className="ct-codex-switch workstation-menu-switch"
-                          title={codexEnabled ? "Codex enabled for this lead" : "Codex disabled for this lead"}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={codexEnabled}
-                            disabled={!selectedLead || Boolean(actionBusy)}
-                            onChange={(event) => onToggleLeadCodex(selectedLead, event.target.checked)}
-                          />
-                          <span>Codex</span>
-                        </label>
                         {!showStartCodexPrimary ? (
                           <button
                             type="button"
@@ -4391,7 +4349,7 @@ function WorkstationView({
                           <button
                             type="button"
                             onClick={openSoloPageSteerModal}
-                            disabled={!codexEnabled || !canStopSoloPageWork || actionBusy === "solo-page-steer"}
+                            disabled={!canStopSoloPageWork || actionBusy === "solo-page-steer"}
                           >
                             <PaperPlaneTilt size={16} weight="bold" />
                             <span>Steer Codex</span>
@@ -4404,7 +4362,7 @@ function WorkstationView({
                         <button
                           type="button"
                           onClick={openProfessionalPhotoModal}
-                          disabled={!codexEnabled || workstationClosed || !imageAssets.length || professionalPhotoJobBusy || actionBusy === "professional-photo-start"}
+                          disabled={workstationClosed || !imageAssets.length || professionalPhotoJobBusy || actionBusy === "professional-photo-start"}
                         >
                           <Camera size={16} weight="bold" />
                           <span>Professional photo</span>
@@ -5734,7 +5692,6 @@ function LeadDetailHeader({
   onDelete,
   onConvert,
   onStartSoloPage,
-  onToggleCodex,
   onCopyContext,
   onOpenWorkstation,
   copyStatus,
@@ -5751,7 +5708,6 @@ function LeadDetailHeader({
   onDelete: () => void;
   onConvert: () => void;
   onStartSoloPage: () => void;
-  onToggleCodex: (enabled: boolean) => void | Promise<void>;
   onCopyContext: () => void | Promise<void>;
   onOpenWorkstation: (clientId: string) => void | Promise<void>;
   copyStatus: string;
@@ -5761,7 +5717,6 @@ function LeadDetailHeader({
   const convertedMilestone = isLeadConverted(lead);
   const crmOutboundBlocked = closed || archived || convertedMilestone;
   const paused = Boolean(lead?.automation_paused);
-  const codexEnabled = Boolean(lead?.codex_enabled);
   const canMarkAnswered = lead?.manual_reply_status === "needs_reply" && !closed;
   const hasWorkstationClient = Boolean(lead?.workstation_client_id);
   const detailContactParts = lead
@@ -5850,15 +5805,6 @@ function LeadDetailHeader({
 
             <div className="ct-action-menu-group">
               <span className="ct-action-menu-label">Automation</span>
-              <label className="ct-codex-switch" title={codexEnabled ? "Codex enabled for this lead" : "Codex disabled for this lead"}>
-                <input
-                  type="checkbox"
-                  checked={codexEnabled}
-                  disabled={!lead || Boolean(actionBusy)}
-                  onChange={(event) => onToggleCodex(event.target.checked)}
-                />
-                <span>Codex agent</span>
-              </label>
               {!inboxMode ? (
                 <button type="button" className="ct-btn ct-btn-ghost" disabled={!lead || closed || paused || Boolean(actionBusy)} onClick={onPauseAutomation}>
                   <PauseCircle size={15} weight="bold" />

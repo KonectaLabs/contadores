@@ -2171,63 +2171,9 @@ body.ct-resizing {
   text-transform: uppercase;
 }
 
-#contadoresView .ct-action-menu-panel .ct-btn,
-#contadoresView .ct-action-menu-panel .ct-codex-switch {
+#contadoresView .ct-action-menu-panel .ct-btn {
   width: 100%;
   justify-content: flex-start;
-}
-
-#contadoresView .ct-codex-switch {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  height: 34px;
-  min-width: 96px;
-  padding: 0 10px;
-  border: 1px solid var(--ct-line);
-  border-radius: var(--ct-radius-sm);
-  background: var(--ct-surface);
-  color: var(--ct-ink);
-  font: 700 11px/1 var(--font-mono);
-  cursor: pointer;
-}
-
-#contadoresView .ct-codex-switch input {
-  flex: 0 0 auto;
-  appearance: none;
-  width: 34px;
-  height: 18px;
-  border-radius: 999px;
-  background: var(--ct-line);
-  position: relative;
-  cursor: pointer;
-}
-
-#contadoresView .ct-codex-switch input::after {
-  content: "";
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: #ffffff;
-  box-shadow: 0 1px 3px rgba(32, 33, 36, 0.18);
-  transition: transform 140ms ease;
-}
-
-#contadoresView .ct-codex-switch input:checked {
-  background: var(--ct-accent);
-}
-
-#contadoresView .ct-codex-switch input:checked::after {
-  transform: translateX(16px);
-}
-
-#contadoresView .ct-codex-switch input:disabled,
-#contadoresView .ct-codex-switch:has(input:disabled) {
-  cursor: not-allowed;
-  opacity: 0.62;
 }
 
 #contadoresView .ct-lead-copy-status {
@@ -5763,12 +5709,6 @@ body.ct-resizing {
     width: 100%;
     min-width: 0;
     padding-inline: 10px;
-  }
-
-  #contadoresView .ct-codex-switch {
-    width: 100%;
-    min-width: 0;
-    justify-content: center;
   }
 
   #contadoresView .workstation-action-menu {

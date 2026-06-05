@@ -79,11 +79,7 @@ passes. Enable Workstation first with `CODEX_AGENT_TOOLS_WORKSTATION_ENABLED`,
 then conversation with `CODEX_AGENT_TOOLS_CONVERSATION_ENABLED`. Tool runs write
 audits to `agent_runs`, `agent_tool_calls`, `scheduled_agent_tasks`, and
 `data/agent-runs/`; deploy verification should inspect those records for the
-first enabled lead/client.
-Lead-level Codex is also gated by `contadores_leads.codex_enabled`; keep
-`CONTADORES_LEAD_CODEX_ENABLED_DEFAULT=false` unless a rollout deliberately
-turns Codex on by default for new leads. The UI switch is the source of truth
-for enabling one lead.
+first enabled client or lead flow.
 
 Workstation solo-page Codex runs are also gated by `CODEX_BACKEND_ENABLED`.
 When off, generation fails fast without calling the SDK. When on, optional

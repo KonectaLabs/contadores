@@ -83,7 +83,6 @@ def configure_contadores_db(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(workstation_endpoints, "CODEX_BACKEND_ENABLED", True)
     monkeypatch.setattr(contadores_conversation_bot_module, "CODEX_BACKEND_ENABLED", True)
     monkeypatch.setattr(codex_agent_runtime, "CODEX_BACKEND_ENABLED", True)
-    monkeypatch.setattr(database_module, "DEFAULT_CONTADORES_LEAD_CODEX_ENABLED", True)
     db_path = tmp_path / "contadores.sqlite"
     engine = create_engine(
         f"sqlite:///{db_path}",
@@ -201,30 +200,6 @@ def test_codex_agent_tool_queues_whatsapp_text(monkeypatch, tmp_path) -> None:
     assert len(calls) == 1
     assert calls[0].tool_name == "send_whatsapp_text"
     assert calls[0].status == "succeeded"
-
-
-def test_codex_agent_tool_rejects_disabled_lead(monkeypatch, tmp_path) -> None:
-    """Audited Codex tools must stop side effects after the lead switch is turned off."""
-    configure_contadores_db(monkeypatch, tmp_path)
-    lead = ContadoresLead.upsert(
-        external_lead_id="sheet-row-agent-tool-disabled",
-        phone="+5491777777790",
-        full_name="Cliente Codex Disabled",
-    )
-    ContadoresLead.set_codex_enabled(lead.id, enabled=False)
-
-    result = call_tool(
-        run_id="agent-run-disabled",
-        tool_name="send_whatsapp_text",
-        arguments={
-            "lead_id": lead.id,
-            "text": "Esto no deberia salir.",
-        },
-    )
-
-    assert result["ok"] is False
-    assert result["error"] == "Codex is disabled for this lead."
-    assert ContadoresMessage.list_by_lead(lead.id) == []
 
 
 def test_codex_agent_tool_schedules_followup(monkeypatch, tmp_path) -> None:
@@ -2541,45 +2516,6 @@ def test_contadores_tick_processes_due_agent_followup(monkeypatch, tmp_path) -> 
     assert ScheduledAgentTask.list_due(now=now_utc()) == []
 
 
-def test_disable_codex_action_clears_pending_codex_tasks(monkeypatch, tmp_path) -> None:
-    """The central lead switch should disable Codex and retire queued wake-ups."""
-    configure_contadores_db(monkeypatch, tmp_path)
-    monkeypatch.setattr(database_module, "DATA_DIR", tmp_path / "data")
-    lead = ContadoresLead.upsert(
-        external_lead_id="sheet-row-disable-codex-action",
-        phone="+5491777777798",
-        full_name="Cliente Switch",
-    )
-    workstation = WorkstationClient.create_for_lead(
-        lead,
-        work_type=WorkstationClientWorkType.SOLO_PAGINA,
-        status=WorkstationClientStatus.PENDING_PAYMENT,
-        automation_status=WorkstationAutomationStatus.INTAKE,
-    )
-    ScheduledAgentTask.create(
-        target_type="lead",
-        target_id=lead.id,
-        due_at=now_utc() - timedelta(minutes=1),
-        reason="lead codex",
-        instruction="check lead",
-    )
-    ScheduledAgentTask.create(
-        target_type="workstation_client",
-        target_id=workstation.id,
-        due_at=now_utc() - timedelta(minutes=1),
-        reason="workstation codex",
-        instruction="check workstation",
-    )
-
-    with TestClient(app) as client:
-        response = client.post(f"/api/contadores/leads/{lead.id}/actions/disable-codex")
-
-    assert response.status_code == 200
-    assert response.json()["lead"]["codex_enabled"] is False
-    assert ContadoresLead.get_by_id(lead.id).codex_enabled is False
-    assert ScheduledAgentTask.list_due(now=now_utc()) == []
-
-
 def build_abogados_test_funnel(
     *,
     referral_ids: list[str] | None = None,
@@ -3263,7 +3199,6 @@ def test_contadores_followup_booked_stage_marks_converted_without_raw_booked(mon
             headers={"X-Internal-Token": "test-internal-token"},
             json={
                 "stage": "booked",
-                "codex_enabled": True,
                 "classification_label": "converted",
                 "classification_reason": "Automation confirmed the client converted.",
             },
@@ -8822,35 +8757,6 @@ def test_manual_workstation_solo_page_work_uses_operator_prompt(monkeypatch, tmp
     )
     updated = WorkstationClient.get_by_id(workstation.id)
     assert updated.automation_status == WorkstationAutomationStatus.AWAITING_REVIEW
-
-
-def test_manual_workstation_codex_start_requires_enabled_lead(monkeypatch, tmp_path) -> None:
-    """Workstation buttons should not queue Codex work when the lead switch is off."""
-    configure_contadores_db(monkeypatch, tmp_path)
-    monkeypatch.setattr(database_module, "DATA_DIR", tmp_path / "data")
-    workstation_endpoints.manual_solo_page_work_client_ids.clear()
-    lead = ContadoresLead.upsert(
-        external_lead_id="sheet-row-manual-workstation-codex-disabled",
-        phone="+5491777777712",
-        full_name="Codex Disabled Workstation",
-    )
-    lead = ContadoresLead.set_codex_enabled(lead.id, enabled=False) or lead
-    workstation = WorkstationClient.create_for_lead(
-        lead,
-        work_type=WorkstationClientWorkType.SOLO_PAGINA,
-        status=WorkstationClientStatus.PENDING_PAYMENT,
-        automation_status=WorkstationAutomationStatus.INTAKE,
-    )
-
-    with TestClient(app) as client:
-        response = client.post(
-            f"/api/workstation/clients/{workstation.id}/solo-page/work",
-            json={"prompt": "Hacer la pagina."},
-        )
-
-    assert response.status_code == 409
-    assert response.json()["detail"] == "Codex is disabled for this lead."
-    assert workstation_endpoints.manual_solo_page_work_client_ids == set()
 
 
 def test_manual_workstation_solo_page_endpoint_queues_background_work(monkeypatch, tmp_path) -> None:

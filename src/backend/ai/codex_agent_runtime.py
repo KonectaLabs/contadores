@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any
 
 import backend.database as database_module
-from backend.ai.codex_guard import assert_codex_enabled_for_target
 from backend.codex_utils import CodexSkill, CodexTurnResult, run_codex_with_context
 from backend.config import (
     CODEX_BACKEND_ENABLED,
@@ -228,7 +227,6 @@ async def run_codex_agent(
     on_turn_started=None,
 ) -> CodexAgentRunResult:
     """Run Codex as an autonomous employee with audited product tools."""
-    assert_codex_enabled_for_target(target_type, target_id)
     if not CODEX_BACKEND_ENABLED:
         raise RuntimeError(
             "Codex SDK desactivado (CODEX_BACKEND_ENABLED no es true). "

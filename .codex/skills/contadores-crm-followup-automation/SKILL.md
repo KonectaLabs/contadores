@@ -67,9 +67,6 @@ Also read these skills when relevant:
 - Exclude closed, converted/legacy booked, and archived leads. The backend
   enqueue guard rejects CRM outbound for these states; do not try to requeue or
   bypass it with direct message inserts.
-- Exclude any lead with `codex_enabled=false` or `codex_disabled` in
-  `exclusion_reasons`. Do not send messages, mutate state, schedule follow-ups,
-  or try to route around that switch.
 - Always inspect message delivery status before deciding that a lead ignored us.
   If our last outbound failed, the next action is delivery repair or exclusion,
   not "the lead did not answer".

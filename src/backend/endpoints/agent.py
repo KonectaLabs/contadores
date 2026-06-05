@@ -95,8 +95,6 @@ QUICK_ACTIONS = [
     "mark-converted",
     "manual-handoff",
     "pause-automation",
-    "enable-codex",
-    "disable-codex",
     "send-loom",
     "send-video-check",
     "send-page-example-video",
@@ -193,7 +191,6 @@ class AgentConversationPatchCommand(BaseModel):
     classification_label: str | None = Field(default=None, max_length=160)
     classification_reason: str | None = Field(default=None, max_length=2000)
     manual_reply_status: Literal["needs_reply", "answered"] | None = None
-    codex_enabled: bool | None = None
     automation_paused: bool | None = None
     automation_paused_reason: str | None = Field(default=None, max_length=4000)
     tags: list[str] | None = None
@@ -1325,8 +1322,6 @@ async def patch_agent_conversation(
 ) -> dict[str, Any]:
     """Update lead tags/state through existing CRM lifecycle helpers."""
     lead = _lead_or_404(lead_id)
-    if not lead.codex_enabled and command.codex_enabled is not True:
-        raise HTTPException(status_code=400, detail="Codex is disabled for this lead.")
     run_id = _ensure_run(command.run_id, target_type="lead", target_id=lead_id)
     arguments = command.model_dump(exclude={"run_id"}, mode="json")
     if command.dry_run:
@@ -1370,8 +1365,6 @@ async def patch_agent_conversation(
             flow_updates["manual_reply_handled_at"] = now
         elif command.manual_reply_status == "needs_reply":
             flow_updates["clear_manual_reply_handled_at"] = True
-        if command.codex_enabled is not None:
-            flow_updates["codex_enabled"] = command.codex_enabled
         if command.automation_paused is not None:
             flow_updates["automation_paused"] = command.automation_paused
         if command.automation_paused_reason is not None:

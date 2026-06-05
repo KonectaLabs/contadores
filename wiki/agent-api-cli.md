@@ -180,7 +180,7 @@ Every mutating convenience endpoint accepts `dry_run`. Outbound message and foll
 
 ## Safety
 
-Writes do not insert messages or mutate lead lifecycle rows directly from the API handler unless wrapped by an audit row and an existing CRM helper. Normal sends go through `call_tool()` and `send_whatsapp_text`, which reuses `enqueue_lead_outbound` and preserves WhatsApp 24-hour window/template checks. Lead and Workstation tools keep `codex_enabled` enforcement through the existing tool guard.
+Writes do not insert messages or mutate lead lifecycle rows directly from the API handler unless wrapped by an audit row and an existing CRM helper. Normal sends go through `call_tool()` and `send_whatsapp_text`, which reuses `enqueue_lead_outbound` and preserves WhatsApp 24-hour window/template checks.
 
 Public campaign forms expose only active campaign form schema and thank-you
 copy. They do not expose CRM notes, token material, Delivery config, Meta
