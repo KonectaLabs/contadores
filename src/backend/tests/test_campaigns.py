@@ -148,6 +148,33 @@ def test_public_form_requires_active_campaign_and_valid_phone(monkeypatch, tmp_p
         assert "WhatsApp" in bad_submit.json()["detail"]
 
 
+def test_campaign_geo_targeting_rejects_invalid_values(monkeypatch, tmp_path) -> None:
+    """Campaign geography should reject unsupported country codes and unsafe names."""
+    configure_contadores_db(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        unsupported_country = client.post(
+            "/api/campaigns",
+            json={**campaign_payload(), "geo_targeting": {"country_code": "XX"}},
+        )
+        assert unsupported_country.status_code == 422
+        assert "country_code" in unsupported_country.text
+
+        invalid_region = client.post(
+            "/api/campaigns",
+            json={**campaign_payload(), "geo_targeting": {"country_code": "AR", "regions": [{"name": "<script>"}]}},
+        )
+        assert invalid_region.status_code == 422
+        assert "invalid characters" in invalid_region.text
+
+        duplicate_city = client.post(
+            "/api/campaigns",
+            json={**campaign_payload(), "geo_targeting": {"country_code": "AR", "cities": [{"name": "CABA"}, {"name": "caba"}]}},
+        )
+        assert duplicate_city.status_code == 422
+        assert "duplicate city" in duplicate_city.text
+
+
 def test_public_submission_validates_schema_and_payload_caps(monkeypatch, tmp_path) -> None:
     """Public submissions should not accept unknown, missing, or oversized fields."""
     configure_contadores_db(monkeypatch, tmp_path)

@@ -145,7 +145,9 @@ Converted client creation requires `name` and `whatsapp`; `email` and
 Campaign geography uses structured fields: `country_code`, repeated `region`
 values, and repeated `city` values. Country codes are directly staged as
 Meta `geo_locations.countries`; regions and cities stay structured and are
-only sent as Meta `regions`/`cities` when a Meta `key` is present.
+only sent as Meta `regions`/`cities` when a Meta `key` is present. The CLI and
+API reject unsupported country codes, duplicate geography values, more than 20
+regions or 20 cities, and unsafe characters before creating the campaign.
 
 Submissions dedupe on `idempotency_key`, record the raw answers, queue Client
 Lead Delivery with existing helpers, and track Meta CAPI only when both the

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import stat
 import webbrowser
@@ -26,6 +27,10 @@ INTERNAL_TOKEN_ENV = "CONTADORES_AGENT_INTERNAL_TOKEN"
 CONFIG_MODE = stat.S_IRUSR | stat.S_IWUSR
 API_PREFIX = "/api/agent"
 LOCAL_CALLBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
+CAMPAIGN_GEO_SUPPORTED_COUNTRIES = {"AR", "UY", "CL", "PY", "BO", "PE", "CO", "MX", "US", "ES"}
+CAMPAIGN_GEO_MAX_AREAS_PER_KIND = 20
+CAMPAIGN_GEO_NAME_MAX_LENGTH = 96
+CAMPAIGN_GEO_NAME_RE = re.compile(r"^[A-Za-zÀ-ÖØ-öø-ÿ0-9][A-Za-zÀ-ÖØ-öø-ÿ0-9 .,'()/-]{0,95}$")
 
 app = typer.Typer(no_args_is_help=True, help="Operate the Contadores Agent API over HTTP.")
 profile_app = typer.Typer(no_args_is_help=True, help="Manage local Agent API profiles.")
@@ -176,6 +181,39 @@ def clean_tags(values: list[str]) -> list[str]:
     if not tags:
         raise AgentCliError("Provide at least one tag.")
     return tags
+
+
+def clean_country_code(value: str) -> str:
+    """Validate a two-letter country code for campaign targeting."""
+    code = "".join(str(value or "").upper().split())
+    if len(code) != 2 or not code.isalpha():
+        raise AgentCliError("--country-code must be a two-letter country code, for example AR.")
+    if code not in CAMPAIGN_GEO_SUPPORTED_COUNTRIES:
+        raise AgentCliError(f"--country-code is not supported: {code}.")
+    return code
+
+
+def clean_geo_names(values: list[str], *, option_name: str) -> list[dict[str, str]]:
+    """Validate repeated campaign geo area options."""
+    areas: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for value in values:
+        for raw_item in value.split(";"):
+            name = " ".join(raw_item.split()).strip()
+            if not name:
+                continue
+            if len(name) > CAMPAIGN_GEO_NAME_MAX_LENGTH:
+                raise AgentCliError(f"{option_name} is too long: {name[:40]}...")
+            if not CAMPAIGN_GEO_NAME_RE.fullmatch(name):
+                raise AgentCliError(f"{option_name} has invalid characters: {name}")
+            duplicate_key = name.casefold()
+            if duplicate_key in seen:
+                raise AgentCliError(f"Duplicate {option_name}: {name}")
+            seen.add(duplicate_key)
+            areas.append({"name": name})
+    if len(areas) > CAMPAIGN_GEO_MAX_AREAS_PER_KIND:
+        raise AgentCliError(f"Use at most {CAMPAIGN_GEO_MAX_AREAS_PER_KIND} {option_name} values.")
+    return areas
 
 
 def parse_json_object(value: str) -> dict[str, Any]:
@@ -855,11 +893,14 @@ def campaigns_create(
                 "extra_info": client_extra_info,
             }
         )
-    geo_targeting = {
-        "country_code": (country_code or "AR").strip().upper(),
-        "regions": [{"name": item.strip()} for item in regions if item.strip()],
-        "cities": [{"name": item.strip()} for item in cities if item.strip()],
-    }
+    try:
+        geo_targeting = {
+            "country_code": clean_country_code(country_code),
+            "regions": clean_geo_names(regions, option_name="--region"),
+            "cities": clean_geo_names(cities, option_name="--city"),
+        }
+    except AgentCliError as error:
+        exit_with_error(error)
 
     run_api_call(
         lambda client: client.request(

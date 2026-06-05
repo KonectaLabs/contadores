@@ -2623,6 +2623,7 @@ const campaignCountryOptions = [
   { value: "US", label: "United States" },
   { value: "ES", label: "Spain" },
 ];
+const campaignGeoNamePattern = /^[A-Za-zÀ-ÖØ-öø-ÿ0-9][A-Za-zÀ-ÖØ-öø-ÿ0-9 .,'()/-]{0,95}$/;
 
 function defaultCampaignFields(): CampaignFieldDraft[] {
   return [
@@ -2670,6 +2671,25 @@ function campaignGeoAreas(value: string): Array<{ name: string }> {
     .filter(Boolean)
     .slice(0, 20)
     .map((name) => ({ name }));
+}
+
+function validateCampaignGeoText(value: string, label: string): string | null {
+  const names = campaignGeoAreas(value).map((item) => item.name);
+  if (names.length > 20) {
+    return `${label} supports up to 20 values.`;
+  }
+  const seen = new Set<string>();
+  for (const name of names) {
+    if (!campaignGeoNamePattern.test(name)) {
+      return `${label} has invalid characters: ${name}`;
+    }
+    const key = name.toLowerCase();
+    if (seen.has(key)) {
+      return `${label} has a duplicate value: ${name}`;
+    }
+    seen.add(key);
+  }
+  return null;
 }
 
 function campaignGeoTargeting(countryCode: string, regionsText: string, citiesText: string): CampaignGeoTargetingDraft {
@@ -2798,6 +2818,11 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
     };
     if (!existingClientId && (!client?.name || !client.whatsapp)) {
       onError("Client name and WhatsApp are required.");
+      return;
+    }
+    const geoError = validateCampaignGeoText(regionsText, "Regions / provinces") || validateCampaignGeoText(citiesText, "Cities");
+    if (geoError) {
+      onError(geoError);
       return;
     }
     setSaving(true);

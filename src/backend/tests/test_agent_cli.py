@@ -478,6 +478,38 @@ def test_agent_commands_call_expected_methods_paths_and_bodies(
         assert call["json"] == body
 
 
+def test_campaign_create_validates_geo_before_http(
+    monkeypatch: pytest.MonkeyPatch,
+    config_path: Path,
+) -> None:
+    """Invalid campaign geography should fail locally without sending HTTP."""
+    fake_http = FakeHttp()
+    monkeypatch.setattr(agent_cli.httpx, "request", fake_http)
+    monkeypatch.setenv(agent_cli.INTERNAL_TOKEN_ENV, "internal-token")
+
+    unsupported_country = runner.invoke(
+        agent_cli.app,
+        ["campaigns", "create", "--name", "Campania", "--client-id", "client-1", "--country-code", "XX"],
+    )
+    assert unsupported_country.exit_code == 1
+    assert "--country-code is not supported" in unsupported_country.output
+
+    invalid_region = runner.invoke(
+        agent_cli.app,
+        ["campaigns", "create", "--name", "Campania", "--client-id", "client-1", "--region", "<script>"],
+    )
+    assert invalid_region.exit_code == 1
+    assert "--region has invalid characters" in invalid_region.output
+
+    duplicate_city = runner.invoke(
+        agent_cli.app,
+        ["campaigns", "create", "--name", "Campania", "--client-id", "client-1", "--city", "CABA", "--city", "caba"],
+    )
+    assert duplicate_city.exit_code == 1
+    assert "Duplicate --city" in duplicate_city.output
+    assert fake_http.calls == []
+
+
 def test_json_output_and_nonzero_exit_on_api_error(
     monkeypatch: pytest.MonkeyPatch,
     config_path: Path,

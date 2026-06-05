@@ -123,7 +123,9 @@ cliente existente o cliente convertido nuevo, presupuesto, pais, regiones,
 ciudades, brief, campos del formulario y Pixel/CAPI opcional. El pais se guarda
 como codigo Meta-compatible (`geo_locations.countries`); regiones y ciudades se
 guardan como listas estructuradas y solo se publican como regiones/cities de
-Meta cuando tienen `key`. La API de operadores es
+Meta cuando tienen `key`. La UI, CLI y API rechazan paises no soportados,
+geografias duplicadas y caracteres no seguros antes de crear la campaña. La API
+de operadores es
 `/api/campaigns`, y cada campaña publica `/c/{public_slug}` como formulario
 mobile-first. Las submissions entran al flujo normal de Client Lead Delivery;
 no se insertan mensajes ni se saltean helpers. Meta CAPI usa el pixel de la

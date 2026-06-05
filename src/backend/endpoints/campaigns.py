@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import secrets
 from datetime import datetime, timezone
 from html import escape
@@ -10,7 +11,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from backend.database import (
     CLIENT_LEAD_CONTEXT_TEMPLATE_NAME,
@@ -60,6 +61,22 @@ PUBLIC_MAX_ANSWER_BYTES = 20_000
 PUBLIC_MAX_FIELD_TEXT = 2_000
 PUBLIC_MAX_TRACKING_TEXT = 1_000
 PUBLISHABLE_CAMPAIGN_STATUSES = {"active", "published"}
+CAMPAIGN_GEO_SUPPORTED_COUNTRIES = {"AR", "UY", "CL", "PY", "BO", "PE", "CO", "MX", "US", "ES"}
+CAMPAIGN_GEO_MAX_AREAS_PER_KIND = 20
+CAMPAIGN_GEO_NAME_MAX_LENGTH = 96
+CAMPAIGN_GEO_KEY_MAX_LENGTH = 80
+CAMPAIGN_GEO_NAME_RE = re.compile(r"^[A-Za-zÀ-ÖØ-öø-ÿ0-9][A-Za-zÀ-ÖØ-öø-ÿ0-9 .,'()/-]{0,95}$")
+CAMPAIGN_GEO_KEY_RE = re.compile(r"^[A-Za-z0-9_:-]{1,80}$")
+
+
+def _validate_country_code(value: str | None) -> str:
+    """Return a normalized ISO-like country code or raise a validation error."""
+    clean = "".join(str(value or "").upper().split())
+    if len(clean) != 2 or not clean.isalpha():
+        raise ValueError("country_code must be a two-letter country code")
+    if clean not in CAMPAIGN_GEO_SUPPORTED_COUNTRIES:
+        raise ValueError(f"country_code is not supported: {clean}")
+    return clean
 
 
 class ConvertedClientCommand(BaseModel):
@@ -80,17 +97,60 @@ class ConvertedClientCommand(BaseModel):
 class CampaignGeoAreaCommand(BaseModel):
     """One campaign geography item selected by the operator."""
 
-    name: str = Field(min_length=1)
-    key: str | None = None
-    country_code: str | None = None
+    name: str = Field(min_length=1, max_length=CAMPAIGN_GEO_NAME_MAX_LENGTH)
+    key: str | None = Field(default=None, max_length=CAMPAIGN_GEO_KEY_MAX_LENGTH)
+    country_code: str | None = Field(default=None, min_length=2, max_length=2)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        clean = " ".join(str(value or "").split()).strip()
+        if not clean:
+            raise ValueError("geo area name is required")
+        if not CAMPAIGN_GEO_NAME_RE.fullmatch(clean):
+            raise ValueError("geo area name has invalid characters")
+        return clean
+
+    @field_validator("key")
+    @classmethod
+    def validate_key(cls, value: str | None) -> str | None:
+        clean = " ".join(str(value or "").split()).strip()
+        if not clean:
+            return None
+        if not CAMPAIGN_GEO_KEY_RE.fullmatch(clean):
+            raise ValueError("geo area key has invalid characters")
+        return clean
+
+    @field_validator("country_code")
+    @classmethod
+    def validate_area_country_code(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _validate_country_code(value)
 
 
 class CampaignGeoTargetingCommand(BaseModel):
     """Structured geography for Meta-compatible owned campaign planning."""
 
     country_code: str = Field(default="AR", min_length=2, max_length=2)
-    regions: list[CampaignGeoAreaCommand] = Field(default_factory=list)
-    cities: list[CampaignGeoAreaCommand] = Field(default_factory=list)
+    regions: list[CampaignGeoAreaCommand] = Field(default_factory=list, max_length=CAMPAIGN_GEO_MAX_AREAS_PER_KIND)
+    cities: list[CampaignGeoAreaCommand] = Field(default_factory=list, max_length=CAMPAIGN_GEO_MAX_AREAS_PER_KIND)
+
+    @field_validator("country_code")
+    @classmethod
+    def validate_country_code(cls, value: str) -> str:
+        return _validate_country_code(value)
+
+    @model_validator(mode="after")
+    def validate_geo_shape(self) -> "CampaignGeoTargetingCommand":
+        seen: set[tuple[str, str]] = set()
+        for kind, items in (("region", self.regions), ("city", self.cities)):
+            for item in items:
+                duplicate_key = (kind, item.name.casefold())
+                if duplicate_key in seen:
+                    raise ValueError(f"duplicate {kind}: {item.name}")
+                seen.add(duplicate_key)
+        return self
 
 
 class LeadCaptureCampaignCommand(BaseModel):
@@ -172,8 +232,7 @@ def _jsonable(value: Any) -> Any:
 
 def _clean_country_code(value: str | None) -> str:
     """Return a two-letter country code accepted by Meta country targeting."""
-    clean = "".join(str(value or "").upper().split())[:2]
-    return clean if len(clean) == 2 and clean.isalpha() else "AR"
+    return _validate_country_code(value or "AR")
 
 
 def _clean_geo_area(area: CampaignGeoAreaCommand, *, fallback_country: str) -> dict[str, str]:

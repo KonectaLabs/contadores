@@ -71,7 +71,8 @@ writes.
 When creating campaigns, pass `--country-code` plus repeated `--region` and
 `--city` values instead of one freeform location string. Country codes map to
 Meta `geo_locations.countries`; region/city names remain structured until a
-Meta key is available.
+Meta key is available. The CLI rejects unsupported country codes, duplicate
+geography values, unsafe characters, and more than 20 regions or 20 cities.
 
 ## Internal Tool Runner
 
