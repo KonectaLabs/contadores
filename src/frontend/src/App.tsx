@@ -2597,8 +2597,25 @@ type CampaignFieldDraft = CampaignFormField & {
 
 type CampaignGeoTargetingDraft = {
   country_code: string;
-  regions: Array<{ name: string }>;
-  cities: Array<{ name: string }>;
+  regions: CampaignGeoArea[];
+  cities: CampaignGeoArea[];
+};
+
+type CampaignGeoArea = {
+  name: string;
+  key?: string;
+  country_code?: string;
+  type?: "region" | "city";
+  source?: "meta" | "local";
+};
+
+type CampaignGeoSearchResponse = {
+  country_code: string;
+  kind: "region" | "city";
+  query: string;
+  source: "meta" | "local";
+  meta_error?: string | null;
+  suggestions: CampaignGeoArea[];
 };
 
 const campaignFieldTypes = [
@@ -2664,22 +2681,13 @@ function campaignFormSchema(fields: CampaignFieldDraft[]): { fields: CampaignFor
   };
 }
 
-function campaignGeoAreas(value: string): Array<{ name: string }> {
-  return value
-    .split(/[\n;]/)
-    .map((item) => item.trim())
-    .filter(Boolean)
-    .slice(0, 20)
-    .map((name) => ({ name }));
-}
-
-function validateCampaignGeoText(value: string, label: string): string | null {
-  const names = campaignGeoAreas(value).map((item) => item.name);
-  if (names.length > 20) {
+function validateCampaignGeoAreas(areas: CampaignGeoArea[], label: string): string | null {
+  if (areas.length > 20) {
     return `${label} supports up to 20 values.`;
   }
   const seen = new Set<string>();
-  for (const name of names) {
+  for (const area of areas) {
+    const name = area.name.trim();
     if (!campaignGeoNamePattern.test(name)) {
       return `${label} has invalid characters: ${name}`;
     }
@@ -2692,11 +2700,17 @@ function validateCampaignGeoText(value: string, label: string): string | null {
   return null;
 }
 
-function campaignGeoTargeting(countryCode: string, regionsText: string, citiesText: string): CampaignGeoTargetingDraft {
+function campaignGeoTargeting(countryCode: string, regions: CampaignGeoArea[], cities: CampaignGeoArea[]): CampaignGeoTargetingDraft {
+  const country = countryCode.trim().toUpperCase() || "AR";
+  const cleanAreas = (areas: CampaignGeoArea[]) => areas.map((area) => ({
+    name: area.name.trim(),
+    ...(area.key ? { key: area.key } : {}),
+    country_code: area.country_code || country,
+  }));
   return {
-    country_code: countryCode.trim().toUpperCase() || "AR",
-    regions: campaignGeoAreas(regionsText),
-    cities: campaignGeoAreas(citiesText),
+    country_code: country,
+    regions: cleanAreas(regions),
+    cities: cleanAreas(cities),
   };
 }
 
@@ -2707,6 +2721,112 @@ function campaignClientLabel(client: CampaignClientItem): string {
     lead?.phone,
     lead?.email,
   ].filter(Boolean).join(" · ");
+}
+
+function CampaignGeoSelector({
+  countryCode,
+  kind,
+  label,
+  value,
+  onChange,
+  onError,
+}: {
+  countryCode: string;
+  kind: "region" | "city";
+  label: string;
+  value: CampaignGeoArea[];
+  onChange: (next: CampaignGeoArea[]) => void;
+  onError: (message: string) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [suggestions, setSuggestions] = useState<CampaignGeoArea[]>([]);
+  const [loading, setLoading] = useState(false);
+  const selectedKeys = useMemo(() => new Set(value.map((item) => `${item.key || ""}:${item.name.toLowerCase()}`)), [value]);
+
+  useEffect(() => {
+    const cleanQuery = query.trim();
+    setLoading(true);
+    const timeout = window.setTimeout(async () => {
+      try {
+        const payload = await apiFetch<CampaignGeoSearchResponse>(
+          `/api/campaigns/geo/search?country_code=${encodeURIComponent(countryCode)}&kind=${kind}&q=${encodeURIComponent(cleanQuery)}&limit=12`,
+        );
+        setSuggestions(payload.suggestions ?? []);
+      } catch (reason) {
+        setSuggestions([]);
+        onError(reason instanceof Error ? reason.message : `Could not search ${label.toLowerCase()}.`);
+      } finally {
+        setLoading(false);
+      }
+    }, cleanQuery ? 220 : 0);
+    return () => window.clearTimeout(timeout);
+  }, [countryCode, kind, label, onError, query]);
+
+  function addArea(area: CampaignGeoArea) {
+    const cleanName = area.name.trim();
+    if (!cleanName || value.length >= 20) {
+      return;
+    }
+    const duplicate = value.some((item) => item.name.toLowerCase() === cleanName.toLowerCase() || (area.key && item.key === area.key));
+    if (duplicate) {
+      return;
+    }
+    onChange([...value, { ...area, name: cleanName, country_code: area.country_code || countryCode }]);
+    setQuery("");
+  }
+
+  function removeArea(index: number) {
+    onChange(value.filter((_, itemIndex) => itemIndex !== index));
+  }
+
+  function addFirstSuggestion(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key !== "Enter") {
+      return;
+    }
+    event.preventDefault();
+    const first = suggestions.find((item) => !selectedKeys.has(`${item.key || ""}:${item.name.toLowerCase()}`));
+    if (first) {
+      addArea(first);
+    }
+  }
+
+  return (
+    <div className="campaign-geo-picker">
+      <label className="ct-field">
+        <span>{label}</span>
+        <input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={addFirstSuggestion}
+          placeholder={kind === "region" ? "Type province/region..." : "Type city..."}
+        />
+      </label>
+      {value.length ? (
+        <div className="campaign-geo-chips">
+          {value.map((area, index) => (
+            <button type="button" className="campaign-geo-chip" key={`${area.key || area.name}-${index}`} onClick={() => removeArea(index)}>
+              <span>{area.name}</span>
+              <small>{area.key ? "Meta" : "Local"}</small>
+              <X size={12} weight="bold" />
+            </button>
+          ))}
+        </div>
+      ) : null}
+      <div className="campaign-geo-results">
+        {loading ? <span className="campaign-geo-empty">Searching...</span> : null}
+        {!loading && suggestions.length === 0 ? <span className="campaign-geo-empty">No options</span> : null}
+        {!loading ? suggestions.map((area) => {
+          const disabled = selectedKeys.has(`${area.key || ""}:${area.name.toLowerCase()}`);
+          return (
+            <button type="button" key={`${area.source || "local"}-${area.key || area.name}`} onClick={() => addArea(area)} disabled={disabled}>
+              <span>{area.name}</span>
+              <small>{area.key ? "Meta" : "Local"}</small>
+            </button>
+          );
+        }) : null}
+      </div>
+    </div>
+  );
 }
 
 function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onError: (message: string) => void }) {
@@ -2727,8 +2847,8 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
   const [newClientExtraInfo, setNewClientExtraInfo] = useState("");
   const [dailyBudget, setDailyBudget] = useState("");
   const [countryCode, setCountryCode] = useState("AR");
-  const [regionsText, setRegionsText] = useState("");
-  const [citiesText, setCitiesText] = useState("");
+  const [selectedRegions, setSelectedRegions] = useState<CampaignGeoArea[]>([]);
+  const [selectedCities, setSelectedCities] = useState<CampaignGeoArea[]>([]);
   const [creativeBrief, setCreativeBrief] = useState("");
   const [metaPixelId, setMetaPixelId] = useState("");
   const [metaEventsEnabled, setMetaEventsEnabled] = useState(false);
@@ -2820,7 +2940,7 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
       onError("Client name and WhatsApp are required.");
       return;
     }
-    const geoError = validateCampaignGeoText(regionsText, "Regions / provinces") || validateCampaignGeoText(citiesText, "Cities");
+    const geoError = validateCampaignGeoAreas(selectedRegions, "Regions / provinces") || validateCampaignGeoAreas(selectedCities, "Cities");
     if (geoError) {
       onError(geoError);
       return;
@@ -2833,7 +2953,7 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
         client,
         status: campaignStatus,
         daily_budget_usd: dailyBudget ? Number(dailyBudget) : null,
-        geo_targeting: campaignGeoTargeting(countryCode, regionsText, citiesText),
+        geo_targeting: campaignGeoTargeting(countryCode, selectedRegions, selectedCities),
         creative_brief: creativeBrief.trim() || null,
         form_schema: campaignFormSchema(fields),
         meta_pixel_id: metaPixelId.trim() || null,
@@ -2846,8 +2966,8 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
       setCampaignName("");
       setDailyBudget("");
       setCountryCode("AR");
-      setRegionsText("");
-      setCitiesText("");
+      setSelectedRegions([]);
+      setSelectedCities([]);
       setCreativeBrief("");
       setMetaPixelId("");
       setMetaEventsEnabled(false);
@@ -2943,7 +3063,14 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
             </label>
             <label className="ct-field">
               <span>Country</span>
-              <select value={countryCode} onChange={(event) => setCountryCode(event.target.value)}>
+              <select
+                value={countryCode}
+                onChange={(event) => {
+                  setCountryCode(event.target.value);
+                  setSelectedRegions([]);
+                  setSelectedCities([]);
+                }}
+              >
                 {campaignCountryOptions.map((country) => (
                   <option key={country.value} value={country.value}>{country.label}</option>
                 ))}
@@ -2952,14 +3079,22 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
           </div>
 
           <div className="campaign-location-grid">
-            <label className="ct-field">
-              <span>Regions / provinces</span>
-              <textarea value={regionsText} onChange={(event) => setRegionsText(event.target.value)} rows={2} placeholder={"Buenos Aires\nCordoba"} />
-            </label>
-            <label className="ct-field">
-              <span>Cities</span>
-              <textarea value={citiesText} onChange={(event) => setCitiesText(event.target.value)} rows={2} placeholder={"CABA\nLa Plata"} />
-            </label>
+            <CampaignGeoSelector
+              countryCode={countryCode}
+              kind="region"
+              label="Regions / provinces"
+              value={selectedRegions}
+              onChange={setSelectedRegions}
+              onError={onError}
+            />
+            <CampaignGeoSelector
+              countryCode={countryCode}
+              kind="city"
+              label="Cities"
+              value={selectedCities}
+              onChange={setSelectedCities}
+              onError={onError}
+            />
           </div>
 
           <div className="ct-field-grid">

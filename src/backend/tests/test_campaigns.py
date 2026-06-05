@@ -175,6 +175,61 @@ def test_campaign_geo_targeting_rejects_invalid_values(monkeypatch, tmp_path) ->
         assert "duplicate city" in duplicate_city.text
 
 
+def test_campaign_geo_search_returns_selectable_locations(monkeypatch, tmp_path) -> None:
+    """Geography search should return option objects instead of requiring free text."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.delenv("META_MARKETING_API_VERSION", raising=False)
+    monkeypatch.delenv("META_MARKETING_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("META_ACCESS_TOKEN", raising=False)
+
+    with TestClient(app) as client:
+        fallback_response = client.get("/api/campaigns/geo/search", params={"country_code": "AR", "kind": "city", "q": "pla"})
+        assert fallback_response.status_code == 200
+        fallback_payload = fallback_response.json()
+        assert fallback_payload["source"] == "local"
+        assert fallback_payload["suggestions"][0] == {
+            "name": "La Plata",
+            "country_code": "AR",
+            "type": "city",
+            "source": "local",
+        }
+
+        bad_country = client.get("/api/campaigns/geo/search", params={"country_code": "XX", "kind": "city", "q": "x"})
+        assert bad_country.status_code == 400
+
+
+def test_campaign_geo_search_uses_meta_keys_when_available(monkeypatch, tmp_path) -> None:
+    """Meta geography search should preserve Graph keys for campaign targeting."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("META_MARKETING_API_VERSION", "v25.0")
+    monkeypatch.setenv("META_MARKETING_ACCESS_TOKEN", "secret-token")
+
+    def fake_get(url: str, *, params: dict[str, object], timeout: int):
+        assert url == "https://graph.facebook.com/v25.0/search"
+        assert params["access_token"] == "secret-token"
+        assert params["type"] == "adgeolocation"
+
+        class FakeResponse:
+            def raise_for_status(self) -> None:
+                return None
+
+            def json(self) -> dict[str, object]:
+                return {"data": [{"name": "La Plata", "key": "12345", "country_code": "AR"}]}
+
+        return FakeResponse()
+
+    monkeypatch.setattr("backend.endpoints.campaigns.httpx.get", fake_get)
+
+    with TestClient(app) as client:
+        response = client.get("/api/campaigns/geo/search", params={"country_code": "AR", "kind": "city", "q": "pla"})
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["source"] == "meta"
+        assert payload["suggestions"] == [
+            {"name": "La Plata", "key": "12345", "country_code": "AR", "type": "city", "source": "meta"}
+        ]
+
+
 def test_public_submission_validates_schema_and_payload_caps(monkeypatch, tmp_path) -> None:
     """Public submissions should not accept unknown, missing, or oversized fields."""
     configure_contadores_db(monkeypatch, tmp_path)

@@ -31,6 +31,7 @@ CAMPAIGN_GEO_SUPPORTED_COUNTRIES = {"AR", "UY", "CL", "PY", "BO", "PE", "CO", "M
 CAMPAIGN_GEO_MAX_AREAS_PER_KIND = 20
 CAMPAIGN_GEO_NAME_MAX_LENGTH = 96
 CAMPAIGN_GEO_NAME_RE = re.compile(r"^[A-Za-zÀ-ÖØ-öø-ÿ0-9][A-Za-zÀ-ÖØ-öø-ÿ0-9 .,'()/-]{0,95}$")
+CAMPAIGN_GEO_KEY_RE = re.compile(r"^[A-Za-z0-9_:-]{1,80}$")
 
 app = typer.Typer(no_args_is_help=True, help="Operate the Contadores Agent API over HTTP.")
 profile_app = typer.Typer(no_args_is_help=True, help="Manage local Agent API profiles.")
@@ -199,18 +200,25 @@ def clean_geo_names(values: list[str], *, option_name: str) -> list[dict[str, st
     seen: set[str] = set()
     for value in values:
         for raw_item in value.split(";"):
-            name = " ".join(raw_item.split()).strip()
+            raw_name, separator, raw_key = raw_item.partition("=")
+            name = " ".join(raw_name.split()).strip()
+            key = " ".join(raw_key.split()).strip() if separator else ""
             if not name:
                 continue
             if len(name) > CAMPAIGN_GEO_NAME_MAX_LENGTH:
                 raise AgentCliError(f"{option_name} is too long: {name[:40]}...")
             if not CAMPAIGN_GEO_NAME_RE.fullmatch(name):
                 raise AgentCliError(f"{option_name} has invalid characters: {name}")
+            if key and not CAMPAIGN_GEO_KEY_RE.fullmatch(key):
+                raise AgentCliError(f"{option_name} key has invalid characters: {key}")
             duplicate_key = name.casefold()
             if duplicate_key in seen:
                 raise AgentCliError(f"Duplicate {option_name}: {name}")
             seen.add(duplicate_key)
-            areas.append({"name": name})
+            area = {"name": name}
+            if key:
+                area["key"] = key
+            areas.append(area)
     if len(areas) > CAMPAIGN_GEO_MAX_AREAS_PER_KIND:
         raise AgentCliError(f"Use at most {CAMPAIGN_GEO_MAX_AREAS_PER_KIND} {option_name} values.")
     return areas
@@ -845,6 +853,30 @@ def campaigns_list(
 def campaigns_get(campaign_id: str) -> None:
     """Fetch one campaign with recent submissions."""
     run_api_call(lambda client: client.request("GET", api_path("campaigns", campaign_id)))
+
+
+@campaigns_app.command("geo-search")
+def campaigns_geo_search(
+    query: str = typer.Argument("", help="Location search text, for example 'cordoba'."),
+    kind: str = typer.Option("city", "--kind", help="Search kind: city or region."),
+    country_code: str = typer.Option("AR", "--country-code", help="Two-letter country code, for example AR."),
+    limit: int | None = typer.Option(None, "--limit", min=1, max=25),
+) -> None:
+    """Search selectable campaign geography before creating a campaign."""
+    clean_kind = kind.strip().lower()
+    if clean_kind not in {"city", "region"}:
+        exit_with_error(AgentCliError("--kind must be city or region."))
+    try:
+        clean_country = clean_country_code(country_code)
+    except AgentCliError as error:
+        exit_with_error(error)
+    run_api_call(
+        lambda client: client.request(
+            "GET",
+            api_path("campaigns", "geo", "search"),
+            params=clean_params({"country_code": clean_country, "kind": clean_kind, "q": query, "limit": limit}),
+        )
+    )
 
 
 @campaigns_app.command("create")

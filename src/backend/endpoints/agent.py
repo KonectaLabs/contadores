@@ -42,6 +42,7 @@ from backend.endpoints.campaigns import (
     create_campaign as create_owned_campaign,
     create_or_reuse_converted_client,
     refresh_campaign_delivery_source as refresh_owned_campaign_delivery_source,
+    search_campaign_geo as search_owned_campaign_geo,
 )
 from backend.endpoints.contadores import (
     CANONICAL_CONVERTED_PIPELINE_STAGE,
@@ -928,6 +929,17 @@ async def create_agent_campaign(request: Request, command: AgentCampaignCreateCo
             "campaign": command.model_dump(exclude={"dry_run"}, mode="json"),
         }
     return await create_owned_campaign(request, command)
+
+
+@agent_router.get("/campaigns/geo/search")
+async def search_agent_campaign_geo(
+    country_code: str = Query(default="AR", min_length=2, max_length=2),
+    kind: str = Query(default="city", pattern="^(region|city)$"),
+    q: str = Query(default="", max_length=96),
+    limit: int = Query(default=12, ge=1, le=25),
+) -> dict[str, Any]:
+    """Search selectable campaign geography through the agent API."""
+    return await search_owned_campaign_geo(country_code=country_code, kind=kind, q=q, limit=limit)
 
 
 @agent_router.get("/campaigns/{campaign_id}")

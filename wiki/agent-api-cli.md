@@ -12,7 +12,8 @@ contadores-agent messages LEAD_ID
 contadores-agent send LEAD_ID "..."
 contadores-agent action LEAD_ID mark-answered
 contadores-agent clients create --name "Cliente" --whatsapp "+549..."
-contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --status active --country-code AR --region "Buenos Aires" --city CABA
+contadores-agent campaigns geo-search cordoba --country-code AR --kind city
+contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --status active --country-code AR --region "Buenos Aires" --city "Cordoba=OPTION_KEY"
 contadores-agent campaigns get CAMPAIGN_ID
 contadores-agent tool call get_lead_context --json '{"lead_id":"..."}'
 ```
@@ -143,11 +144,16 @@ Converted client creation requires `name` and `whatsapp`; `email` and
 `extra_info` are optional. Campaigns can link to an existing client with
 `client_id` or create one inline with `client_name` and `client_whatsapp`.
 Campaign geography uses structured fields: `country_code`, repeated `region`
-values, and repeated `city` values. Country codes are directly staged as
-Meta `geo_locations.countries`; regions and cities stay structured and are
-only sent as Meta `regions`/`cities` when a Meta `key` is present. The CLI and
-API reject unsupported country codes, duplicate geography values, more than 20
-regions or 20 cities, and unsafe characters before creating the campaign.
+values, and repeated `city` values. The UI uses search-and-select controls,
+not persisted freeform text: the API first tries Meta Targeting Search when
+credentials exist, then falls back to local suggestions marked as `Local`.
+Country codes are directly staged as Meta `geo_locations.countries`; regions
+and cities stay structured and are only sent as Meta `regions`/`cities` when a
+Meta `key` is present. Use `contadores-agent campaigns geo-search ...` before
+CLI creation; selected values can be passed as `--city "Name=KEY"` or
+`--region "Name=KEY"`. The CLI and API reject unsupported country codes,
+duplicate geography values, more than 20 regions or 20 cities, and unsafe
+characters before creating the campaign.
 
 Submissions dedupe on `idempotency_key`, record the raw answers, queue Client
 Lead Delivery with existing helpers, and track Meta CAPI only when both the
@@ -177,7 +183,8 @@ contadores-agent clients list --query Cliente
 contadores-agent clients create --name "Cliente" --whatsapp "+549..." --email cliente@example.com
 contadores-agent campaigns list --status active
 contadores-agent campaigns get CAMPAIGN_ID
-contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --status active --country-code AR --region "Buenos Aires" --city CABA
+contadores-agent campaigns geo-search cordoba --country-code AR --kind city
+contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --status active --country-code AR --region "Buenos Aires" --city "Cordoba=OPTION_KEY"
 contadores-agent campaigns submissions CAMPAIGN_ID --limit 20
 contadores-agent campaigns delivery-source CAMPAIGN_ID
 contadores-agent meta readiness

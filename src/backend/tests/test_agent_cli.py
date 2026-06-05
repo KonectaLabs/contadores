@@ -368,6 +368,13 @@ def test_agent_commands_call_expected_methods_paths_and_bodies(
             None,
         ),
         (
+            ["campaigns", "geo-search", "pla", "--country-code", "AR", "--kind", "city", "--limit", "5"],
+            "GET",
+            "/api/agent/campaigns/geo/search",
+            {"country_code": "AR", "kind": "city", "q": "pla", "limit": 5},
+            None,
+        ),
+        (
             [
                 "campaigns",
                 "create",
@@ -384,7 +391,7 @@ def test_agent_commands_call_expected_methods_paths_and_bodies(
                 "--region",
                 "Canelones",
                 "--city",
-                "Ciudad de la Costa",
+                "Ciudad de la Costa=98765",
                 "--form-schema-json",
                 '{"fields":[{"id":"full_name","label":"Nombre","type":"text","required":true}]}',
                 "--dry-run",
@@ -399,7 +406,7 @@ def test_agent_commands_call_expected_methods_paths_and_bodies(
                 "geo_targeting": {
                     "country_code": "UY",
                     "regions": [{"name": "Montevideo"}, {"name": "Canelones"}],
-                    "cities": [{"name": "Ciudad de la Costa"}],
+                    "cities": [{"name": "Ciudad de la Costa", "key": "98765"}],
                 },
                 "campaign_info": {},
                 "form_schema": {"fields": [{"id": "full_name", "label": "Nombre", "type": "text", "required": True}]},

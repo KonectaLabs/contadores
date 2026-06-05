@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import secrets
 from datetime import datetime, timezone
 from html import escape
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -67,6 +69,51 @@ CAMPAIGN_GEO_NAME_MAX_LENGTH = 96
 CAMPAIGN_GEO_KEY_MAX_LENGTH = 80
 CAMPAIGN_GEO_NAME_RE = re.compile(r"^[A-Za-zÀ-ÖØ-öø-ÿ0-9][A-Za-zÀ-ÖØ-öø-ÿ0-9 .,'()/-]{0,95}$")
 CAMPAIGN_GEO_KEY_RE = re.compile(r"^[A-Za-z0-9_:-]{1,80}$")
+CAMPAIGN_GEO_SEARCH_LIMIT = 12
+
+CAMPAIGN_GEO_FALLBACKS: dict[str, dict[str, list[str]]] = {
+    "AR": {
+        "region": [
+            "Buenos Aires",
+            "Ciudad Autonoma de Buenos Aires",
+            "Cordoba",
+            "Santa Fe",
+            "Mendoza",
+            "Tucuman",
+            "Salta",
+            "Entre Rios",
+            "Neuquen",
+            "Rio Negro",
+        ],
+        "city": [
+            "CABA",
+            "Buenos Aires",
+            "La Plata",
+            "Cordoba",
+            "Rosario",
+            "Mendoza",
+            "Mar del Plata",
+            "San Miguel de Tucuman",
+            "Salta",
+            "Neuquen",
+        ],
+    },
+    "UY": {
+        "region": ["Montevideo", "Canelones", "Maldonado", "Colonia", "San Jose", "Rocha"],
+        "city": ["Montevideo", "Ciudad de la Costa", "Punta del Este", "Maldonado", "Colonia del Sacramento"],
+    },
+    "CL": {
+        "region": ["Region Metropolitana", "Valparaiso", "Biobio", "Maule", "Araucania"],
+        "city": ["Santiago", "Valparaiso", "Concepcion", "Vina del Mar", "Temuco"],
+    },
+    "PY": {"region": ["Central", "Asuncion", "Alto Parana"], "city": ["Asuncion", "Ciudad del Este", "San Lorenzo"]},
+    "BO": {"region": ["La Paz", "Santa Cruz", "Cochabamba"], "city": ["La Paz", "Santa Cruz de la Sierra", "Cochabamba"]},
+    "PE": {"region": ["Lima", "Arequipa", "La Libertad"], "city": ["Lima", "Arequipa", "Trujillo"]},
+    "CO": {"region": ["Bogota", "Antioquia", "Valle del Cauca"], "city": ["Bogota", "Medellin", "Cali"]},
+    "MX": {"region": ["Ciudad de Mexico", "Jalisco", "Nuevo Leon"], "city": ["Ciudad de Mexico", "Guadalajara", "Monterrey"]},
+    "US": {"region": ["Florida", "California", "Texas", "New York"], "city": ["Miami", "Los Angeles", "Houston", "New York"]},
+    "ES": {"region": ["Madrid", "Cataluna", "Andalucia", "Valencia"], "city": ["Madrid", "Barcelona", "Valencia", "Sevilla"]},
+}
 
 
 def _validate_country_code(value: str | None) -> str:
@@ -233,6 +280,100 @@ def _jsonable(value: Any) -> Any:
 def _clean_country_code(value: str | None) -> str:
     """Return a two-letter country code accepted by Meta country targeting."""
     return _validate_country_code(value or "AR")
+
+
+def _clean_graph_error(value: Any) -> str:
+    """Redact Graph API token material from errors sent to operators."""
+    text = str(value)
+    text = re.sub(r"(?i)(access_token=)[^&\s'\"<>]+", r"\1[redacted]", text)
+    return text[:500]
+
+
+def _meta_graph_get(path: str, params: dict[str, Any]) -> dict[str, Any]:
+    """Read Meta Graph when marketing credentials are configured."""
+    api_version = str(os.getenv("META_MARKETING_API_VERSION") or "").strip().strip("/")
+    access_token = str(os.getenv("META_MARKETING_ACCESS_TOKEN") or os.getenv("META_ACCESS_TOKEN") or "").strip()
+    if not api_version or not access_token:
+        return {}
+    request_params = dict(params)
+    request_params["access_token"] = access_token
+    response = httpx.get(f"https://graph.facebook.com/{api_version}/{path.strip('/')}", params=request_params, timeout=12)
+    response.raise_for_status()
+    payload = response.json()
+    return payload if isinstance(payload, dict) else {}
+
+
+def _geo_search_match_score(name: str, query: str) -> tuple[int, str]:
+    """Rank prefix matches first, then contains matches."""
+    clean_name = name.casefold()
+    clean_query = query.casefold()
+    if clean_name == clean_query:
+        return (0, clean_name)
+    if clean_name.startswith(clean_query):
+        return (1, clean_name)
+    if clean_query in clean_name:
+        return (2, clean_name)
+    return (3, clean_name)
+
+
+def _fallback_geo_suggestions(*, country: str, kind: str, query: str, limit: int) -> list[dict[str, str]]:
+    """Return curated local suggestions when Meta search is not configured or has no match."""
+    names = CAMPAIGN_GEO_FALLBACKS.get(country, {}).get(kind, [])
+    clean_query = " ".join(query.split()).strip()
+    matches = [name for name in names if not clean_query or clean_query.casefold() in name.casefold()]
+    ranked = sorted(matches, key=lambda name: _geo_search_match_score(name, clean_query or name))
+    return [
+        {
+            "name": name,
+            "country_code": country,
+            "type": kind,
+            "source": "local",
+        }
+        for name in ranked[:limit]
+    ]
+
+
+def _meta_geo_suggestions(*, country: str, kind: str, query: str, limit: int) -> tuple[list[dict[str, str]], str | None]:
+    """Search Meta ad geolocations and return key-bearing suggestions."""
+    if len(query.strip()) < 2:
+        return [], None
+    location_types = ["region"] if kind == "region" else ["city"]
+    params = {
+        "type": "adgeolocation",
+        "q": query.strip(),
+        "limit": limit,
+        "location_types": json.dumps(location_types),
+        "country_code": country,
+    }
+    try:
+        rows = _meta_graph_get("search", params).get("data", [])
+    except Exception as error:
+        return [], _clean_graph_error(error)
+    if not isinstance(rows, list):
+        return [], None
+
+    suggestions: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        row_country = str(row.get("country_code") or country).upper()
+        name = " ".join(str(row.get("name") or "").split()).strip()
+        key = " ".join(str(row.get("key") or "").split()).strip()
+        if row_country != country or not name or not key:
+            continue
+        suggestion = {
+            "name": name,
+            "key": key,
+            "country_code": row_country,
+            "type": kind,
+            "source": "meta",
+        }
+        dedupe_key = f"{kind}:{key}"
+        if dedupe_key not in seen:
+            suggestions.append(suggestion)
+            seen.add(dedupe_key)
+    return suggestions[:limit], None
 
 
 def _clean_geo_area(area: CampaignGeoAreaCommand, *, fallback_country: str) -> dict[str, str]:
@@ -908,6 +1049,32 @@ async def list_campaign_clients(
             continue
         clients.append(payload)
     return {"count": len(clients), "clients": clients}
+
+
+@campaigns_router.get("/geo/search")
+async def search_campaign_geo(
+    country_code: str = Query(default="AR", min_length=2, max_length=2),
+    kind: str = Query(default="city", pattern="^(region|city)$"),
+    q: str = Query(default="", max_length=96),
+    limit: int = Query(default=CAMPAIGN_GEO_SEARCH_LIMIT, ge=1, le=25),
+) -> dict[str, Any]:
+    """Search campaign geography suggestions for Meta targeting selectors."""
+    try:
+        country = _clean_country_code(country_code)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    query = " ".join(q.split()).strip()
+    meta_suggestions, meta_error = _meta_geo_suggestions(country=country, kind=kind, query=query, limit=limit)
+    fallback_suggestions = _fallback_geo_suggestions(country=country, kind=kind, query=query, limit=limit)
+    suggestions = meta_suggestions or fallback_suggestions
+    return {
+        "country_code": country,
+        "kind": kind,
+        "query": query,
+        "source": "meta" if meta_suggestions else "local",
+        "meta_error": meta_error,
+        "suggestions": suggestions[:limit],
+    }
 
 
 @campaigns_router.get("")

@@ -3513,6 +3513,72 @@ body.ct-resizing {
   min-width: 0;
 }
 
+#contadoresView .campaign-geo-picker {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+}
+
+#contadoresView .campaign-geo-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+#contadoresView .campaign-geo-chip,
+#contadoresView .campaign-geo-results button {
+  min-height: 30px;
+  border: 1px solid var(--ct-line);
+  border-radius: 8px;
+  background: var(--ct-surface);
+  color: var(--ct-ink);
+  font: 750 12px/1.1 var(--font-sans);
+}
+
+#contadoresView .campaign-geo-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+}
+
+#contadoresView .campaign-geo-chip small,
+#contadoresView .campaign-geo-results small {
+  color: var(--ct-ink-muted);
+  font: 800 10px/1 var(--font-mono);
+  text-transform: uppercase;
+}
+
+#contadoresView .campaign-geo-results {
+  display: grid;
+  gap: 5px;
+  min-height: 30px;
+}
+
+#contadoresView .campaign-geo-results button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: 7px 9px;
+  text-align: left;
+}
+
+#contadoresView .campaign-geo-results button:disabled {
+  opacity: .55;
+}
+
+#contadoresView .campaign-geo-empty {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  color: var(--ct-ink-muted);
+  font: 750 11px/1 var(--font-mono);
+}
+
 #contadoresView .campaign-form-builder-head {
   justify-content: space-between;
 }
