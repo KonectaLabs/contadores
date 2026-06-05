@@ -2561,6 +2561,7 @@ type LeadCaptureCampaignItem = {
   submission_count: number;
   daily_budget_usd: number | null;
   location: string;
+  campaign_info: Record<string, unknown>;
   creative_brief: string;
   form_schema: { fields?: CampaignFormField[] };
   delivery_source?: ClientLeadSource | null;
@@ -2594,6 +2595,12 @@ type CampaignFieldDraft = CampaignFormField & {
   optionsText: string;
 };
 
+type CampaignGeoTargetingDraft = {
+  country_code: string;
+  regions: Array<{ name: string }>;
+  cities: Array<{ name: string }>;
+};
+
 const campaignFieldTypes = [
   { value: "text", label: "Text" },
   { value: "textarea", label: "Long text" },
@@ -2602,6 +2609,19 @@ const campaignFieldTypes = [
   { value: "yes_no", label: "Yes / No" },
   { value: "select", label: "Choice" },
   { value: "multi_select", label: "Multiple" },
+];
+
+const campaignCountryOptions = [
+  { value: "AR", label: "Argentina" },
+  { value: "UY", label: "Uruguay" },
+  { value: "CL", label: "Chile" },
+  { value: "PY", label: "Paraguay" },
+  { value: "BO", label: "Bolivia" },
+  { value: "PE", label: "Peru" },
+  { value: "CO", label: "Colombia" },
+  { value: "MX", label: "Mexico" },
+  { value: "US", label: "United States" },
+  { value: "ES", label: "Spain" },
 ];
 
 function defaultCampaignFields(): CampaignFieldDraft[] {
@@ -2643,6 +2663,23 @@ function campaignFormSchema(fields: CampaignFieldDraft[]): { fields: CampaignFor
   };
 }
 
+function campaignGeoAreas(value: string): Array<{ name: string }> {
+  return value
+    .split(/[\n;]/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, 20)
+    .map((name) => ({ name }));
+}
+
+function campaignGeoTargeting(countryCode: string, regionsText: string, citiesText: string): CampaignGeoTargetingDraft {
+  return {
+    country_code: countryCode.trim().toUpperCase() || "AR",
+    regions: campaignGeoAreas(regionsText),
+    cities: campaignGeoAreas(citiesText),
+  };
+}
+
 function campaignClientLabel(client: CampaignClientItem): string {
   const lead = client.lead;
   return [
@@ -2669,7 +2706,9 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
   const [newClientEmail, setNewClientEmail] = useState("");
   const [newClientExtraInfo, setNewClientExtraInfo] = useState("");
   const [dailyBudget, setDailyBudget] = useState("");
-  const [location, setLocation] = useState("");
+  const [countryCode, setCountryCode] = useState("AR");
+  const [regionsText, setRegionsText] = useState("");
+  const [citiesText, setCitiesText] = useState("");
   const [creativeBrief, setCreativeBrief] = useState("");
   const [metaPixelId, setMetaPixelId] = useState("");
   const [metaEventsEnabled, setMetaEventsEnabled] = useState(false);
@@ -2769,7 +2808,7 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
         client,
         status: campaignStatus,
         daily_budget_usd: dailyBudget ? Number(dailyBudget) : null,
-        location: location.trim() || null,
+        geo_targeting: campaignGeoTargeting(countryCode, regionsText, citiesText),
         creative_brief: creativeBrief.trim() || null,
         form_schema: campaignFormSchema(fields),
         meta_pixel_id: metaPixelId.trim() || null,
@@ -2781,7 +2820,9 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
       });
       setCampaignName("");
       setDailyBudget("");
-      setLocation("");
+      setCountryCode("AR");
+      setRegionsText("");
+      setCitiesText("");
       setCreativeBrief("");
       setMetaPixelId("");
       setMetaEventsEnabled(false);
@@ -2876,8 +2917,23 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
               <input value={dailyBudget} onChange={(event) => setDailyBudget(event.target.value)} inputMode="numeric" placeholder="15" />
             </label>
             <label className="ct-field">
-              <span>Location</span>
-              <input value={location} onChange={(event) => setLocation(event.target.value)} placeholder="Buenos Aires" />
+              <span>Country</span>
+              <select value={countryCode} onChange={(event) => setCountryCode(event.target.value)}>
+                {campaignCountryOptions.map((country) => (
+                  <option key={country.value} value={country.value}>{country.label}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <div className="campaign-location-grid">
+            <label className="ct-field">
+              <span>Regions / provinces</span>
+              <textarea value={regionsText} onChange={(event) => setRegionsText(event.target.value)} rows={2} placeholder={"Buenos Aires\nCordoba"} />
+            </label>
+            <label className="ct-field">
+              <span>Cities</span>
+              <textarea value={citiesText} onChange={(event) => setCitiesText(event.target.value)} rows={2} placeholder={"CABA\nLa Plata"} />
             </label>
           </div>
 

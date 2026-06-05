@@ -28,7 +28,11 @@ def campaign_payload() -> dict[str, object]:
             "extra_info": "Cliente creado desde campaign test.",
         },
         "daily_budget_usd": 15,
-        "location": "Buenos Aires",
+        "geo_targeting": {
+            "country_code": "AR",
+            "regions": [{"name": "Buenos Aires"}, {"name": "Cordoba"}],
+            "cities": [{"name": "CABA"}, {"name": "La Plata"}],
+        },
         "creative_brief": "Problema primero, formulario propio.",
         "form_schema": {
             "fields": [
@@ -54,10 +58,23 @@ def test_campaign_api_creates_converted_client_and_queues_delivery(monkeypatch, 
         assert campaign["client"]["lead"]["normalized_phone"]
         assert campaign["client_lead_source_id"]
         assert campaign["platform_ad_campaign_id"]
+        assert campaign["location"] == "AR · Buenos Aires, Cordoba · CABA, La Plata"
+        assert campaign["campaign_info"]["meta_targeting"]["geo_locations"]["countries"] == ["AR"]
+        assert campaign["campaign_info"]["location_regions"] == [
+            {"name": "Buenos Aires", "country": "AR"},
+            {"name": "Cordoba", "country": "AR"},
+        ]
+        assert campaign["campaign_info"]["location_cities"] == [
+            {"name": "CABA", "country": "AR"},
+            {"name": "La Plata", "country": "AR"},
+        ]
         assert campaign["public_url"].endswith(f"/c/{campaign['public_slug']}")
         assert WorkstationClient.get_by_id(campaign["client_id"]) is not None
         assert ClientLeadSource.get_by_id(campaign["client_lead_source_id"]) is not None
-        assert PlatformAdCampaign.get_by_id(campaign["platform_ad_campaign_id"]) is not None
+        platform_campaign = PlatformAdCampaign.get_by_id(campaign["platform_ad_campaign_id"])
+        assert platform_campaign is not None
+        assert platform_campaign.target_segments()[0]["targeting"]["geo_locations"]["countries"] == ["AR"]
+        assert platform_campaign.target_segments()[1]["regions"][0]["name"] == "Buenos Aires"
 
         public_response = client.get(f"/api/public/campaigns/{campaign['public_slug']}")
         assert public_response.status_code == 200

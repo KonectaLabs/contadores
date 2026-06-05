@@ -27,7 +27,7 @@ contadores-agent messages LEAD_ID
 contadores-agent send LEAD_ID "..."
 contadores-agent action LEAD_ID mark-answered
 contadores-agent clients create --name "Cliente" --whatsapp "+549..."
-contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --status active
+contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --status active --country-code AR --region "Buenos Aires" --city CABA
 contadores-agent campaigns get CAMPAIGN_ID
 contadores-agent tool call get_lead_context --json '{"lead_id":"..."}'
 ```
@@ -57,7 +57,7 @@ form, or inspect submissions:
 contadores-agent clients list --query Cliente
 contadores-agent clients create --name "Cliente" --whatsapp "+549..." --email cliente@example.com
 contadores-agent campaigns list --status active
-contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --status active
+contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --status active --country-code AR --region "Buenos Aires" --city CABA
 contadores-agent campaigns delivery-source CAMPAIGN_ID
 contadores-agent campaigns submissions CAMPAIGN_ID --limit 20
 contadores-agent meta readiness
@@ -68,6 +68,10 @@ Owned campaign submissions are routed through Client Lead Delivery helpers. Meta
 CAPI events are attempted only when the campaign has a pixel, the campaign has
 Meta events enabled, and `META_MARKETING_LIVE_WRITES_ENABLED` permits live
 writes.
+When creating campaigns, pass `--country-code` plus repeated `--region` and
+`--city` values instead of one freeform location string. Country codes map to
+Meta `geo_locations.countries`; region/city names remain structured until a
+Meta key is available.
 
 ## Internal Tool Runner
 

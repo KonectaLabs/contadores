@@ -110,7 +110,7 @@ Campañas, clientes convertidos y formularios owned:
 
 ```bash
 contadores-agent clients create --name "Cliente" --whatsapp "+549..."
-contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --status active
+contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --status active --country-code AR --region "Buenos Aires" --city CABA
 contadores-agent campaigns get CAMPAIGN_ID
 contadores-agent campaigns delivery-source CAMPAIGN_ID
 contadores-agent campaigns submissions CAMPAIGN_ID --limit 20
@@ -119,8 +119,11 @@ contadores-agent meta inventory --limit 20
 ```
 
 El CRM tambien expone la pestaña `Ads` para crear campañas owned desde la UI:
-cliente existente o cliente convertido nuevo, presupuesto, ubicacion, brief,
-campos del formulario y Pixel/CAPI opcional. La API de operadores es
+cliente existente o cliente convertido nuevo, presupuesto, pais, regiones,
+ciudades, brief, campos del formulario y Pixel/CAPI opcional. El pais se guarda
+como codigo Meta-compatible (`geo_locations.countries`); regiones y ciudades se
+guardan como listas estructuradas y solo se publican como regiones/cities de
+Meta cuando tienen `key`. La API de operadores es
 `/api/campaigns`, y cada campaña publica `/c/{public_slug}` como formulario
 mobile-first. Las submissions entran al flujo normal de Client Lead Delivery;
 no se insertan mensajes ni se saltean helpers. Meta CAPI usa el pixel de la

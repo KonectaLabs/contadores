@@ -3506,6 +3506,13 @@ body.ct-resizing {
   min-width: 0;
 }
 
+#contadoresView .campaign-location-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+
 #contadoresView .campaign-form-builder-head {
   justify-content: space-between;
 }
@@ -5575,6 +5582,7 @@ body.ct-resizing {
   }
 
   #contadoresView .campaign-field-row,
+  #contadoresView .campaign-location-grid,
   #contadoresView .campaign-submission-row,
   #contadoresView .campaign-detail-head {
     grid-template-columns: 1fr;

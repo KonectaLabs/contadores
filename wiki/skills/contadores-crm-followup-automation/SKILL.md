@@ -133,7 +133,7 @@ HTTP CLI/API contract:
 
 ```bash
 contadores-agent clients create --name "Cliente" --whatsapp "+549..." --email cliente@example.com
-contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --status active
+contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --status active --country-code AR --region "Buenos Aires" --city CABA
 contadores-agent campaigns submissions CAMPAIGN_ID --limit 20
 ```
 

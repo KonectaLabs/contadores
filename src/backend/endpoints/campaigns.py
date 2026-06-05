@@ -77,6 +77,22 @@ class ConvertedClientCommand(BaseModel):
     offer_currency: str = "USD"
 
 
+class CampaignGeoAreaCommand(BaseModel):
+    """One campaign geography item selected by the operator."""
+
+    name: str = Field(min_length=1)
+    key: str | None = None
+    country_code: str | None = None
+
+
+class CampaignGeoTargetingCommand(BaseModel):
+    """Structured geography for Meta-compatible owned campaign planning."""
+
+    country_code: str = Field(default="AR", min_length=2, max_length=2)
+    regions: list[CampaignGeoAreaCommand] = Field(default_factory=list)
+    cities: list[CampaignGeoAreaCommand] = Field(default_factory=list)
+
+
 class LeadCaptureCampaignCommand(BaseModel):
     """Create an owned lead-capture campaign."""
 
@@ -88,6 +104,7 @@ class LeadCaptureCampaignCommand(BaseModel):
     daily_budget_usd: int | None = Field(default=None, ge=1)
     budget_currency: str = "USD"
     location: str | None = None
+    geo_targeting: CampaignGeoTargetingCommand | None = None
     campaign_info: dict[str, Any] = Field(default_factory=dict)
     creative_brief: str | None = None
     form_schema: dict[str, Any] = Field(default_factory=dict)
@@ -111,6 +128,7 @@ class LeadCaptureCampaignPatchCommand(BaseModel):
     daily_budget_usd: int | None = Field(default=None, ge=1)
     budget_currency: str | None = None
     location: str | None = None
+    geo_targeting: CampaignGeoTargetingCommand | None = None
     campaign_info: dict[str, Any] | None = None
     creative_brief: str | None = None
     form_schema: dict[str, Any] | None = None
@@ -150,6 +168,93 @@ def _jsonable(value: Any) -> Any:
     if value is None:
         return ""
     return value if isinstance(value, (str, int, float, bool)) else str(value)
+
+
+def _clean_country_code(value: str | None) -> str:
+    """Return a two-letter country code accepted by Meta country targeting."""
+    clean = "".join(str(value or "").upper().split())[:2]
+    return clean if len(clean) == 2 and clean.isalpha() else "AR"
+
+
+def _clean_geo_area(area: CampaignGeoAreaCommand, *, fallback_country: str) -> dict[str, str]:
+    """Normalize one operator-selected region/city."""
+    name = " ".join(area.name.split()).strip()
+    item: dict[str, str] = {"name": name}
+    key = " ".join(str(area.key or "").split()).strip()
+    country = _clean_country_code(area.country_code or fallback_country)
+    if key:
+        item["key"] = key
+    if country:
+        item["country"] = country
+    return item
+
+
+def _build_geo_targeting(command: CampaignGeoTargetingCommand | None, fallback_location: str | None = None) -> dict[str, Any]:
+    """Build Meta-shaped geo targeting without pretending unresolved labels are Meta IDs."""
+    if command is None:
+        fallback = " ".join(str(fallback_location or "").split()).strip()
+        return {
+            "label": fallback,
+            "targeting": {},
+            "unresolved": {"regions": [], "cities": []},
+        }
+    country = _clean_country_code(command.country_code)
+    regions = [_clean_geo_area(area, fallback_country=country) for area in command.regions if " ".join(area.name.split()).strip()]
+    cities = [_clean_geo_area(area, fallback_country=country) for area in command.cities if " ".join(area.name.split()).strip()]
+    geo_locations: dict[str, Any] = {"countries": [country]}
+    keyed_regions = [item for item in regions if item.get("key")]
+    keyed_cities = [item for item in cities if item.get("key")]
+    if keyed_regions:
+        geo_locations["regions"] = keyed_regions
+    if keyed_cities:
+        geo_locations["cities"] = keyed_cities
+    unresolved = {
+        "regions": [item for item in regions if not item.get("key")],
+        "cities": [item for item in cities if not item.get("key")],
+    }
+    label_parts = [country]
+    if regions:
+        label_parts.append(", ".join(item["name"] for item in regions))
+    if cities:
+        label_parts.append(", ".join(item["name"] for item in cities))
+    return {
+        "label": " · ".join(label_parts),
+        "country_code": country,
+        "regions": regions,
+        "cities": cities,
+        "targeting": {"geo_locations": geo_locations},
+        "unresolved": unresolved,
+    }
+
+
+def _campaign_info_with_geo(command: LeadCaptureCampaignCommand) -> tuple[dict[str, Any], str]:
+    """Merge submitted campaign info with structured geography metadata."""
+    campaign_info = _jsonable(command.campaign_info if isinstance(command.campaign_info, dict) else {})
+    if not isinstance(campaign_info, dict):
+        campaign_info = {}
+    geo = _build_geo_targeting(command.geo_targeting, command.location)
+    if command.geo_targeting is not None:
+        campaign_info["location_country"] = geo["country_code"]
+        campaign_info["location_regions"] = geo["regions"]
+        campaign_info["location_cities"] = geo["cities"]
+        campaign_info["location_unresolved"] = geo["unresolved"]
+        campaign_info["meta_targeting"] = geo["targeting"]
+    location_label = geo["label"] or " ".join(str(command.location or "").split()).strip()
+    return campaign_info, location_label
+
+
+def _campaign_meta_target_segments(campaign_info: dict[str, Any], location_label: str = "") -> list[Any]:
+    """Return structured target segments for staged platform campaigns."""
+    meta_targeting = campaign_info.get("meta_targeting") if isinstance(campaign_info, dict) else None
+    segments: list[Any] = []
+    if isinstance(meta_targeting, dict) and meta_targeting:
+        segments.append({"type": "meta_targeting", "targeting": meta_targeting})
+    unresolved = campaign_info.get("location_unresolved") if isinstance(campaign_info, dict) else None
+    if isinstance(unresolved, dict) and (unresolved.get("regions") or unresolved.get("cities")):
+        segments.append({"type": "unresolved_geo_locations", **unresolved})
+    if not segments and location_label:
+        segments.append({"type": "location_label", "value": location_label})
+    return segments
 
 
 def _request_origin(request: Request) -> str:
@@ -476,9 +581,7 @@ def ensure_campaign_delivery_source(campaign: LeadCaptureCampaign) -> ClientLead
 
 
 def _stage_platform_ad_campaign(command: LeadCaptureCampaignCommand, *, client_id: str, funnel_id: str) -> PlatformAdCampaign:
-    target_segments = []
-    if command.location:
-        target_segments.append({"type": "location", "value": command.location})
+    campaign_info, location_label = _campaign_info_with_geo(command)
     return PlatformAdCampaign.add(
         client_id=client_id,
         funnel_id=funnel_id,
@@ -486,9 +589,9 @@ def _stage_platform_ad_campaign(command: LeadCaptureCampaignCommand, *, client_i
         objective="lead_capture_form",
         budget_daily_usd=command.daily_budget_usd,
         budget_currency=command.budget_currency,
-        target_segments=target_segments,
+        target_segments=_campaign_meta_target_segments(campaign_info, location_label),
         angles=[command.creative_brief] if command.creative_brief else [],
-        creative_benchmark={"source": "owned_campaign_form", "campaign_info": command.campaign_info},
+        creative_benchmark={"source": "owned_campaign_form", "campaign_info": campaign_info},
         creative_testing={"destination": "owned_form", "default_status": "PAUSED"},
         approval_status="not_requested",
         idempotency_key=f"lead-capture:{client_id}:{command.name}",
@@ -783,6 +886,7 @@ async def create_campaign(request: Request, command: LeadCaptureCampaignCommand)
         )
         platform_campaign_id = platform_campaign.id
 
+    campaign_info, location_label = _campaign_info_with_geo(command)
     try:
         campaign = LeadCaptureCampaign.add(
             client_id=client_id,
@@ -793,8 +897,8 @@ async def create_campaign(request: Request, command: LeadCaptureCampaignCommand)
             public_slug=command.public_slug,
             daily_budget_usd=command.daily_budget_usd,
             budget_currency=command.budget_currency,
-            location=command.location or "",
-            campaign_info=command.campaign_info,
+            location=location_label,
+            campaign_info=campaign_info,
             creative_brief=command.creative_brief or "",
             form_schema=command.form_schema,
             thank_you_title=command.thank_you_title,
@@ -901,7 +1005,7 @@ async def stage_campaign_meta_plan(request: Request, campaign_id: str) -> dict[s
             objective="lead_capture_form",
             budget_daily_usd=campaign.daily_budget_usd,
             budget_currency=campaign.budget_currency,
-            target_segments=[{"type": "location", "value": campaign.location}] if campaign.location else [],
+            target_segments=_campaign_meta_target_segments(campaign.campaign_info, campaign.location),
             angles=[campaign.creative_brief] if campaign.creative_brief else [],
             creative_benchmark={"source": "owned_campaign_form", "campaign_info": campaign.campaign_info},
             creative_testing={"destination_url": _public_url(request, campaign), "default_status": "PAUSED"},

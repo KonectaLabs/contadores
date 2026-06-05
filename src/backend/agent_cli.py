@@ -820,7 +820,10 @@ def campaigns_create(
     status: str = typer.Option("draft", "--status"),
     public_slug: str | None = typer.Option(None, "--public-slug"),
     daily_budget_usd: int | None = typer.Option(None, "--daily-budget-usd", min=1),
-    location: str | None = typer.Option(None, "--location"),
+    country_code: str = typer.Option("AR", "--country-code", help="Two-letter Meta country code, for example AR."),
+    regions: list[str] = typer.Option([], "--region", help="Region/province name. Repeat for multiple."),
+    cities: list[str] = typer.Option([], "--city", help="City name. Repeat for multiple."),
+    location: str | None = typer.Option(None, "--location", help="Legacy display-only location fallback."),
     creative_brief: str | None = typer.Option(None, "--creative-brief"),
     campaign_info_json: str = typer.Option("{}", "--campaign-info-json", help="Campaign metadata JSON object."),
     form_schema_json: str = typer.Option("{}", "--form-schema-json", help="Public form schema JSON object."),
@@ -852,6 +855,11 @@ def campaigns_create(
                 "extra_info": client_extra_info,
             }
         )
+    geo_targeting = {
+        "country_code": (country_code or "AR").strip().upper(),
+        "regions": [{"name": item.strip()} for item in regions if item.strip()],
+        "cities": [{"name": item.strip()} for item in cities if item.strip()],
+    }
 
     run_api_call(
         lambda client: client.request(
@@ -866,6 +874,7 @@ def campaigns_create(
                     "public_slug": public_slug,
                     "daily_budget_usd": daily_budget_usd,
                     "location": location,
+                    "geo_targeting": geo_targeting,
                     "creative_brief": creative_brief,
                     "campaign_info": campaign_info,
                     "form_schema": form_schema,

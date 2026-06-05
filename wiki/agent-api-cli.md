@@ -12,7 +12,7 @@ contadores-agent messages LEAD_ID
 contadores-agent send LEAD_ID "..."
 contadores-agent action LEAD_ID mark-answered
 contadores-agent clients create --name "Cliente" --whatsapp "+549..."
-contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --status active
+contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --status active --country-code AR --region "Buenos Aires" --city CABA
 contadores-agent campaigns get CAMPAIGN_ID
 contadores-agent tool call get_lead_context --json '{"lead_id":"..."}'
 ```
@@ -142,6 +142,10 @@ POST /api/public/campaigns/{public_slug}/submissions
 Converted client creation requires `name` and `whatsapp`; `email` and
 `extra_info` are optional. Campaigns can link to an existing client with
 `client_id` or create one inline with `client_name` and `client_whatsapp`.
+Campaign geography uses structured fields: `country_code`, repeated `region`
+values, and repeated `city` values. Country codes are directly staged as
+Meta `geo_locations.countries`; regions and cities stay structured and are
+only sent as Meta `regions`/`cities` when a Meta `key` is present.
 
 Submissions dedupe on `idempotency_key`, record the raw answers, queue Client
 Lead Delivery with existing helpers, and track Meta CAPI only when both the
@@ -171,7 +175,7 @@ contadores-agent clients list --query Cliente
 contadores-agent clients create --name "Cliente" --whatsapp "+549..." --email cliente@example.com
 contadores-agent campaigns list --status active
 contadores-agent campaigns get CAMPAIGN_ID
-contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --status active
+contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --status active --country-code AR --region "Buenos Aires" --city CABA
 contadores-agent campaigns submissions CAMPAIGN_ID --limit 20
 contadores-agent campaigns delivery-source CAMPAIGN_ID
 contadores-agent meta readiness
