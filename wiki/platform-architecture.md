@@ -203,8 +203,10 @@ audited, approved plan:
 3. `PlatformCreativeAsset` holds each generated image/video, prompt, source
    refs, approval state, and eventually the Meta creative ID or asset hash.
 4. `sync_meta_inventory` stores read-only ad account, Page, lead form, pixel,
-   WhatsApp number, and existing campaign snapshots when credentials exist; if
-   credentials are missing, it stores the blocker explicitly.
+   WhatsApp number, and existing campaign snapshots when credentials exist. It
+   falls back to configured server Meta IDs when arguments are omitted; if
+   credentials are missing, it stores the blocker explicitly. Page lead forms
+   need Meta `pages_manage_ads`.
 5. `stage_meta_publish_plan` creates the canonical staged payload:
    `Campaign -> Ad Set -> Ad/Creative`, destination, targeting, budget,
    initial `PAUSED` status, lead-routing metadata, missing fields, and

@@ -36,6 +36,29 @@ def _clean(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _env_list(*names: str) -> list[str]:
+    values: list[str] = []
+    seen: set[str] = set()
+    for name in names:
+        for raw_item in os.getenv(name, "").replace("\n", ",").split(","):
+            clean_item = _clean(raw_item)
+            if clean_item and clean_item not in seen:
+                values.append(clean_item)
+                seen.add(clean_item)
+    return values
+
+
+def _append_unique_by_id(rows: list[Any], row: Any) -> None:
+    if not isinstance(row, dict):
+        return
+    row_id = _clean(row.get("id"))
+    if not row_id:
+        return
+    existing_ids = {_clean(item.get("id")) for item in rows if isinstance(item, dict)}
+    if row_id not in existing_ids:
+        rows.append(row)
+
+
 def _clean_graph_payload(value: Any) -> Any:
     """Remove token-like fields before persisting provider payloads."""
     if isinstance(value, dict):
@@ -147,8 +170,8 @@ def sync_meta_inventory(
         return snapshot, result
 
     getter = graph_get or _default_graph_getter(api_version=api_version, access_token=access_token)
-    account_id = _clean(ad_account_id)
-    business = _clean(business_id)
+    account_id = _clean(ad_account_id) or _clean(os.getenv("META_AD_ACCOUNT_ID"))
+    business = _clean(business_id) or _clean(os.getenv("META_BUSINESS_ID"))
 
     accounts_payload = _try_read(
         graph_get=getter,
@@ -189,8 +212,19 @@ def sync_meta_inventory(
         errors=errors,
     )
     pages = _data_list(pages_payload)
+    configured_page_ids = page_ids if page_ids else _env_list("META_PAGE_IDS", "META_PAGE_ID")
+    for page_id in configured_page_ids:
+        if any(isinstance(page, dict) and _clean(page.get("id")) == _clean(page_id) for page in pages):
+            continue
+        page_payload = _try_read(
+            graph_get=getter,
+            path=page_id,
+            params={"fields": "id,name,tasks,instagram_business_account"},
+            errors=errors,
+        )
+        _append_unique_by_id(pages, page_payload)
     inventory["pages"] = pages
-    selected_page_ids = [_clean(page_id) for page_id in (page_ids or []) if _clean(page_id)]
+    selected_page_ids = [_clean(page_id) for page_id in configured_page_ids if _clean(page_id)]
     if not selected_page_ids:
         selected_page_ids = [_clean(page.get("id")) for page in pages if isinstance(page, dict) and _clean(page.get("id"))]
     if include_lead_forms:
@@ -208,14 +242,26 @@ def sync_meta_inventory(
                 forms.append(form)
         inventory["lead_forms"] = forms
 
-    if include_whatsapp and business:
-        wabas_payload = _try_read(
-            graph_get=getter,
-            path=f"{business}/owned_whatsapp_business_accounts",
-            params={"fields": "id,name,currency,timezone_id", "limit": clean_limit},
-            errors=errors,
-        )
-        wabas = _data_list(wabas_payload)
+    if include_whatsapp:
+        wabas: list[Any] = []
+        if business:
+            wabas_payload = _try_read(
+                graph_get=getter,
+                path=f"{business}/owned_whatsapp_business_accounts",
+                params={"fields": "id,name,currency,timezone_id", "limit": clean_limit},
+                errors=errors,
+            )
+            wabas = _data_list(wabas_payload)
+        for waba_id in _env_list("META_WHATSAPP_BUSINESS_ACCOUNT_IDS", "META_WHATSAPP_BUSINESS_ACCOUNT_ID"):
+            if any(isinstance(waba, dict) and _clean(waba.get("id")) == _clean(waba_id) for waba in wabas):
+                continue
+            waba_payload = _try_read(
+                graph_get=getter,
+                path=waba_id,
+                params={"fields": "id,name,currency,timezone_id"},
+                errors=errors,
+            )
+            _append_unique_by_id(wabas, waba_payload)
         inventory["whatsapp_business_accounts"] = wabas
         phone_numbers: list[Any] = []
         for waba in wabas:
@@ -231,6 +277,16 @@ def sync_meta_inventory(
                 if isinstance(phone, dict):
                     phone = {"whatsapp_business_account_id": waba["id"], **phone}
                 phone_numbers.append(phone)
+        for phone_id in _env_list("META_WHATSAPP_PHONE_NUMBER_IDS", "META_WHATSAPP_PHONE_NUMBER_ID"):
+            if any(isinstance(phone, dict) and _clean(phone.get("id")) == _clean(phone_id) for phone in phone_numbers):
+                continue
+            phone_payload = _try_read(
+                graph_get=getter,
+                path=phone_id,
+                params={"fields": "id,display_phone_number,verified_name,quality_rating"},
+                errors=errors,
+            )
+            _append_unique_by_id(phone_numbers, phone_payload)
         inventory["whatsapp_phone_numbers"] = phone_numbers
 
     status = "ready" if not errors else "partial"

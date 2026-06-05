@@ -245,7 +245,10 @@ Use this order:
    `destination.whatsapp_referral_source_id`; for instant forms, include
    `destination.client_lead_source_id`.
 5. `sync_meta_inventory` to read available ad accounts, Pages, lead forms,
-   pixels, WhatsApp numbers, and existing campaigns before asking for IDs.
+   pixels, WhatsApp numbers, and existing campaigns before asking for IDs. Call
+   it even without arguments; it falls back to configured server Meta IDs. If
+   Page lead forms return 403, the missing Meta permission is usually
+   `pages_manage_ads`.
 6. `upload_meta_creative_asset` for each generated image/video that only has a
    local file path. This writes only to Meta media storage, stores `image_hash`
    or `video_id`, and links the staged publish plan. It still requires

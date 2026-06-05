@@ -203,8 +203,12 @@ Flujo Meta agent-native:
    `whatsapp_referral_source_id`; instant forms usan `client_lead_source_id`
    para entrar a Client Lead Delivery.
 7. `sync_meta_inventory` lee cuentas, Pages, formularios, pixels, numeros de
-   WhatsApp y campanas existentes cuando hay credenciales; si faltan, guarda un
-   snapshot `missing_credentials` para observabilidad.
+   WhatsApp y campanas existentes cuando hay credenciales. Si no se pasan IDs,
+   usa `META_AD_ACCOUNT_ID`, `META_BUSINESS_ID`, `META_PAGE_ID` y los IDs de
+   WhatsApp configurados en el server. Si faltan credenciales, guarda un
+   snapshot `missing_credentials`; si Meta rechaza una superficie, guarda
+   `partial` con el error redactado. Para formularios nativos de Page, Meta
+   exige `pages_manage_ads`.
 8. `upload_meta_creative_asset` sube una imagen/video staged a Meta media
    storage y guarda `image_hash` o `video_id` en el asset y en los publish plans
    que lo referencian. Es un write externo acotado: exige

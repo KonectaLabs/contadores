@@ -629,6 +629,15 @@ def test_meta_inventory_sync_persists_read_only_inventory(monkeypatch, tmp_path)
     monkeypatch.setenv("META_MARKETING_API_VERSION", "v25.0")
     monkeypatch.delenv("META_MARKETING_ACCESS_TOKEN", raising=False)
     monkeypatch.delenv("META_ACCESS_TOKEN", raising=False)
+    for env_name in (
+        "META_PAGE_IDS",
+        "META_PAGE_ID",
+        "META_WHATSAPP_BUSINESS_ACCOUNT_IDS",
+        "META_WHATSAPP_BUSINESS_ACCOUNT_ID",
+        "META_WHATSAPP_PHONE_NUMBER_IDS",
+        "META_WHATSAPP_PHONE_NUMBER_ID",
+    ):
+        monkeypatch.delenv(env_name, raising=False)
 
     def fake_graph_get(path: str, params: dict | None = None) -> dict:
         del params
@@ -667,12 +676,75 @@ def test_meta_inventory_sync_persists_read_only_inventory(monkeypatch, tmp_path)
     assert PlatformEvent.list_recent(target_type="meta_inventory", target_id=snapshot.id)[0].event_type == "meta_inventory.synced"
 
 
+def test_meta_inventory_sync_uses_configured_env_ids(monkeypatch, tmp_path) -> None:
+    """Agents should get a complete inventory snapshot without knowing configured Meta IDs."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("META_MARKETING_API_VERSION", "v25.0")
+    monkeypatch.setenv("META_AD_ACCOUNT_ID", "act_env")
+    monkeypatch.setenv("META_BUSINESS_ID", "business_env")
+    monkeypatch.setenv("META_PAGE_ID", "page_env")
+    monkeypatch.setenv("META_WHATSAPP_BUSINESS_ACCOUNT_ID", "waba_env")
+    monkeypatch.setenv("META_WHATSAPP_PHONE_NUMBER_ID", "wa_phone_env")
+    monkeypatch.delenv("META_MARKETING_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("META_ACCESS_TOKEN", raising=False)
+    calls: list[str] = []
+
+    def fake_graph_get(path: str, params: dict | None = None) -> dict:
+        del params
+        calls.append(path)
+        if path == "me/adaccounts":
+            return {"data": [{"id": "act_env", "name": "Configured account"}]}
+        if path == "act_env":
+            return {"id": "act_env", "name": "Configured account"}
+        if path == "act_env/campaigns":
+            return {"data": [{"id": "campaign_env", "name": "Configured campaign"}]}
+        if path == "act_env/adspixels":
+            return {"data": [{"id": "pixel_env", "name": "Configured pixel"}]}
+        if path == "me/accounts":
+            return {"data": []}
+        if path == "page_env":
+            return {"id": "page_env", "name": "Configured page"}
+        if path == "page_env/leadgen_forms":
+            return {"data": []}
+        if path == "business_env/owned_whatsapp_business_accounts":
+            return {"data": []}
+        if path == "waba_env":
+            return {"id": "waba_env", "name": "Configured WABA"}
+        if path == "waba_env/phone_numbers":
+            return {"data": [{"id": "wa_phone_env", "display_phone_number": "+39 333 824 6345"}]}
+        raise AssertionError(path)
+
+    snapshot, result = sync_meta_inventory(source="test", actor="tester", graph_get=fake_graph_get)
+
+    inventory = snapshot.inventory()
+    assert result.status == "ready"
+    assert result.ad_account_id == "act_env"
+    assert result.business_id == "business_env"
+    assert inventory["selected_ad_account"]["id"] == "act_env"
+    assert inventory["campaigns"][0]["id"] == "campaign_env"
+    assert inventory["pixels"][0]["id"] == "pixel_env"
+    assert inventory["pages"][0]["id"] == "page_env"
+    assert inventory["whatsapp_business_accounts"][0]["id"] == "waba_env"
+    assert inventory["whatsapp_phone_numbers"][0]["id"] == "wa_phone_env"
+    assert "page_env" in calls
+    assert "waba_env" in calls
+
+
 def test_meta_inventory_sync_redacts_access_token_from_errors(monkeypatch, tmp_path) -> None:
     """Meta inventory errors must not persist provider URLs with raw tokens."""
     configure_contadores_db(monkeypatch, tmp_path)
     monkeypatch.setenv("META_MARKETING_API_VERSION", "v25.0")
     monkeypatch.delenv("META_MARKETING_ACCESS_TOKEN", raising=False)
     monkeypatch.delenv("META_ACCESS_TOKEN", raising=False)
+    for env_name in (
+        "META_PAGE_IDS",
+        "META_PAGE_ID",
+        "META_WHATSAPP_BUSINESS_ACCOUNT_IDS",
+        "META_WHATSAPP_BUSINESS_ACCOUNT_ID",
+        "META_WHATSAPP_PHONE_NUMBER_IDS",
+        "META_WHATSAPP_PHONE_NUMBER_ID",
+    ):
+        monkeypatch.delenv(env_name, raising=False)
 
     def fake_graph_get(path: str, params: dict | None = None) -> dict:
         del params
