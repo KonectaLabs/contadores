@@ -147,6 +147,136 @@ def test_campaign_api_creates_converted_client_and_queues_delivery(monkeypatch, 
         assert sync_response.json()["source"]["last_sync_note"] == "owned campaign form source; submissions arrive directly"
 
 
+def test_public_submission_queues_delivery_for_each_campaign_contact(monkeypatch, tmp_path) -> None:
+    """Campaign Delivery should queue one notification row per configured recipient."""
+    configure_contadores_db(monkeypatch, tmp_path)
+
+    delivery_config = {
+        "enabled": True,
+        "contacts": [
+            {"id": "client", "kind": "client"},
+            {"id": "mathi"},
+            {"id": "custom-ops", "label": "Operaciones", "phone": "+5491122233344"},
+        ],
+    }
+
+    with TestClient(app) as client:
+        create_response = client.post(
+            "/api/campaigns",
+            json={**campaign_payload(), "delivery_config": delivery_config},
+        )
+        assert create_response.status_code == 200, create_response.text
+        campaign = create_response.json()["campaign"]
+
+        assert campaign["status"] == "active"
+        assert campaign["delivery_config"]["enabled"] is True
+        assert {item["label"] for item in campaign["delivery_config"]["contacts"]} == {
+            "Cliente Campania",
+            "Mathi",
+            "Operaciones",
+        }
+        assert {item["recipient_name"] for item in campaign["delivery_sources"]} == {
+            "Cliente Campania",
+            "Mathi",
+            "Operaciones",
+        }
+
+        submit_response = client.post(
+            f"/api/public/campaigns/{campaign['public_slug']}/submissions",
+            json={
+                "answers": {
+                    "full_name": "Lead Tres Destinos",
+                    "phone": "+5491199988877",
+                    "email": "lead3@example.com",
+                    "necesidad": "Quiero coordinar una llamada",
+                },
+                "idempotency_key": "campaign-submit-three-contacts",
+            },
+        )
+        assert submit_response.status_code == 200, submit_response.text
+        receipt = submit_response.json()
+        assert receipt["delivery_queued"] is True
+
+        delivery_prefix = f"campaign-submission:{receipt['submission']['id']}"
+        deliveries = ClientLeadDelivery.list_by_source_row_key_prefix(delivery_prefix)
+        delivery_statuses = {
+            (
+                delivery.delivery_status.value
+                if hasattr(delivery.delivery_status, "value")
+                else str(delivery.delivery_status)
+            )
+            for delivery in deliveries
+        }
+        assert len(deliveries) == 3
+        assert delivery_statuses == {"pending"}
+        assert {delivery.raw_row["email"] for delivery in deliveries} == {"lead3@example.com"}
+        assert {delivery.raw_row["necesidad"] for delivery in deliveries} == {"Quiero coordinar una llamada"}
+
+        submissions_response = client.get(f"/api/campaigns/{campaign['id']}/submissions")
+        assert submissions_response.status_code == 200
+        submissions_payload = submissions_response.json()
+        assert submissions_payload["count"] == 1
+        submission_payload = submissions_payload["submissions"][0]
+        assert submission_payload["delivery_status"] == "pending"
+        assert {item["recipient_name"] for item in submission_payload["delivery_statuses"]} == {
+            "Cliente Campania",
+            "Mathi",
+            "Operaciones",
+        }
+        assert {item["recipient_phone"] for item in submission_payload["delivery_statuses"]} == {
+            "+5491123456789",
+            "5491138033159",
+            "+5491122233344",
+        }
+        assert {item["delivery_status"] for item in submission_payload["delivery_statuses"]} == {"pending"}
+
+
+def test_public_submission_skips_delivery_when_campaign_delivery_disabled(monkeypatch, tmp_path) -> None:
+    """Disabled campaign Delivery should accept the form without queueing notifications."""
+    configure_contadores_db(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        create_response = client.post(
+            "/api/campaigns",
+            json={
+                **campaign_payload(),
+                "delivery_config": {"enabled": False, "contacts": [{"id": "client", "kind": "client"}]},
+            },
+        )
+        assert create_response.status_code == 200, create_response.text
+        campaign = create_response.json()["campaign"]
+        assert campaign["delivery_config"]["enabled"] is False
+        assert campaign["delivery_sources"] == []
+
+        submit_response = client.post(
+            f"/api/public/campaigns/{campaign['public_slug']}/submissions",
+            json={
+                "answers": {
+                    "full_name": "Lead Sin Delivery",
+                    "phone": "+5491199988877",
+                    "email": "sin-delivery@example.com",
+                    "necesidad": "Quiero mas info",
+                },
+                "idempotency_key": "campaign-submit-delivery-disabled",
+            },
+        )
+        assert submit_response.status_code == 200, submit_response.text
+        receipt = submit_response.json()
+        assert receipt["delivery_queued"] is False
+
+        deliveries = ClientLeadDelivery.list_by_source_row_key_prefix(
+            f"campaign-submission:{receipt['submission']['id']}"
+        )
+        assert deliveries == []
+
+        submissions_response = client.get(f"/api/campaigns/{campaign['id']}/submissions")
+        assert submissions_response.status_code == 200
+        submission_payload = submissions_response.json()["submissions"][0]
+        assert submission_payload["client_lead_delivery_id"] == ""
+        assert submission_payload["delivery_status"] == ""
+        assert submission_payload["delivery_statuses"] == []
+
+
 def test_public_form_requires_active_campaign_and_valid_phone(monkeypatch, tmp_path) -> None:
     """Draft campaigns are not public and invalid submission phones are rejected."""
     configure_contadores_db(monkeypatch, tmp_path)

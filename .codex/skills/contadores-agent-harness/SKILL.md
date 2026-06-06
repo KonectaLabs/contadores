@@ -73,6 +73,11 @@ to paste a pixel per campaign: campaign creation auto-resolves the pixel from
 `META_PIXEL_ID`, `META_DEFAULT_PIXEL_ID`, `META_MARKETING_PIXEL_ID`, or the
 latest `sync_meta_inventory` snapshot. Public owned forms also load browser
 Pixel on accepted submissions and use the same submission `event_id` as CAPI.
+Campaign Delivery is configured inline on the campaign: a toggle enables or
+disables WhatsApp template delivery, the campaign client is the default
+recipient, and multiple preset or custom recipients can be selected. The backend
+expands the selected recipients into one `ClientLeadSource` per recipient and
+queues one `ClientLeadDelivery` per public submission and recipient.
 When creating campaigns, use country-only or country-plus-region targeting.
 Search first with `contadores-agent campaigns geo-search QUERY --country-code
 AR --kind region`; selected Meta options can be passed as `--region

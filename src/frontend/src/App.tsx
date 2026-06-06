@@ -2564,7 +2564,9 @@ type LeadCaptureCampaignItem = {
   campaign_info: Record<string, unknown>;
   creative_brief: string;
   form_schema: { fields?: CampaignFormField[] };
+  delivery_config?: CampaignDeliveryConfig;
   delivery_source?: ClientLeadSource | null;
+  delivery_sources?: ClientLeadSource[];
   meta_pixel_id: string;
   meta_events_enabled: boolean;
   created_at: string | null;
@@ -2578,6 +2580,14 @@ type LeadCaptureSubmissionItem = {
   email: string | null;
   answers: Record<string, unknown>;
   delivery_status: string;
+  delivery_statuses?: Array<{
+    delivery_id: string;
+    source_id: string;
+    recipient_name: string;
+    recipient_phone: string;
+    delivery_status: string;
+    last_delivery_error?: string | null;
+  }>;
   meta_event_status: string;
   created_at: string | null;
 };
@@ -2657,6 +2667,19 @@ type CampaignMetaDefaults = {
   pixel_label: string;
 };
 
+type CampaignDeliveryContact = {
+  id: string;
+  label: string;
+  phone: string;
+  kind?: string;
+  normalized_phone?: string;
+};
+
+type CampaignDeliveryConfig = {
+  enabled: boolean;
+  contacts: CampaignDeliveryContact[];
+};
+
 const emptyCampaignMetaDefaults: CampaignMetaDefaults = {
   meta_events_available: false,
   meta_event_name: "Lead",
@@ -2672,6 +2695,13 @@ const campaignFieldTypes = [
   { value: "yes_no", label: "Yes / No" },
   { value: "select", label: "Choice" },
   { value: "multi_select", label: "Multiple" },
+];
+
+const campaignDeliveryPresets: CampaignDeliveryContact[] = [
+  { id: "client", label: "Cliente", phone: "", kind: "client" },
+  { id: "mathi", label: "Mathi", phone: "5491138033159", kind: "preset" },
+  { id: "facu", label: "Facu", phone: "5491153484587", kind: "preset" },
+  { id: "alan", label: "Alan", phone: "393716506381", kind: "preset" },
 ];
 
 const campaignCountryOptions = [
@@ -2699,6 +2729,37 @@ function defaultCampaignFields(): CampaignFieldDraft[] {
     { id: "email", label: "Cual es tu email?", type: "email", required: false, placeholder: "nombre@email.com", optionsText: "" },
     { id: "necesidad", label: "Que servicio necesitas?", type: "textarea", required: true, placeholder: "Contanos brevemente", optionsText: "" },
   ];
+}
+
+function campaignDeliveryConfigOrDefault(campaign: LeadCaptureCampaignItem | null): CampaignDeliveryConfig {
+  const config = campaign?.delivery_config;
+  if (config && Array.isArray(config.contacts)) {
+    return {
+      enabled: config.enabled !== false,
+      contacts: config.contacts,
+    };
+  }
+  return { enabled: true, contacts: [campaignDeliveryPresets[0]] };
+}
+
+function campaignDeliveryContactSelected(config: CampaignDeliveryConfig, contactId: string): boolean {
+  return config.contacts.some((contact) => contact.id === contactId);
+}
+
+function campaignDeliveryContactLabel(contact: CampaignDeliveryContact): string {
+  return contact.phone ? `${contact.label} · ${contact.phone}` : contact.label;
+}
+
+function campaignDeliveryConfigPayload(config: CampaignDeliveryConfig): CampaignDeliveryConfig {
+  return {
+    enabled: config.enabled,
+    contacts: config.contacts.map((contact) => ({
+      id: contact.id,
+      label: contact.label,
+      phone: contact.phone,
+      kind: contact.kind || "custom",
+    })),
+  };
 }
 
 function campaignFieldId(value: string, index: number): string {
@@ -2993,12 +3054,20 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
   const [destinationUrl, setDestinationUrl] = useState("");
   const [metaEventsEnabled, setMetaEventsEnabled] = useState(false);
   const [metaDefaults, setMetaDefaults] = useState<CampaignMetaDefaults>(emptyCampaignMetaDefaults);
+  const [deliveryEnabled, setDeliveryEnabled] = useState(true);
+  const [deliveryContactIds, setDeliveryContactIds] = useState<string[]>(["client"]);
+  const [deliveryCustomContacts, setDeliveryCustomContacts] = useState<CampaignDeliveryContact[]>([]);
+  const [deliveryCustomName, setDeliveryCustomName] = useState("");
+  const [deliveryCustomPhone, setDeliveryCustomPhone] = useState("");
+  const [detailDeliveryName, setDetailDeliveryName] = useState("");
+  const [detailDeliveryPhone, setDetailDeliveryPhone] = useState("");
   const [fields, setFields] = useState<CampaignFieldDraft[]>(defaultCampaignFields);
 
   const hasCampaigns = campaigns.length > 0;
   const showCampaignEmpty = !loading && !createOpen && !hasCampaigns;
   const selectedCampaign = campaigns.find((campaign) => campaign.id === selectedCampaignId) ?? campaigns[0] ?? null;
   const selectedClient = clients.find((client) => client.id === existingClientId) ?? null;
+  const selectedCampaignDelivery = campaignDeliveryConfigOrDefault(selectedCampaign);
   const countryMatches = filteredCampaignCountries(countryQuery);
   const draftCountryLabel = draftCountryCode ? campaignCountryLabels[draftCountryCode] || draftCountryCode : "";
   const creativeDraft: CampaignCreativeDraft = {
@@ -3174,6 +3243,82 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
     setCreateOpen(true);
   }
 
+  function buildCreateDeliveryConfig(): CampaignDeliveryConfig {
+    const selectedPresets = campaignDeliveryPresets.filter((contact) => deliveryContactIds.includes(contact.id));
+    return campaignDeliveryConfigPayload({
+      enabled: deliveryEnabled,
+      contacts: [...selectedPresets, ...deliveryCustomContacts],
+    });
+  }
+
+  function toggleCreateDeliveryContact(contactId: string) {
+    setDeliveryContactIds((current) => {
+      if (current.includes(contactId)) {
+        return current.filter((id) => id !== contactId);
+      }
+      return [...current, contactId];
+    });
+  }
+
+  function addCreateDeliveryCustomContact() {
+    const label = deliveryCustomName.trim();
+    const phone = deliveryCustomPhone.trim();
+    if (!label || !phone) {
+      onError("Delivery contact needs name and phone.");
+      return;
+    }
+    setDeliveryCustomContacts((current) => [
+      ...current,
+      { id: `custom-${Date.now()}`, label, phone, kind: "custom" },
+    ]);
+    setDeliveryCustomName("");
+    setDeliveryCustomPhone("");
+  }
+
+  async function updateCampaignDeliveryConfig(campaign: LeadCaptureCampaignItem, nextConfig: CampaignDeliveryConfig) {
+    setSaving(true);
+    try {
+      const payload = await apiFetch<{ campaign: LeadCaptureCampaignItem }>(
+        `/api/campaigns/${encodeURIComponent(campaign.id)}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ delivery_config: campaignDeliveryConfigPayload(nextConfig) }),
+        },
+      );
+      setCampaigns((current) => current.map((item) => item.id === campaign.id ? payload.campaign : item));
+      await loadCampaignSubmissions(campaign.id);
+    } catch (reason) {
+      onError(reason instanceof Error ? reason.message : "Could not update campaign delivery.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function toggleCampaignDeliveryContact(campaign: LeadCaptureCampaignItem, preset: CampaignDeliveryContact) {
+    const current = campaignDeliveryConfigOrDefault(campaign);
+    const exists = campaignDeliveryContactSelected(current, preset.id);
+    const contacts = exists
+      ? current.contacts.filter((contact) => contact.id !== preset.id)
+      : [...current.contacts, preset];
+    void updateCampaignDeliveryConfig(campaign, { ...current, contacts });
+  }
+
+  function addDetailDeliveryCustomContact(campaign: LeadCaptureCampaignItem) {
+    const label = detailDeliveryName.trim();
+    const phone = detailDeliveryPhone.trim();
+    if (!label || !phone) {
+      onError("Delivery contact needs name and phone.");
+      return;
+    }
+    const current = campaignDeliveryConfigOrDefault(campaign);
+    void updateCampaignDeliveryConfig(campaign, {
+      ...current,
+      contacts: [...current.contacts, { id: `custom-${Date.now()}`, label, phone, kind: "custom" }],
+    });
+    setDetailDeliveryName("");
+    setDetailDeliveryPhone("");
+  }
+
   function updateField(index: number, patch: Partial<CampaignFieldDraft>) {
     setFields((current) => current.map((field, fieldIndex) => fieldIndex === index ? { ...field, ...patch } : field));
   }
@@ -3312,6 +3457,7 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
         destination_url: destinationUrl.trim() || null,
         meta_event_name: "Lead",
         meta_events_enabled: metaEventsEnabled,
+        delivery_config: buildCreateDeliveryConfig(),
       };
       const payload = await apiFetch<{ campaign: LeadCaptureCampaignItem }>("/api/campaigns", {
         method: "POST",
@@ -3329,6 +3475,11 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
       setCreativeMediaUrl("");
       setDestinationUrl("");
       setMetaEventsEnabled(Boolean(metaDefaults.meta_events_available));
+      setDeliveryEnabled(true);
+      setDeliveryContactIds(["client"]);
+      setDeliveryCustomContacts([]);
+      setDeliveryCustomName("");
+      setDeliveryCustomPhone("");
       setClientMode("new");
       setExistingClientId("");
       setNewClientName("");
@@ -3590,11 +3741,71 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
               </div>
             </section>
 
+            <section className="campaign-create-section campaign-section-delivery">
+              <div className="campaign-section-side">
+                <span className="campaign-section-icon"><PaperPlaneTilt size={16} weight="bold" /></span>
+                <div>
+                  <strong>4. Delivery</strong>
+                  <small>WhatsApp templates</small>
+                </div>
+              </div>
+              <div className="campaign-section-body campaign-delivery-config">
+                <label className="campaign-delivery-toggle">
+                  <span>
+                    <strong>Auto delivery</strong>
+                    <small>{deliveryEnabled ? "On" : "Off"}</small>
+                  </span>
+                  <input type="checkbox" checked={deliveryEnabled} onChange={(event) => setDeliveryEnabled(event.target.checked)} />
+                </label>
+                <div className="campaign-delivery-preset-grid">
+                  {campaignDeliveryPresets.map((contact) => (
+                    <button
+                      type="button"
+                      key={contact.id}
+                      className={deliveryContactIds.includes(contact.id) ? "active" : ""}
+                      onClick={() => toggleCreateDeliveryContact(contact.id)}
+                    >
+                      <span>{contact.label}</span>
+                      <small>{contact.id === "client" ? "default" : contact.phone}</small>
+                    </button>
+                  ))}
+                </div>
+                {deliveryCustomContacts.length ? (
+                  <div className="campaign-delivery-selected">
+                    {deliveryCustomContacts.map((contact) => (
+                      <button
+                        type="button"
+                        key={contact.id}
+                        onClick={() => setDeliveryCustomContacts((current) => current.filter((item) => item.id !== contact.id))}
+                      >
+                        {campaignDeliveryContactLabel(contact)}
+                        <X size={12} weight="bold" />
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+                <div className="campaign-delivery-custom">
+                  <label className="ct-field">
+                    <span>Name</span>
+                    <input value={deliveryCustomName} onChange={(event) => setDeliveryCustomName(event.target.value)} placeholder="Delivery contact" />
+                  </label>
+                  <label className="ct-field">
+                    <span>Phone</span>
+                    <input value={deliveryCustomPhone} onChange={(event) => setDeliveryCustomPhone(event.target.value)} inputMode="tel" placeholder="549..." />
+                  </label>
+                  <button type="button" className="ct-btn ct-btn-ghost" onClick={addCreateDeliveryCustomContact}>
+                    <Plus size={13} weight="bold" />
+                    Contact
+                  </button>
+                </div>
+              </div>
+            </section>
+
             <section className="campaign-create-section campaign-section-creative">
               <div className="campaign-section-side">
                 <span className="campaign-section-icon"><Camera size={16} weight="bold" /></span>
                 <div>
-                  <strong>4. Creative</strong>
+                  <strong>5. Creative</strong>
                   <small>Media and copy</small>
                 </div>
               </div>
@@ -3682,7 +3893,7 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
               <div className="campaign-section-side">
                 <span className="campaign-section-icon"><ListChecks size={16} weight="bold" /></span>
                 <div>
-                  <strong>5. Form fields</strong>
+                  <strong>6. Form fields</strong>
                   <small>{fields.length} fields</small>
                 </div>
               </div>
@@ -3754,7 +3965,7 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
               <div className="campaign-section-side">
                 <span className="campaign-section-icon"><Pulse size={16} weight="bold" /></span>
                 <div>
-                  <strong>6. Meta</strong>
+                  <strong>7. Meta</strong>
                   <small>Submit tracking</small>
                 </div>
               </div>
@@ -3911,7 +4122,7 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
               <div className="campaign-detail-metrics">
                 <span><strong>{compactNumber(selectedCampaign.submission_count)}</strong>Submissions</span>
                 <span><strong>{selectedCampaign.daily_budget_usd ? `$${selectedCampaign.daily_budget_usd}` : "-"}</strong>Daily</span>
-                <span><strong>{selectedCampaign.delivery_source ? "Ready" : "Missing"}</strong>Delivery</span>
+                <span><strong>{selectedCampaignDelivery.enabled ? "On" : "Off"}</strong>Delivery</span>
                 <span><strong>{selectedCampaign.meta_events_enabled ? "On" : "Off"}</strong>Meta</span>
               </div>
 
@@ -3920,6 +4131,67 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
                 <button type="button" className="ct-btn ct-btn-ghost" disabled={saving || selectedCampaign.status === "paused"} onClick={() => void patchCampaignStatus(selectedCampaign, "paused")}>Pause</button>
                 <button type="button" className="ct-btn ct-btn-ghost" disabled={saving} onClick={() => void refreshDeliverySource(selectedCampaign)}>Delivery source</button>
               </div>
+
+              <section className="campaign-delivery-panel">
+                <div className="campaign-submissions-head">
+                  <strong>Delivery</strong>
+                  <label className="campaign-delivery-mini-toggle">
+                    <span>{selectedCampaignDelivery.enabled ? "On" : "Off"}</span>
+                    <input
+                      type="checkbox"
+                      checked={selectedCampaignDelivery.enabled}
+                      disabled={saving}
+                      onChange={(event) => void updateCampaignDeliveryConfig(selectedCampaign, { ...selectedCampaignDelivery, enabled: event.target.checked })}
+                    />
+                  </label>
+                </div>
+                <div className="campaign-delivery-preset-grid">
+                  {campaignDeliveryPresets.map((contact) => (
+                    <button
+                      type="button"
+                      key={contact.id}
+                      className={campaignDeliveryContactSelected(selectedCampaignDelivery, contact.id) ? "active" : ""}
+                      disabled={saving}
+                      onClick={() => toggleCampaignDeliveryContact(selectedCampaign, contact)}
+                    >
+                      <span>{contact.label}</span>
+                      <small>{contact.id === "client" ? "default" : contact.phone}</small>
+                    </button>
+                  ))}
+                </div>
+                {selectedCampaignDelivery.contacts.filter((contact) => contact.kind === "custom").length ? (
+                  <div className="campaign-delivery-selected">
+                    {selectedCampaignDelivery.contacts.filter((contact) => contact.kind === "custom").map((contact) => (
+                      <button
+                        type="button"
+                        key={contact.id}
+                        disabled={saving}
+                        onClick={() => void updateCampaignDeliveryConfig(selectedCampaign, {
+                          ...selectedCampaignDelivery,
+                          contacts: selectedCampaignDelivery.contacts.filter((item) => item.id !== contact.id),
+                        })}
+                      >
+                        {campaignDeliveryContactLabel(contact)}
+                        <X size={12} weight="bold" />
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+                <div className="campaign-delivery-custom">
+                  <label className="ct-field">
+                    <span>Name</span>
+                    <input value={detailDeliveryName} onChange={(event) => setDetailDeliveryName(event.target.value)} placeholder="Delivery contact" />
+                  </label>
+                  <label className="ct-field">
+                    <span>Phone</span>
+                    <input value={detailDeliveryPhone} onChange={(event) => setDetailDeliveryPhone(event.target.value)} inputMode="tel" placeholder="549..." />
+                  </label>
+                  <button type="button" className="ct-btn ct-btn-ghost" disabled={saving} onClick={() => addDetailDeliveryCustomContact(selectedCampaign)}>
+                    <Plus size={13} weight="bold" />
+                    Contact
+                  </button>
+                </div>
+              </section>
 
               <div className="campaign-submissions">
                 <div className="campaign-submissions-head">
@@ -3932,17 +4204,41 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
                 {submissionsLoading && !submissions.length ? (
                   <CtEmptyState compact loading title="Loading submissions" message="Checking captured leads." />
                 ) : submissions.length ? (
-                  <div className="campaign-submission-list">
-                    {submissions.map((submission) => (
-                      <article className="campaign-submission-row" key={submission.id}>
-                        <div>
-                          <strong>{submission.full_name || submission.phone}</strong>
-                          <span>{submission.phone}{submission.email ? ` · ${submission.email}` : ""}</span>
-                        </div>
-                        <span>{submission.created_at ? relativeTime(submission.created_at) : "-"}</span>
-                        <span className="delivery-status-pill" data-tone={submission.delivery_status === "pending" ? "warn" : "muted"}>{humanize(submission.delivery_status || "queued")}</span>
-                      </article>
-                    ))}
+                  <div className="campaign-submission-sheet">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Fecha</th>
+                          <th>Nombre</th>
+                          <th>WhatsApp</th>
+                          <th>Email</th>
+                          <th>Delivery</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {submissions.map((submission) => (
+                          <tr key={submission.id}>
+                            <td>{submission.created_at ? shortDate(submission.created_at) : "-"}</td>
+                            <td>{submission.full_name || "-"}</td>
+                            <td>{submission.phone}</td>
+                            <td>{submission.email || "-"}</td>
+                            <td>
+                              <div className="campaign-submission-delivery">
+                                {(submission.delivery_statuses?.length ? submission.delivery_statuses : [{ delivery_id: "", source_id: "", recipient_name: "", recipient_phone: "", delivery_status: submission.delivery_status }]).map((status, index) => (
+                                  <span
+                                    className="delivery-status-pill"
+                                    data-tone={status.delivery_status === "pending" ? "warn" : status.delivery_status === "delivered" || status.delivery_status === "sent" ? "success" : status.delivery_status === "failed" || status.delivery_status === "blocked" ? "danger" : "muted"}
+                                    key={`${submission.id}-${status.delivery_id || index}`}
+                                  >
+                                    {status.recipient_name ? `${status.recipient_name}: ` : ""}{humanize(status.delivery_status || "queued")}
+                                  </span>
+                                ))}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 ) : (
                   <CtEmptyState compact title="No submissions yet" message="Captured leads will appear here." />

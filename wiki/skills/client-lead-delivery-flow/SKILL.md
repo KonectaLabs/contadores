@@ -104,6 +104,13 @@ renders `city = <value>`.
 If the user gives multiple WhatsApp numbers, put them in `recipients`. The
 backend expands them into one Delivery source per recipient.
 
+Owned campaign forms do not use `data/client-lead-sources.json` for their
+recipient list. They store Delivery settings in `campaign_info.delivery`; the
+Ads UI toggle enables/disables delivery, the campaign client is the default
+recipient, and multiple preset or custom recipients expand to one
+`ClientLeadSource` per recipient. Each public owned-form submission queues one
+`ClientLeadDelivery` per selected recipient.
+
 If the user gives multiple campaign spreadsheets for the same client, put them
 in `sheets`. Each item supports `id`, `label`, `sheet_url`, `sheet_gid`, and
 `sheet_tab_name`. The backend expands each sheet into its own Delivery source

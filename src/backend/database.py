@@ -2505,6 +2505,34 @@ class ClientLeadSource(SQLModel, table=True):
             return items
 
     @classmethod
+    def list_by_id_prefix(cls, prefix: str) -> list["ClientLeadSource"]:
+        """List sources whose ids begin with a stable prefix."""
+        clean_prefix = (prefix or "").strip()
+        if not clean_prefix:
+            return []
+        with Session(engine) as session:
+            statement = select(cls).where(cls.id.like(f"{clean_prefix}%")).order_by(cls.label, cls.id)
+            items = list(session.exec(statement).all())
+            for item in items:
+                session.expunge(item)
+            return items
+
+    @classmethod
+    def set_enabled(cls, source_id: str, enabled: bool) -> Optional["ClientLeadSource"]:
+        """Enable or disable one source without changing its recipient/config."""
+        with Session(engine) as session:
+            item = session.get(cls, (source_id or "").strip())
+            if item is None:
+                return None
+            item.enabled = bool(enabled)
+            item.updated_at = datetime.now(timezone.utc)
+            session.add(item)
+            session.commit()
+            session.refresh(item)
+            session.expunge(item)
+            return item
+
+    @classmethod
     def get_by_meta_lead_form_id(cls, form_id: str) -> Optional["ClientLeadSource"]:
         """Return the enabled Delivery source bound to one Meta instant form."""
         clean_form_id = " ".join(str(form_id or "").split()).strip()
@@ -2714,6 +2742,30 @@ class ClientLeadDelivery(SQLModel, table=True):
                 .where(cls.source_id == source_id)
                 .order_by(cls.row_number.desc(), cls.created_at.desc(), cls.id.desc())
                 .limit(limit)
+            )
+            items = list(session.exec(statement).all())
+            for item in items:
+                session.expunge(item)
+            return items
+
+    @classmethod
+    def list_by_source_row_key_prefix(
+        cls,
+        prefix: str,
+        *,
+        limit: int = 50,
+    ) -> list["ClientLeadDelivery"]:
+        """List deliveries created for one source row key prefix."""
+        clean_prefix = (prefix or "").strip()
+        if not clean_prefix:
+            return []
+        clean_limit = max(1, min(int(limit or 50), 500))
+        with Session(engine) as session:
+            statement = (
+                select(cls)
+                .where(or_(cls.source_row_key == clean_prefix, cls.source_row_key.like(f"{clean_prefix}:%")))
+                .order_by(cls.created_at, cls.id)
+                .limit(clean_limit)
             )
             items = list(session.exec(statement).all())
             for item in items:

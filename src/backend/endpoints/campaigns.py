@@ -133,6 +133,12 @@ CAMPAIGN_GEO_FALLBACKS: dict[str, dict[str, list[str]]] = {
     },
 }
 
+CAMPAIGN_DELIVERY_PRESETS = {
+    "alan": {"id": "alan", "label": "Alan", "phone": "393716506381", "kind": "preset"},
+    "mathi": {"id": "mathi", "label": "Mathi", "phone": "5491138033159", "kind": "preset"},
+    "facu": {"id": "facu", "label": "Facu", "phone": "5491153484587", "kind": "preset"},
+}
+
 
 def _validate_country_code(value: str | None) -> str:
     """Return a normalized ISO-like country code or raise a validation error."""
@@ -245,6 +251,22 @@ class CampaignGeoTargetingCommand(BaseModel):
         return self
 
 
+class CampaignDeliveryContactCommand(BaseModel):
+    """One WhatsApp recipient for campaign Delivery alerts."""
+
+    id: str | None = None
+    label: str | None = None
+    phone: str | None = None
+    kind: str | None = None
+
+
+class CampaignDeliveryConfigCommand(BaseModel):
+    """Delivery behavior for one owned campaign."""
+
+    enabled: bool = True
+    contacts: list[CampaignDeliveryContactCommand] = Field(default_factory=list, max_length=12)
+
+
 class LeadCaptureCampaignCommand(BaseModel):
     """Create an owned lead-capture campaign."""
 
@@ -268,6 +290,7 @@ class LeadCaptureCampaignCommand(BaseModel):
     meta_events_enabled: bool = False
     meta_test_event_code: str | None = None
     stage_platform_campaign: bool = True
+    delivery_config: CampaignDeliveryConfigCommand | None = None
 
 
 class LeadCaptureCampaignPatchCommand(BaseModel):
@@ -294,6 +317,7 @@ class LeadCaptureCampaignPatchCommand(BaseModel):
     meta_campaign_id: str | None = None
     meta_adset_id: str | None = None
     meta_ad_id: str | None = None
+    delivery_config: CampaignDeliveryConfigCommand | None = None
 
 
 class PublicSubmissionCommand(BaseModel):
@@ -586,6 +610,119 @@ def _campaign_info_with_geo(command: LeadCaptureCampaignCommand) -> tuple[dict[s
     return campaign_info, location_label
 
 
+def _campaign_client_delivery_contact(client_id: str) -> dict[str, Any] | None:
+    """Return the campaign client as a Delivery contact when possible."""
+    clean_client_id = (client_id or "").strip()
+    if not clean_client_id:
+        return None
+    client = WorkstationClient.get_by_id(clean_client_id)
+    if client is None:
+        return None
+    lead = ContadoresLead.get_by_id(client.lead_id)
+    if lead is None or not normalize_phone(lead.phone):
+        return None
+    label = client.display_name or lead.full_name or "Cliente"
+    return {"id": "client", "label": label, "phone": lead.phone, "kind": "client"}
+
+
+def _delivery_contact_key(value: str, fallback: str) -> str:
+    """Return a compact stable key for one Delivery contact."""
+    raw = " ".join(str(value or fallback or "contact").split()).strip().lower()
+    key = re.sub(r"[^a-z0-9]+", "-", raw).strip("-")
+    return (key or "contact")[:48]
+
+
+def _normalize_delivery_contact(raw_contact: Any, *, client_id: str, index: int) -> dict[str, Any] | None:
+    """Normalize one submitted campaign Delivery contact."""
+    if isinstance(raw_contact, CampaignDeliveryContactCommand):
+        raw = raw_contact.model_dump(mode="json")
+    elif isinstance(raw_contact, dict):
+        raw = raw_contact
+    else:
+        return None
+
+    raw_id = " ".join(str(raw.get("id") or "").split()).strip().lower()
+    raw_kind = " ".join(str(raw.get("kind") or "").split()).strip().lower()
+    if raw_id == "client" or raw_kind == "client":
+        return _campaign_client_delivery_contact(client_id)
+    if raw_id in CAMPAIGN_DELIVERY_PRESETS:
+        return dict(CAMPAIGN_DELIVERY_PRESETS[raw_id])
+
+    clean_phone = " ".join(str(raw.get("phone") or "").split()).strip()
+    clean_label = " ".join(str(raw.get("label") or "").split()).strip()
+    if not clean_phone and not clean_label:
+        return None
+    if not normalize_phone(clean_phone):
+        raise ValueError(f"delivery contact phone is invalid: {clean_label or clean_phone}")
+    label = clean_label or clean_phone
+    contact_id = _delivery_contact_key(raw_id or label, f"custom-{index}")
+    return {"id": contact_id, "label": label, "phone": clean_phone, "kind": "custom"}
+
+
+def _normalize_campaign_delivery_config(
+    raw_config: Any,
+    *,
+    client_id: str,
+) -> dict[str, Any]:
+    """Normalize Delivery config stored inside campaign_info."""
+    if isinstance(raw_config, CampaignDeliveryConfigCommand):
+        raw = raw_config.model_dump(mode="json")
+    elif isinstance(raw_config, dict):
+        raw = raw_config
+    else:
+        raw = {}
+
+    contacts_input = raw.get("contacts") if isinstance(raw.get("contacts"), list) else []
+    if not contacts_input:
+        contacts_input = [{"id": "client", "kind": "client"}]
+
+    contacts: list[dict[str, Any]] = []
+    seen_phones: set[str] = set()
+    for index, raw_contact in enumerate(contacts_input):
+        contact = _normalize_delivery_contact(raw_contact, client_id=client_id, index=index)
+        if contact is None:
+            continue
+        normalized_phone = normalize_phone(contact.get("phone") or "")
+        if not normalized_phone or normalized_phone in seen_phones:
+            continue
+        seen_phones.add(normalized_phone)
+        contact["normalized_phone"] = normalized_phone
+        contacts.append(contact)
+
+    return {"enabled": bool(raw.get("enabled", True)), "contacts": contacts}
+
+
+def _campaign_info_with_delivery(
+    campaign_info: dict[str, Any],
+    delivery_config: CampaignDeliveryConfigCommand | dict[str, Any] | None,
+    *,
+    client_id: str,
+) -> dict[str, Any]:
+    """Merge campaign Delivery settings into campaign info."""
+    next_info = dict(campaign_info or {})
+    next_info["delivery"] = _normalize_campaign_delivery_config(delivery_config, client_id=client_id)
+    return next_info
+
+
+def _campaign_delivery_config(campaign: LeadCaptureCampaign) -> dict[str, Any]:
+    """Return normalized Delivery settings for an existing campaign."""
+    raw = campaign.campaign_info.get("delivery") if isinstance(campaign.campaign_info, dict) else None
+    return _normalize_campaign_delivery_config(raw, client_id=campaign.client_id)
+
+
+def _campaign_delivery_source_prefix(campaign: LeadCaptureCampaign) -> str:
+    """Return the source id prefix used by campaign Delivery contacts."""
+    return f"campaign-{campaign.public_slug}"
+
+
+def _campaign_delivery_source_id(campaign: LeadCaptureCampaign, contact: dict[str, Any], index: int) -> str:
+    """Return the source id for one campaign Delivery contact."""
+    if index == 0 and contact.get("id") == "client":
+        return campaign.client_lead_source_id or _campaign_delivery_source_prefix(campaign)
+    suffix = _delivery_contact_key(str(contact.get("id") or contact.get("label") or ""), f"contact-{index + 1}")
+    return f"{_campaign_delivery_source_prefix(campaign)}-{suffix}"[:96]
+
+
 def _campaign_meta_target_segments(campaign_info: dict[str, Any], location_label: str = "") -> list[Any]:
     """Return structured target segments for staged platform campaigns."""
     meta_targeting = campaign_info.get("meta_targeting") if isinstance(campaign_info, dict) else None
@@ -650,8 +787,40 @@ def _client_payload(client: WorkstationClient | None) -> dict[str, Any] | None:
     }
 
 
+def _aggregate_delivery_status(statuses: list[str]) -> str:
+    """Return one display status for several delivery attempts."""
+    clean = {str(status or "").strip().lower() for status in statuses if str(status or "").strip()}
+    if not clean:
+        return ""
+    for candidate in ["failed", "blocked", "pending", "sent", "delivered", "skipped"]:
+        if candidate in clean:
+            return candidate
+    return sorted(clean)[0]
+
+
 def _submission_payload(submission: LeadCaptureSubmission) -> dict[str, Any]:
-    delivery = ClientLeadDelivery.get_by_id(submission.client_lead_delivery_id) if submission.client_lead_delivery_id else None
+    delivery_prefix = f"campaign-submission:{submission.id}"
+    deliveries = ClientLeadDelivery.list_by_source_row_key_prefix(delivery_prefix)
+    if not deliveries and submission.client_lead_delivery_id:
+        primary = ClientLeadDelivery.get_by_id(submission.client_lead_delivery_id)
+        deliveries = [primary] if primary else []
+    delivery_statuses: list[dict[str, Any]] = []
+    for delivery in deliveries:
+        source = ClientLeadSource.get_by_id(delivery.source_id)
+        status = delivery.delivery_status.value if hasattr(delivery.delivery_status, "value") else str(delivery.delivery_status)
+        delivery_statuses.append(
+            {
+                "delivery_id": delivery.id,
+                "source_id": delivery.source_id,
+                "recipient_name": source.recipient_name if source else "",
+                "recipient_phone": source.recipient_phone if source else "",
+                "delivery_status": status,
+                "last_delivery_error": delivery.last_delivery_error,
+            }
+        )
+    aggregate_delivery_status = _aggregate_delivery_status(
+        [item["delivery_status"] for item in delivery_statuses]
+    )
     return {
         "id": submission.id,
         "campaign_id": submission.campaign_id,
@@ -666,11 +835,8 @@ def _submission_payload(submission: LeadCaptureSubmission) -> dict[str, Any]:
         "meta_event_id": submission.meta_event_id,
         "meta_event_status": submission.meta_event_status,
         "meta_event_response": submission.meta_event_response,
-        "delivery_status": (
-            delivery.delivery_status.value
-            if delivery and hasattr(delivery.delivery_status, "value")
-            else (str(delivery.delivery_status) if delivery else "")
-        ),
+        "delivery_status": aggregate_delivery_status,
+        "delivery_statuses": delivery_statuses,
         "created_at": format_timestamp_seconds(submission.created_at),
         "updated_at": format_timestamp_seconds(submission.updated_at),
     }
@@ -709,6 +875,7 @@ def _campaign_payload(
 ) -> dict[str, Any]:
     client = WorkstationClient.get_by_id(campaign.client_id) if campaign.client_id else None
     source = ClientLeadSource.get_by_id(campaign.client_lead_source_id) if campaign.client_lead_source_id else None
+    delivery_sources = ClientLeadSource.list_by_id_prefix(_campaign_delivery_source_prefix(campaign))
     counts = LeadCaptureSubmission.count_by_campaign()
     payload = {
         "id": campaign.id,
@@ -737,14 +904,20 @@ def _campaign_payload(
         "meta_ad_id": campaign.meta_ad_id,
         "submission_count": counts.get(campaign.id, 0),
         "client": _client_payload(client),
+        "delivery_config": _campaign_delivery_config(campaign),
         "delivery_source": build_source_response(source).model_dump(mode="json") if source else None,
+        "delivery_sources": [
+            build_source_response(item).model_dump(mode="json")
+            for item in delivery_sources
+        ],
         "created_at": format_timestamp_seconds(campaign.created_at),
         "updated_at": format_timestamp_seconds(campaign.updated_at),
     }
     if include_submissions:
+        submissions = LeadCaptureSubmission.list_by_campaign(campaign.id, limit=500)
         payload["submissions"] = [
             _submission_payload(item)
-            for item in LeadCaptureSubmission.list_by_campaign(campaign.id, limit=500)
+            for item in reversed(submissions)
         ]
     return payload
 
@@ -890,47 +1063,68 @@ def _context_mapping_for_form(form_schema: dict[str, Any]) -> dict[str, str]:
     return mapping
 
 
-def ensure_campaign_delivery_source(campaign: LeadCaptureCampaign) -> ClientLeadSource | None:
-    """Create or update the Delivery source used by one campaign."""
-    if not campaign.client_id:
-        return None
-    client = WorkstationClient.get_by_id(campaign.client_id)
-    if client is None:
-        return None
-    lead = ContadoresLead.get_by_id(client.lead_id)
-    if lead is None or not normalize_phone(lead.phone):
-        return None
-    source_id = campaign.client_lead_source_id or f"campaign-{campaign.public_slug}"
+def ensure_campaign_delivery_sources(campaign: LeadCaptureCampaign) -> list[ClientLeadSource]:
+    """Create or update the Delivery sources used by one campaign."""
+    delivery_config = _campaign_delivery_config(campaign)
+    prefix = _campaign_delivery_source_prefix(campaign)
+    existing_sources = ClientLeadSource.list_by_id_prefix(prefix)
+    if not campaign.client_id or not delivery_config["enabled"]:
+        for source in existing_sources:
+            if source.enabled:
+                ClientLeadSource.set_enabled(source.id, False)
+        return []
+
     context_mapping = _context_mapping_for_form(campaign.form_schema)
     template_name = CLIENT_LEAD_CONTEXT_TEMPLATE_NAME if context_mapping else None
-    try:
-        source = ClientLeadSource.upsert(
-            source_id=source_id,
-            label=f"{client.display_name or lead.full_name or 'Cliente'} - {campaign.name}",
-            enabled=campaign.status in {"active", "published"},
-            sheet_url="",
-            recipient_name=client.display_name or lead.full_name,
-            recipient_phone=lead.phone,
-            template_name=template_name,
-            template_language=CLIENT_LEAD_DEFAULT_TEMPLATE_LANGUAGE,
-            column_mapping={
-                "source_id": "id",
-                "created_time": "created_time",
-                "full_name": "full_name",
-                "phone_number": "phone_number",
-                "email": "email",
-            },
-            context_field_mapping=context_mapping,
-        )
-    except ValueError:
-        return None
-    if campaign.client_lead_source_id != source.id:
-        campaign = LeadCaptureCampaign.update(campaign.id, client_lead_source_id=source.id) or campaign
-    return source
+    sources: list[ClientLeadSource] = []
+    desired_ids: set[str] = set()
+    for index, contact in enumerate(delivery_config["contacts"]):
+        source_id = _campaign_delivery_source_id(campaign, contact, index)
+        desired_ids.add(source_id)
+        try:
+            source = ClientLeadSource.upsert(
+                source_id=source_id,
+                label=f"{campaign.name} -> {contact['label']}",
+                enabled=campaign.status in {"active", "published"},
+                sheet_url="",
+                recipient_name=contact["label"],
+                recipient_phone=contact["phone"],
+                template_name=template_name,
+                template_language=CLIENT_LEAD_DEFAULT_TEMPLATE_LANGUAGE,
+                column_mapping={
+                    "source_id": "id",
+                    "created_time": "created_time",
+                    "full_name": "full_name",
+                    "phone_number": "phone_number",
+                    "email": "email",
+                },
+                context_field_mapping=context_mapping,
+            )
+        except ValueError:
+            continue
+        sources.append(source)
+
+    for source in existing_sources:
+        if source.id not in desired_ids and source.enabled:
+            ClientLeadSource.set_enabled(source.id, False)
+    if sources and campaign.client_lead_source_id != sources[0].id:
+        LeadCaptureCampaign.update(campaign.id, client_lead_source_id=sources[0].id)
+    return sources
+
+
+def ensure_campaign_delivery_source(campaign: LeadCaptureCampaign) -> ClientLeadSource | None:
+    """Create or update the primary Delivery source used by one campaign."""
+    sources = ensure_campaign_delivery_sources(campaign)
+    return sources[0] if sources else None
 
 
 def _stage_platform_ad_campaign(command: LeadCaptureCampaignCommand, *, client_id: str, funnel_id: str) -> PlatformAdCampaign:
     campaign_info, location_label = _campaign_info_with_geo(command)
+    campaign_info = _campaign_info_with_delivery(
+        campaign_info,
+        command.delivery_config,
+        client_id=client_id,
+    )
     return PlatformAdCampaign.add(
         client_id=client_id,
         funnel_id=funnel_id,
@@ -1081,44 +1275,47 @@ def _raw_row_for_submission(campaign: LeadCaptureCampaign, submission: LeadCaptu
     return raw
 
 
-def _queue_delivery_for_submission(
+def _queue_deliveries_for_submission(
     *,
     campaign: LeadCaptureCampaign,
     submission: LeadCaptureSubmission,
-) -> ClientLeadDelivery | None:
-    source = ensure_campaign_delivery_source(campaign)
-    if source is None:
-        return None
+) -> list[ClientLeadDelivery]:
+    sources = ensure_campaign_delivery_sources(campaign)
+    if not sources:
+        return []
     raw_row = _raw_row_for_submission(campaign, submission)
-    block_reason = ""
-    if not normalize_phone(submission.phone):
-        block_reason = "lead_phone_invalid"
-    elif not normalize_phone(source.recipient_phone):
-        block_reason = "recipient_phone_invalid"
+    deliveries: list[ClientLeadDelivery] = []
+    for source in sources:
+        block_reason = ""
+        if not normalize_phone(submission.phone):
+            block_reason = "lead_phone_invalid"
+        elif not normalize_phone(source.recipient_phone):
+            block_reason = "recipient_phone_invalid"
 
-    wa_link = build_wa_link(phone=submission.normalized_phone or submission.phone)
-    notification_text = build_notification_text(
-        source,
-        name=submission.full_name or "",
-        phone=submission.normalized_phone or submission.phone,
-        email=submission.email,
-        wa_link=wa_link,
-        context_text=build_context_text_from_row(source, raw_row),
-    )
-    delivery, _created = ClientLeadDelivery.upsert_from_sheet_row(
-        source=source,
-        source_row_key=f"campaign-submission:{submission.id}",
-        row_number=0,
-        raw_row=raw_row,
-        full_name=submission.full_name,
-        phone_number=submission.phone,
-        email=submission.email,
-        created_time=submission.created_at,
-        wa_link=wa_link,
-        notification_text=notification_text,
-        block_reason=block_reason or None,
-    )
-    return delivery
+        wa_link = build_wa_link(phone=submission.normalized_phone or submission.phone)
+        notification_text = build_notification_text(
+            source,
+            name=submission.full_name or "",
+            phone=submission.normalized_phone or submission.phone,
+            email=submission.email,
+            wa_link=wa_link,
+            context_text=build_context_text_from_row(source, raw_row),
+        )
+        delivery, _created = ClientLeadDelivery.upsert_from_sheet_row(
+            source=source,
+            source_row_key=f"campaign-submission:{submission.id}",
+            row_number=0,
+            raw_row=raw_row,
+            full_name=submission.full_name,
+            phone_number=submission.phone,
+            email=submission.email,
+            created_time=submission.created_at,
+            wa_link=wa_link,
+            notification_text=notification_text,
+            block_reason=block_reason or None,
+        )
+        deliveries.append(delivery)
+    return deliveries
 
 
 def _track_meta_event(
@@ -1266,14 +1463,25 @@ async def create_campaign(request: Request, command: LeadCaptureCampaignCommand)
 
     platform_campaign_id = ""
     if command.stage_platform_campaign and client_id:
-        platform_campaign = _stage_platform_ad_campaign(
-            command,
-            client_id=client_id,
-            funnel_id=funnel_id,
-        )
+        try:
+            platform_campaign = _stage_platform_ad_campaign(
+                command,
+                client_id=client_id,
+                funnel_id=funnel_id,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
         platform_campaign_id = platform_campaign.id
 
     campaign_info, location_label = _campaign_info_with_geo(command)
+    try:
+        campaign_info = _campaign_info_with_delivery(
+            campaign_info,
+            command.delivery_config,
+            client_id=client_id,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
     meta_pixel_id = _campaign_meta_pixel_id(command.meta_pixel_id, events_enabled=command.meta_events_enabled)
     try:
         campaign = LeadCaptureCampaign.add(
@@ -1302,9 +1510,9 @@ async def create_campaign(request: Request, command: LeadCaptureCampaignCommand)
 
     if not campaign.destination_url:
         campaign = LeadCaptureCampaign.update(campaign.id, destination_url=_public_url(request, campaign)) or campaign
-    source = ensure_campaign_delivery_source(campaign)
-    if source and campaign.client_lead_source_id != source.id:
-        campaign = LeadCaptureCampaign.update(campaign.id, client_lead_source_id=source.id) or campaign
+    sources = ensure_campaign_delivery_sources(campaign)
+    if sources and campaign.client_lead_source_id != sources[0].id:
+        campaign = LeadCaptureCampaign.update(campaign.id, client_lead_source_id=sources[0].id) or campaign
 
     PlatformEvent.add(
         event_type="lead_capture_campaign.created",
@@ -1336,6 +1544,7 @@ async def patch_campaign(
     """Patch one owned lead-capture campaign."""
     current = _get_campaign_or_404(campaign_id)
     updates = command.model_dump(exclude_unset=True)
+    delivery_config = updates.pop("delivery_config", None)
     next_client_id = str(updates.get("client_id", current.client_id) or "").strip()
     next_status = str(updates.get("status", current.status) or "draft").strip().lower()
     linked_client = _validate_campaign_client_link(next_client_id, next_status)
@@ -1347,15 +1556,24 @@ async def patch_campaign(
         updates["meta_pixel_id"] = _campaign_meta_pixel_id(None, events_enabled=True)
     if "meta_event_name" in updates and not str(updates.get("meta_event_name") or "").strip():
         updates["meta_event_name"] = DEFAULT_META_EVENT_NAME
+    if delivery_config is not None:
+        try:
+            updates["campaign_info"] = _campaign_info_with_delivery(
+                updates.get("campaign_info") if isinstance(updates.get("campaign_info"), dict) else current.campaign_info,
+                delivery_config,
+                client_id=next_client_id,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
     try:
         campaign = LeadCaptureCampaign.update(campaign_id, **updates)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     if campaign is None:
         raise HTTPException(status_code=404, detail="Campaign not found.")
-    source = ensure_campaign_delivery_source(campaign)
-    if source and campaign.client_lead_source_id != source.id:
-        campaign = LeadCaptureCampaign.update(campaign.id, client_lead_source_id=source.id) or campaign
+    sources = ensure_campaign_delivery_sources(campaign)
+    if sources and campaign.client_lead_source_id != sources[0].id:
+        campaign = LeadCaptureCampaign.update(campaign.id, client_lead_source_id=sources[0].id) or campaign
     return {"campaign": _campaign_payload(campaign, request=request)}
 
 
@@ -1363,11 +1581,14 @@ async def patch_campaign(
 async def refresh_campaign_delivery_source(request: Request, campaign_id: str) -> dict[str, Any]:
     """Create or refresh the Delivery source for one owned campaign."""
     campaign = _get_campaign_or_404(campaign_id)
-    source = ensure_campaign_delivery_source(campaign)
-    if source is None:
-        raise HTTPException(status_code=400, detail="Campaign must be linked to a client with a valid WhatsApp.")
+    sources = ensure_campaign_delivery_sources(campaign)
+    if not sources:
+        raise HTTPException(status_code=400, detail="Campaign delivery needs at least one valid contact.")
     campaign = LeadCaptureCampaign.get_by_id(campaign.id) or campaign
-    return {"campaign": _campaign_payload(campaign, request=request), "source": build_source_response(source).model_dump(mode="json")}
+    return {
+        "campaign": _campaign_payload(campaign, request=request),
+        "sources": [build_source_response(source).model_dump(mode="json") for source in sources],
+    }
 
 
 @campaigns_router.get("/{campaign_id}/submissions")
@@ -1378,6 +1599,7 @@ async def list_campaign_submissions(
     """List public form submissions for one campaign."""
     campaign = _get_campaign_or_404(campaign_id)
     submissions = LeadCaptureSubmission.list_by_campaign(campaign.id, limit=limit)
+    submissions = list(reversed(submissions))
     return {
         "campaign_id": campaign.id,
         "count": len(submissions),
@@ -1484,7 +1706,8 @@ async def submit_public_campaign_form(
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
-    delivery = _queue_delivery_for_submission(campaign=campaign, submission=submission)
+    deliveries = _queue_deliveries_for_submission(campaign=campaign, submission=submission)
+    delivery = deliveries[0] if deliveries else None
     if delivery is not None:
         submission = LeadCaptureSubmission.update_delivery_and_meta(
             submission.id,
@@ -1505,6 +1728,7 @@ async def submit_public_campaign_form(
             "submission_id": submission.id,
             "client_id": campaign.client_id,
             "delivery_id": delivery.id if delivery else "",
+            "delivery_ids": [item.id for item in deliveries],
             "delivery_status": (
                 delivery.delivery_status.value
                 if delivery and hasattr(delivery.delivery_status, "value")
@@ -1516,7 +1740,7 @@ async def submit_public_campaign_form(
     return _public_submission_receipt(
         campaign=campaign,
         submission=submission,
-        delivery_queued=bool(delivery and delivery.delivery_status == ClientLeadDeliveryStatus.PENDING),
+        delivery_queued=any(item.delivery_status == ClientLeadDeliveryStatus.PENDING for item in deliveries),
     )
 
 

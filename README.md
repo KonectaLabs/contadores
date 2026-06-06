@@ -149,6 +149,14 @@ habilitado, el backend toma el pixel automaticamente desde `META_PIXEL_ID` /
 intenta CAPI con el mismo `event_id` de submission. CAPI sigue respetando el
 gate existente `META_MARKETING_LIVE_WRITES_ENABLED`.
 
+Cada campaña owned tiene Delivery inline: un toggle prende/apaga el envio de
+templates WhatsApp cuando llega una submission, el cliente de la campaña queda
+como destinatario por default y se pueden sumar varios contactos predefinidos o
+custom. El backend expande esos contactos a fuentes `ClientLeadSource` por
+destinatario y crea una fila `ClientLeadDelivery` por cada contacto. La vista
+de submissions en Ads se muestra como tabla, con fecha y los leads mas recientes
+abajo.
+
 ### Configurar sin UI, agent-native
 
 Los agentes autonomos no tienen que pedirle al operador que abra la UI para
