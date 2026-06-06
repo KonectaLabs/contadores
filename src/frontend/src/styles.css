@@ -3610,6 +3610,12 @@ body.ct-resizing {
   background: linear-gradient(90deg, color-mix(in srgb, var(--ct-accent) 7%, var(--ct-surface)), var(--ct-surface) 36%);
 }
 
+#contadoresView .campaign-section-plan {
+  border-color: color-mix(in srgb, #138f8f 38%, var(--ct-line));
+  border-left-color: #138f8f;
+  background: linear-gradient(90deg, #eefafa, var(--ct-surface) 42%);
+}
+
 #contadoresView .campaign-section-targeting {
   border-color: color-mix(in srgb, #2f80ed 38%, var(--ct-line));
   border-left-color: #2f80ed;
@@ -3634,6 +3640,152 @@ body.ct-resizing {
 #contadoresView .campaign-section-meta {
   border-left-color: #eb7d52;
   background: linear-gradient(90deg, #fff4ee, var(--ct-surface) 42%);
+}
+
+#contadoresView .campaign-meta-plan {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+#contadoresView .campaign-meta-plan-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+#contadoresView .campaign-meta-plan-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 310px) minmax(0, 1fr);
+  gap: 12px;
+  min-width: 0;
+}
+
+#contadoresView .campaign-meta-plan-tree {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+  max-height: 520px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, #138f8f 22%, var(--ct-line));
+  border-radius: var(--ct-radius-sm);
+  background: color-mix(in srgb, #f5fbfb 72%, var(--ct-surface));
+}
+
+#contadoresView .campaign-meta-plan-campaign,
+#contadoresView .campaign-meta-plan-adset {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+#contadoresView .campaign-meta-plan-adset {
+  margin-left: 16px;
+  padding-left: 10px;
+  border-left: 1px solid color-mix(in srgb, #138f8f 28%, var(--ct-line));
+}
+
+#contadoresView .campaign-meta-plan-tree button {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--ct-line);
+  border-radius: var(--ct-radius-sm);
+  background: var(--ct-surface);
+  text-align: left;
+  color: var(--ct-text);
+  cursor: pointer;
+  transition: border-color .16s ease, transform .16s ease, background .16s ease;
+}
+
+#contadoresView .campaign-meta-plan-tree button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, #138f8f 42%, var(--ct-line));
+}
+
+#contadoresView .campaign-meta-plan-tree button.active {
+  border-color: #138f8f;
+  background: #e7f6f5;
+}
+
+#contadoresView .campaign-meta-plan-tree button span,
+#contadoresView .campaign-meta-plan-editor-head span,
+#contadoresView .campaign-meta-plan-media span {
+  color: var(--ct-muted);
+  font-size: .72rem;
+  font-weight: 800;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+#contadoresView .campaign-meta-plan-tree button strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: .9rem;
+}
+
+#contadoresView .campaign-meta-plan-ad {
+  margin-left: 18px;
+}
+
+#contadoresView .campaign-meta-plan-editor {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--ct-line);
+  border-radius: var(--ct-radius-sm);
+  background: rgba(255, 255, 255, .78);
+}
+
+#contadoresView .campaign-meta-plan-editor-head {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+#contadoresView .campaign-meta-plan-editor-head strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#contadoresView .campaign-meta-plan-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  min-width: 0;
+}
+
+#contadoresView .campaign-meta-plan-wide {
+  grid-column: 1 / -1;
+}
+
+#contadoresView .campaign-meta-plan-media {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px dashed color-mix(in srgb, #138f8f 38%, var(--ct-line));
+  border-radius: var(--ct-radius-sm);
+  background: #f7fcfb;
+}
+
+#contadoresView .campaign-meta-plan-media div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
 }
 
 #contadoresView .campaign-section-side {
@@ -5052,6 +5204,63 @@ body.ct-resizing {
   border: 1px solid var(--ct-line);
   border-radius: var(--ct-radius);
   background: var(--ct-surface);
+}
+
+#contadoresView .campaign-plan-readonly {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, #138f8f 24%, var(--ct-line));
+  border-radius: var(--ct-radius);
+  background: #f7fcfb;
+}
+
+#contadoresView .campaign-plan-readonly-tree {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+#contadoresView .campaign-plan-readonly-tree article {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--ct-line);
+  border-radius: var(--ct-radius-sm);
+  background: var(--ct-surface);
+}
+
+#contadoresView .campaign-plan-readonly-tree article > div,
+#contadoresView .campaign-plan-readonly-adset {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+#contadoresView .campaign-plan-readonly-adset {
+  margin-left: 14px;
+  padding-left: 10px;
+  border-left: 1px solid color-mix(in srgb, #138f8f 32%, var(--ct-line));
+}
+
+#contadoresView .campaign-plan-readonly span,
+#contadoresView .campaign-plan-readonly small {
+  color: var(--ct-ink-muted);
+}
+
+#contadoresView .campaign-plan-readonly span {
+  font: 800 11px/1.2 var(--font-mono);
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+#contadoresView .campaign-plan-readonly strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 #contadoresView .campaign-media-grid {
@@ -6947,6 +7156,8 @@ body.ct-resizing {
   #contadoresView .campaign-client-fields,
   #contadoresView .campaign-delivery-custom,
   #contadoresView .campaign-creative-grid,
+  #contadoresView .campaign-meta-plan-grid,
+  #contadoresView .campaign-meta-plan-fields,
   #contadoresView .campaign-meta-grid {
     grid-template-columns: 1fr;
   }

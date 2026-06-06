@@ -2563,6 +2563,7 @@ type LeadCaptureCampaignItem = {
   daily_budget_usd: number | null;
   location: string;
   campaign_info: Record<string, unknown>;
+  meta_plan_graph?: MetaPlanGraph;
   creative_brief: string;
   form_schema: { fields?: CampaignFormField[] };
   delivery_config?: CampaignDeliveryConfig;
@@ -2642,6 +2643,77 @@ type CampaignStoredCreativeMedia = {
   media_url: string;
   asset_type: string;
   source: string;
+};
+
+type MetaPlanStrategy = "1x1x3" | "1x3x3" | "3x3x3" | "custom";
+
+type MetaPlanNodeSelection = {
+  type: "campaign" | "ad_set" | "ad";
+  id: string;
+};
+
+type MetaPlanCreativeMedia = {
+  creative_asset_id?: string;
+  asset_file_path?: string;
+  asset_type?: string;
+  media_url?: string;
+  source?: string;
+  meta_creative_id?: string;
+  image_hash?: string;
+  video_id?: string;
+};
+
+type MetaPlanAd = {
+  id: string;
+  name: string;
+  status: string;
+  primary_text: string;
+  headline: string;
+  description: string;
+  call_to_action: string;
+  destination_url: string;
+  media: MetaPlanCreativeMedia[];
+};
+
+type MetaPlanAdSet = {
+  id: string;
+  name: string;
+  status: string;
+  destination_type: "form" | "website" | "whatsapp";
+  page_id?: string;
+  instagram_actor_id?: string;
+  whatsapp_phone_number_id?: string;
+  whatsapp_referral_source_id?: string;
+  lead_form_id?: string;
+  client_lead_source_id?: string;
+  landing_page_url?: string;
+  performance_goal: string;
+  optimization_goal: string;
+  billing_event: string;
+  bid_strategy: string;
+  budget_daily_usd?: number | null;
+  budget_total_usd?: number | null;
+  audience: { locations: CampaignGeoLocation[] };
+  targeting: Record<string, unknown>;
+  ads: MetaPlanAd[];
+};
+
+type MetaPlanCampaign = {
+  id: string;
+  name: string;
+  status: string;
+  objective: string;
+  buying_type: string;
+  special_ad_categories: string[];
+  budget_daily_usd?: number | null;
+  budget_total_usd?: number | null;
+  ad_sets: MetaPlanAdSet[];
+};
+
+type MetaPlanGraph = {
+  schema_version: string;
+  strategy: MetaPlanStrategy | string;
+  campaigns: MetaPlanCampaign[];
 };
 
 type CampaignGeoTargetingDraft = {
@@ -2959,6 +3031,220 @@ function campaignCreativeAssetPayload(asset: CampaignCreativeAssetItem): Record<
   };
 }
 
+const metaPlanStrategies: Array<{ value: MetaPlanStrategy; label: string; campaignCount: number; adSetCount: number; adCount: number }> = [
+  { value: "1x1x3", label: "1 > 1 > 3", campaignCount: 1, adSetCount: 1, adCount: 3 },
+  { value: "1x3x3", label: "1 > 3 > 3", campaignCount: 1, adSetCount: 3, adCount: 3 },
+  { value: "3x3x3", label: "3 > 3 > 3", campaignCount: 3, adSetCount: 3, adCount: 3 },
+  { value: "custom", label: "Custom", campaignCount: 1, adSetCount: 1, adCount: 1 },
+];
+
+function metaPlanNodeId(prefix: string, index: number): string {
+  return `${prefix}_${index + 1}`;
+}
+
+function campaignMetaPlanMedia(assets: CampaignCreativeAssetItem[], mediaUrl: string): MetaPlanCreativeMedia[] {
+  const uploaded = assets.map((asset) => campaignCreativeAssetPayload(asset));
+  const external = mediaUrl.trim() ? [{ source: "external_url", media_url: mediaUrl.trim(), asset_type: campaignMediaType(mediaUrl) }] : [];
+  return [...uploaded, ...external];
+}
+
+function campaignMetaTargeting(locations: CampaignGeoLocation[]): Record<string, unknown> {
+  const countries: string[] = [];
+  const regions: Array<Record<string, string>> = [];
+  locations.forEach((location) => {
+    const country = location.country_code.trim().toUpperCase() || "AR";
+    if (!location.regions.length) {
+      countries.push(country);
+      return;
+    }
+    location.regions.forEach((region) => {
+      regions.push({
+        name: region.name,
+        country,
+        ...(region.key ? { key: region.key } : {}),
+      });
+    });
+  });
+  const geoLocations: Record<string, unknown> = {};
+  if (countries.length) {
+    geoLocations.countries = Array.from(new Set(countries));
+  }
+  if (regions.length) {
+    geoLocations.regions = regions;
+  }
+  return Object.keys(geoLocations).length ? { geo_locations: geoLocations } : {};
+}
+
+function campaignMetaPlanAd(
+  id: string,
+  name: string,
+  creative: CampaignCreativeDraft,
+  media: MetaPlanCreativeMedia[],
+): MetaPlanAd {
+  return {
+    id,
+    name,
+    status: "PAUSED",
+    primary_text: creative.primaryText.trim(),
+    headline: creative.headline.trim(),
+    description: creative.description.trim(),
+    call_to_action: creative.callToAction.trim() || "LEARN_MORE",
+    destination_url: creative.destinationUrl.trim(),
+    media,
+  };
+}
+
+function campaignMetaPlanGraphFromStrategy({
+  strategy,
+  campaignName,
+  dailyBudget,
+  locations,
+  creative,
+  media,
+}: {
+  strategy: MetaPlanStrategy;
+  campaignName: string;
+  dailyBudget: string;
+  locations: CampaignGeoLocation[];
+  creative: CampaignCreativeDraft;
+  media: MetaPlanCreativeMedia[];
+}): MetaPlanGraph {
+  const shape = metaPlanStrategies.find((item) => item.value === strategy) ?? metaPlanStrategies[0];
+  const budget = dailyBudget ? Number(dailyBudget) : null;
+  const name = campaignName.trim() || "Nueva campaña";
+  const safeLocations = locations.length ? locations : [{ country_code: "AR", regions: [], cities: [] }];
+  return {
+    schema_version: "konecta.meta_plan_graph.v1",
+    strategy,
+    campaigns: Array.from({ length: shape.campaignCount }, (_, campaignIndex) => {
+      const campaignId = metaPlanNodeId("campaign", campaignIndex);
+      return {
+        id: campaignId,
+        name: shape.campaignCount === 1 ? name : `${name} ${campaignIndex + 1}`,
+        status: "PAUSED",
+        objective: "OUTCOME_LEADS",
+        buying_type: "AUCTION",
+        special_ad_categories: [],
+        budget_daily_usd: budget,
+        budget_total_usd: null,
+        ad_sets: Array.from({ length: shape.adSetCount }, (_, adSetIndex) => {
+          const adSetId = `${campaignId}_adset_${adSetIndex + 1}`;
+          return {
+            id: adSetId,
+            name: `Ad set ${adSetIndex + 1}`,
+            status: "PAUSED",
+            destination_type: "form",
+            performance_goal: "LEAD_GENERATION",
+            optimization_goal: "LEAD_GENERATION",
+            billing_event: "IMPRESSIONS",
+            bid_strategy: "LOWEST_COST_WITHOUT_CAP",
+            budget_daily_usd: null,
+            budget_total_usd: null,
+            audience: { locations: safeLocations },
+            targeting: campaignMetaTargeting(safeLocations),
+            ads: Array.from({ length: shape.adCount }, (_, adIndex) => campaignMetaPlanAd(
+              `${adSetId}_ad_${adIndex + 1}`,
+              `Ad ${adIndex + 1}`,
+              creative,
+              media,
+            )),
+          };
+        }),
+      };
+    }),
+  };
+}
+
+function campaignMetaPlanSelection(graph: MetaPlanGraph): MetaPlanNodeSelection {
+  const campaign = graph.campaigns[0];
+  const adSet = campaign?.ad_sets[0];
+  const ad = adSet?.ads[0];
+  if (ad) {
+    return { type: "ad", id: ad.id };
+  }
+  if (adSet) {
+    return { type: "ad_set", id: adSet.id };
+  }
+  return { type: "campaign", id: campaign?.id || "campaign_1" };
+}
+
+function campaignMetaPlanCounts(graph: MetaPlanGraph): { campaigns: number; adSets: number; ads: number } {
+  const adSets = graph.campaigns.reduce((total, campaign) => total + campaign.ad_sets.length, 0);
+  const ads = graph.campaigns.reduce(
+    (total, campaign) => total + campaign.ad_sets.reduce((adTotal, adSet) => adTotal + adSet.ads.length, 0),
+    0,
+  );
+  return { campaigns: graph.campaigns.length, adSets, ads };
+}
+
+function campaignMetaPlanHydrated(
+  graph: MetaPlanGraph,
+  {
+    campaignName,
+    dailyBudget,
+    locations,
+    creative,
+    media,
+  }: {
+    campaignName: string;
+    dailyBudget: string;
+    locations: CampaignGeoLocation[];
+    creative: CampaignCreativeDraft;
+    media: MetaPlanCreativeMedia[];
+  },
+): MetaPlanGraph {
+  const safeLocations = locations.length ? locations : [{ country_code: "AR", regions: [], cities: [] }];
+  const budget = dailyBudget ? Number(dailyBudget) : null;
+  return {
+    ...graph,
+    campaigns: graph.campaigns.map((campaign, campaignIndex) => ({
+      ...campaign,
+      name: campaign.name.trim() || (campaignIndex === 0 ? campaignName.trim() || "Nueva campaña" : `Campaña ${campaignIndex + 1}`),
+      budget_daily_usd: campaign.budget_daily_usd || budget,
+      ad_sets: campaign.ad_sets.map((adSet) => ({
+        ...adSet,
+        audience: { locations: safeLocations },
+        targeting: campaignMetaTargeting(safeLocations),
+        ads: adSet.ads.map((ad) => ({
+          ...ad,
+          primary_text: ad.primary_text.trim() || creative.primaryText.trim(),
+          headline: ad.headline.trim() || creative.headline.trim(),
+          description: ad.description.trim() || creative.description.trim(),
+          call_to_action: ad.call_to_action.trim() || creative.callToAction.trim() || "LEARN_MORE",
+          destination_url: ad.destination_url.trim() || creative.destinationUrl.trim(),
+          media: ad.media.length ? ad.media : media,
+        })),
+      })),
+    })),
+  };
+}
+
+function selectedMetaCampaign(graph: MetaPlanGraph, selection: MetaPlanNodeSelection): MetaPlanCampaign | null {
+  return graph.campaigns.find((campaign) => campaign.id === selection.id) ?? null;
+}
+
+function selectedMetaAdSet(graph: MetaPlanGraph, selection: MetaPlanNodeSelection): MetaPlanAdSet | null {
+  for (const campaign of graph.campaigns) {
+    const adSet = campaign.ad_sets.find((item) => item.id === selection.id);
+    if (adSet) {
+      return adSet;
+    }
+  }
+  return null;
+}
+
+function selectedMetaAd(graph: MetaPlanGraph, selection: MetaPlanNodeSelection): MetaPlanAd | null {
+  for (const campaign of graph.campaigns) {
+    for (const adSet of campaign.ad_sets) {
+      const ad = adSet.ads.find((item) => item.id === selection.id);
+      if (ad) {
+        return ad;
+      }
+    }
+  }
+  return null;
+}
+
 function campaignRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
@@ -3159,6 +3445,25 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
   const [detailDeliveryName, setDetailDeliveryName] = useState("");
   const [detailDeliveryPhone, setDetailDeliveryPhone] = useState("");
   const [fields, setFields] = useState<CampaignFieldDraft[]>(defaultCampaignFields);
+  const [metaPlanStrategy, setMetaPlanStrategy] = useState<MetaPlanStrategy>("1x1x3");
+  const [metaPlanGraph, setMetaPlanGraph] = useState<MetaPlanGraph>(() => campaignMetaPlanGraphFromStrategy({
+    strategy: "1x1x3",
+    campaignName: "",
+    dailyBudget: "",
+    locations: [],
+    creative: {
+      primaryText: "",
+      headline: "",
+      description: "",
+      assetBrief: "",
+      destinationUrl: "",
+      mediaCount: 0,
+      mediaUrl: "",
+      callToAction: "LEARN_MORE",
+    },
+    media: [],
+  }));
+  const [selectedMetaNode, setSelectedMetaNode] = useState<MetaPlanNodeSelection>(() => campaignMetaPlanSelection(metaPlanGraph));
 
   const activeCampaigns = campaigns.filter((campaign) => campaign.status !== "archived");
   const archivedCampaigns = campaigns.filter((campaign) => campaign.status === "archived");
@@ -3181,7 +3486,12 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
     mediaUrl: creativeMediaUrl,
     callToAction: "LEARN_MORE",
   };
+  const creativeMedia = campaignMetaPlanMedia(creativeAssets, creativeMediaUrl);
   const creativeSummary = campaignCreativeBriefSummary(creativeDraft);
+  const metaPlanCounts = campaignMetaPlanCounts(metaPlanGraph);
+  const selectedGraphCampaign = selectedMetaCampaign(metaPlanGraph, selectedMetaNode);
+  const selectedGraphAdSet = selectedMetaAdSet(metaPlanGraph, selectedMetaNode);
+  const selectedGraphAd = selectedMetaAd(metaPlanGraph, selectedMetaNode);
 
   async function loadCampaignSubmissions(campaignId: string) {
     setSubmissionsLoading(true);
@@ -3216,6 +3526,12 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
         }
         return [...current, asset];
       });
+      if (selectedMetaNode.type === "ad") {
+        const media = campaignCreativeAssetPayload(asset);
+        updateMetaPlanAd(selectedMetaNode.id, {
+          media: [...(selectedGraphAd?.media ?? []), media],
+        });
+      }
       if (!creativeAssetBrief.trim()) {
         setCreativeAssetBrief(campaignCreativeAssetName(asset));
       }
@@ -3291,6 +3607,19 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
 
   function removeCampaignCreativeAsset(assetId: string) {
     setCreativeAssets((current) => current.filter((asset) => asset.id !== assetId));
+    setMetaPlanGraph((current) => ({
+      ...current,
+      campaigns: current.campaigns.map((campaign) => ({
+        ...campaign,
+        ad_sets: campaign.ad_sets.map((adSet) => ({
+          ...adSet,
+          ads: adSet.ads.map((ad) => ({
+            ...ad,
+            media: ad.media.filter((media) => media.creative_asset_id !== assetId),
+          })),
+        })),
+      })),
+    }));
   }
 
   async function loadCampaigns() {
@@ -3344,6 +3673,56 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
 
   function closeCreateView() {
     setCampaignView("campaigns");
+  }
+
+  function rebuildMetaPlanGraph(strategy: MetaPlanStrategy = metaPlanStrategy) {
+    const nextGraph = campaignMetaPlanGraphFromStrategy({
+      strategy,
+      campaignName,
+      dailyBudget,
+      locations: campaignLocations,
+      creative: creativeDraft,
+      media: creativeMedia,
+    });
+    setMetaPlanStrategy(strategy);
+    setMetaPlanGraph(nextGraph);
+    setSelectedMetaNode(campaignMetaPlanSelection(nextGraph));
+  }
+
+  function updateMetaPlanCampaign(campaignId: string, patch: Partial<MetaPlanCampaign>) {
+    setMetaPlanGraph((current) => ({
+      ...current,
+      campaigns: current.campaigns.map((campaign) => campaign.id === campaignId ? { ...campaign, ...patch } : campaign),
+    }));
+  }
+
+  function updateMetaPlanAdSet(adSetId: string, patch: Partial<MetaPlanAdSet>) {
+    setMetaPlanGraph((current) => ({
+      ...current,
+      campaigns: current.campaigns.map((campaign) => ({
+        ...campaign,
+        ad_sets: campaign.ad_sets.map((adSet) => adSet.id === adSetId ? { ...adSet, ...patch } : adSet),
+      })),
+    }));
+  }
+
+  function updateMetaPlanAd(adId: string, patch: Partial<MetaPlanAd>) {
+    setMetaPlanGraph((current) => ({
+      ...current,
+      campaigns: current.campaigns.map((campaign) => ({
+        ...campaign,
+        ad_sets: campaign.ad_sets.map((adSet) => ({
+          ...adSet,
+          ads: adSet.ads.map((ad) => ad.id === adId ? { ...ad, ...patch } : ad),
+        })),
+      })),
+    }));
+  }
+
+  function setSelectedAdMedia(media: MetaPlanCreativeMedia[]) {
+    if (selectedMetaNode.type === "ad") {
+      updateMetaPlanAd(selectedMetaNode.id, { media });
+    }
   }
 
   function updateMetaEventsEnabled(enabled: boolean) {
@@ -3545,10 +3924,13 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
       onError(geoError);
       return;
     }
-    const creativeMedia = [
-      ...creativeAssets.map(campaignCreativeAssetPayload),
-      creativeMediaUrl.trim() ? { source: "external_url", media_url: creativeMediaUrl.trim() } : null,
-    ].filter(Boolean);
+    const nextMetaPlanGraph = campaignMetaPlanHydrated(metaPlanGraph, {
+      campaignName: cleanName,
+      dailyBudget,
+      locations,
+      creative: creativeDraft,
+      media: creativeMedia,
+    });
     setSaving(true);
     try {
       const body = {
@@ -3558,6 +3940,7 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
         status: campaignStatus,
         daily_budget_usd: dailyBudget ? Number(dailyBudget) : null,
         geo_targeting: campaignGeoTargeting(locations),
+        meta_plan_graph: nextMetaPlanGraph,
         campaign_info: {
           creative: {
             primary_text: creativeBrief.trim(),
@@ -3610,6 +3993,26 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
       setNewClientEmail("");
       setNewClientExtraInfo("");
       setFields(defaultCampaignFields());
+      const resetGraph = campaignMetaPlanGraphFromStrategy({
+        strategy: "1x1x3",
+        campaignName: "",
+        dailyBudget: "",
+        locations: [],
+        creative: {
+          primaryText: "",
+          headline: "",
+          description: "",
+          assetBrief: "",
+          destinationUrl: "",
+          mediaCount: 0,
+          mediaUrl: "",
+          callToAction: "LEARN_MORE",
+        },
+        media: [],
+      });
+      setMetaPlanStrategy("1x1x3");
+      setMetaPlanGraph(resetGraph);
+      setSelectedMetaNode(campaignMetaPlanSelection(resetGraph));
       setCampaignView("campaigns");
       await loadCampaigns();
       await selectCampaign(payload.campaign.id);
@@ -3660,6 +4063,160 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
 
   async function copyCampaignUrl(campaign: LeadCaptureCampaignItem) {
     await navigator.clipboard.writeText(campaign.public_url);
+  }
+
+  function renderMetaPlanEditor() {
+    if (selectedMetaNode.type === "campaign" && selectedGraphCampaign) {
+      return (
+        <div className="campaign-meta-plan-editor">
+          <div className="campaign-meta-plan-editor-head">
+            <span>Campaign</span>
+            <strong>{selectedGraphCampaign.name}</strong>
+          </div>
+          <div className="campaign-meta-plan-fields">
+            <label className="ct-field">
+              <span>Name</span>
+              <input value={selectedGraphCampaign.name} onChange={(event) => updateMetaPlanCampaign(selectedGraphCampaign.id, { name: event.target.value })} />
+            </label>
+            <label className="ct-field">
+              <span>Budget diario USD</span>
+              <input
+                value={selectedGraphCampaign.budget_daily_usd ?? ""}
+                onChange={(event) => updateMetaPlanCampaign(selectedGraphCampaign.id, { budget_daily_usd: event.target.value ? Number(event.target.value) : null })}
+                inputMode="numeric"
+                placeholder={dailyBudget || "25"}
+              />
+            </label>
+            <label className="ct-field">
+              <span>Objective</span>
+              <select value={selectedGraphCampaign.objective} onChange={(event) => updateMetaPlanCampaign(selectedGraphCampaign.id, { objective: event.target.value })}>
+                <option value="OUTCOME_LEADS">Leads</option>
+                <option value="OUTCOME_TRAFFIC">Traffic</option>
+                <option value="OUTCOME_SALES">Sales</option>
+              </select>
+            </label>
+          </div>
+        </div>
+      );
+    }
+
+    if (selectedMetaNode.type === "ad_set" && selectedGraphAdSet) {
+      return (
+        <div className="campaign-meta-plan-editor">
+          <div className="campaign-meta-plan-editor-head">
+            <span>Ad set</span>
+            <strong>{selectedGraphAdSet.name}</strong>
+          </div>
+          <div className="campaign-meta-plan-fields">
+            <label className="ct-field">
+              <span>Name</span>
+              <input value={selectedGraphAdSet.name} onChange={(event) => updateMetaPlanAdSet(selectedGraphAdSet.id, { name: event.target.value })} />
+            </label>
+            <div className="campaign-control-block campaign-meta-plan-wide">
+              <span>Destination</span>
+              <div className="campaign-segmented" role="group" aria-label="Ad set destination">
+                {[
+                  { value: "form", label: "Form" },
+                  { value: "website", label: "Website" },
+                  { value: "whatsapp", label: "WhatsApp" },
+                ].map((item) => (
+                  <button
+                    type="button"
+                    key={item.value}
+                    className={selectedGraphAdSet.destination_type === item.value ? "is-active" : ""}
+                    onClick={() => updateMetaPlanAdSet(selectedGraphAdSet.id, { destination_type: item.value as MetaPlanAdSet["destination_type"] })}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <label className="ct-field">
+              <span>Performance goal</span>
+              <select value={selectedGraphAdSet.optimization_goal} onChange={(event) => updateMetaPlanAdSet(selectedGraphAdSet.id, { optimization_goal: event.target.value, performance_goal: event.target.value })}>
+                <option value="LEAD_GENERATION">Lead generation</option>
+                <option value="OFFSITE_CONVERSIONS">Pixel Lead</option>
+                <option value="LINK_CLICKS">Link clicks</option>
+              </select>
+            </label>
+            <label className="ct-field">
+              <span>Facebook Page ID</span>
+              <input value={selectedGraphAdSet.page_id || ""} onChange={(event) => updateMetaPlanAdSet(selectedGraphAdSet.id, { page_id: event.target.value })} placeholder="Optional until publish" />
+            </label>
+            <label className="ct-field">
+              <span>Instagram Actor ID</span>
+              <input value={selectedGraphAdSet.instagram_actor_id || ""} onChange={(event) => updateMetaPlanAdSet(selectedGraphAdSet.id, { instagram_actor_id: event.target.value })} placeholder="Optional" />
+            </label>
+            {selectedGraphAdSet.destination_type === "website" ? (
+              <label className="ct-field campaign-meta-plan-wide">
+                <span>Website URL</span>
+                <input value={selectedGraphAdSet.landing_page_url || ""} onChange={(event) => updateMetaPlanAdSet(selectedGraphAdSet.id, { landing_page_url: event.target.value })} placeholder="https://..." />
+              </label>
+            ) : null}
+            {selectedGraphAdSet.destination_type === "whatsapp" ? (
+              <label className="ct-field campaign-meta-plan-wide">
+                <span>WhatsApp Phone Number ID</span>
+                <input value={selectedGraphAdSet.whatsapp_phone_number_id || ""} onChange={(event) => updateMetaPlanAdSet(selectedGraphAdSet.id, { whatsapp_phone_number_id: event.target.value })} placeholder="Meta phone number id" />
+              </label>
+            ) : null}
+          </div>
+        </div>
+      );
+    }
+
+    if (selectedMetaNode.type === "ad" && selectedGraphAd) {
+      return (
+        <div className="campaign-meta-plan-editor">
+          <div className="campaign-meta-plan-editor-head">
+            <span>Ad</span>
+            <strong>{selectedGraphAd.name}</strong>
+          </div>
+          <div className="campaign-meta-plan-fields">
+            <label className="ct-field">
+              <span>Name</span>
+              <input value={selectedGraphAd.name} onChange={(event) => updateMetaPlanAd(selectedGraphAd.id, { name: event.target.value })} />
+            </label>
+            <label className="ct-field">
+              <span>CTA</span>
+              <select value={selectedGraphAd.call_to_action} onChange={(event) => updateMetaPlanAd(selectedGraphAd.id, { call_to_action: event.target.value })}>
+                <option value="LEARN_MORE">Learn more</option>
+                <option value="SIGN_UP">Sign up</option>
+                <option value="CONTACT_US">Contact us</option>
+                <option value="WHATSAPP_MESSAGE">WhatsApp</option>
+              </select>
+            </label>
+            <label className="ct-field campaign-meta-plan-wide">
+              <span>Primary text</span>
+              <textarea value={selectedGraphAd.primary_text} onChange={(event) => updateMetaPlanAd(selectedGraphAd.id, { primary_text: event.target.value })} rows={3} placeholder="Main ad text" />
+            </label>
+            <label className="ct-field">
+              <span>Headline</span>
+              <input value={selectedGraphAd.headline} onChange={(event) => updateMetaPlanAd(selectedGraphAd.id, { headline: event.target.value })} placeholder="Short title" />
+            </label>
+            <label className="ct-field">
+              <span>Description</span>
+              <input value={selectedGraphAd.description} onChange={(event) => updateMetaPlanAd(selectedGraphAd.id, { description: event.target.value })} placeholder="Optional line" />
+            </label>
+            <label className="ct-field campaign-meta-plan-wide">
+              <span>Redirect URL</span>
+              <input value={selectedGraphAd.destination_url} onChange={(event) => updateMetaPlanAd(selectedGraphAd.id, { destination_url: event.target.value })} placeholder="https://..." />
+            </label>
+            <div className="campaign-meta-plan-media campaign-meta-plan-wide">
+              <div>
+                <span>Media</span>
+                <strong>{compactNumber(selectedGraphAd.media.length)} attached</strong>
+              </div>
+              <button type="button" className="ct-btn ct-btn-ghost" onClick={() => setSelectedAdMedia(creativeMedia)} disabled={!creativeMedia.length}>
+                <UploadSimple size={13} weight="bold" />
+                Use uploaded media
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    return <CtEmptyState compact title="Select a node" message="Choose a campaign, ad set, or ad." />;
   }
 
   function renderCampaignCard(campaign: LeadCaptureCampaignItem) {
@@ -3749,11 +4306,80 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
             </button>
           </div>
           <div className="campaign-create-main">
+            <section className="campaign-create-section campaign-section-plan">
+              <div className="campaign-section-side">
+                <span className="campaign-section-icon"><Megaphone size={16} weight="bold" /></span>
+                <div>
+                  <strong>1. Meta plan</strong>
+                  <small>{metaPlanCounts.campaigns} campaigns · {metaPlanCounts.adSets} ad sets · {metaPlanCounts.ads} ads</small>
+                </div>
+              </div>
+              <div className="campaign-section-body campaign-meta-plan">
+                <div className="campaign-meta-plan-toolbar">
+                  <div className="campaign-segmented" role="group" aria-label="Meta plan strategy">
+                    {metaPlanStrategies.map((strategy) => (
+                      <button
+                        type="button"
+                        key={strategy.value}
+                        className={metaPlanStrategy === strategy.value ? "is-active" : ""}
+                        onClick={() => rebuildMetaPlanGraph(strategy.value)}
+                      >
+                        {strategy.label}
+                      </button>
+                    ))}
+                  </div>
+                  <button type="button" className="ct-btn ct-btn-ghost" onClick={() => rebuildMetaPlanGraph(metaPlanStrategy)}>
+                    Rebuild
+                  </button>
+                </div>
+                <div className="campaign-meta-plan-grid">
+                  <div className="campaign-meta-plan-tree" aria-label="Meta plan tree">
+                    {metaPlanGraph.campaigns.map((campaign) => (
+                      <div className="campaign-meta-plan-campaign" key={campaign.id}>
+                        <button
+                          type="button"
+                          className={selectedMetaNode.type === "campaign" && selectedMetaNode.id === campaign.id ? "active" : ""}
+                          onClick={() => setSelectedMetaNode({ type: "campaign", id: campaign.id })}
+                        >
+                          <span>Campaign</span>
+                          <strong>{campaign.name}</strong>
+                        </button>
+                        {campaign.ad_sets.map((adSet) => (
+                          <div className="campaign-meta-plan-adset" key={adSet.id}>
+                            <button
+                              type="button"
+                              className={selectedMetaNode.type === "ad_set" && selectedMetaNode.id === adSet.id ? "active" : ""}
+                              onClick={() => setSelectedMetaNode({ type: "ad_set", id: adSet.id })}
+                            >
+                              <span>Ad set · {humanize(adSet.destination_type)}</span>
+                              <strong>{adSet.name}</strong>
+                            </button>
+                            {adSet.ads.map((ad) => (
+                              <button
+                                type="button"
+                                className={`campaign-meta-plan-ad ${selectedMetaNode.type === "ad" && selectedMetaNode.id === ad.id ? "active" : ""}`}
+                                key={ad.id}
+                                onClick={() => setSelectedMetaNode({ type: "ad", id: ad.id })}
+                              >
+                                <span>Ad</span>
+                                <strong>{ad.name}</strong>
+                              </button>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                  {renderMetaPlanEditor()}
+                </div>
+              </div>
+            </section>
+
             <section className="campaign-create-section campaign-section-basics">
               <div className="campaign-section-side">
                 <span className="campaign-section-icon"><NotePencil size={16} weight="bold" /></span>
                 <div>
-                  <strong>1. Basics</strong>
+                  <strong>2. Basics</strong>
                   <small>Name, status and budget</small>
                 </div>
               </div>
@@ -3783,7 +4409,7 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
               <div className="campaign-section-side">
                 <span className="campaign-section-icon"><Megaphone size={16} weight="bold" /></span>
                 <div>
-                  <strong>2. Ubicacion</strong>
+                  <strong>3. Ubicacion</strong>
                   <small>Pais o provincia</small>
                 </div>
               </div>
@@ -3861,7 +4487,7 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
               <div className="campaign-section-side">
                 <span className="campaign-section-icon"><ChatCircleText size={16} weight="bold" /></span>
                 <div>
-                  <strong>3. Client</strong>
+                  <strong>4. Client</strong>
                   <small>Existing or new</small>
                 </div>
               </div>
@@ -3936,7 +4562,7 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
               <div className="campaign-section-side">
                 <span className="campaign-section-icon"><PaperPlaneTilt size={16} weight="bold" /></span>
                 <div>
-                  <strong>4. Delivery</strong>
+                  <strong>5. Delivery</strong>
                   <small>WhatsApp templates</small>
                 </div>
               </div>
@@ -3996,7 +4622,7 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
               <div className="campaign-section-side">
                 <span className="campaign-section-icon"><Camera size={16} weight="bold" /></span>
                 <div>
-                  <strong>5. Creative</strong>
+                  <strong>6. Creative</strong>
                   <small>Media and copy</small>
                 </div>
               </div>
@@ -4055,7 +4681,17 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
                 ) : null}
                 <label className="ct-field campaign-creative-primary">
                   <span>Media URL (optional)</span>
-                  <input value={creativeMediaUrl} onChange={(event) => setCreativeMediaUrl(event.target.value)} placeholder="https://.../ad-image.png" />
+                  <input
+                    value={creativeMediaUrl}
+                    onChange={(event) => {
+                      const nextUrl = event.target.value;
+                      setCreativeMediaUrl(nextUrl);
+                      if (selectedMetaNode.type === "ad") {
+                        setSelectedAdMedia(campaignMetaPlanMedia(creativeAssets, nextUrl));
+                      }
+                    }}
+                    placeholder="https://.../ad-image.png"
+                  />
                 </label>
                 <label className="ct-field campaign-creative-primary">
                   <span>Primary text</span>
@@ -4084,7 +4720,7 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
               <div className="campaign-section-side">
                 <span className="campaign-section-icon"><ListChecks size={16} weight="bold" /></span>
                 <div>
-                  <strong>6. Form fields</strong>
+                  <strong>7. Form fields</strong>
                   <small>{fields.length} fields</small>
                 </div>
               </div>
@@ -4154,7 +4790,7 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
               <div className="campaign-section-side">
                 <span className="campaign-section-icon"><Pulse size={16} weight="bold" /></span>
                 <div>
-                  <strong>7. Meta</strong>
+                  <strong>8. Meta</strong>
                   <small>Submit tracking</small>
                 </div>
               </div>
@@ -4350,6 +4986,35 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
                 )}
                 <button type="button" className="ct-btn ct-btn-ghost" disabled={saving || selectedCampaign.status === "archived"} onClick={() => void refreshDeliverySource(selectedCampaign)}>Delivery source</button>
               </div>
+
+              {selectedCampaign.meta_plan_graph ? (
+                <section className="campaign-plan-readonly">
+                  <div className="campaign-submissions-head">
+                    <strong>Meta plan</strong>
+                    <span>
+                      {campaignMetaPlanCounts(selectedCampaign.meta_plan_graph).campaigns} campaigns · {campaignMetaPlanCounts(selectedCampaign.meta_plan_graph).adSets} ad sets · {campaignMetaPlanCounts(selectedCampaign.meta_plan_graph).ads} ads
+                    </span>
+                  </div>
+                  <div className="campaign-plan-readonly-tree">
+                    {selectedCampaign.meta_plan_graph.campaigns.map((campaign) => (
+                      <article key={campaign.id}>
+                        <div>
+                          <span>Campaign</span>
+                          <strong>{campaign.name}</strong>
+                          <small>{campaign.budget_daily_usd ? `USD ${campaign.budget_daily_usd}` : "No budget"} · {humanize(campaign.status)}</small>
+                        </div>
+                        {campaign.ad_sets.map((adSet) => (
+                          <div className="campaign-plan-readonly-adset" key={adSet.id}>
+                            <span>Ad set · {humanize(adSet.destination_type)}</span>
+                            <strong>{adSet.name}</strong>
+                            <small>{adSet.ads.length} ads · {humanize(adSet.optimization_goal)}</small>
+                          </div>
+                        ))}
+                      </article>
+                    ))}
+                  </div>
+                </section>
+              ) : null}
 
               <section className="campaign-media-panel">
                 <div className="campaign-submissions-head">

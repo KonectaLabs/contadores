@@ -457,7 +457,7 @@ def _plan_blockers(plan: dict[str, Any]) -> list[str]:
         _require(isinstance(ad_set.get("targeting"), dict) and bool(ad_set.get("targeting")), f"{prefix}.targeting", blocked)
         optimization_goal = _clean(ad_set.get("optimization_goal")).upper()
         if optimization_goal in {"OFFSITE_CONVERSIONS", "CONVERSIONS"}:
-            promoted_object = _ad_set_promoted_object(destination, ad_set)
+            promoted_object = _ad_set_promoted_object(_ad_set_destination(destination, ad_set), ad_set)
             _require(bool(_clean(promoted_object.get("pixel_id"))), f"{prefix}.promoted_object.pixel_id", blocked)
             _require(
                 bool(_clean(promoted_object.get("custom_event_type"))),
@@ -650,6 +650,12 @@ def _destination_promoted_object(destination: dict[str, Any]) -> dict[str, Any]:
     return {"page_id": _clean(destination.get("page_id")), "landing_page_url": _clean(destination.get("landing_page_url"))}
 
 
+def _ad_set_destination(plan_destination: dict[str, Any], ad_set: dict[str, Any]) -> dict[str, Any]:
+    """Return an ad-set destination override when the staged graph provides one."""
+    destination = ad_set.get("destination") if isinstance(ad_set.get("destination"), dict) else {}
+    return destination or plan_destination
+
+
 def _ad_set_promoted_object(destination: dict[str, Any], ad_set: dict[str, Any]) -> dict[str, Any]:
     """Return an ad-set promoted object, preferring explicit pixel optimization."""
     promoted_object = ad_set.get("promoted_object") if isinstance(ad_set.get("promoted_object"), dict) else {}
@@ -663,8 +669,14 @@ def _ad_set_promoted_object(destination: dict[str, Any], ad_set: dict[str, Any])
     return _destination_promoted_object(destination)
 
 
-def _creative_params(plan: dict[str, Any], creative: dict[str, Any], name: str) -> dict[str, Any]:
-    destination = plan.get("destination") if isinstance(plan.get("destination"), dict) else {}
+def _creative_params(
+    plan: dict[str, Any],
+    creative: dict[str, Any],
+    name: str,
+    *,
+    destination_override: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    destination = destination_override or (plan.get("destination") if isinstance(plan.get("destination"), dict) else {})
     destination_type = _clean(destination.get("destination_type")) or "whatsapp"
     page_id = _clean(destination.get("page_id"))
     call_to_action = _clean(creative.get("call_to_action"))
@@ -745,6 +757,7 @@ def build_meta_publish_operations(plan: dict[str, Any], *, live_write: bool = Fa
     for ad_set_index, ad_set in enumerate(ad_sets, start=1):
         if not isinstance(ad_set, dict):
             continue
+        ad_set_destination = _ad_set_destination(destination, ad_set)
         ad_set_ref = f"ad_set_{ad_set_index}"
         params: dict[str, Any] = {
             "name": _clean(ad_set.get("name")),
@@ -754,7 +767,7 @@ def build_meta_publish_operations(plan: dict[str, Any], *, live_write: bool = Fa
             "billing_event": _clean(ad_set.get("billing_event")) or "IMPRESSIONS",
             "bid_strategy": _clean(ad_set.get("bid_strategy")) or "LOWEST_COST_WITHOUT_CAP",
             "targeting": ad_set.get("targeting") if isinstance(ad_set.get("targeting"), dict) else {},
-            "promoted_object": _ad_set_promoted_object(destination, ad_set),
+            "promoted_object": _ad_set_promoted_object(ad_set_destination, ad_set),
         }
         daily_budget = _money_to_minor_units(ad_set.get("budget_daily_usd"))
         total_budget = _money_to_minor_units(ad_set.get("budget_total_usd"))
@@ -807,7 +820,12 @@ def build_meta_publish_operations(plan: dict[str, Any], *, live_write: bool = Fa
                         path=f"/{ad_account_id}/adcreatives",
                         depends_on=[ad_set_ref],
                         live_write=live_write,
-                        params=_creative_params(plan, creative, _clean(creative.get("name")) or _clean(ad.get("name"))),
+                        params=_creative_params(
+                            plan,
+                            creative,
+                            _clean(creative.get("name")) or _clean(ad.get("name")),
+                            destination_override=ad_set_destination,
+                        ),
                     )
                 )
                 step += 1

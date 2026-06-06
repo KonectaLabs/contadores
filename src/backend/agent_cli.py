@@ -27,7 +27,7 @@ INTERNAL_TOKEN_ENV = "CONTADORES_AGENT_INTERNAL_TOKEN"
 CONFIG_MODE = stat.S_IRUSR | stat.S_IWUSR
 API_PREFIX = "/api/agent"
 LOCAL_CALLBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
-CAMPAIGN_GEO_SUPPORTED_COUNTRIES = {"AR", "UY", "CL", "PY", "BO", "PE", "CO", "EC", "MX", "US", "ES"}
+CAMPAIGN_GEO_SUPPORTED_COUNTRIES = {"AR", "UY", "CL", "PY", "BO", "PE", "CO", "EC", "MX", "US", "ES", "DE"}
 CAMPAIGN_GEO_MAX_AREAS_PER_KIND = 20
 CAMPAIGN_GEO_NAME_MAX_LENGTH = 96
 CAMPAIGN_GEO_NAME_RE = re.compile(r"^[A-Za-zÀ-ÖØ-öø-ÿ0-9][A-Za-zÀ-ÖØ-öø-ÿ0-9 .,'()/-]{0,95}$")
@@ -43,6 +43,8 @@ followup_app = typer.Typer(no_args_is_help=True, help="Schedule future agent fol
 tool_app = typer.Typer(no_args_is_help=True, help="List and call audited tools.")
 clients_app = typer.Typer(no_args_is_help=True, help="Create and list converted clients.")
 campaigns_app = typer.Typer(no_args_is_help=True, help="Manage owned campaign forms.")
+campaign_graph_app = typer.Typer(no_args_is_help=True, help="Manage Campaign > Ad Set > Ad graphs.")
+campaign_publish_app = typer.Typer(no_args_is_help=True, help="Stage and publish Meta campaign plans.")
 meta_app = typer.Typer(no_args_is_help=True, help="Inspect Meta API readiness and inventory.")
 
 
@@ -233,6 +235,21 @@ def parse_json_object(value: str) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise AgentCliError("--json must be a JSON object.")
     return parsed
+
+
+def parse_json_object_or_file(value: str, *, option_name: str) -> dict[str, Any]:
+    """Parse a JSON object from an inline value or @/path/to/file.json."""
+    clean_value = (value or "").strip()
+    if clean_value.startswith("@"):
+        path = Path(clean_value[1:]).expanduser()
+        try:
+            clean_value = path.read_text(encoding="utf-8")
+        except OSError as error:
+            raise AgentCliError(f"Could not read {option_name} file: {error}") from error
+    try:
+        return parse_json_object(clean_value)
+    except AgentCliError as error:
+        raise AgentCliError(str(error).replace("--json", option_name)) from error
 
 
 def profile_from_payload(
@@ -897,6 +914,7 @@ def campaigns_create(
     location: str | None = typer.Option(None, "--location", help="Legacy display-only location fallback."),
     creative_brief: str | None = typer.Option(None, "--creative-brief"),
     campaign_info_json: str = typer.Option("{}", "--campaign-info-json", help="Campaign metadata JSON object."),
+    graph_json: str | None = typer.Option(None, "--graph-json", help="Meta plan graph JSON object or @file."),
     form_schema_json: str = typer.Option("{}", "--form-schema-json", help="Public form schema JSON object."),
     thank_you_title: str = typer.Option("Gracias", "--thank-you-title"),
     thank_you_body: str = typer.Option(
@@ -910,6 +928,7 @@ def campaigns_create(
     """Create one owned public campaign form."""
     try:
         campaign_info = parse_json_object(campaign_info_json)
+        meta_plan_graph = parse_json_object_or_file(graph_json, option_name="--graph-json") if graph_json else None
         form_schema = parse_json_object(form_schema_json)
         geo_targeting_override = parse_json_object(geo_targeting_json) if geo_targeting_json else None
     except AgentCliError as error:
@@ -952,6 +971,7 @@ def campaigns_create(
                     "geo_targeting": geo_targeting,
                     "creative_brief": creative_brief,
                     "campaign_info": campaign_info,
+                    "meta_plan_graph": meta_plan_graph,
                     "form_schema": form_schema,
                     "thank_you_title": thank_you_title,
                     "thank_you_body": thank_you_body,
@@ -987,6 +1007,167 @@ def campaigns_delivery_source(campaign_id: str) -> None:
             "POST",
             api_path("campaigns", campaign_id, "delivery-source"),
         )
+    )
+
+
+@campaign_graph_app.command("get")
+def campaign_graph_get(campaign_id: str) -> None:
+    """Fetch the saved Campaign > Ad Set > Ad graph."""
+    run_api_call(lambda client: client.request("GET", api_path("campaigns", campaign_id, "graph")))
+
+
+@campaign_graph_app.command("set")
+def campaign_graph_set(
+    campaign_id: str,
+    graph_json: str = typer.Option(..., "--graph-json", help="Meta plan graph JSON object or @file."),
+) -> None:
+    """Replace the saved Campaign > Ad Set > Ad graph."""
+    try:
+        graph = parse_json_object_or_file(graph_json, option_name="--graph-json")
+    except AgentCliError as error:
+        exit_with_error(error)
+    run_api_call(
+        lambda client: client.request(
+            "PUT",
+            api_path("campaigns", campaign_id, "graph"),
+            json_body={"meta_plan_graph": graph},
+        )
+    )
+
+
+@campaign_graph_app.command("duplicate")
+def campaign_graph_duplicate(
+    campaign_id: str,
+    node_type: str = typer.Option(..., "--node-type", help="campaign, ad_set, or ad."),
+    node_id: str = typer.Option(..., "--node-id", help="ID of the graph node to duplicate."),
+    target_parent_id: str = typer.Option("", "--target-parent-id", help="Optional target campaign/ad_set parent id."),
+    overrides_json: str | None = typer.Option(None, "--overrides-json", help="JSON object or @file applied to the duplicate."),
+) -> None:
+    """Duplicate one graph node and apply explicit overrides."""
+    clean_node_type = node_type.strip().lower()
+    if clean_node_type not in {"campaign", "ad_set", "ad"}:
+        exit_with_error(AgentCliError("--node-type must be campaign, ad_set, or ad."))
+    try:
+        overrides = parse_json_object_or_file(overrides_json, option_name="--overrides-json") if overrides_json else {}
+    except AgentCliError as error:
+        exit_with_error(error)
+    run_api_call(
+        lambda client: client.request(
+            "POST",
+            api_path("campaigns", campaign_id, "graph", "duplicate"),
+            json_body=clean_params(
+                {
+                    "node_type": clean_node_type,
+                    "node_id": node_id,
+                    "target_parent_id": target_parent_id,
+                    "overrides": overrides,
+                }
+            ),
+        )
+    )
+
+
+@campaign_graph_app.command("stage-meta-plan")
+def campaign_graph_stage_meta_plan(
+    campaign_id: str,
+    ad_account_id: str = typer.Option("", "--ad-account-id"),
+    notes: str = typer.Option("", "--notes"),
+    idempotency_key: str | None = typer.Option(None, "--idempotency-key"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+) -> None:
+    """Stage the saved graph into audited Meta publish attempts."""
+    run_api_call(
+        lambda client: client.request(
+            "POST",
+            api_path("campaigns", campaign_id, "meta-plan", "stage"),
+            json_body=clean_params(
+                {
+                    "ad_account_id": ad_account_id,
+                    "notes": notes,
+                    "idempotency_key": idempotency_key,
+                    "dry_run": dry_run if dry_run else None,
+                }
+            ),
+        )
+    )
+
+
+def _publish_tool_call(
+    tool_name: str,
+    arguments: dict[str, Any],
+    *,
+    run_id: str,
+    dry_run: bool = False,
+) -> None:
+    run_api_call(
+        lambda client: client.request(
+            "POST",
+            api_path("runs", run_id, "tools", tool_name),
+            json_body=clean_params({"arguments": arguments, "dry_run": dry_run if dry_run else None}),
+        )
+    )
+
+
+@campaign_publish_app.command("preflight")
+def campaign_publish_preflight(
+    attempt_id: str,
+    run_id: str = typer.Option("campaign-publish-cli", "--run-id"),
+    live_writes_requested: bool = typer.Option(False, "--live-writes-requested"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+) -> None:
+    """Preflight one staged Meta publish attempt."""
+    _publish_tool_call(
+        "preflight_meta_publish_plan",
+        {"attempt_id": attempt_id, "live_writes_requested": live_writes_requested},
+        run_id=run_id,
+        dry_run=dry_run,
+    )
+
+
+@campaign_publish_app.command("approve")
+def campaign_publish_approve(
+    attempt_id: str,
+    approved_by: str = typer.Option(..., "--approved-by"),
+    approval_note: str = typer.Option("", "--approval-note"),
+    run_id: str = typer.Option("campaign-publish-cli", "--run-id"),
+    approve_live_writes: bool = typer.Option(False, "--approve-live-writes"),
+    require_inventory_ready: bool = typer.Option(True, "--require-inventory-ready/--skip-inventory-ready"),
+    max_daily_budget_usd: int = typer.Option(50, "--max-daily-budget-usd", min=1),
+    max_lifetime_budget_usd: int = typer.Option(1500, "--max-lifetime-budget-usd", min=0),
+    max_estimated_monthly_budget_usd: int = typer.Option(1500, "--max-estimated-monthly-budget-usd", min=1),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+) -> None:
+    """Approve one staged Meta publish attempt."""
+    _publish_tool_call(
+        "approve_meta_publish_plan",
+        {
+            "attempt_id": attempt_id,
+            "approved_by": approved_by,
+            "approval_note": approval_note,
+            "approve_live_writes": approve_live_writes,
+            "require_inventory_ready": require_inventory_ready,
+            "max_daily_budget_usd": max_daily_budget_usd,
+            "max_lifetime_budget_usd": max_lifetime_budget_usd,
+            "max_estimated_monthly_budget_usd": max_estimated_monthly_budget_usd,
+        },
+        run_id=run_id,
+        dry_run=dry_run,
+    )
+
+
+@campaign_publish_app.command("execute")
+def campaign_publish_execute(
+    attempt_id: str,
+    run_id: str = typer.Option("campaign-publish-cli", "--run-id"),
+    live_writes_requested: bool = typer.Option(False, "--live-writes-requested"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+) -> None:
+    """Execute one approved Meta publish attempt through the live-write gate."""
+    _publish_tool_call(
+        "execute_meta_publish_plan",
+        {"attempt_id": attempt_id, "live_writes_requested": live_writes_requested},
+        run_id=run_id,
+        dry_run=dry_run,
     )
 
 
@@ -1054,6 +1235,8 @@ def tool_call(
     )
 
 
+campaigns_app.add_typer(campaign_graph_app, name="graph")
+campaigns_app.add_typer(campaign_publish_app, name="publish")
 app.add_typer(profile_app, name="profile")
 app.add_typer(queues_app, name="queues")
 app.add_typer(conversations_app, name="conversations")

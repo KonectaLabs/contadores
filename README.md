@@ -114,15 +114,29 @@ contadores-agent campaigns geo-search bavaria --country-code DE --kind region
 contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --status active --country-code AR --region "Buenos Aires=OPTION_KEY"
 contadores-agent campaigns create --name "Campaña multi pais" --client-id CLIENT_ID --geo-targeting-json '{"locations":[{"country_code":"AR"},{"country_code":"DE","regions":[{"name":"Bavaria","key":"OPTION_KEY"}]}]}'
 contadores-agent campaigns get CAMPAIGN_ID
+contadores-agent campaigns graph get CAMPAIGN_ID
+contadores-agent campaigns graph set CAMPAIGN_ID --graph-json @meta-plan.json
+contadores-agent campaigns graph duplicate CAMPAIGN_ID --node-type ad --node-id AD_ID --overrides-json '{"headline":"Variante"}'
+contadores-agent campaigns graph stage-meta-plan CAMPAIGN_ID --ad-account-id act_123
+contadores-agent campaigns publish preflight ATTEMPT_ID
+contadores-agent campaigns publish approve ATTEMPT_ID --approved-by facundo --approve-live-writes
+contadores-agent campaigns publish execute ATTEMPT_ID --live-writes-requested
 contadores-agent campaigns delivery-source CAMPAIGN_ID
 contadores-agent campaigns submissions CAMPAIGN_ID --limit 20
 contadores-agent meta readiness
 contadores-agent meta inventory --limit 20
 ```
 
-El CRM tambien expone la pestaña `Ads` para crear campañas owned desde la UI:
-cliente existente o cliente convertido nuevo, presupuesto, localizaciones,
-creativo Meta-style, campos del formulario y tracking Meta opcional por toggle.
+El CRM tambien expone la pestaña `Ads` con dos vistas: `Mis campañas` y
+`Crear campaña`. Cada campaña CRM es un workspace con un formulario owned y un
+grafo Meta versionado en `campaign_info.meta_plan_graph`: `Campaigns -> Ad Sets
+-> Ads`. La creacion empieza por un planner Meta-like con estrategias
+`1 > 1 > 3`, `1 > 3 > 3`, `3 > 3 > 3` o custom. La campaña define presupuesto,
+el ad set define publico/destino/objetivo de rendimiento/Pagina, y el ad define
+media, texto, headline, descripcion, CTA y URL. No hay logica de prompt dentro
+del sistema: el agente externo debe armar JSON y operar por API/CLI.
+El resto del workspace mantiene cliente existente o cliente convertido nuevo,
+localizaciones, campos del formulario y tracking Meta opcional por toggle.
 Los campos arrancan con defaults, pero no hay preguntas bloqueadas: se pueden
 renombrar, cambiar de tipo, marcar optional/required o borrar, incluso nombre y
 WhatsApp.
@@ -252,6 +266,13 @@ Flujo Meta agent-native:
    tambien declara el ruteo: Click-to-WhatsApp usa el funnel y, si ya existe,
    `whatsapp_referral_source_id`; instant forms usan `client_lead_source_id`
    para entrar a Client Lead Delivery.
+   Para campañas owned, preferir el contrato de workspace:
+   `contadores-agent campaigns graph set CAMPAIGN_ID --graph-json @meta-plan.json`
+   y despues `contadores-agent campaigns graph stage-meta-plan CAMPAIGN_ID`.
+   Ese endpoint convierte `campaign_info.meta_plan_graph` a uno o mas
+   `stage_meta_publish_plan`. El destino `form` del grafo es el formulario
+   publico del CRM y se stagea como `landing_page`, para que pixel/CAPI puedan
+   optimizar por el evento `Lead` del submit.
 7. `sync_meta_inventory` lee cuentas, Pages, formularios, pixels, numeros de
    WhatsApp y campanas existentes cuando hay credenciales. Si no se pasan IDs,
    usa `META_AD_ACCOUNT_ID`, `META_BUSINESS_ID`, `META_PAGE_ID` y los IDs de

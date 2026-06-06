@@ -458,6 +458,7 @@ class MetaAdSetPlan(BaseModel):
     optimization_goal: str = "LEAD_GENERATION"
     billing_event: str = "IMPRESSIONS"
     bid_strategy: str = "LOWEST_COST_WITHOUT_CAP"
+    destination: MetaLeadDestinationPlan | None = None
     promoted_object: dict[str, Any] = Field(default_factory=dict)
     targeting: dict[str, Any] = Field(default_factory=dict)
     placements: list[str] = Field(default_factory=list)
@@ -1925,7 +1926,13 @@ def _ad_set_with_campaign_meta_optimization(
 ) -> dict[str, Any]:
     """Apply campaign pixel optimization to one landing-page ad set when enabled."""
     next_ad_set = dict(ad_set)
-    if destination.destination_type != "landing_page" or not meta_optimization.get("enabled"):
+    ad_set_destination = ad_set.get("destination") if isinstance(ad_set.get("destination"), dict) else None
+    effective_destination = (
+        MetaLeadDestinationPlan.model_validate(ad_set_destination)
+        if ad_set_destination is not None
+        else destination
+    )
+    if effective_destination.destination_type != "landing_page" or not meta_optimization.get("enabled"):
         return next_ad_set
     promoted_object = meta_optimization.get("promoted_object")
     if not isinstance(promoted_object, dict) or not promoted_object:

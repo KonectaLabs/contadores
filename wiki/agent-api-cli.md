@@ -12,9 +12,11 @@ contadores-agent messages LEAD_ID
 contadores-agent send LEAD_ID "..."
 contadores-agent action LEAD_ID mark-answered
 contadores-agent clients create --name "Cliente" --whatsapp "+549..."
-contadores-agent campaigns geo-search cordoba --country-code AR --kind city
-contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --status active --country-code AR --region "Buenos Aires" --city "Cordoba=OPTION_KEY"
+contadores-agent campaigns geo-search buenos --country-code AR --kind region
+contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --status active --country-code AR --region "Buenos Aires=OPTION_KEY"
 contadores-agent campaigns get CAMPAIGN_ID
+contadores-agent campaigns graph get CAMPAIGN_ID
+contadores-agent campaigns graph stage-meta-plan CAMPAIGN_ID --ad-account-id act_123
 contadores-agent tool call get_lead_context --json '{"lead_id":"..."}'
 ```
 
@@ -115,6 +117,10 @@ GET   /api/agent/campaigns
 POST  /api/agent/campaigns
 GET   /api/agent/campaigns/{campaign_id}
 PATCH /api/agent/campaigns/{campaign_id}
+GET   /api/agent/campaigns/{campaign_id}/graph
+PUT   /api/agent/campaigns/{campaign_id}/graph
+POST  /api/agent/campaigns/{campaign_id}/graph/duplicate
+POST  /api/agent/campaigns/{campaign_id}/meta-plan/stage
 GET   /api/agent/campaigns/{campaign_id}/submissions
 POST  /api/agent/campaigns/{campaign_id}/delivery-source
 ```
@@ -130,6 +136,17 @@ POST /api/agent/meta/inventory/sync
 configured server IDs. It persists the same audited inventory snapshot as the
 `sync_meta_inventory` tool. Native Meta lead forms require Meta
 `pages_manage_ads`; CRM-owned public forms do not.
+
+Each campaign can carry a versioned `meta_plan_graph` that mirrors Meta's
+working hierarchy: `Campaigns -> Ad Sets -> Ads`. The CRM campaign remains the
+workspace and owns one public form. The graph can contain one or several Meta
+campaigns. Campaign nodes own budget/objective, ad-set nodes own audience,
+destination (`form`, `website`, `whatsapp`), Page/Instagram IDs and performance
+goal, and ad nodes own creative media plus copy. The API does not parse prompts;
+external agents should generate the JSON and call `graph set`, `graph
+duplicate`, and `meta-plan/stage`. A graph destination of `form` means the CRM
+public form URL and stages as a Meta `landing_page`, so pixel/CAPI Lead
+optimization can be applied.
 
 The operator API exposes the same product surface under `/api/campaigns`.
 Creative media uploaded from the Ads creator uses platform asset endpoints:
@@ -153,19 +170,21 @@ POST /api/public/campaigns/{public_slug}/submissions
 Converted client creation requires `name` and `whatsapp`; `email` and
 `extra_info` are optional. Campaigns can link to an existing client with
 `client_id` or create one inline with `client_name` and `client_whatsapp`.
-Campaign geography uses structured `locations`. Each location can be a whole
-country, country + regions/provinces, or country + cities. The UI uses
+Campaign geography uses structured `locations`. The recommended surface is a
+whole country or country + regions/provinces. The UI uses
 search-and-select controls, not persisted freeform text: the API first tries
 Meta Targeting Search when credentials exist, then falls back to local
 suggestions marked as `Local`. Whole-country locations are staged as Meta
-`geo_locations.countries`; region/city locations are only sent as Meta
-`regions`/`cities` when a Meta `key` is present, and they do not imply the
+`geo_locations.countries`; region locations are sent as Meta
+`regions` when a Meta `key` is present, and they do not imply the
 whole country. Use `contadores-agent campaigns geo-search ...` before CLI
-creation; selected values can be passed as `--city "Name=KEY"` or
-`--region "Name=KEY"`, or use `--geo-targeting-json` with `locations` for
-multi-country campaigns. The CLI and API reject unsupported country codes,
-duplicate geography values, more than 20 locations, more than 20 regions or
-20 cities per location, and unsafe characters before creating the campaign.
+creation; selected values can be passed as `--region "Name=KEY"`, or use
+`--geo-targeting-json` with `locations` for multi-country campaigns. Legacy
+city targeting remains accepted by the API/CLI for existing automations, but
+new Ads UI creation intentionally does not expose cities. The CLI and API reject
+unsupported country codes, duplicate geography values, more than 20 locations,
+more than 20 regions per location, and unsafe characters before creating the
+campaign.
 
 Submissions dedupe on `idempotency_key`, record the raw answers, queue Client
 Lead Delivery with existing helpers, and can track Meta when
@@ -199,8 +218,16 @@ contadores-agent clients list --query Cliente
 contadores-agent clients create --name "Cliente" --whatsapp "+549..." --email cliente@example.com
 contadores-agent campaigns list --status active
 contadores-agent campaigns get CAMPAIGN_ID
-contadores-agent campaigns geo-search cordoba --country-code AR --kind city
-contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --status active --country-code AR --region "Buenos Aires" --city "Cordoba=OPTION_KEY"
+contadores-agent campaigns geo-search buenos --country-code AR --kind region
+contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --status active --country-code AR --region "Buenos Aires=OPTION_KEY"
+contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --graph-json @meta-plan.json
+contadores-agent campaigns graph get CAMPAIGN_ID
+contadores-agent campaigns graph set CAMPAIGN_ID --graph-json @meta-plan.json
+contadores-agent campaigns graph duplicate CAMPAIGN_ID --node-type ad_set --node-id ADSET_ID --overrides-json '{"name":"Provincia nueva"}'
+contadores-agent campaigns graph stage-meta-plan CAMPAIGN_ID --ad-account-id act_123
+contadores-agent campaigns publish preflight ATTEMPT_ID
+contadores-agent campaigns publish approve ATTEMPT_ID --approved-by facundo --approve-live-writes
+contadores-agent campaigns publish execute ATTEMPT_ID --live-writes-requested
 contadores-agent campaigns submissions CAMPAIGN_ID --limit 20
 contadores-agent campaigns delivery-source CAMPAIGN_ID
 contadores-agent meta readiness

@@ -29,11 +29,12 @@ agent-native flow first:
    `knowledge.meta_planning`, source snippets, and unresolved questions before
    drafting creatives or a Meta publish plan.
 4. If required Meta fields are missing, stage the plan with
-   `stage_meta_publish_plan`, run `sync_meta_inventory` to check existing
-   account/Page/form/pixel/WhatsApp assets, and ask Facundo through
-   `ask_human_question` for anything still missing; do not invent ad account
-   IDs, Page IDs, WhatsApp phone number IDs, budgets, or special ad category
-   decisions.
+   `contadores-agent campaigns graph stage-meta-plan` for CRM-owned campaign
+   workspaces, or `stage_meta_publish_plan` for lower-level raw plans. Then run
+   `sync_meta_inventory` to check existing account/Page/form/pixel/WhatsApp
+   assets, and ask Facundo through `ask_human_question` for anything still
+   missing; do not invent ad account IDs, Page IDs, WhatsApp phone number IDs,
+   budgets, or special ad category decisions.
 5. After staging and inventory sync, run `preflight_meta_publish_plan` to
    persist the ordered campaign, ad-set, creative, and ad operations. Live
    writes stay blocked unless the platform has explicit approval, credentials,
@@ -47,6 +48,21 @@ agent-native flow first:
 8. Only after approval, credentials, and `META_MARKETING_LIVE_WRITES_ENABLED`,
    run `execute_meta_publish_plan` with `live_writes_requested=true`. It stores
    each Meta provider ID so retries skip already-created objects.
+
+CRM-owned Ads workspace rule:
+
+- Treat the CRM campaign as a workspace with one owned public form and a
+  versioned `meta_plan_graph` in the shape `Campaigns -> Ad Sets -> Ads`.
+- No prompt parsing lives in the platform. External agents should build JSON
+  and use `contadores-agent campaigns create --graph-json`,
+  `campaigns graph set`, `campaigns graph duplicate`, and
+  `campaigns graph stage-meta-plan`.
+- Campaign nodes own budget/objective. Ad-set nodes own audience, destination
+  (`form`, `website`, `whatsapp`), Page/Instagram IDs, and optimization goal.
+  Ad nodes own media, primary text, headline, description, CTA, and URL.
+- Destination `form` means the CRM public form URL, not a native Meta instant
+  form. It stages as `landing_page` so browser Pixel + server CAPI can optimize
+  for the owned form submit event `Lead`.
 
 Validated local Meta defaults for Contadores/Konecta as of 2026-05-31:
 

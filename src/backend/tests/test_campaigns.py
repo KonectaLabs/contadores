@@ -261,6 +261,104 @@ def test_campaign_delivery_keeps_facu_preset_when_client_uses_same_phone(monkeyp
         assert {item["recipient_phone"] for item in campaign["delivery_sources"]} == {"5491153484587"}
 
 
+def test_campaign_meta_plan_graph_crud_duplicate_and_stage(monkeypatch, tmp_path) -> None:
+    """Owned campaigns should expose a first-class Campaign > Ad Set > Ad graph."""
+    configure_contadores_db(monkeypatch, tmp_path)
+
+    graph = {
+        "schema_version": "konecta.meta_plan_graph.v1",
+        "strategy": "1x1x3",
+        "campaigns": [
+            {
+                "id": "campaign_1",
+                "name": "Meta Campania Leads",
+                "budget_daily_usd": 25,
+                "ad_sets": [
+                    {
+                        "id": "adset_1",
+                        "name": "Buenos Aires",
+                        "destination_type": "form",
+                        "audience": {
+                            "locations": [
+                                {"country_code": "AR", "regions": [{"name": "Buenos Aires"}], "cities": []}
+                            ]
+                        },
+                        "ads": [
+                            {
+                                "id": "ad_1",
+                                "name": "Ad oferta",
+                                "primary_text": "Servicio contable para ordenar impuestos.",
+                                "headline": "Ordena tus impuestos",
+                                "description": "Consulta por WhatsApp.",
+                                "call_to_action": "LEARN_MORE",
+                                "media": [{"asset_file_path": "data/test/ad.png", "asset_type": "image"}],
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+
+    with TestClient(app) as client:
+        create_response = client.post(
+            "/api/campaigns",
+            json={
+                **campaign_payload(),
+                "meta_pixel_id": "1234567890",
+                "meta_events_enabled": True,
+                "meta_optimize_for_pixel": True,
+                "meta_optimization": {"enabled": True, "event_name": "Lead"},
+                "meta_plan_graph": graph,
+            },
+        )
+        assert create_response.status_code == 200, create_response.text
+        campaign = create_response.json()["campaign"]
+        assert campaign["meta_plan_graph"]["campaigns"][0]["ad_sets"][0]["destination_type"] == "form"
+        assert campaign["meta_plan_graph"]["campaigns"][0]["ad_sets"][0]["client_lead_source_id"]
+
+        graph_response = client.get(f"/api/campaigns/{campaign['id']}/graph")
+        assert graph_response.status_code == 200
+        saved_graph = graph_response.json()["meta_plan_graph"]
+        assert saved_graph["campaigns"][0]["ad_sets"][0]["targeting"]["geo_locations"]["regions"][0]["name"] == "Buenos Aires"
+
+        duplicate_response = client.post(
+            f"/api/campaigns/{campaign['id']}/graph/duplicate",
+            json={
+                "node_type": "ad",
+                "node_id": "ad_1",
+                "overrides": {"name": "Ad variante", "headline": "Nueva variante"},
+            },
+        )
+        assert duplicate_response.status_code == 200, duplicate_response.text
+        duplicated_ads = duplicate_response.json()["meta_plan_graph"]["campaigns"][0]["ad_sets"][0]["ads"]
+        assert len(duplicated_ads) == 2
+        assert duplicated_ads[1]["headline"] == "Nueva variante"
+
+        dry_stage_response = client.post(
+            f"/api/campaigns/{campaign['id']}/meta-plan/stage",
+            json={"dry_run": True, "ad_account_id": "act_123"},
+        )
+        assert dry_stage_response.status_code == 200, dry_stage_response.text
+        stage_payload = dry_stage_response.json()["stage_payloads"][0]
+        assert stage_payload["destination"]["destination_type"] == "landing_page"
+        assert stage_payload["ad_sets"][0]["destination"]["destination_type"] == "landing_page"
+
+        stage_response = client.post(
+            f"/api/campaigns/{campaign['id']}/meta-plan/stage",
+            json={"ad_account_id": "act_123", "idempotency_key": "stage-meta-plan-test"},
+        )
+        assert stage_response.status_code == 200, stage_response.text
+        attempt = stage_response.json()["attempts"][0]
+        request_payload = attempt["request_payload"]
+        assert request_payload["meta_optimization"]["enabled"] is True
+        assert request_payload["ad_sets"][0]["optimization_goal"] == "OFFSITE_CONVERSIONS"
+        assert request_payload["ad_sets"][0]["promoted_object"] == {
+            "pixel_id": "1234567890",
+            "custom_event_type": "LEAD",
+        }
+
+
 def test_public_submission_skips_delivery_when_campaign_delivery_disabled(monkeypatch, tmp_path) -> None:
     """Disabled campaign Delivery should accept the form without queueing notifications."""
     configure_contadores_db(monkeypatch, tmp_path)

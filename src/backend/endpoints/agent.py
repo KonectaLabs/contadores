@@ -33,6 +33,9 @@ from backend.database import (
 )
 from backend.meta_ads_inventory import sync_meta_inventory
 from backend.endpoints.campaigns import (
+    CampaignMetaPlanDuplicateCommand,
+    CampaignMetaPlanGraphCommand,
+    CampaignMetaPlanStageCommand,
     ConvertedClientCommand,
     LeadCaptureCampaignCommand,
     LeadCaptureCampaignPatchCommand,
@@ -41,8 +44,12 @@ from backend.endpoints.campaigns import (
     _submission_payload,
     create_campaign as create_owned_campaign,
     create_or_reuse_converted_client,
+    duplicate_campaign_meta_plan_node as duplicate_owned_campaign_meta_plan_node,
+    get_campaign_meta_plan_graph as get_owned_campaign_meta_plan_graph,
     refresh_campaign_delivery_source as refresh_owned_campaign_delivery_source,
     search_campaign_geo as search_owned_campaign_geo,
+    set_campaign_meta_plan_graph as set_owned_campaign_meta_plan_graph,
+    stage_campaign_meta_plan_graph as stage_owned_campaign_meta_plan_graph,
 )
 from backend.endpoints.contadores import (
     CANONICAL_CONVERTED_PIPELINE_STAGE,
@@ -840,6 +847,10 @@ async def get_agent_capabilities() -> dict[str, Any]:
                 "POST /api/agent/campaigns",
                 "GET /api/agent/campaigns/{campaign_id}",
                 "PATCH /api/agent/campaigns/{campaign_id}",
+                "GET /api/agent/campaigns/{campaign_id}/graph",
+                "PUT /api/agent/campaigns/{campaign_id}/graph",
+                "POST /api/agent/campaigns/{campaign_id}/graph/duplicate",
+                "POST /api/agent/campaigns/{campaign_id}/meta-plan/stage",
                 "GET /api/agent/campaigns/{campaign_id}/submissions",
                 "POST /api/agent/campaigns/{campaign_id}/delivery-source",
             ],
@@ -971,6 +982,42 @@ async def patch_agent_campaign(
     from backend.endpoints.campaigns import patch_campaign as patch_owned_campaign
 
     return await patch_owned_campaign(request, campaign_id, command)
+
+
+@agent_router.get("/campaigns/{campaign_id}/graph")
+async def get_agent_campaign_graph(request: Request, campaign_id: str) -> dict[str, Any]:
+    """Return the normalized Campaign > Ad Set > Ad graph for one campaign."""
+    return await get_owned_campaign_meta_plan_graph(request, campaign_id)
+
+
+@agent_router.put("/campaigns/{campaign_id}/graph")
+async def set_agent_campaign_graph(
+    request: Request,
+    campaign_id: str,
+    command: CampaignMetaPlanGraphCommand,
+) -> dict[str, Any]:
+    """Replace the saved Campaign > Ad Set > Ad graph."""
+    return await set_owned_campaign_meta_plan_graph(request, campaign_id, command)
+
+
+@agent_router.post("/campaigns/{campaign_id}/graph/duplicate")
+async def duplicate_agent_campaign_graph_node(
+    request: Request,
+    campaign_id: str,
+    command: CampaignMetaPlanDuplicateCommand,
+) -> dict[str, Any]:
+    """Duplicate a Campaign, Ad Set, or Ad node in the saved graph."""
+    return await duplicate_owned_campaign_meta_plan_node(request, campaign_id, command)
+
+
+@agent_router.post("/campaigns/{campaign_id}/meta-plan/stage")
+async def stage_agent_campaign_graph(
+    request: Request,
+    campaign_id: str,
+    command: CampaignMetaPlanStageCommand,
+) -> dict[str, Any]:
+    """Stage the saved graph into audited Meta publish attempts."""
+    return await stage_owned_campaign_meta_plan_graph(request, campaign_id, command)
 
 
 @agent_router.get("/campaigns/{campaign_id}/submissions")

@@ -30,6 +30,8 @@ contadores-agent clients create --name "Cliente" --whatsapp "+549..."
 contadores-agent campaigns geo-search buenos --country-code AR --kind region
 contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --status active --country-code AR --region "Buenos Aires=OPTION_KEY"
 contadores-agent campaigns get CAMPAIGN_ID
+contadores-agent campaigns graph get CAMPAIGN_ID
+contadores-agent campaigns graph stage-meta-plan CAMPAIGN_ID --ad-account-id act_123
 contadores-agent tool call get_lead_context --json '{"lead_id":"..."}'
 ```
 
@@ -60,6 +62,14 @@ contadores-agent clients create --name "Cliente" --whatsapp "+549..." --email cl
 contadores-agent campaigns list --status active
 contadores-agent campaigns geo-search buenos --country-code AR --kind region
 contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --status active --country-code AR --region "Buenos Aires=OPTION_KEY"
+contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --graph-json @meta-plan.json
+contadores-agent campaigns graph get CAMPAIGN_ID
+contadores-agent campaigns graph set CAMPAIGN_ID --graph-json @meta-plan.json
+contadores-agent campaigns graph duplicate CAMPAIGN_ID --node-type ad --node-id AD_ID --overrides-json '{"headline":"Variante"}'
+contadores-agent campaigns graph stage-meta-plan CAMPAIGN_ID --ad-account-id act_123
+contadores-agent campaigns publish preflight ATTEMPT_ID
+contadores-agent campaigns publish approve ATTEMPT_ID --approved-by facundo --approve-live-writes
+contadores-agent campaigns publish execute ATTEMPT_ID --live-writes-requested
 contadores-agent campaigns delivery-source CAMPAIGN_ID
 contadores-agent campaigns submissions CAMPAIGN_ID --limit 20
 contadores-agent meta readiness
@@ -73,6 +83,14 @@ to paste a pixel per campaign: campaign creation auto-resolves the pixel from
 `META_PIXEL_ID`, `META_DEFAULT_PIXEL_ID`, `META_MARKETING_PIXEL_ID`, or the
 latest `sync_meta_inventory` snapshot. Public owned forms also load browser
 Pixel on accepted submissions and use the same submission `event_id` as CAPI.
+Each owned campaign also carries a deterministic Meta `meta_plan_graph`:
+`Campaigns -> Ad Sets -> Ads`. The platform does not parse prompts. External
+agents should build/edit JSON through `campaigns graph set` and
+`campaigns graph duplicate`, then stage through `campaigns graph
+stage-meta-plan`. Campaign nodes own budget/objective, ad-set nodes own
+audience/destination/Page/performance goal, and ad nodes own media/copy/CTA/URL.
+Destination `form` means the CRM public form and stages as `landing_page`, so
+Meta can optimize for the owned form submit event when pixel optimization is on.
 Campaign Delivery is configured inline on the campaign: a toggle enables or
 disables WhatsApp template delivery, the campaign client is the default
 recipient, and multiple preset or custom recipients can be selected. The backend

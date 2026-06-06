@@ -35,6 +35,13 @@ from backend.database import (
     normalize_email,
     normalize_phone,
 )
+from backend.campaign_meta_plan import (
+    META_PLAN_GRAPH_KEY,
+    campaign_info_with_meta_plan_graph,
+    duplicate_meta_plan_node,
+    meta_plan_graph_to_stage_payloads,
+    normalize_meta_plan_graph,
+)
 from backend.endpoints.client_leads import (
     build_context_text_from_row,
     build_notification_text,
@@ -43,6 +50,7 @@ from backend.endpoints.client_leads import (
     format_timestamp_seconds,
 )
 from backend.meta_conversions import build_user_data, send_meta_conversion_event
+from backend.ai.codex_agent_tools import stage_meta_publish_plan
 
 
 campaigns_router = APIRouter(prefix="/api/campaigns", tags=["campaigns"])
@@ -276,6 +284,30 @@ class CampaignMetaOptimizationCommand(BaseModel):
     event_name: str = DEFAULT_META_EVENT_NAME
 
 
+class CampaignMetaPlanGraphCommand(BaseModel):
+    """Replace the CRM-owned Meta campaign/adset/ad graph."""
+
+    meta_plan_graph: dict[str, Any] = Field(default_factory=dict)
+
+
+class CampaignMetaPlanDuplicateCommand(BaseModel):
+    """Duplicate one Campaign, Ad Set, or Ad node in the graph."""
+
+    node_type: str = Field(pattern="^(campaign|ad_set|ad)$")
+    node_id: str = Field(min_length=1, max_length=120)
+    target_parent_id: str = Field(default="", max_length=120)
+    overrides: dict[str, Any] = Field(default_factory=dict)
+
+
+class CampaignMetaPlanStageCommand(BaseModel):
+    """Stage the saved Meta graph into audited Meta publish attempts."""
+
+    ad_account_id: str = ""
+    notes: str = ""
+    idempotency_key: str | None = Field(default=None, max_length=240)
+    dry_run: bool = False
+
+
 class LeadCaptureCampaignCommand(BaseModel):
     """Create an owned lead-capture campaign."""
 
@@ -288,6 +320,7 @@ class LeadCaptureCampaignCommand(BaseModel):
     budget_currency: str = "USD"
     location: str | None = None
     geo_targeting: CampaignGeoTargetingCommand | None = None
+    meta_plan_graph: dict[str, Any] = Field(default_factory=dict)
     campaign_info: dict[str, Any] = Field(default_factory=dict)
     creative_brief: str | None = None
     form_schema: dict[str, Any] = Field(default_factory=dict)
@@ -315,6 +348,7 @@ class LeadCaptureCampaignPatchCommand(BaseModel):
     budget_currency: str | None = None
     location: str | None = None
     geo_targeting: CampaignGeoTargetingCommand | None = None
+    meta_plan_graph: dict[str, Any] | None = None
     campaign_info: dict[str, Any] | None = None
     creative_brief: str | None = None
     form_schema: dict[str, Any] | None = None
@@ -891,6 +925,18 @@ def _client_payload(client: WorkstationClient | None) -> dict[str, Any] | None:
     }
 
 
+def _campaign_meta_plan_graph(campaign: LeadCaptureCampaign) -> dict[str, Any]:
+    """Return the saved graph or a normalized graph for older flat campaigns."""
+    return normalize_meta_plan_graph(
+        campaign.campaign_info.get(META_PLAN_GRAPH_KEY),
+        campaign_name=campaign.name,
+        daily_budget_usd=campaign.daily_budget_usd,
+        campaign_info=campaign.campaign_info,
+        destination_url=campaign.destination_url,
+        client_lead_source_id=campaign.client_lead_source_id,
+    )
+
+
 def _aggregate_delivery_status(statuses: list[str]) -> str:
     """Return one display status for several delivery attempts."""
     clean = {str(status or "").strip().lower() for status in statuses if str(status or "").strip()}
@@ -995,6 +1041,7 @@ def _campaign_payload(
         "budget_currency": campaign.budget_currency,
         "location": campaign.location,
         "campaign_info": campaign.campaign_info,
+        "meta_plan_graph": _campaign_meta_plan_graph(campaign),
         "creative_brief": campaign.creative_brief,
         "form_schema": campaign.form_schema,
         "thank_you_title": campaign.thank_you_title,
@@ -1641,6 +1688,13 @@ async def create_campaign(request: Request, command: LeadCaptureCampaignCommand)
             event_name=command.meta_event_name or DEFAULT_META_EVENT_NAME,
             enabled=meta_optimization_enabled,
         )
+        campaign_info = campaign_info_with_meta_plan_graph(
+            campaign_info,
+            command.meta_plan_graph,
+            campaign_name=command.name,
+            daily_budget_usd=command.daily_budget_usd,
+            destination_url=command.destination_url or "",
+        )
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     try:
@@ -1673,6 +1727,17 @@ async def create_campaign(request: Request, command: LeadCaptureCampaignCommand)
     sources = ensure_campaign_delivery_sources(campaign)
     if sources and campaign.client_lead_source_id != sources[0].id:
         campaign = LeadCaptureCampaign.update(campaign.id, client_lead_source_id=sources[0].id) or campaign
+    campaign = LeadCaptureCampaign.update(
+        campaign.id,
+        campaign_info=campaign_info_with_meta_plan_graph(
+            campaign.campaign_info,
+            campaign.campaign_info.get(META_PLAN_GRAPH_KEY),
+            campaign_name=campaign.name,
+            daily_budget_usd=campaign.daily_budget_usd,
+            destination_url=campaign.destination_url,
+            client_lead_source_id=campaign.client_lead_source_id,
+        ),
+    ) or campaign
 
     PlatformEvent.add(
         event_type="lead_capture_campaign.created",
@@ -1707,6 +1772,7 @@ async def patch_campaign(
     delivery_config = updates.pop("delivery_config", None)
     meta_optimization = updates.pop("meta_optimization", None)
     meta_optimize_for_pixel = updates.pop("meta_optimize_for_pixel", None)
+    meta_plan_graph = updates.pop("meta_plan_graph", None)
     next_client_id = str(updates.get("client_id", current.client_id) or "").strip()
     next_status = str(updates.get("status", current.status) or "draft").strip().lower()
     linked_client = _validate_campaign_client_link(next_client_id, next_status)
@@ -1762,6 +1828,15 @@ async def patch_campaign(
             event_name=str(updates.get("meta_event_name", current.meta_event_name) or DEFAULT_META_EVENT_NAME),
             enabled=next_meta_optimization_enabled,
         )
+    if meta_plan_graph is not None:
+        updates["campaign_info"] = campaign_info_with_meta_plan_graph(
+            updates.get("campaign_info") if isinstance(updates.get("campaign_info"), dict) else current.campaign_info,
+            meta_plan_graph,
+            campaign_name=str(updates.get("name", current.name) or current.name),
+            daily_budget_usd=updates.get("daily_budget_usd", current.daily_budget_usd),
+            destination_url=str(updates.get("destination_url", current.destination_url) or ""),
+            client_lead_source_id=current.client_lead_source_id,
+        )
     try:
         campaign = LeadCaptureCampaign.update(campaign_id, **updates)
     except ValueError as error:
@@ -1772,6 +1847,127 @@ async def patch_campaign(
     if sources and campaign.client_lead_source_id != sources[0].id:
         campaign = LeadCaptureCampaign.update(campaign.id, client_lead_source_id=sources[0].id) or campaign
     return {"campaign": _campaign_payload(campaign, request=request)}
+
+
+@campaigns_router.get("/{campaign_id}/graph")
+async def get_campaign_meta_plan_graph(request: Request, campaign_id: str) -> dict[str, Any]:
+    """Return the normalized Meta Campaign > Ad Set > Ad graph."""
+    campaign = _get_campaign_or_404(campaign_id)
+    return {
+        "campaign_id": campaign.id,
+        "meta_plan_graph": _campaign_meta_plan_graph(campaign),
+        "campaign": _campaign_payload(campaign, request=request),
+    }
+
+
+@campaigns_router.put("/{campaign_id}/graph")
+async def set_campaign_meta_plan_graph(
+    request: Request,
+    campaign_id: str,
+    command: CampaignMetaPlanGraphCommand,
+) -> dict[str, Any]:
+    """Replace the saved Meta Campaign > Ad Set > Ad graph."""
+    campaign = _get_campaign_or_404(campaign_id)
+    try:
+        campaign_info = campaign_info_with_meta_plan_graph(
+            campaign.campaign_info,
+            command.meta_plan_graph,
+            campaign_name=campaign.name,
+            daily_budget_usd=campaign.daily_budget_usd,
+            destination_url=campaign.destination_url,
+            client_lead_source_id=campaign.client_lead_source_id,
+        )
+        updated = LeadCaptureCampaign.update(campaign.id, campaign_info=campaign_info)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Campaign not found.")
+    return {
+        "campaign_id": updated.id,
+        "meta_plan_graph": _campaign_meta_plan_graph(updated),
+        "campaign": _campaign_payload(updated, request=request),
+    }
+
+
+@campaigns_router.post("/{campaign_id}/graph/duplicate")
+async def duplicate_campaign_meta_plan_node(
+    request: Request,
+    campaign_id: str,
+    command: CampaignMetaPlanDuplicateCommand,
+) -> dict[str, Any]:
+    """Duplicate one node in the saved Meta plan graph and persist it."""
+    campaign = _get_campaign_or_404(campaign_id)
+    try:
+        graph = duplicate_meta_plan_node(
+            _campaign_meta_plan_graph(campaign),
+            node_type=command.node_type,  # type: ignore[arg-type]
+            node_id=command.node_id,
+            target_parent_id=command.target_parent_id,
+            overrides=command.overrides,
+        )
+        campaign_info = campaign_info_with_meta_plan_graph(
+            campaign.campaign_info,
+            graph,
+            campaign_name=campaign.name,
+            daily_budget_usd=campaign.daily_budget_usd,
+            destination_url=campaign.destination_url,
+            client_lead_source_id=campaign.client_lead_source_id,
+        )
+        updated = LeadCaptureCampaign.update(campaign.id, campaign_info=campaign_info)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Campaign not found.")
+    return {
+        "campaign_id": updated.id,
+        "meta_plan_graph": _campaign_meta_plan_graph(updated),
+        "campaign": _campaign_payload(updated, request=request),
+    }
+
+
+@campaigns_router.post("/{campaign_id}/meta-plan/stage")
+async def stage_campaign_meta_plan_graph(
+    request: Request,
+    campaign_id: str,
+    command: CampaignMetaPlanStageCommand,
+) -> dict[str, Any]:
+    """Stage the saved graph into one or more audited Meta publish attempts."""
+    campaign = _get_campaign_or_404(campaign_id)
+    await stage_campaign_meta_plan(request, campaign.id)
+    campaign = _get_campaign_or_404(campaign_id)
+
+    publish_campaign_id = campaign.platform_ad_campaign_id or campaign.id
+    stage_payloads = meta_plan_graph_to_stage_payloads(
+        _campaign_meta_plan_graph(campaign),
+        campaign_id=publish_campaign_id,
+        client_id=campaign.client_id,
+        funnel_id=campaign.funnel_id,
+        ad_account_id=command.ad_account_id or os.getenv("META_AD_ACCOUNT_ID", "").strip(),
+        budget_currency=campaign.budget_currency,
+        public_url=_public_url(request, campaign),
+        client_lead_source_id=campaign.client_lead_source_id,
+        notes=command.notes,
+        idempotency_key=command.idempotency_key,
+    )
+    if command.idempotency_key and len(stage_payloads) > 1:
+        for index, payload in enumerate(stage_payloads, start=1):
+            payload["idempotency_key"] = f"{command.idempotency_key}:{index}"
+
+    if command.dry_run:
+        return {"campaign_id": campaign.id, "dry_run": True, "stage_payloads": stage_payloads}
+
+    results = [stage_meta_publish_plan(payload) for payload in stage_payloads]
+    attempts = [result.get("attempt", {}) for result in results]
+    campaign_info = dict(campaign.campaign_info)
+    campaign_info["meta_publish_attempts"] = attempts
+    updated = LeadCaptureCampaign.update(campaign.id, campaign_info=campaign_info) or campaign
+    return {
+        "campaign_id": updated.id,
+        "stage_payloads": stage_payloads,
+        "attempts": attempts,
+        "results": results,
+        "campaign": _campaign_payload(updated, request=request),
+    }
 
 
 @campaigns_router.post("/{campaign_id}/delivery-source")
