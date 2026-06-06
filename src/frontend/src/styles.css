@@ -3458,8 +3458,13 @@ body.ct-resizing {
 
 #contadoresView .campaign-manager-surface {
   display: grid;
+  grid-template-rows: none;
+  align-content: start;
   gap: 14px;
   min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 #contadoresView .campaign-manager-head,
