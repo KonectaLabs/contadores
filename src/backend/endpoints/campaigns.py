@@ -1551,11 +1551,12 @@ def render_public_form_html(campaign: dict[str, Any]) -> str:
     .option {{ min-height: 58px; border: 1px solid #5d5a54; border-radius: 8px; padding: 0 18px; font-size: 18px; background: transparent; color: #f3eee6; cursor: pointer; text-align: left; transition: transform .18s cubic-bezier(.16, 1, .3, 1), border-color .18s ease, background .18s ease; }}
     .option:hover {{ transform: translateY(-1px); border-color: #f3eee6; background: #2d2c2a; }}
     .option.selected {{ border-color: #f3eee6; background: #f3eee6; color: #242423; }}
-    .actions {{ display: flex; align-items: center; justify-content: flex-start; gap: 12px; margin-top: clamp(28px, 5vw, 56px); }}
+    .actions {{ display: grid; grid-template-columns: minmax(92px, auto) minmax(180px, 260px) minmax(92px, auto); align-items: center; justify-content: center; gap: 14px; margin-top: clamp(32px, 5vw, 60px); }}
     button {{ min-height: 58px; border: 0; border-radius: 8px; padding: 0 24px; font: inherit; font-weight: 800; cursor: pointer; transition: transform .18s cubic-bezier(.16, 1, .3, 1), opacity .18s ease; }}
     button:active {{ transform: translateY(1px) scale(.99); }}
-    .back {{ background: transparent; color: #aaa49b; }}
-    .next, .submit {{ background: #f3eee6; color: #242423; box-shadow: none; }}
+    .back {{ justify-self: end; background: transparent; color: #aaa49b; }}
+    .next, .submit {{ grid-column: 2; justify-self: stretch; display: inline-flex; align-items: center; justify-content: center; gap: 10px; background: #f3eee6; color: #242423; box-shadow: none; }}
+    .next span, .submit span {{ display: inline-flex; align-items: center; font-size: 1.18em; line-height: 1; transform: translateY(-1px); }}
     .next:disabled, .submit:disabled {{ opacity: .58; cursor: not-allowed; box-shadow: none; }}
     .error {{ min-height: 22px; color: #f0a18d; font-size: 14px; font-weight: 700; margin-top: 12px; }}
     .thanks {{ display: none; align-content: center; min-height: 420px; padding: clamp(32px, 8vw, 86px); }}
@@ -1575,7 +1576,10 @@ def render_public_form_html(campaign: dict[str, Any]) -> str:
       label {{ font-size: clamp(29px, 8.8vw, 42px); }}
       label::before {{ min-width: 27px; min-height: 27px; margin-right: 11px; font-size: 14px; transform: translateY(-3px); }}
       input, textarea, select {{ font-size: 26px; }}
-      .actions {{ position: sticky; bottom: 0; background: linear-gradient(180deg, rgba(36, 36, 35, .68), #242423 38%); padding-top: 14px; }}
+      .actions {{ position: sticky; bottom: 0; grid-template-columns: 58px minmax(0, 1fr) 58px; gap: 10px; background: linear-gradient(180deg, rgba(36, 36, 35, .68), #242423 38%); padding-top: 14px; }}
+      .next, .submit {{ min-height: 64px; font-size: 18px; }}
+      .back {{ width: 58px; min-height: 58px; padding: 0; overflow: hidden; color: transparent; }}
+      .back::before {{ content: "\\2190"; color: #aaa49b; font-size: 27px; line-height: 1; }}
     }}
   </style>
 </head>
@@ -1593,8 +1597,8 @@ def render_public_form_html(campaign: dict[str, Any]) -> str:
         <div class="error" id="error"></div>
         <div class="actions">
           <button type="button" class="back" id="backBtn">Atras</button>
-          <button type="button" class="next" id="nextBtn">OK</button>
-          <button type="submit" class="submit" id="submitBtn">Enviar</button>
+          <button type="button" class="next" id="nextBtn">Siguiente <span aria-hidden="true">&rarr;</span></button>
+          <button type="submit" class="submit" id="submitBtn">Enviar <span aria-hidden="true">&rarr;</span></button>
         </div>
       </form>
       <div class="thanks" id="thanks">
@@ -1719,10 +1723,27 @@ def render_public_form_html(campaign: dict[str, Any]) -> str:
       submitBtn.style.display = last ? "inline-flex" : "none";
       progressBar.style.width = `${{fields.length ? ((state.index + 1) / fields.length) * 100 : 100}}%`;
     }}
-    backBtn.addEventListener("click", () => {{ saveCurrent(); state.index = Math.max(0, state.index - 1); showStep(); }});
-    nextBtn.addEventListener("click", () => {{
+    function goNext() {{
       if (!validCurrent()) {{ errorEl.textContent = "Completa este dato para seguir."; return; }}
-      saveCurrent(); state.index = Math.min(fields.length - 1, state.index + 1); showStep();
+      saveCurrent();
+      state.index = Math.min(fields.length - 1, state.index + 1);
+      showStep();
+    }}
+    function submitCurrentStep() {{
+      if (state.index >= fields.length - 1) {{
+        document.getElementById("leadForm").requestSubmit();
+        return;
+      }}
+      goNext();
+    }}
+    backBtn.addEventListener("click", () => {{ saveCurrent(); state.index = Math.max(0, state.index - 1); showStep(); }});
+    nextBtn.addEventListener("click", goNext);
+    document.getElementById("leadForm").addEventListener("keydown", (event) => {{
+      if (event.key !== "Enter" || event.isComposing) return;
+      const tagName = event.target?.tagName?.toLowerCase();
+      if (tagName === "textarea" && !event.metaKey && !event.ctrlKey) return;
+      event.preventDefault();
+      submitCurrentStep();
     }});
     document.getElementById("leadForm").addEventListener("submit", async (event) => {{
       event.preventDefault();

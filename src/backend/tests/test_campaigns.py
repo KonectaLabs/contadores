@@ -332,6 +332,10 @@ def test_public_form_html_escapes_configured_schema(monkeypatch, tmp_path) -> No
 
         assert '</script><div id="owned">' not in html
         assert "${option}</button>" not in html
+        assert ">OK</button>" not in html
+        assert "Siguiente" in html
+        assert 'addEventListener("keydown"' in html
+        assert "requestSubmit()" in html
         assert "escapeHtml(field.label || field.id)" in html
         assert "escapeAttr(option)" in html
 
