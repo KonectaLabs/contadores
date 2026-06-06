@@ -3480,7 +3480,46 @@ body.ct-resizing {
 }
 
 #contadoresView .campaign-manager-head {
+  grid-template-columns: minmax(180px, auto) auto minmax(0, 1fr) auto;
   justify-content: space-between;
+}
+
+#contadoresView .campaign-view-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 4px;
+  border: 1px solid var(--ct-line);
+  border-radius: var(--ct-radius);
+  background: var(--ct-surface-2);
+}
+
+#contadoresView .campaign-view-switch button {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 11px;
+  border: 1px solid transparent;
+  border-radius: var(--ct-radius-sm);
+  background: transparent;
+  color: var(--ct-ink-muted);
+  cursor: pointer;
+  font: 800 12px/1 var(--font-sans);
+  white-space: nowrap;
+}
+
+#contadoresView .campaign-view-switch button:hover {
+  color: var(--ct-accent-strong);
+}
+
+#contadoresView .campaign-view-switch button.active {
+  border-color: color-mix(in srgb, var(--ct-accent) 28%, var(--ct-line));
+  background: color-mix(in srgb, var(--ct-accent) 12%, var(--ct-surface));
+  color: var(--ct-accent-strong);
+  box-shadow: 0 8px 18px rgba(15, 118, 110, 0.08);
 }
 
 #contadoresView .campaign-manager-surface.is-empty {
@@ -3506,6 +3545,7 @@ body.ct-resizing {
 #contadoresView .campaign-manager-metrics {
   flex: 1 1 auto;
   justify-content: flex-end;
+  justify-self: end;
 }
 
 #contadoresView .campaign-create-panel {
@@ -7040,6 +7080,16 @@ body.ct-resizing {
   #contadoresView .campaign-submissions-head {
     flex-wrap: wrap;
     justify-content: flex-start;
+  }
+
+  #contadoresView .campaign-view-switch,
+  #contadoresView .campaign-view-switch button {
+    width: 100%;
+  }
+
+  #contadoresView .campaign-view-switch {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   #contadoresView .campaign-create-section {

@@ -111,7 +111,10 @@ recipient, and multiple preset or custom recipients expand to one
 `ClientLeadSource` per recipient. Each public owned-form submission queues one
 `ClientLeadDelivery` per selected recipient. Deleting an owned campaign from Ads
 archives it (`status=archived`) instead of removing rows, so submissions and ad
-media remain visible under the archived campaign list.
+media remain visible under the archived campaign list. Keep the Ads UI split
+into two explicit views: `Mis campañas` for list/detail/leads/media and
+`Crear campaña` for the creation form; campaign creation should not render
+inside the campaign list/detail view.
 
 If the user gives multiple campaign spreadsheets for the same client, put them
 in `sheets`. Each item supports `id`, `label`, `sheet_url`, `sheet_gid`, and

@@ -89,6 +89,7 @@ type LeadViewFilterOption = {
   tone: "all" | "neutral" | "accent" | "success" | "warn" | "muted";
 };
 type ActiveSection = "crm" | "campaigns" | "workstation" | "delivery";
+type CampaignsPanelView = "campaigns" | "create";
 type LoadWorkstationDetailOptions = {
   syncNotes?: boolean;
   showLoading?: boolean;
@@ -3123,7 +3124,7 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
   const [loading, setLoading] = useState(false);
   const [submissionsLoading, setSubmissionsLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [createOpen, setCreateOpen] = useState(false);
+  const [campaignView, setCampaignView] = useState<CampaignsPanelView>("campaigns");
   const [campaignName, setCampaignName] = useState("");
   const [campaignStatus, setCampaignStatus] = useState("draft");
   const [clientMode, setClientMode] = useState<CampaignClientMode>("new");
@@ -3162,7 +3163,8 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
   const activeCampaigns = campaigns.filter((campaign) => campaign.status !== "archived");
   const archivedCampaigns = campaigns.filter((campaign) => campaign.status === "archived");
   const hasCampaigns = campaigns.length > 0;
-  const showCampaignEmpty = !loading && !createOpen && !hasCampaigns;
+  const isCreateView = campaignView === "create";
+  const showCampaignEmpty = !loading && !hasCampaigns;
   const selectedCampaign = campaigns.find((campaign) => campaign.id === selectedCampaignId) ?? activeCampaigns[0] ?? archivedCampaigns[0] ?? null;
   const selectedClient = clients.find((client) => client.id === existingClientId) ?? null;
   const selectedCampaignDelivery = campaignDeliveryConfigOrDefault(selectedCampaign);
@@ -3333,15 +3335,15 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
     }
   }
 
-  function toggleCreatePanel() {
-    if (createOpen) {
-      setCreateOpen(false);
-      return;
-    }
+  function openCreateView() {
     const metaReady = Boolean(metaDefaults.meta_events_available);
     setMetaEventsEnabled(metaReady);
     setMetaOptimizeForPixel(metaReady);
-    setCreateOpen(true);
+    setCampaignView("create");
+  }
+
+  function closeCreateView() {
+    setCampaignView("campaigns");
   }
 
   function updateMetaEventsEnabled(enabled: boolean) {
@@ -3608,7 +3610,7 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
       setNewClientEmail("");
       setNewClientExtraInfo("");
       setFields(defaultCampaignFields());
-      setCreateOpen(false);
+      setCampaignView("campaigns");
       await loadCampaigns();
       await selectCampaign(payload.campaign.id);
     } catch (reason) {
@@ -3682,12 +3684,34 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
   }
 
   return (
-    <section className={`ct-surface campaign-manager-surface ${showCampaignEmpty ? "is-empty" : ""}`}>
+    <section className={`ct-surface campaign-manager-surface ${showCampaignEmpty && !isCreateView ? "is-empty" : ""}`}>
       <div className="ct-simple-head campaign-manager-head">
         <div className="ct-simple-title">
-          <span>Campaigns</span>
-          <strong>{campaigns.length ? `${compactNumber(campaigns.length)} forms` : "No forms yet"}</strong>
-          <small>{selectedCampaign ? selectedCampaign.name : "Owned lead capture"}</small>
+          <span>Ads</span>
+          <strong>{isCreateView ? "Create campaign" : campaigns.length ? `${compactNumber(campaigns.length)} forms` : "No forms yet"}</strong>
+          <small>{isCreateView ? "New owned lead form" : selectedCampaign ? selectedCampaign.name : "Owned lead capture"}</small>
+        </div>
+        <div className="campaign-view-switch" role="tablist" aria-label="Ads views">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={!isCreateView}
+            className={!isCreateView ? "active" : ""}
+            onClick={closeCreateView}
+          >
+            <ListChecks size={14} weight="bold" />
+            Mis campañas
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={isCreateView}
+            className={isCreateView ? "active" : ""}
+            onClick={openCreateView}
+          >
+            <Plus size={14} weight="bold" />
+            Crear campaña
+          </button>
         </div>
         <div className="ct-simple-metrics campaign-manager-metrics">
           <span><strong>{compactNumber(campaigns.reduce((total, campaign) => total + (campaign.submission_count || 0), 0))}</strong>Leads</span>
@@ -3696,20 +3720,26 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
           <span><strong>{compactNumber(clients.length)}</strong>Clients</span>
         </div>
         <div className="campaign-manager-actions">
-          <button type="button" className="ct-btn ct-btn-ghost" onClick={() => void loadCampaigns()} disabled={loading}>
-            <ArrowsClockwise size={14} weight="bold" />
-            Refresh
-          </button>
-          {hasCampaigns || createOpen ? (
-            <button type="button" className="ct-btn" onClick={toggleCreatePanel}>
-              <Plus size={14} weight="bold" />
-              Campaign
+          {isCreateView ? (
+            <button type="button" className="ct-btn ct-btn-ghost" onClick={closeCreateView}>
+              Mis campañas
             </button>
-          ) : null}
+          ) : (
+            <>
+              <button type="button" className="ct-btn ct-btn-ghost" onClick={() => void loadCampaigns()} disabled={loading}>
+                <ArrowsClockwise size={14} weight="bold" />
+                Refresh
+              </button>
+              <button type="button" className="ct-btn ct-btn-primary" onClick={openCreateView}>
+                <Plus size={14} weight="bold" />
+                New campaign
+              </button>
+            </>
+          )}
         </div>
       </div>
 
-      {createOpen ? (
+      {isCreateView ? (
         <form className="campaign-create-panel campaign-create-studio" onSubmit={createCampaign}>
           <div className="campaign-create-main">
             <section className="campaign-create-section campaign-section-basics">
@@ -4222,14 +4252,14 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
             </section>
 
             <div className="campaign-create-actions">
-              <button type="button" className="ct-btn ct-btn-ghost" onClick={() => setCreateOpen(false)}>Cancel</button>
+              <button type="button" className="ct-btn ct-btn-ghost" onClick={closeCreateView}>Cancel</button>
               <button type="submit" className="ct-btn campaign-create-primary" disabled={saving}>{saving ? "Saving..." : "Create campaign"}</button>
             </div>
           </aside>
         </form>
       ) : null}
 
-      {showCampaignEmpty ? (
+      {!isCreateView && showCampaignEmpty ? (
         <section className="campaign-empty-launchpad" aria-label="Create first campaign">
           <div className="campaign-empty-mark" aria-hidden="true">
             <Megaphone size={34} weight="duotone" />
@@ -4239,7 +4269,7 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
             <strong>Create the first campaign</strong>
             <p>Targeting, client, creative media and the lead form live in one clean flow.</p>
           </div>
-          <button type="button" className="ct-btn campaign-empty-primary" onClick={toggleCreatePanel}>
+          <button type="button" className="ct-btn campaign-empty-primary" onClick={openCreateView}>
             <Plus size={16} weight="bold" />
             Create campaign
           </button>
@@ -4250,7 +4280,7 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
             <span>Meta Lead</span>
           </div>
         </section>
-      ) : (
+      ) : !isCreateView ? (
         <div className="campaign-manager-grid">
           <div className="campaign-list">
             {loading && !campaigns.length ? (
@@ -4469,7 +4499,7 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
             )}
           </div>
         </div>
-      )}
+      ) : null}
     </section>
   );
 }

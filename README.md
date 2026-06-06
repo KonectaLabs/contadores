@@ -145,7 +145,9 @@ nombre de la campaña. Las submissions entran al flujo normal de Client Lead Del
 no se insertan mensajes ni se saltean helpers. El boton de borrar en Ads archiva
 la campaña (`status=archived`) en vez de eliminar filas: queda fuera del listado
 principal, pero sigue disponible bajo `Archived` con sus submissions y media
-subida. Cuando el tracking Meta esta
+subida. La UI de Ads separa dos vistas claras: `Mis campañas` para listar,
+inspeccionar, archivar y ver leads/media, y `Crear campaña` para el formulario
+de alta; no se crea una campaña dentro del listado. Cuando el tracking Meta esta
 habilitado, el backend toma el pixel automaticamente desde `META_PIXEL_ID` /
 `META_DEFAULT_PIXEL_ID` / `META_MARKETING_PIXEL_ID` o desde el ultimo
 `sync_meta_inventory`; el formulario publico carga browser Pixel y el backend
