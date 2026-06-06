@@ -1434,41 +1434,42 @@ def render_public_form_html(campaign: dict[str, Any]) -> str:
     :root {{
       color-scheme: light;
       font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: #fbfbf8;
-      color: #18211e;
+      background: #242423;
+      color: #f3eee6;
     }}
     * {{ box-sizing: border-box; }}
-    body {{ margin: 0; min-height: 100vh; background: radial-gradient(circle at top left, #eef6f1 0, transparent 32rem), #fbfbf8; }}
-    main {{ min-height: 100dvh; display: grid; place-items: center; padding: clamp(18px, 4vw, 54px); }}
-    .form-shell {{ width: min(100%, 860px); min-height: min(760px, calc(100dvh - 36px)); display: grid; grid-template-rows: auto auto 1fr; overflow: hidden; border: 1px solid #dde8e3; border-radius: 8px; background: rgba(255, 255, 255, .92); box-shadow: 0 28px 80px rgba(24, 33, 30, .10), inset 0 1px 0 rgba(255, 255, 255, .88); }}
-    .header {{ display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 24px clamp(22px, 5vw, 58px) 18px; border-bottom: 1px solid #edf2ef; }}
-    .eyebrow {{ margin: 0; font-size: 11px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: #527469; }}
-    h1 {{ max-width: 46ch; margin: 0; overflow: hidden; font-size: clamp(16px, 2.4vw, 22px); line-height: 1.12; letter-spacing: 0; text-overflow: ellipsis; white-space: nowrap; }}
-    .progress {{ height: 2px; background: #e9f0ed; }}
-    .progress > div {{ height: 100%; width: 0%; background: #0f7a5d; transition: width .28s cubic-bezier(.16, 1, .3, 1); }}
-    form {{ display: grid; align-content: center; min-height: 0; padding: clamp(30px, 7vw, 78px) clamp(24px, 8vw, 96px) clamp(24px, 5vw, 54px); }}
-    .step {{ display: none; min-height: 360px; align-content: center; }}
+    body {{ margin: 0; min-height: 100vh; background: #242423; }}
+    main {{ min-height: 100dvh; display: grid; place-items: stretch; padding: 0; }}
+    .form-shell {{ width: min(100%, 1040px); min-height: 100dvh; display: grid; grid-template-rows: auto auto 1fr; overflow: hidden; margin: 0 auto; border: 0; border-radius: 0; background: transparent; box-shadow: none; }}
+    .header {{ display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 28px clamp(24px, 7vw, 82px) 16px; border-bottom: 0; }}
+    .eyebrow {{ margin: 0; font-size: 11px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: #85827b; }}
+    h1 {{ max-width: 46ch; margin: 0; overflow: hidden; color: #b7b1a7; font-size: clamp(14px, 1.8vw, 18px); font-weight: 650; line-height: 1.12; letter-spacing: 0; text-overflow: ellipsis; white-space: nowrap; }}
+    .progress {{ height: 2px; margin: 0 clamp(24px, 7vw, 82px); background: #383735; }}
+    .progress > div {{ height: 100%; width: 0%; background: #f3eee6; transition: width .28s cubic-bezier(.16, 1, .3, 1); }}
+    form {{ display: grid; align-content: center; min-height: 0; padding: clamp(52px, 11vw, 132px) clamp(28px, 9vw, 112px) clamp(28px, 7vw, 72px); }}
+    .step {{ display: none; min-height: 420px; align-content: center; }}
     .step.active {{ display: grid; animation: step-in .32s cubic-bezier(.16, 1, .3, 1); }}
-    .step::before {{ content: attr(data-number); display: block; margin-bottom: 18px; color: #0f7a5d; font-size: 12px; font-weight: 850; letter-spacing: .08em; }}
-    label {{ display: block; max-width: 760px; font-size: clamp(32px, 6.4vw, 58px); font-weight: 820; line-height: .98; letter-spacing: 0; margin: 0 0 clamp(24px, 4vw, 40px); }}
-    input, textarea, select {{ width: 100%; min-height: 64px; border: 0; border-bottom: 2px solid #b9c9c3; border-radius: 0; padding: 12px 0; font: inherit; font-size: clamp(22px, 3vw, 30px); font-weight: 560; color: #18211e; background: transparent; }}
+    label {{ display: block; max-width: 820px; color: #f3eee6; font-size: clamp(32px, 5vw, 52px); font-weight: 500; line-height: 1.12; letter-spacing: 0; margin: 0 0 clamp(34px, 5vw, 56px); }}
+    label::before {{ content: attr(data-number); min-width: 30px; min-height: 30px; display: inline-flex; align-items: center; justify-content: center; margin-right: 16px; transform: translateY(-4px); border-radius: 7px; background: #f3eee6; color: #242423; font-size: 16px; font-weight: 850; line-height: 1; vertical-align: middle; }}
+    input, textarea, select {{ width: 100%; min-height: 68px; border: 0; border-bottom: 2px solid #d8d3ca; border-radius: 0; padding: 12px 0; font: inherit; font-size: clamp(27px, 4vw, 40px); font-weight: 450; color: #f3eee6; caret-color: #f3eee6; background: transparent; }}
     textarea {{ min-height: 150px; resize: vertical; line-height: 1.25; }}
-    input::placeholder, textarea::placeholder {{ color: #8ca19a; }}
-    input:focus, textarea:focus, select:focus {{ outline: none; border-color: #0f7a5d; }}
-    .options {{ display: grid; gap: 10px; max-width: 620px; }}
-    .option {{ min-height: 58px; border: 1px solid #cbd9d4; border-radius: 8px; padding: 0 18px; font-size: 18px; background: rgba(255, 255, 255, .7); color: #18211e; cursor: pointer; text-align: left; transition: transform .18s cubic-bezier(.16, 1, .3, 1), border-color .18s ease, background .18s ease; }}
-    .option:hover {{ transform: translateY(-1px); border-color: #8eb5a8; background: #fff; }}
-    .option.selected {{ border-color: #0f7a5d; background: #eaf6f1; }}
-    .actions {{ display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: clamp(20px, 4vw, 42px); }}
-    button {{ min-height: 48px; border: 0; border-radius: 8px; padding: 0 18px; font: inherit; font-weight: 780; cursor: pointer; }}
-    .back {{ background: transparent; color: #52655f; }}
-    .next, .submit {{ background: #0f7a5d; color: #fff; box-shadow: 0 12px 26px rgba(15, 122, 93, .18); }}
+    input::placeholder, textarea::placeholder {{ color: #6f6d68; }}
+    input:focus, textarea:focus, select:focus {{ outline: none; border-color: #f3eee6; }}
+    .options {{ display: grid; gap: 11px; max-width: 620px; }}
+    .option {{ min-height: 58px; border: 1px solid #5d5a54; border-radius: 8px; padding: 0 18px; font-size: 18px; background: transparent; color: #f3eee6; cursor: pointer; text-align: left; transition: transform .18s cubic-bezier(.16, 1, .3, 1), border-color .18s ease, background .18s ease; }}
+    .option:hover {{ transform: translateY(-1px); border-color: #f3eee6; background: #2d2c2a; }}
+    .option.selected {{ border-color: #f3eee6; background: #f3eee6; color: #242423; }}
+    .actions {{ display: flex; align-items: center; justify-content: flex-start; gap: 12px; margin-top: clamp(28px, 5vw, 56px); }}
+    button {{ min-height: 58px; border: 0; border-radius: 8px; padding: 0 24px; font: inherit; font-weight: 800; cursor: pointer; transition: transform .18s cubic-bezier(.16, 1, .3, 1), opacity .18s ease; }}
+    button:active {{ transform: translateY(1px) scale(.99); }}
+    .back {{ background: transparent; color: #aaa49b; }}
+    .next, .submit {{ background: #f3eee6; color: #242423; box-shadow: none; }}
     .next:disabled, .submit:disabled {{ opacity: .58; cursor: not-allowed; box-shadow: none; }}
-    .error {{ min-height: 22px; color: #9d3a24; font-size: 14px; font-weight: 700; margin-top: 12px; }}
+    .error {{ min-height: 22px; color: #f0a18d; font-size: 14px; font-weight: 700; margin-top: 12px; }}
     .thanks {{ display: none; align-content: center; min-height: 420px; padding: clamp(32px, 8vw, 86px); }}
     .thanks.active {{ display: block; }}
-    .thanks h2 {{ margin: 0 0 12px; font-size: clamp(34px, 7vw, 62px); line-height: 1; letter-spacing: 0; }}
-    .thanks p {{ max-width: 46ch; margin: 0; color: #4f625c; font-size: 19px; line-height: 1.45; }}
+    .thanks h2 {{ margin: 0 0 12px; color: #f3eee6; font-size: clamp(34px, 7vw, 62px); line-height: 1; letter-spacing: 0; }}
+    .thanks p {{ max-width: 46ch; margin: 0; color: #b7b1a7; font-size: 19px; line-height: 1.45; }}
     .hidden {{ position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }}
     @keyframes step-in {{ from {{ opacity: 0; transform: translateY(10px); }} to {{ opacity: 1; transform: translateY(0); }} }}
     @media (max-width: 520px) {{
@@ -1476,11 +1477,13 @@ def render_public_form_html(campaign: dict[str, Any]) -> str:
       .form-shell {{ min-height: 100dvh; border: 0; border-radius: 0; box-shadow: none; }}
       .header {{ display: grid; padding: 22px 20px 16px; }}
       h1 {{ white-space: normal; }}
-      form {{ padding: 34px 22px 22px; }}
+      .progress {{ margin: 0 20px; }}
+      form {{ padding: 34px 24px 22px; }}
       .step {{ min-height: calc(100dvh - 246px); }}
-      label {{ font-size: clamp(31px, 10vw, 44px); }}
-      input, textarea, select {{ font-size: 23px; }}
-      .actions {{ position: sticky; bottom: 0; background: linear-gradient(180deg, rgba(255, 255, 255, .72), #fff 38%); padding-top: 14px; }}
+      label {{ font-size: clamp(29px, 8.8vw, 42px); }}
+      label::before {{ min-width: 27px; min-height: 27px; margin-right: 11px; font-size: 14px; transform: translateY(-3px); }}
+      input, textarea, select {{ font-size: 26px; }}
+      .actions {{ position: sticky; bottom: 0; background: linear-gradient(180deg, rgba(36, 36, 35, .68), #242423 38%); padding-top: 14px; }}
     }}
   </style>
 </head>
@@ -1498,7 +1501,7 @@ def render_public_form_html(campaign: dict[str, Any]) -> str:
         <div class="error" id="error"></div>
         <div class="actions">
           <button type="button" class="back" id="backBtn">Atras</button>
-          <button type="button" class="next" id="nextBtn">Siguiente</button>
+          <button type="button" class="next" id="nextBtn">OK</button>
           <button type="submit" class="submit" id="submitBtn">Enviar</button>
         </div>
       </form>
@@ -1545,8 +1548,8 @@ def render_public_form_html(campaign: dict[str, Any]) -> str:
 
     function renderSteps() {{
       stepsEl.innerHTML = fields.map((field, idx) => `
-        <section class="step" data-index="${{idx}}" data-field="${{escapeAttr(field.id)}}" data-number="${{String(idx + 1).padStart(2, "0")}}">
-          <label for="field-${{escapeAttr(field.id)}}">${{escapeHtml(field.label || field.id)}}${{field.required ? " *" : ""}}</label>
+        <section class="step" data-index="${{idx}}" data-field="${{escapeAttr(field.id)}}">
+          <label for="field-${{escapeAttr(field.id)}}" data-number="${{idx + 1}}">${{escapeHtml(field.label || field.id)}}${{field.required ? " *" : ""}}</label>
           ${{fieldInput(field)}}
         </section>
       `).join("");
@@ -1592,7 +1595,7 @@ def render_public_form_html(campaign: dict[str, Any]) -> str:
       errorEl.textContent = "";
       document.querySelectorAll(".step").forEach((step) => step.classList.toggle("active", Number(step.dataset.index) === state.index));
       const last = state.index >= fields.length - 1;
-      backBtn.style.visibility = state.index === 0 ? "hidden" : "visible";
+      backBtn.style.display = state.index === 0 ? "none" : "inline-flex";
       nextBtn.style.display = last ? "none" : "inline-flex";
       submitBtn.style.display = last ? "inline-flex" : "none";
       progressBar.style.width = `${{fields.length ? ((state.index + 1) / fields.length) * 100 : 100}}%`;

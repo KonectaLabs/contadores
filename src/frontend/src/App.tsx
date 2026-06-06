@@ -3350,7 +3350,7 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
                     return (
                       <section className="campaign-preview-question" key={`${field.id}-preview-${index}`}>
                         <div className="campaign-preview-question-head">
-                          <span>{String(index + 1).padStart(2, "0")}</span>
+                          <span>{index + 1}</span>
                           {field.required ? <small>Required</small> : null}
                         </div>
                         <strong>{field.label.trim() || `Field ${index + 1}`}</strong>
@@ -3368,8 +3368,8 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
                 </div>
                 <div className="campaign-preview-foot">
                   <button type="button" className="ct-btn" disabled>
-                    <PaperPlaneTilt size={13} weight="bold" />
-                    Submit
+                    <Check size={13} weight="bold" />
+                    OK
                   </button>
                   <span>Draft preview</span>
                 </div>
