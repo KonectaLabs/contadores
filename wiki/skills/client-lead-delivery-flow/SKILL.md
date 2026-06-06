@@ -114,7 +114,9 @@ archives it (`status=archived`) instead of removing rows, so submissions and ad
 media remain visible under the archived campaign list. Keep the Ads UI split
 into two explicit views: `Mis campañas` for list/detail/leads/media and
 `Crear campaña` for the creation form; campaign creation should not render
-inside the campaign list/detail view.
+inside the campaign list/detail view. The creation form must keep its final
+submit action visible in the header or sticky action bar, not hidden at the
+bottom of the preview column.
 
 If the user gives multiple campaign spreadsheets for the same client, put them
 in `sheets`. Each item supports `id`, `label`, `sheet_url`, `sheet_gid`, and

@@ -3740,7 +3740,14 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
       </div>
 
       {isCreateView ? (
-        <form className="campaign-create-panel campaign-create-studio" onSubmit={createCampaign}>
+        <form id="campaign-create-form" className="campaign-create-panel campaign-create-studio" onSubmit={createCampaign}>
+          <div className="campaign-create-sticky-actions">
+            <button type="button" className="ct-btn ct-btn-ghost" onClick={closeCreateView}>Cancel</button>
+            <button type="submit" className="ct-btn campaign-create-primary" disabled={saving}>
+              <Check size={14} weight="bold" />
+              {saving ? "Saving..." : "Create campaign"}
+            </button>
+          </div>
           <div className="campaign-create-main">
             <section className="campaign-create-section campaign-section-basics">
               <div className="campaign-section-side">

@@ -3567,6 +3567,23 @@ body.ct-resizing {
   background: transparent;
 }
 
+#contadoresView .campaign-create-sticky-actions {
+  position: sticky;
+  top: 0;
+  z-index: 18;
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--ct-accent) 24%, var(--ct-line));
+  border-radius: var(--ct-radius);
+  background: rgba(255, 255, 255, .92);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(12px);
+}
+
 #contadoresView .campaign-create-main,
 #contadoresView .campaign-create-preview {
   display: grid;
@@ -7095,6 +7112,15 @@ body.ct-resizing {
   #contadoresView .campaign-create-section {
     padding: 14px;
     gap: 14px;
+  }
+
+  #contadoresView .campaign-create-sticky-actions {
+    grid-template-columns: 1fr;
+    display: grid;
+  }
+
+  #contadoresView .campaign-create-sticky-actions .ct-btn {
+    width: 100%;
   }
 
   #contadoresView .campaign-section-side {
