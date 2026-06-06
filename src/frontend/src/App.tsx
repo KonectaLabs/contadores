@@ -2841,15 +2841,18 @@ function CampaignGeoSelector({
   }
 
   return (
-    <div className="campaign-geo-picker">
+    <div className="campaign-geo-picker" data-kind={kind}>
       <label className="ct-field">
         <span>{label}</span>
-        <input
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          onKeyDown={addFirstSuggestion}
-          placeholder={kind === "region" ? "Type province/region..." : "Type city..."}
-        />
+        <div className="campaign-command-input">
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={addFirstSuggestion}
+            placeholder={kind === "region" ? "Type to search provinces..." : "Type to search cities..."}
+          />
+          {loading ? <SpinnerGap size={14} weight="bold" className="workstation-spinner" /> : null}
+        </div>
       </label>
       {value.length ? (
         <div className="campaign-geo-chips">
@@ -2863,13 +2866,16 @@ function CampaignGeoSelector({
         </div>
       ) : null}
       <div className="campaign-geo-results">
-        {loading ? <span className="campaign-geo-empty">Searching...</span> : null}
-        {!loading && query.trim() && suggestions.length === 0 ? <span className="campaign-geo-empty">No options</span> : null}
+        {!loading && !query.trim() ? <span className="campaign-geo-empty">Start typing to search</span> : null}
+        {!loading && query.trim() && suggestions.length === 0 ? <span className="campaign-geo-empty">No matches</span> : null}
         {!loading ? suggestions.map((area) => {
           const disabled = selectedKeys.has(`${area.key || ""}:${area.name.toLowerCase()}`);
           return (
             <button type="button" key={`${area.source || "local"}-${area.key || area.name}`} onClick={() => addArea(area)} disabled={disabled}>
-              <span>{area.name}</span>
+              <span>
+                <strong>{area.name}</strong>
+                <em>{campaignCountryLabels[area.country_code || countryCode] || area.country_code || countryCode}</em>
+              </span>
               <small>{area.key ? "Meta" : "Local"}</small>
             </button>
           );
@@ -3138,24 +3144,40 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
               <span>Daily budget</span>
               <input value={dailyBudget} onChange={(event) => setDailyBudget(event.target.value)} inputMode="numeric" placeholder="15" />
             </label>
-            <label className="ct-field">
-              <span>Country</span>
-              <select
-                value={locationCountryCode}
-                onChange={(event) => {
-                  setLocationCountryCode(event.target.value);
-                  setSelectedRegions([]);
-                  setSelectedCities([]);
-                }}
-              >
-                {campaignCountryOptions.map((country) => (
-                  <option key={country.value} value={country.value}>{country.label}</option>
-                ))}
-              </select>
-            </label>
           </div>
 
-          <div className="campaign-location-builder">
+          <section className="campaign-location-card">
+            <div className="campaign-card-head">
+              <div>
+                <span>Target locations</span>
+                <strong>{campaignLocations.length ? `${campaignLocations.length} saved` : "Build one location"}</strong>
+              </div>
+              <span className="campaign-card-badge">Meta-ready</span>
+            </div>
+
+            <div className="campaign-location-compose">
+              <label className="ct-field campaign-country-field">
+                <span>Country</span>
+                <select
+                  value={locationCountryCode}
+                  onChange={(event) => {
+                    setLocationCountryCode(event.target.value);
+                    setSelectedRegions([]);
+                    setSelectedCities([]);
+                  }}
+                >
+                  {campaignCountryOptions.map((country) => (
+                    <option key={country.value} value={country.value}>{country.label}</option>
+                  ))}
+                </select>
+              </label>
+              <div className="campaign-location-current">
+                <span>Current selection</span>
+                <strong>{campaignGeoLocationLabel(currentGeoLocation())}</strong>
+                <small>{selectedRegions.length || selectedCities.length ? "Specific area" : "Whole country"}</small>
+              </div>
+            </div>
+
             <div className="campaign-location-grid">
               <CampaignGeoSelector
                 countryCode={locationCountryCode}
@@ -3174,24 +3196,40 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
                 onError={onError}
               />
             </div>
+
             <div className="campaign-location-actions">
-              <span>{campaignGeoLocationLabel(currentGeoLocation())}</span>
-              <button type="button" className="ct-btn ct-btn-ghost" onClick={addCampaignLocation}>
+              <div>
+                <span>Ready to add</span>
+                <strong>{campaignGeoLocationLabel(currentGeoLocation())}</strong>
+              </div>
+              <button type="button" className="ct-btn" onClick={addCampaignLocation}>
                 <Plus size={13} weight="bold" />
-                Location
+                Add location
               </button>
             </div>
+
             {campaignLocations.length ? (
               <div className="campaign-location-list">
                 {campaignLocations.map((location, index) => (
-                  <button type="button" className="campaign-location-chip" key={`${location.country_code}-${index}`} onClick={() => removeCampaignLocation(index)}>
-                    <span>{campaignGeoLocationLabel(location)}</span>
-                    <X size={12} weight="bold" />
-                  </button>
+                  <article className="campaign-location-item" key={`${location.country_code}-${index}`}>
+                    <div>
+                      <span>{location.regions.length || location.cities.length ? "Specific" : "Country"}</span>
+                      <strong>{campaignGeoLocationLabel(location)}</strong>
+                      <small>{location.regions.length ? `${location.regions.length} regions` : null}{location.regions.length && location.cities.length ? " · " : ""}{location.cities.length ? `${location.cities.length} cities` : null}{!location.regions.length && !location.cities.length ? "Whole country" : null}</small>
+                    </div>
+                    <button type="button" className="ct-icon-btn" onClick={() => removeCampaignLocation(index)} aria-label="Remove location">
+                      <X size={13} weight="bold" />
+                    </button>
+                  </article>
                 ))}
               </div>
-            ) : null}
-          </div>
+            ) : (
+              <div className="campaign-location-empty">
+                <CheckCircle size={16} weight="bold" />
+                <span>If you do not add a specific region or city, the selected country is used as a whole-country target.</span>
+              </div>
+            )}
+          </section>
 
           <div className="ct-field-grid">
             <label className="ct-field">
