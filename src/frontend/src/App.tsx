@@ -2595,6 +2595,17 @@ type CampaignFieldDraft = CampaignFormField & {
   optionsText: string;
 };
 
+type CampaignClientMode = "existing" | "new";
+
+type CampaignCreativeDraft = {
+  primaryText: string;
+  headline: string;
+  description: string;
+  assetBrief: string;
+  destinationUrl: string;
+  callToAction: string;
+};
+
 type CampaignGeoTargetingDraft = {
   locations: CampaignGeoLocation[];
 };
@@ -2768,6 +2779,38 @@ function campaignClientLabel(client: CampaignClientItem): string {
   ].filter(Boolean).join(" · ");
 }
 
+function campaignLocationKindLabel(location: CampaignGeoLocation): string {
+  if (location.regions.length || location.cities.length) {
+    return "Specific";
+  }
+  return "Country";
+}
+
+function campaignLocationDetailLabel(location: CampaignGeoLocation): string {
+  const details = [
+    location.regions.length ? `${location.regions.length} regions` : "",
+    location.cities.length ? `${location.cities.length} cities` : "",
+  ].filter(Boolean);
+  return details.length ? details.join(" · ") : "Whole country";
+}
+
+function campaignCreativeBriefSummary(creative: CampaignCreativeDraft): string {
+  const creativeLines = [
+    creative.primaryText.trim() ? `Primary text: ${creative.primaryText.trim()}` : "",
+    creative.headline.trim() ? `Headline: ${creative.headline.trim()}` : "",
+    creative.description.trim() ? `Description: ${creative.description.trim()}` : "",
+    creative.assetBrief.trim() ? `Creative asset: ${creative.assetBrief.trim()}` : "",
+    creative.destinationUrl.trim() ? `Destination URL: ${creative.destinationUrl.trim()}` : "",
+  ].filter(Boolean);
+  if (!creativeLines.length) {
+    return "";
+  }
+  if (creative.callToAction.trim()) {
+    creativeLines.push(`Call to action: ${creative.callToAction.trim()}`);
+  }
+  return creativeLines.join("\n");
+}
+
 function CampaignGeoSelector({
   countryCode,
   kind,
@@ -2896,6 +2939,7 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
   const [createOpen, setCreateOpen] = useState(false);
   const [campaignName, setCampaignName] = useState("");
   const [campaignStatus, setCampaignStatus] = useState("draft");
+  const [clientMode, setClientMode] = useState<CampaignClientMode>("new");
   const [existingClientId, setExistingClientId] = useState("");
   const [newClientName, setNewClientName] = useState("");
   const [newClientWhatsapp, setNewClientWhatsapp] = useState("");
@@ -2907,11 +2951,28 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
   const [selectedCities, setSelectedCities] = useState<CampaignGeoArea[]>([]);
   const [campaignLocations, setCampaignLocations] = useState<CampaignGeoLocation[]>([]);
   const [creativeBrief, setCreativeBrief] = useState("");
+  const [creativeHeadline, setCreativeHeadline] = useState("");
+  const [creativeDescription, setCreativeDescription] = useState("");
+  const [creativeAssetBrief, setCreativeAssetBrief] = useState("");
+  const [destinationUrl, setDestinationUrl] = useState("");
   const [metaPixelId, setMetaPixelId] = useState("");
+  const [metaEventName, setMetaEventName] = useState("Lead");
   const [metaEventsEnabled, setMetaEventsEnabled] = useState(false);
   const [fields, setFields] = useState<CampaignFieldDraft[]>(defaultCampaignFields);
 
   const selectedCampaign = campaigns.find((campaign) => campaign.id === selectedCampaignId) ?? campaigns[0] ?? null;
+  const selectedClient = clients.find((client) => client.id === existingClientId) ?? null;
+  const currentLocation = currentGeoLocation();
+  const currentLocationLabel = campaignGeoLocationLabel(currentLocation);
+  const creativeDraft: CampaignCreativeDraft = {
+    primaryText: creativeBrief,
+    headline: creativeHeadline,
+    description: creativeDescription,
+    assetBrief: creativeAssetBrief,
+    destinationUrl,
+    callToAction: "LEARN_MORE",
+  };
+  const creativeSummary = campaignCreativeBriefSummary(creativeDraft);
 
   async function loadCampaignSubmissions(campaignId: string) {
     setSubmissionsLoading(true);
@@ -3011,13 +3072,18 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
       onError("Campaign name is required.");
       return;
     }
-    const client = existingClientId ? null : {
+    const usingExistingClient = clientMode === "existing";
+    if (usingExistingClient && !existingClientId) {
+      onError("Choose an existing client or switch to new client.");
+      return;
+    }
+    const client = usingExistingClient ? null : {
       name: newClientName.trim(),
       whatsapp: newClientWhatsapp.trim(),
       email: newClientEmail.trim() || null,
       extra_info: newClientExtraInfo.trim() || null,
     };
-    if (!existingClientId && (!client?.name || !client.whatsapp)) {
+    if (!usingExistingClient && (!client?.name || !client.whatsapp)) {
       onError("Client name and WhatsApp are required.");
       return;
     }
@@ -3031,14 +3097,25 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
     try {
       const body = {
         name: cleanName,
-        client_id: existingClientId || null,
+        client_id: usingExistingClient ? existingClientId : null,
         client,
         status: campaignStatus,
         daily_budget_usd: dailyBudget ? Number(dailyBudget) : null,
         geo_targeting: campaignGeoTargeting(locations),
-        creative_brief: creativeBrief.trim() || null,
+        campaign_info: {
+          creative: {
+            primary_text: creativeBrief.trim(),
+            headline: creativeHeadline.trim(),
+            description: creativeDescription.trim(),
+            asset_brief: creativeAssetBrief.trim(),
+            call_to_action: creativeDraft.callToAction,
+          },
+        },
+        creative_brief: creativeSummary || null,
         form_schema: campaignFormSchema(fields),
+        destination_url: destinationUrl.trim() || null,
         meta_pixel_id: metaPixelId.trim() || null,
+        meta_event_name: metaEventName.trim() || "Lead",
         meta_events_enabled: metaEventsEnabled,
       };
       const payload = await apiFetch<{ campaign: LeadCaptureCampaignItem }>("/api/campaigns", {
@@ -3052,8 +3129,15 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
       setSelectedCities([]);
       setCampaignLocations([]);
       setCreativeBrief("");
+      setCreativeHeadline("");
+      setCreativeDescription("");
+      setCreativeAssetBrief("");
+      setDestinationUrl("");
       setMetaPixelId("");
+      setMetaEventName("Lead");
       setMetaEventsEnabled(false);
+      setClientMode("new");
+      setExistingClientId("");
       setNewClientName("");
       setNewClientWhatsapp("");
       setNewClientEmail("");
@@ -3126,272 +3210,379 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
       </div>
 
       {createOpen ? (
-        <form className="campaign-create-panel" onSubmit={createCampaign}>
-          <div className="ct-field-grid">
-            <label className="ct-field">
-              <span>Name</span>
-              <input value={campaignName} onChange={(event) => setCampaignName(event.target.value)} required />
-            </label>
-            <label className="ct-field">
-              <span>Status</span>
-              <select value={campaignStatus} onChange={(event) => setCampaignStatus(event.target.value)}>
-                <option value="draft">Draft</option>
-                <option value="active">Active</option>
-                <option value="paused">Paused</option>
-              </select>
-            </label>
-            <label className="ct-field">
-              <span>Daily budget</span>
-              <input value={dailyBudget} onChange={(event) => setDailyBudget(event.target.value)} inputMode="numeric" placeholder="15" />
-            </label>
-          </div>
-
-          <section className="campaign-location-card">
-            <div className="campaign-card-head">
-              <div>
-                <span>Target locations</span>
-                <strong>{campaignLocations.length ? `${campaignLocations.length} saved` : "Build one location"}</strong>
-              </div>
-              <span className="campaign-card-badge">Meta-ready</span>
-            </div>
-
-            <div className="campaign-location-compose">
-              <label className="ct-field campaign-country-field">
-                <span>Country</span>
-                <select
-                  value={locationCountryCode}
-                  onChange={(event) => {
-                    setLocationCountryCode(event.target.value);
-                    setSelectedRegions([]);
-                    setSelectedCities([]);
-                  }}
-                >
-                  {campaignCountryOptions.map((country) => (
-                    <option key={country.value} value={country.value}>{country.label}</option>
-                  ))}
-                </select>
-              </label>
-              <div className="campaign-location-current">
-                <span>Current selection</span>
-                <strong>{campaignGeoLocationLabel(currentGeoLocation())}</strong>
-                <small>{selectedRegions.length || selectedCities.length ? "Specific area" : "Whole country"}</small>
-              </div>
-            </div>
-
-            <div className="campaign-location-grid">
-              <CampaignGeoSelector
-                countryCode={locationCountryCode}
-                kind="region"
-                label="Regions / provinces"
-                value={selectedRegions}
-                onChange={setSelectedRegions}
-                onError={onError}
-              />
-              <CampaignGeoSelector
-                countryCode={locationCountryCode}
-                kind="city"
-                label="Cities"
-                value={selectedCities}
-                onChange={setSelectedCities}
-                onError={onError}
-              />
-            </div>
-
-            <div className="campaign-location-actions">
-              <div>
-                <span>Ready to add</span>
-                <strong>{campaignGeoLocationLabel(currentGeoLocation())}</strong>
-              </div>
-              <button type="button" className="ct-btn" onClick={addCampaignLocation}>
-                <Plus size={13} weight="bold" />
-                Add location
-              </button>
-            </div>
-
-            {campaignLocations.length ? (
-              <div className="campaign-location-list">
-                {campaignLocations.map((location, index) => (
-                  <article className="campaign-location-item" key={`${location.country_code}-${index}`}>
-                    <div>
-                      <span>{location.regions.length || location.cities.length ? "Specific" : "Country"}</span>
-                      <strong>{campaignGeoLocationLabel(location)}</strong>
-                      <small>{location.regions.length ? `${location.regions.length} regions` : null}{location.regions.length && location.cities.length ? " · " : ""}{location.cities.length ? `${location.cities.length} cities` : null}{!location.regions.length && !location.cities.length ? "Whole country" : null}</small>
-                    </div>
-                    <button type="button" className="ct-icon-btn" onClick={() => removeCampaignLocation(index)} aria-label="Remove location">
-                      <X size={13} weight="bold" />
-                    </button>
-                  </article>
-                ))}
-              </div>
-            ) : (
-              <div className="campaign-location-empty">
-                <CheckCircle size={16} weight="bold" />
-                <span>If you do not add a specific region or city, the selected country is used as a whole-country target.</span>
-              </div>
-            )}
-          </section>
-
-          <div className="ct-field-grid">
-            <label className="ct-field">
-              <span>Existing client</span>
-              <select value={existingClientId} onChange={(event) => setExistingClientId(event.target.value)}>
-                <option value="">New converted client</option>
-                {clients.map((client) => (
-                  <option key={client.id} value={client.id}>{campaignClientLabel(client)}</option>
-                ))}
-              </select>
-            </label>
-            {!existingClientId ? (
-              <>
-                <label className="ct-field">
-                  <span>Client name</span>
-                  <input value={newClientName} onChange={(event) => setNewClientName(event.target.value)} />
-                </label>
-                <label className="ct-field">
-                  <span>Client WhatsApp</span>
-                  <input value={newClientWhatsapp} onChange={(event) => setNewClientWhatsapp(event.target.value)} inputMode="tel" />
-                </label>
-                <label className="ct-field">
-                  <span>Client email</span>
-                  <input value={newClientEmail} onChange={(event) => setNewClientEmail(event.target.value)} type="email" />
-                </label>
-              </>
-            ) : null}
-          </div>
-          {!existingClientId ? (
-            <label className="ct-field">
-              <span>Extra info</span>
-              <textarea value={newClientExtraInfo} onChange={(event) => setNewClientExtraInfo(event.target.value)} rows={3} />
-            </label>
-          ) : null}
-
-          <label className="ct-field">
-            <span>Creative brief</span>
-            <textarea value={creativeBrief} onChange={(event) => setCreativeBrief(event.target.value)} rows={3} />
-          </label>
-
-          <div className="campaign-form-builder">
-            <div className="campaign-form-builder-head">
-              <div>
-                <span>Form fields</span>
-                <strong>{fields.length} fields</strong>
-              </div>
-              <button type="button" className="ct-btn ct-btn-ghost" onClick={addField}>
-                <Plus size={13} weight="bold" />
-                Field
-              </button>
-            </div>
-            <div className="campaign-form-shell">
-              <div className="campaign-field-list">
-                {fields.map((field, index) => {
-                  const locked = field.id === "full_name" || field.id === "phone";
-                  const typeLabel = campaignFieldTypes.find((type) => type.value === field.type)?.label || field.type;
-                  return (
-                    <article className="campaign-field-card" key={`${field.id}-${index}`}>
-                      <div className="campaign-field-card-head">
-                        <div>
-                          <span>Field {index + 1}</span>
-                          <strong>{field.label.trim() || "Untitled field"}</strong>
-                        </div>
-                        <div className="campaign-field-badges">
-                          <span>{typeLabel}</span>
-                          <span className={field.required ? "is-required" : "is-optional"}>{field.required ? "Required" : "Optional"}</span>
-                          {locked ? <span className="is-locked">Locked</span> : null}
-                        </div>
-                        <button type="button" className="ct-icon-btn" onClick={() => removeField(index)} disabled={locked || fields.length <= 2} aria-label="Remove field">
-                          <Trash size={14} weight="bold" />
-                        </button>
-                      </div>
-
-                      <div className="campaign-field-editor">
-                        <label className="ct-field campaign-field-label">
-                          <span>Label</span>
-                          <input value={field.label} onChange={(event) => updateField(index, { label: event.target.value, id: locked ? field.id : campaignFieldId(event.target.value, index) })} />
-                        </label>
-                        <label className="ct-field">
-                          <span>Type</span>
-                          <select value={field.type} onChange={(event) => updateField(index, { type: event.target.value })} disabled={locked}>
-                            {campaignFieldTypes.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
-                          </select>
-                        </label>
-                        <label className="ct-field">
-                          <span>Placeholder</span>
-                          <input value={field.placeholder || ""} onChange={(event) => updateField(index, { placeholder: event.target.value })} placeholder="Shown inside the form field" />
-                        </label>
-                        <label className="campaign-required-toggle">
-                          <input type="checkbox" checked={Boolean(field.required)} onChange={(event) => updateField(index, { required: event.target.checked })} disabled={locked} />
-                          <span>{field.required ? "Required" : "Optional"}</span>
-                        </label>
-                      </div>
-
-                      {(field.type === "select" || field.type === "multi_select") ? (
-                        <label className="ct-field campaign-field-options">
-                          <span>Options</span>
-                          <input value={field.optionsText} onChange={(event) => updateField(index, { optionsText: event.target.value })} placeholder="Opcion 1, Opcion 2" />
-                        </label>
-                      ) : null}
-                    </article>
-                  );
-                })}
-              </div>
-
-              <aside className="campaign-form-preview" aria-label="Campaign form preview">
-                <div className="campaign-preview-head">
-                  <span>Lead form preview</span>
-                  <strong>{campaignName.trim() || "New campaign"}</strong>
+        <form className="campaign-create-panel campaign-create-studio" onSubmit={createCampaign}>
+          <div className="campaign-create-main">
+            <section className="campaign-create-section campaign-section-basics">
+              <div className="campaign-section-side">
+                <span className="campaign-section-icon"><NotePencil size={16} weight="bold" /></span>
+                <div>
+                  <strong>1. Basics</strong>
+                  <small>Name, status and budget</small>
                 </div>
-                <div className="campaign-preview-pages">
-                  {fields.map((field, index) => {
-                    const options = field.optionsText
-                      .split(/[\n,]/)
-                      .map((option) => option.trim())
-                      .filter(Boolean);
-                    const previewOptions = options.length ? options.slice(0, 4) : ["Si", "No"];
-                    return (
-                      <section className="campaign-preview-question" key={`${field.id}-preview-${index}`}>
-                        <div className="campaign-preview-question-head">
-                          <span>{index + 1}</span>
-                          {field.required ? <small>Required</small> : null}
+              </div>
+              <div className="campaign-section-body campaign-basics-grid">
+                <label className="ct-field">
+                  <span>Campaign name</span>
+                  <input value={campaignName} onChange={(event) => setCampaignName(event.target.value)} required placeholder="Campaña Facu Contadores" />
+                </label>
+                <div className="campaign-control-block">
+                  <span>Status</span>
+                  <div className="campaign-segmented" role="group" aria-label="Campaign status">
+                    {["draft", "active", "paused"].map((status) => (
+                      <button type="button" className={campaignStatus === status ? "is-active" : ""} key={status} onClick={() => setCampaignStatus(status)}>
+                        {humanize(status)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <label className="ct-field">
+                  <span>Daily budget (USD)</span>
+                  <input value={dailyBudget} onChange={(event) => setDailyBudget(event.target.value)} inputMode="numeric" placeholder="25" />
+                </label>
+              </div>
+            </section>
+
+            <section className="campaign-create-section campaign-section-targeting">
+              <div className="campaign-section-side">
+                <span className="campaign-section-icon"><Megaphone size={16} weight="bold" /></span>
+                <div>
+                  <strong>2. Targeting</strong>
+                  <small>Country, regions, cities</small>
+                </div>
+              </div>
+              <div className="campaign-section-body">
+                <div className="campaign-targeting-top">
+                  <label className="ct-field campaign-country-field">
+                    <span>Country</span>
+                    <select
+                      value={locationCountryCode}
+                      onChange={(event) => {
+                        setLocationCountryCode(event.target.value);
+                        setSelectedRegions([]);
+                        setSelectedCities([]);
+                      }}
+                    >
+                      {campaignCountryOptions.map((country) => (
+                        <option key={country.value} value={country.value}>{country.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <div className="campaign-location-current">
+                    <span>Current selection</span>
+                    <strong>{currentLocationLabel}</strong>
+                    <small>{campaignLocationDetailLabel(currentLocation)}</small>
+                  </div>
+                  <button type="button" className="ct-btn campaign-add-location" onClick={addCampaignLocation}>
+                    <Plus size={13} weight="bold" />
+                    Add location
+                  </button>
+                </div>
+                <div className="campaign-location-grid">
+                  <CampaignGeoSelector
+                    countryCode={locationCountryCode}
+                    kind="region"
+                    label="Regions / provinces"
+                    value={selectedRegions}
+                    onChange={setSelectedRegions}
+                    onError={onError}
+                  />
+                  <CampaignGeoSelector
+                    countryCode={locationCountryCode}
+                    kind="city"
+                    label="Cities"
+                    value={selectedCities}
+                    onChange={setSelectedCities}
+                    onError={onError}
+                  />
+                </div>
+                {campaignLocations.length ? (
+                  <div className="campaign-location-list">
+                    {campaignLocations.map((location, index) => (
+                      <article className="campaign-location-item" key={`${location.country_code}-${index}`}>
+                        <div>
+                          <span>{campaignLocationKindLabel(location)}</span>
+                          <strong>{campaignGeoLocationLabel(location)}</strong>
+                          <small>{campaignLocationDetailLabel(location)}</small>
                         </div>
-                        <strong>{field.label.trim() || `Field ${index + 1}`}</strong>
-                        {field.placeholder ? <em>{field.placeholder}</em> : null}
-                        {(field.type === "select" || field.type === "multi_select" || field.type === "yes_no") ? (
-                          <div className="campaign-preview-options">
-                            {previewOptions.map((option) => <span key={`${field.id}-${option}`}>{option}</span>)}
+                        <button type="button" className="ct-icon-btn" onClick={() => removeCampaignLocation(index)} aria-label="Remove location">
+                          <X size={13} weight="bold" />
+                        </button>
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="campaign-location-empty">
+                    <CheckCircle size={16} weight="bold" />
+                    <span>No saved target yet. If you create now, {currentLocationLabel} will be used.</span>
+                  </div>
+                )}
+              </div>
+            </section>
+
+            <section className="campaign-create-section campaign-section-client">
+              <div className="campaign-section-side">
+                <span className="campaign-section-icon"><ChatCircleText size={16} weight="bold" /></span>
+                <div>
+                  <strong>3. Client</strong>
+                  <small>Existing or new</small>
+                </div>
+              </div>
+              <div className="campaign-section-body">
+                <div className="campaign-client-mode">
+                  <div className="campaign-segmented" role="group" aria-label="Client source">
+                    <button
+                      type="button"
+                      className={clientMode === "existing" ? "is-active" : ""}
+                      disabled={!clients.length}
+                      onClick={() => {
+                        setClientMode("existing");
+                        setExistingClientId((current) => current || clients[0]?.id || "");
+                      }}
+                    >
+                      Existing client
+                    </button>
+                    <button
+                      type="button"
+                      className={clientMode === "new" ? "is-active" : ""}
+                      onClick={() => {
+                        setClientMode("new");
+                        setExistingClientId("");
+                      }}
+                    >
+                      New client
+                    </button>
+                  </div>
+                  {clientMode === "existing" ? (
+                    <label className="ct-field">
+                      <span>Choose client</span>
+                      <select value={existingClientId} onChange={(event) => setExistingClientId(event.target.value)}>
+                        <option value="" disabled>Select one client</option>
+                        {clients.map((client) => (
+                          <option key={client.id} value={client.id}>{campaignClientLabel(client)}</option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : null}
+                </div>
+                {clientMode === "new" ? (
+                  <>
+                    <div className="campaign-client-fields">
+                      <label className="ct-field">
+                        <span>Client name</span>
+                        <input value={newClientName} onChange={(event) => setNewClientName(event.target.value)} placeholder="New converted client" />
+                      </label>
+                      <label className="ct-field">
+                        <span>WhatsApp</span>
+                        <input value={newClientWhatsapp} onChange={(event) => setNewClientWhatsapp(event.target.value)} inputMode="tel" placeholder="549..." />
+                      </label>
+                      <label className="ct-field">
+                        <span>Email</span>
+                        <input value={newClientEmail} onChange={(event) => setNewClientEmail(event.target.value)} type="email" placeholder="cliente@email.com" />
+                      </label>
+                    </div>
+                    <label className="ct-field">
+                      <span>Extra info</span>
+                      <textarea value={newClientExtraInfo} onChange={(event) => setNewClientExtraInfo(event.target.value)} rows={2} placeholder="Notes for this client" />
+                    </label>
+                  </>
+                ) : (
+                  <div className="campaign-existing-client-summary">
+                    <strong>{selectedClient?.display_name || "No client selected"}</strong>
+                    <span>{selectedClient?.lead?.phone || "Choose a saved converted client"}{selectedClient?.lead?.email ? ` · ${selectedClient.lead.email}` : ""}</span>
+                  </div>
+                )}
+              </div>
+            </section>
+
+            <section className="campaign-create-section campaign-section-creative">
+              <div className="campaign-section-side">
+                <span className="campaign-section-icon"><Camera size={16} weight="bold" /></span>
+                <div>
+                  <strong>4. Creative</strong>
+                  <small>Copy and asset notes</small>
+                </div>
+              </div>
+              <div className="campaign-section-body campaign-creative-grid">
+                <label className="ct-field campaign-creative-primary">
+                  <span>Primary text</span>
+                  <textarea value={creativeBrief} onChange={(event) => setCreativeBrief(event.target.value)} rows={3} placeholder="Main ad text shown above the image/video" />
+                </label>
+                <label className="ct-field">
+                  <span>Headline</span>
+                  <input value={creativeHeadline} onChange={(event) => setCreativeHeadline(event.target.value)} placeholder="Short offer headline" />
+                </label>
+                <label className="ct-field">
+                  <span>Description</span>
+                  <input value={creativeDescription} onChange={(event) => setCreativeDescription(event.target.value)} placeholder="Optional supporting line" />
+                </label>
+                <label className="ct-field campaign-creative-primary">
+                  <span>Image / video asset</span>
+                  <textarea value={creativeAssetBrief} onChange={(event) => setCreativeAssetBrief(event.target.value)} rows={2} placeholder="Contador en oficina, testimonial corto, placa de beneficios..." />
+                </label>
+                <label className="ct-field campaign-creative-primary">
+                  <span>Destination URL</span>
+                  <input value={destinationUrl} onChange={(event) => setDestinationUrl(event.target.value)} placeholder="https://..." />
+                </label>
+              </div>
+            </section>
+
+            <section className="campaign-create-section campaign-section-form">
+              <div className="campaign-section-side">
+                <span className="campaign-section-icon"><ListChecks size={16} weight="bold" /></span>
+                <div>
+                  <strong>5. Form fields</strong>
+                  <small>{fields.length} fields</small>
+                </div>
+              </div>
+              <div className="campaign-section-body campaign-form-builder">
+                <div className="campaign-form-builder-head">
+                  <div>
+                    <span>Lead form</span>
+                    <strong>Questions people complete</strong>
+                  </div>
+                  <button type="button" className="ct-btn ct-btn-ghost" onClick={addField}>
+                    <Plus size={13} weight="bold" />
+                    Field
+                  </button>
+                </div>
+                <div className="campaign-field-list">
+                  {fields.map((field, index) => {
+                    const locked = field.id === "full_name" || field.id === "phone";
+                    const typeLabel = campaignFieldTypes.find((type) => type.value === field.type)?.label || field.type;
+                    return (
+                      <article className="campaign-field-card" key={`${field.id}-${index}`}>
+                        <div className="campaign-field-card-head">
+                          <div>
+                            <span>Field {index + 1}</span>
+                            <strong>{field.label.trim() || "Untitled field"}</strong>
                           </div>
-                        ) : (
-                          <div className={`campaign-preview-input ${field.type === "textarea" ? "is-long" : ""}`} />
-                        )}
-                      </section>
+                          <div className="campaign-field-badges">
+                            <span>{typeLabel}</span>
+                            <span className={field.required ? "is-required" : "is-optional"}>{field.required ? "Required" : "Optional"}</span>
+                            {locked ? <span className="is-locked">Locked</span> : null}
+                          </div>
+                          <button type="button" className="ct-icon-btn" onClick={() => removeField(index)} disabled={locked || fields.length <= 2} aria-label="Remove field">
+                            <Trash size={14} weight="bold" />
+                          </button>
+                        </div>
+                        <div className="campaign-field-editor">
+                          <label className="ct-field campaign-field-label">
+                            <span>Label</span>
+                            <input value={field.label} onChange={(event) => updateField(index, { label: event.target.value, id: locked ? field.id : campaignFieldId(event.target.value, index) })} />
+                          </label>
+                          <label className="ct-field">
+                            <span>Type</span>
+                            <select value={field.type} onChange={(event) => updateField(index, { type: event.target.value })} disabled={locked}>
+                              {campaignFieldTypes.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
+                            </select>
+                          </label>
+                          <label className="ct-field">
+                            <span>Placeholder</span>
+                            <input value={field.placeholder || ""} onChange={(event) => updateField(index, { placeholder: event.target.value })} placeholder="Shown inside the form field" />
+                          </label>
+                          <label className="campaign-required-toggle">
+                            <input type="checkbox" checked={Boolean(field.required)} onChange={(event) => updateField(index, { required: event.target.checked })} disabled={locked} />
+                            <span>{field.required ? "Required" : "Optional"}</span>
+                          </label>
+                        </div>
+                        {(field.type === "select" || field.type === "multi_select") ? (
+                          <label className="ct-field campaign-field-options">
+                            <span>Options</span>
+                            <input value={field.optionsText} onChange={(event) => updateField(index, { optionsText: event.target.value })} placeholder="Opcion 1, Opcion 2" />
+                          </label>
+                        ) : null}
+                      </article>
                     );
                   })}
                 </div>
-                <div className="campaign-preview-foot">
-                  <button type="button" className="ct-btn" disabled>
-                    <Check size={13} weight="bold" />
-                    OK
-                  </button>
-                  <span>Draft preview</span>
+              </div>
+            </section>
+
+            <section className="campaign-create-section campaign-section-meta">
+              <div className="campaign-section-side">
+                <span className="campaign-section-icon"><Pulse size={16} weight="bold" /></span>
+                <div>
+                  <strong>6. Meta</strong>
+                  <small>Pixel and events</small>
                 </div>
-              </aside>
+              </div>
+              <div className="campaign-section-body campaign-meta-grid">
+                <label className="ct-field">
+                  <span>Meta Pixel ID</span>
+                  <input value={metaPixelId} onChange={(event) => setMetaPixelId(event.target.value)} placeholder="123456789012345" />
+                </label>
+                <label className="ct-field">
+                  <span>Event name</span>
+                  <input value={metaEventName} onChange={(event) => setMetaEventName(event.target.value)} placeholder="Lead" />
+                </label>
+                <label className="ct-field ct-field-toggle campaign-meta-toggle">
+                  <input type="checkbox" checked={metaEventsEnabled} onChange={(event) => setMetaEventsEnabled(event.target.checked)} />
+                  <span>Send Meta event on lead</span>
+                </label>
+              </div>
+            </section>
+          </div>
+
+          <aside className="campaign-create-preview">
+            <section className="campaign-form-preview" aria-label="Campaign form preview">
+              <div className="campaign-preview-head">
+                <span>Lead form preview</span>
+                <strong>{campaignName.trim() || "New campaign"}</strong>
+              </div>
+              <div className="campaign-preview-pages">
+                {fields.slice(0, 4).map((field, index) => {
+                  const options = field.optionsText
+                    .split(/[\n,]/)
+                    .map((option) => option.trim())
+                    .filter(Boolean);
+                  const previewOptions = options.length ? options.slice(0, 4) : ["Si", "No"];
+                  return (
+                    <section className="campaign-preview-question" key={`${field.id}-preview-${index}`}>
+                      <div className="campaign-preview-question-head">
+                        <span>{index + 1}/{fields.length}</span>
+                        {field.required ? <small>Required</small> : null}
+                      </div>
+                      <strong>{field.label.trim() || `Field ${index + 1}`}</strong>
+                      {field.placeholder ? <em>{field.placeholder}</em> : null}
+                      {(field.type === "select" || field.type === "multi_select" || field.type === "yes_no") ? (
+                        <div className="campaign-preview-options">
+                          {previewOptions.map((option) => <span key={`${field.id}-${option}`}>{option}</span>)}
+                        </div>
+                      ) : (
+                        <div className={`campaign-preview-input ${field.type === "textarea" ? "is-long" : ""}`} />
+                      )}
+                    </section>
+                  );
+                })}
+              </div>
+              <div className="campaign-preview-foot">
+                <button type="button" className="ct-btn" disabled>
+                  <Check size={13} weight="bold" />
+                  Next
+                </button>
+                <span>Draft preview</span>
+              </div>
+            </section>
+
+            <section className="campaign-summary-card">
+              <strong>Campaign summary</strong>
+              <dl>
+                <div><dt>Status</dt><dd>{humanize(campaignStatus)}</dd></div>
+                <div><dt>Budget</dt><dd>{dailyBudget ? `USD ${dailyBudget}` : "-"}</dd></div>
+                <div><dt>Country</dt><dd>{campaignCountryLabels[locationCountryCode]}</dd></div>
+                <div><dt>Locations</dt><dd>{campaignLocations.length ? `${campaignLocations.length} saved` : currentLocationLabel}</dd></div>
+                <div><dt>Client</dt><dd>{clientMode === "existing" ? (selectedClient?.display_name || "Existing") : (newClientName.trim() || "New client")}</dd></div>
+                <div><dt>Form fields</dt><dd>{fields.length} fields</dd></div>
+                <div><dt>Creative</dt><dd>{creativeSummary ? "Copy ready" : "Empty"}</dd></div>
+                <div><dt>Meta event</dt><dd>{metaEventsEnabled ? metaEventName || "Lead" : "Off"}</dd></div>
+              </dl>
+            </section>
+
+            <div className="campaign-create-actions">
+              <button type="button" className="ct-btn ct-btn-ghost" onClick={() => setCreateOpen(false)}>Cancel</button>
+              <button type="submit" className="ct-btn campaign-create-primary" disabled={saving}>{saving ? "Saving..." : "Create campaign"}</button>
             </div>
-          </div>
-
-          <div className="ct-field-grid">
-            <label className="ct-field">
-              <span>Meta pixel</span>
-              <input value={metaPixelId} onChange={(event) => setMetaPixelId(event.target.value)} />
-            </label>
-            <label className="ct-field ct-field-toggle">
-              <input type="checkbox" checked={metaEventsEnabled} onChange={(event) => setMetaEventsEnabled(event.target.checked)} />
-              <span>Send Meta event</span>
-            </label>
-          </div>
-
-          <div className="campaign-create-actions">
-            <button type="button" className="ct-btn ct-btn-ghost" onClick={() => setCreateOpen(false)}>Cancel</button>
-            <button type="submit" className="ct-btn" disabled={saving}>{saving ? "Saving..." : "Create"}</button>
-          </div>
+          </aside>
         </form>
       ) : null}
 

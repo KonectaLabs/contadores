@@ -122,12 +122,14 @@ contadores-agent meta inventory --limit 20
 
 El CRM tambien expone la pestaña `Ads` para crear campañas owned desde la UI:
 cliente existente o cliente convertido nuevo, presupuesto, localizaciones,
-brief, campos del formulario y Pixel/CAPI opcional. Una localizacion se arma
-como pais entero, pais + provincias/regiones, o pais + ciudades; despues se
-agrega a la lista y se puede repetir para mas paises. Regiones y ciudades se
-seleccionan con buscador: primero intenta Meta Targeting Search cuando hay
-credenciales, y si no usa sugerencias locales marcadas como `Local`. Si no se
-elige provincia ni ciudad, se guarda el pais entero como
+creativo Meta-style, campos del formulario y Pixel/CAPI opcional. El creativo
+se guarda como texto principal, headline, descripcion, notas de imagen/video,
+destination URL y `creative_brief` compatible con la API actual. Una
+localizacion se arma como pais entero, pais + provincias/regiones, o pais +
+ciudades; despues se agrega a la lista y se puede repetir para mas paises.
+Regiones y ciudades se seleccionan con buscador: primero intenta Meta Targeting
+Search cuando hay credenciales, y si no usa sugerencias locales marcadas como
+`Local`. Si no se elige provincia ni ciudad, se guarda el pais entero como
 `geo_locations.countries`; si se elige provincia o ciudad, no se targetea todo
 el pais, solo las regiones/cities que tengan `key`. La CLI tambien expone
 `campaigns geo-search`; para multi-pais se puede pasar `--geo-targeting-json`
