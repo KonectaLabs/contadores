@@ -4641,8 +4641,7 @@ body.ct-resizing {
   color: var(--ct-accent);
 }
 
-#contadoresView .campaign-field-badges .is-optional,
-#contadoresView .campaign-field-badges .is-locked {
+#contadoresView .campaign-field-badges .is-optional {
   background: var(--ct-surface);
   color: var(--ct-ink-muted);
 }
