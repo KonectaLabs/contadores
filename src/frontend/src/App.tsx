@@ -3272,7 +3272,10 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
 
           <div className="campaign-form-builder">
             <div className="campaign-form-builder-head">
-              <strong>Form fields</strong>
+              <div>
+                <span>Form fields</span>
+                <strong>{fields.length} fields</strong>
+              </div>
               <button type="button" className="ct-btn ct-btn-ghost" onClick={addField}>
                 <Plus size={13} weight="bold" />
                 Field
@@ -3280,32 +3283,52 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
             </div>
             {fields.map((field, index) => {
               const locked = field.id === "full_name" || field.id === "phone";
+              const typeLabel = campaignFieldTypes.find((type) => type.value === field.type)?.label || field.type;
               return (
-                <div className="campaign-field-row" key={`${field.id}-${index}`}>
-                  <label className="ct-field">
-                    <span>Label</span>
-                    <input value={field.label} onChange={(event) => updateField(index, { label: event.target.value, id: locked ? field.id : campaignFieldId(event.target.value, index) })} />
-                  </label>
-                  <label className="ct-field">
-                    <span>Type</span>
-                    <select value={field.type} onChange={(event) => updateField(index, { type: event.target.value })} disabled={locked}>
-                      {campaignFieldTypes.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
-                    </select>
-                  </label>
-                  {(field.type === "select" || field.type === "multi_select") ? (
+                <article className="campaign-field-card" key={`${field.id}-${index}`}>
+                  <div className="campaign-field-card-head">
+                    <div>
+                      <span>Field {index + 1}</span>
+                      <strong>{field.label.trim() || "Untitled field"}</strong>
+                    </div>
+                    <div className="campaign-field-badges">
+                      <span>{typeLabel}</span>
+                      <span className={field.required ? "is-required" : "is-optional"}>{field.required ? "Required" : "Optional"}</span>
+                      {locked ? <span className="is-locked">Locked</span> : null}
+                    </div>
+                    <button type="button" className="ct-icon-btn" onClick={() => removeField(index)} disabled={locked || fields.length <= 2} aria-label="Remove field">
+                      <Trash size={14} weight="bold" />
+                    </button>
+                  </div>
+
+                  <div className="campaign-field-editor">
+                    <label className="ct-field campaign-field-label">
+                      <span>Label</span>
+                      <input value={field.label} onChange={(event) => updateField(index, { label: event.target.value, id: locked ? field.id : campaignFieldId(event.target.value, index) })} />
+                    </label>
                     <label className="ct-field">
+                      <span>Type</span>
+                      <select value={field.type} onChange={(event) => updateField(index, { type: event.target.value })} disabled={locked}>
+                        {campaignFieldTypes.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
+                      </select>
+                    </label>
+                    <label className="ct-field">
+                      <span>Placeholder</span>
+                      <input value={field.placeholder || ""} onChange={(event) => updateField(index, { placeholder: event.target.value })} placeholder="Shown inside the form field" />
+                    </label>
+                    <label className="campaign-required-toggle">
+                      <input type="checkbox" checked={Boolean(field.required)} onChange={(event) => updateField(index, { required: event.target.checked })} disabled={locked} />
+                      <span>{field.required ? "Required" : "Optional"}</span>
+                    </label>
+                  </div>
+
+                  {(field.type === "select" || field.type === "multi_select") ? (
+                    <label className="ct-field campaign-field-options">
                       <span>Options</span>
                       <input value={field.optionsText} onChange={(event) => updateField(index, { optionsText: event.target.value })} placeholder="Opcion 1, Opcion 2" />
                     </label>
                   ) : null}
-                  <label className="campaign-required-toggle">
-                    <input type="checkbox" checked={Boolean(field.required)} onChange={(event) => updateField(index, { required: event.target.checked })} disabled={locked} />
-                    <span>Required</span>
-                  </label>
-                  <button type="button" className="ct-icon-btn" onClick={() => removeField(index)} disabled={locked || fields.length <= 2} aria-label="Remove field">
-                    <Trash size={14} weight="bold" />
-                  </button>
-                </div>
+                </article>
               );
             })}
           </div>
