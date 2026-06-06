@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -73,6 +74,7 @@ CAMPAIGN_GEO_KEY_RE = re.compile(r"^[A-Za-z0-9_:-]{1,80}$")
 CAMPAIGN_GEO_SEARCH_LIMIT = 12
 DEFAULT_META_EVENT_NAME = "Lead"
 META_PIXEL_ENV_NAMES = ("META_PIXEL_ID", "META_DEFAULT_PIXEL_ID", "META_MARKETING_PIXEL_ID")
+SUBMISSION_PHONE_MISSING_TRACKING_KEY = "_lead_phone_missing"
 
 CAMPAIGN_GEO_FALLBACKS: dict[str, dict[str, list[str]]] = {
     "AR": {
@@ -1368,6 +1370,14 @@ def _submission_idempotency_key(campaign: LeadCaptureCampaign, idempotency_key: 
     return f"lead-capture:{campaign.id}:{secrets.token_urlsafe(16)}"
 
 
+def _submission_placeholder_phone(campaign: LeadCaptureCampaign, scoped_idempotency_key: str) -> str:
+    """Return a valid internal phone placeholder for forms that do not ask phone."""
+    seed = f"{campaign.id}:{scoped_idempotency_key}".encode()
+    digest = hashlib.sha256(seed).hexdigest()
+    digits = "".join(str(int(char, 16) % 10) for char in digest[:18])
+    return f"0000{digits}"
+
+
 def _submission_contact(command: PublicSubmissionCommand, answers: dict[str, Any]) -> tuple[str, str, str | None]:
     full_name = (
         command.full_name
@@ -1379,7 +1389,13 @@ def _submission_contact(command: PublicSubmissionCommand, answers: dict[str, Any
     return " ".join((full_name or "").split()).strip(), phone, clean_email
 
 
+def _submission_phone_missing(submission: LeadCaptureSubmission) -> bool:
+    value = submission.tracking.get(SUBMISSION_PHONE_MISSING_TRACKING_KEY)
+    return str(value or "").strip().lower() == "true"
+
+
 def _raw_row_for_submission(campaign: LeadCaptureCampaign, submission: LeadCaptureSubmission) -> dict[str, str]:
+    display_phone = "" if _submission_phone_missing(submission) else submission.normalized_phone or submission.phone
     raw: dict[str, str] = {
         "id": submission.id,
         "created_time": format_timestamp_seconds(submission.created_at) or "",
@@ -1387,7 +1403,7 @@ def _raw_row_for_submission(campaign: LeadCaptureCampaign, submission: LeadCaptu
         "campaign_name": campaign.name,
         "campaign_slug": campaign.public_slug,
         "full_name": submission.full_name or "",
-        "phone_number": submission.normalized_phone or submission.phone,
+        "phone_number": display_phone,
         "email": submission.email or "",
     }
     for key, value in submission.answers.items():
@@ -1410,16 +1426,19 @@ def _queue_deliveries_for_submission(
     deliveries: list[ClientLeadDelivery] = []
     for source in sources:
         block_reason = ""
-        if not normalize_phone(submission.phone):
+        lead_phone = raw_row.get("phone_number", "")
+        if _submission_phone_missing(submission):
+            block_reason = "lead_phone_missing"
+        elif not normalize_phone(lead_phone):
             block_reason = "lead_phone_invalid"
         elif not normalize_phone(source.recipient_phone):
             block_reason = "recipient_phone_invalid"
 
-        wa_link = build_wa_link(phone=submission.normalized_phone or submission.phone)
+        wa_link = build_wa_link(phone=lead_phone)
         notification_text = build_notification_text(
             source,
             name=submission.full_name or "",
-            phone=submission.normalized_phone or submission.phone,
+            phone=lead_phone,
             email=submission.email,
             wa_link=wa_link,
             context_text=build_context_text_from_row(source, raw_row),
@@ -1430,7 +1449,7 @@ def _queue_deliveries_for_submission(
             row_number=0,
             raw_row=raw_row,
             full_name=submission.full_name,
-            phone_number=submission.phone,
+            phone_number=lead_phone,
             email=submission.email,
             created_time=submission.created_at,
             wa_link=wa_link,
@@ -1880,20 +1899,23 @@ async def submit_public_campaign_form(
     answers = _normalize_submission_answers(campaign, command)
     tracking = _normalize_tracking(command.tracking)
     full_name, phone, email = _submission_contact(command, answers)
-    if not full_name:
-        raise HTTPException(status_code=400, detail="Name is required.")
-    if not normalize_phone(phone):
+    normalized_phone = normalize_phone(phone)
+    if phone and not normalized_phone:
         raise HTTPException(status_code=400, detail="WhatsApp is invalid.")
-    phone_duplicate = LeadCaptureSubmission.get_latest_by_campaign_phone(campaign.id, phone)
-    if phone_duplicate is not None:
-        return _public_submission_receipt(campaign=campaign, submission=phone_duplicate, duplicate=True)
+    storage_phone = phone if normalized_phone else _submission_placeholder_phone(campaign, scoped_idempotency_key)
+    if not normalized_phone:
+        tracking[SUBMISSION_PHONE_MISSING_TRACKING_KEY] = "true"
+    else:
+        phone_duplicate = LeadCaptureSubmission.get_latest_by_campaign_phone(campaign.id, phone)
+        if phone_duplicate is not None:
+            return _public_submission_receipt(campaign=campaign, submission=phone_duplicate, duplicate=True)
     try:
         submission = LeadCaptureSubmission.add(
             campaign_id=campaign.id,
             client_id=campaign.client_id,
             idempotency_key=scoped_idempotency_key,
             full_name=full_name,
-            phone=phone,
+            phone=storage_phone,
             email=email,
             answers=answers,
             tracking=tracking,

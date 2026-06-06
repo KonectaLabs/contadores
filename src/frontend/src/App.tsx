@@ -4101,7 +4101,6 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
                 </div>
                 <div className="campaign-field-list">
                   {fields.map((field, index) => {
-                    const locked = field.id === "full_name" || field.id === "phone";
                     const typeLabel = campaignFieldTypes.find((type) => type.value === field.type)?.label || field.type;
                     return (
                       <article className="campaign-field-card" key={`${field.id}-${index}`}>
@@ -4113,20 +4112,19 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
                           <div className="campaign-field-badges">
                             <span>{typeLabel}</span>
                             <span className={field.required ? "is-required" : "is-optional"}>{field.required ? "Required" : "Optional"}</span>
-                            {locked ? <span className="is-locked">Locked</span> : null}
                           </div>
-                          <button type="button" className="ct-icon-btn" onClick={() => removeField(index)} disabled={locked || fields.length <= 2} aria-label="Remove field">
+                          <button type="button" className="ct-icon-btn" onClick={() => removeField(index)} aria-label="Remove field">
                             <Trash size={14} weight="bold" />
                           </button>
                         </div>
                         <div className="campaign-field-editor">
                           <label className="ct-field campaign-field-label">
                             <span>Label</span>
-                            <input value={field.label} onChange={(event) => updateField(index, { label: event.target.value, id: locked ? field.id : campaignFieldId(event.target.value, index) })} />
+                            <input value={field.label} onChange={(event) => updateField(index, { label: event.target.value, id: campaignFieldId(event.target.value, index) })} />
                           </label>
                           <label className="ct-field">
                             <span>Type</span>
-                            <select value={field.type} onChange={(event) => updateField(index, { type: event.target.value })} disabled={locked}>
+                            <select value={field.type} onChange={(event) => updateField(index, { type: event.target.value })}>
                               {campaignFieldTypes.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
                             </select>
                           </label>
@@ -4135,7 +4133,7 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
                             <input value={field.placeholder || ""} onChange={(event) => updateField(index, { placeholder: event.target.value })} placeholder="Shown inside the form field" />
                           </label>
                           <label className="campaign-required-toggle">
-                            <input type="checkbox" checked={Boolean(field.required)} onChange={(event) => updateField(index, { required: event.target.checked })} disabled={locked} />
+                            <input type="checkbox" checked={Boolean(field.required)} onChange={(event) => updateField(index, { required: event.target.checked })} />
                             <span>{field.required ? "Required" : "Optional"}</span>
                           </label>
                         </div>

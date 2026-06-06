@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from backend.database import (
     ClientLeadDelivery,
+    ClientLeadDeliveryStatus,
     ClientLeadSource,
     LeadCaptureSubmission,
     PlatformAdCampaign,
@@ -275,6 +276,88 @@ def test_public_submission_skips_delivery_when_campaign_delivery_disabled(monkey
         assert submission_payload["client_lead_delivery_id"] == ""
         assert submission_payload["delivery_status"] == ""
         assert submission_payload["delivery_statuses"] == []
+
+
+def test_public_submission_accepts_custom_schema_without_name_or_phone(monkeypatch, tmp_path) -> None:
+    """Owned forms should stay valid when default contact questions are deleted."""
+    configure_contadores_db(monkeypatch, tmp_path)
+
+    payload = campaign_payload()
+    payload["form_schema"] = {
+        "fields": [
+            {
+                "id": "mensaje",
+                "label": "Mensaje",
+                "type": "textarea",
+                "required": True,
+                "placeholder": "Contanos que necesitas",
+            }
+        ],
+        "layout": "multi_step",
+    }
+
+    with TestClient(app) as client:
+        create_response = client.post("/api/campaigns", json=payload)
+        assert create_response.status_code == 200, create_response.text
+        campaign = create_response.json()["campaign"]
+        assert campaign["form_schema"]["fields"] == [
+            {
+                "id": "mensaje",
+                "label": "Mensaje",
+                "type": "textarea",
+                "required": True,
+                "placeholder": "Contanos que necesitas",
+                "options": [],
+            }
+        ]
+
+        submit_response = client.post(
+            f"/api/public/campaigns/{campaign['public_slug']}/submissions",
+            json={"answers": {"mensaje": "Necesito una consulta"}, "idempotency_key": "custom-no-phone"},
+        )
+        assert submit_response.status_code == 200, submit_response.text
+        receipt = submit_response.json()
+        assert receipt["delivery_queued"] is False
+
+        submissions = LeadCaptureSubmission.list_by_campaign(campaign["id"])
+        assert len(submissions) == 1
+        submission = submissions[0]
+        assert submission.full_name is None
+        assert submission.answers["mensaje"] == "Necesito una consulta"
+        assert submission.tracking["_lead_phone_missing"] == "true"
+        assert submission.phone.startswith("0000")
+        assert submission.normalized_phone == submission.phone
+
+        deliveries = ClientLeadDelivery.list_by_source_row_key_prefix(f"campaign-submission:{submission.id}")
+        assert len(deliveries) == 1
+        delivery = deliveries[0]
+        assert delivery.delivery_status == ClientLeadDeliveryStatus.BLOCKED
+        assert delivery.block_reason == "lead_phone_missing"
+        assert delivery.phone_number == ""
+        assert delivery.raw_row["phone_number"] == ""
+        assert delivery.raw_row["mensaje"] == "Necesito una consulta"
+
+
+def test_campaign_form_schema_can_be_empty_when_all_questions_are_deleted(monkeypatch, tmp_path) -> None:
+    """Deleting every default question should persist an intentionally empty form."""
+    configure_contadores_db(monkeypatch, tmp_path)
+
+    payload = campaign_payload()
+    payload["form_schema"] = {"fields": [], "layout": "multi_step"}
+
+    with TestClient(app) as client:
+        create_response = client.post("/api/campaigns", json=payload)
+        assert create_response.status_code == 200, create_response.text
+        campaign = create_response.json()["campaign"]
+        assert campaign["form_schema"] == {"fields": [], "layout": "multi_step"}
+
+        submit_response = client.post(
+            f"/api/public/campaigns/{campaign['public_slug']}/submissions",
+            json={"answers": {}, "idempotency_key": "empty-form"},
+        )
+        assert submit_response.status_code == 200, submit_response.text
+        assert submit_response.json()["delivery_queued"] is False
+        assert len(LeadCaptureSubmission.list_by_campaign(campaign["id"])) == 1
 
 
 def test_public_form_requires_active_campaign_and_valid_phone(monkeypatch, tmp_path) -> None:

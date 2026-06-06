@@ -123,6 +123,9 @@ contadores-agent meta inventory --limit 20
 El CRM tambien expone la pestaña `Ads` para crear campañas owned desde la UI:
 cliente existente o cliente convertido nuevo, presupuesto, localizaciones,
 creativo Meta-style, campos del formulario y tracking Meta opcional por toggle.
+Los campos arrancan con defaults, pero no hay preguntas bloqueadas: se pueden
+renombrar, cambiar de tipo, marcar optional/required o borrar, incluso nombre y
+WhatsApp.
 El creativo se guarda como texto principal, headline, descripcion, media subida,
 media URL, destination URL y `creative_brief` compatible con la API actual. Las imagenes y
 videos que se eligen, arrastran o pegan desde clipboard se guardan como

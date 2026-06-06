@@ -116,7 +116,9 @@ into two explicit views: `Mis campañas` for list/detail/leads/media and
 `Crear campaña` for the creation form; campaign creation should not render
 inside the campaign list/detail view. The creation form must keep its final
 submit action visible in the header or sticky action bar, not hidden at the
-bottom of the preview column.
+bottom of the preview column. Owned campaign form questions start from defaults
+only; no question is locked. Operators can rename, change type, toggle required,
+or delete any question, including name and WhatsApp.
 
 If the user gives multiple campaign spreadsheets for the same client, put them
 in `sheets`. Each item supports `id`, `label`, `sheet_url`, `sheet_gid`, and

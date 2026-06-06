@@ -3055,7 +3055,9 @@ def default_lead_capture_form_schema() -> dict[str, Any]:
 def normalize_lead_capture_form_schema(value: dict[str, Any] | None) -> dict[str, Any]:
     """Normalize a public form schema into the compact contract the app serves."""
     raw_fields = (value or {}).get("fields")
-    if not isinstance(raw_fields, list) or not raw_fields:
+    if raw_fields is None:
+        return default_lead_capture_form_schema()
+    if not isinstance(raw_fields, list):
         return default_lead_capture_form_schema()
 
     fields: list[dict[str, Any]] = []
@@ -3087,8 +3089,6 @@ def normalize_lead_capture_form_schema(value: dict[str, Any] | None) -> dict[str
             }
         )
 
-    if not fields:
-        return default_lead_capture_form_schema()
     return {
         "fields": fields,
         "layout": str((value or {}).get("layout") or "multi_step").strip() or "multi_step",
