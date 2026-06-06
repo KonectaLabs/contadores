@@ -6,10 +6,10 @@ from fastapi.testclient import TestClient
 
 from backend.database import (
     ClientLeadDelivery,
-    ClientLeadDeliveryStatus,
     ClientLeadSource,
     LeadCaptureSubmission,
     PlatformAdCampaign,
+    PlatformMetaInventorySnapshot,
     WorkstationClient,
 )
 from backend.main import app
@@ -458,6 +458,74 @@ def test_meta_capi_status_is_blocked_when_live_writes_are_not_enabled(monkeypatc
         submission = LeadCaptureSubmission.list_by_campaign(campaign["id"])[0]
         assert submission.meta_event_status == "blocked"
         assert "META_MARKETING_LIVE_WRITES_ENABLED" in submission.meta_event_response["blocked_reasons"]
+
+
+def test_campaign_meta_tracking_uses_automatic_pixel(monkeypatch, tmp_path) -> None:
+    """Campaign creation should not require operators to paste a Meta pixel ID."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("META_PIXEL_ID", "pixel-auto-1234")
+    monkeypatch.setenv("META_MARKETING_API_VERSION", "v25.0")
+    monkeypatch.setenv("META_MARKETING_ACCESS_TOKEN", "test-token")
+    monkeypatch.delenv("META_MARKETING_LIVE_WRITES_ENABLED", raising=False)
+
+    with TestClient(app) as client:
+        defaults_response = client.get("/api/campaigns/meta/defaults")
+        assert defaults_response.status_code == 200
+        assert defaults_response.json()["meta_events_available"] is True
+        assert defaults_response.json()["pixel_label"] == "Pixel ending 1234"
+
+        create_response = client.post(
+            "/api/campaigns",
+            json={**campaign_payload(), "meta_events_enabled": True},
+        )
+        assert create_response.status_code == 200
+        campaign = create_response.json()["campaign"]
+        assert campaign["meta_pixel_id"] == "pixel-auto-1234"
+        assert campaign["meta_event_name"] == "Lead"
+
+        public_html = client.get(f"/c/{campaign['public_slug']}/").text
+        assert "https://connect.facebook.net/en_US/fbevents.js" in public_html
+        assert "pixel-auto-1234" in public_html
+        assert "eventID: String(payload.submission.id)" in public_html
+
+        submit_response = client.post(
+            f"/api/public/campaigns/{campaign['public_slug']}/submissions",
+            json={
+                "answers": {"full_name": "Lead Pixel", "phone": "+5491199988877", "necesidad": "Info"},
+                "idempotency_key": "meta-auto-submit-1",
+            },
+        )
+        assert submit_response.status_code == 200
+        submission = LeadCaptureSubmission.list_by_campaign(campaign["id"])[0]
+        assert submission.meta_event_id == submission.id
+        assert submission.meta_event_status == "blocked"
+
+
+def test_campaign_meta_defaults_can_use_latest_inventory_pixel(monkeypatch, tmp_path) -> None:
+    """Automatic pixel resolution should fall back to the latest synced Meta inventory."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    for env_name in ("META_PIXEL_ID", "META_DEFAULT_PIXEL_ID", "META_MARKETING_PIXEL_ID"):
+        monkeypatch.delenv(env_name, raising=False)
+    PlatformMetaInventorySnapshot.add(
+        status="ready",
+        source="test",
+        actor="tester",
+        ad_account_id="act_123",
+        inventory={"pixels": [{"id": "pixel-inventory-5678", "name": "Main pixel"}]},
+    )
+
+    with TestClient(app) as client:
+        defaults_response = client.get("/api/campaigns/meta/defaults")
+        assert defaults_response.status_code == 200
+        assert defaults_response.json()["meta_events_available"] is True
+        assert defaults_response.json()["pixel_label"] == "Pixel ending 5678"
+
+        create_response = client.post(
+            "/api/campaigns",
+            json={**campaign_payload(), "meta_events_enabled": True},
+        )
+        assert create_response.status_code == 200
+        assert create_response.json()["campaign"]["meta_pixel_id"] == "pixel-inventory-5678"
 
 
 def test_meta_capi_errors_are_redacted_and_not_public(monkeypatch, tmp_path) -> None:

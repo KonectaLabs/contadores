@@ -122,9 +122,9 @@ contadores-agent meta inventory --limit 20
 
 El CRM tambien expone la pestaña `Ads` para crear campañas owned desde la UI:
 cliente existente o cliente convertido nuevo, presupuesto, localizaciones,
-creativo Meta-style, campos del formulario y Pixel/CAPI opcional. El creativo
-se guarda como texto principal, headline, descripcion, media subida, media URL,
-destination URL y `creative_brief` compatible con la API actual. Las imagenes y
+creativo Meta-style, campos del formulario y tracking Meta opcional por toggle.
+El creativo se guarda como texto principal, headline, descripcion, media subida,
+media URL, destination URL y `creative_brief` compatible con la API actual. Las imagenes y
 videos que se eligen, arrastran o pegan desde clipboard se guardan como
 `PlatformCreativeAsset` bajo `data/platform/creative-assets` y quedan
 referenciados en `campaign_info.creative.media`. Una
@@ -141,9 +141,12 @@ duplicadas y caracteres no seguros antes de crear la campaña. La API de
 operadores es
 `/api/campaigns`, y cada campaña publica `/c/{public_slug}` como formulario
 mobile-first. Las submissions entran al flujo normal de Client Lead Delivery;
-no se insertan mensajes ni se saltean helpers. Meta CAPI usa el pixel de la
-campaña solo si la campaña lo tiene habilitado y el gate existente
-`META_MARKETING_LIVE_WRITES_ENABLED` esta activo.
+no se insertan mensajes ni se saltean helpers. Cuando el tracking Meta esta
+habilitado, el backend toma el pixel automaticamente desde `META_PIXEL_ID` /
+`META_DEFAULT_PIXEL_ID` / `META_MARKETING_PIXEL_ID` o desde el ultimo
+`sync_meta_inventory`; el formulario publico carga browser Pixel y el backend
+intenta CAPI con el mismo `event_id` de submission. CAPI sigue respetando el
+gate existente `META_MARKETING_LIVE_WRITES_ENABLED`.
 
 ### Configurar sin UI, agent-native
 

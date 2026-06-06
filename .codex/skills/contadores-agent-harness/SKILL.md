@@ -67,9 +67,12 @@ contadores-agent meta inventory --limit 20
 ```
 
 Owned campaign submissions are routed through Client Lead Delivery helpers. Meta
-CAPI events are attempted only when the campaign has a pixel, the campaign has
-Meta events enabled, and `META_MARKETING_LIVE_WRITES_ENABLED` permits live
-writes.
+CAPI events are attempted when the campaign has Meta events enabled and
+`META_MARKETING_LIVE_WRITES_ENABLED` permits live writes. Do not ask operators
+to paste a pixel per campaign: campaign creation auto-resolves the pixel from
+`META_PIXEL_ID`, `META_DEFAULT_PIXEL_ID`, `META_MARKETING_PIXEL_ID`, or the
+latest `sync_meta_inventory` snapshot. Public owned forms also load browser
+Pixel on accepted submissions and use the same submission `event_id` as CAPI.
 When creating campaigns, pass `--country-code` plus repeated `--region` and
 `--city` values instead of one freeform location string. Search first with
 `contadores-agent campaigns geo-search QUERY --country-code AR --kind city` or

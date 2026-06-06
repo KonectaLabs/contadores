@@ -26,12 +26,12 @@ from backend.database import (
     LeadCaptureSubmission,
     PlatformAdCampaign,
     PlatformEvent,
+    PlatformMetaInventorySnapshot,
     WorkstationAutomationStatus,
     WorkstationClient,
     WorkstationClientStatus,
     WorkstationClientWorkType,
     normalize_email,
-    normalize_lead_capture_form_schema,
     normalize_phone,
 )
 from backend.endpoints.client_leads import (
@@ -71,6 +71,8 @@ CAMPAIGN_GEO_KEY_MAX_LENGTH = 80
 CAMPAIGN_GEO_NAME_RE = re.compile(r"^[A-Za-zÀ-ÖØ-öø-ÿ0-9][A-Za-zÀ-ÖØ-öø-ÿ0-9 .,'()/-]{0,95}$")
 CAMPAIGN_GEO_KEY_RE = re.compile(r"^[A-Za-z0-9_:-]{1,80}$")
 CAMPAIGN_GEO_SEARCH_LIMIT = 12
+DEFAULT_META_EVENT_NAME = "Lead"
+META_PIXEL_ENV_NAMES = ("META_PIXEL_ID", "META_DEFAULT_PIXEL_ID", "META_MARKETING_PIXEL_ID")
 
 CAMPAIGN_GEO_FALLBACKS: dict[str, dict[str, list[str]]] = {
     "AR": {
@@ -292,6 +294,15 @@ class PublicSubmissionCommand(BaseModel):
     honeypot: str | None = None
 
 
+class CampaignMetaDefaultsResponse(BaseModel):
+    """Operator-facing Meta tracking defaults for campaign creation."""
+
+    meta_events_available: bool
+    meta_event_name: str = DEFAULT_META_EVENT_NAME
+    pixel_source: str = ""
+    pixel_label: str = ""
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -316,6 +327,49 @@ def _clean_graph_error(value: Any) -> str:
     text = str(value)
     text = re.sub(r"(?i)(access_token=)[^&\s'\"<>]+", r"\1[redacted]", text)
     return text[:500]
+
+
+def _clean_meta_pixel_id(value: Any) -> str:
+    """Return a compact Meta pixel ID string from config or inventory."""
+    return " ".join(str(value or "").split()).strip()
+
+
+def _meta_pixel_label(pixel_id: str) -> str:
+    """Return a UI-safe label without needing to show the full pixel ID."""
+    clean = _clean_meta_pixel_id(pixel_id)
+    if not clean:
+        return ""
+    return f"Pixel ending {clean[-4:]}" if len(clean) > 4 else "Pixel configured"
+
+
+def _default_meta_pixel_id() -> tuple[str, str]:
+    """Resolve the default campaign pixel from owned config, then latest Meta inventory."""
+    for env_name in META_PIXEL_ENV_NAMES:
+        pixel_id = _clean_meta_pixel_id(os.getenv(env_name))
+        if pixel_id:
+            return pixel_id, f"env:{env_name}"
+
+    for snapshot in PlatformMetaInventorySnapshot.list_recent(limit=20):
+        inventory = snapshot.inventory()
+        pixels = inventory.get("pixels") if isinstance(inventory, dict) else []
+        if not isinstance(pixels, list):
+            continue
+        for pixel in pixels:
+            if not isinstance(pixel, dict):
+                continue
+            pixel_id = _clean_meta_pixel_id(pixel.get("id") or pixel.get("pixel_id"))
+            if pixel_id:
+                return pixel_id, f"inventory:{snapshot.id}"
+    return "", ""
+
+
+def _campaign_meta_pixel_id(requested_pixel_id: str | None, *, events_enabled: bool) -> str:
+    """Use the provided pixel only when present; otherwise auto-resolve when tracking is on."""
+    clean_pixel_id = _clean_meta_pixel_id(requested_pixel_id)
+    if clean_pixel_id or not events_enabled:
+        return clean_pixel_id
+    default_pixel_id, _source = _default_meta_pixel_id()
+    return default_pixel_id
 
 
 def _meta_graph_get(path: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -674,6 +728,7 @@ def _campaign_payload(
 
 
 def _public_campaign_payload(campaign: LeadCaptureCampaign, *, request: Request) -> dict[str, Any]:
+    meta_pixel_id = _clean_meta_pixel_id(campaign.meta_pixel_id) if campaign.meta_events_enabled else ""
     return {
         "id": campaign.id,
         "name": campaign.name,
@@ -683,6 +738,11 @@ def _public_campaign_payload(campaign: LeadCaptureCampaign, *, request: Request)
         "form_schema": campaign.form_schema,
         "thank_you_title": campaign.thank_you_title,
         "thank_you_body": campaign.thank_you_body,
+        "meta": {
+            "events_enabled": bool(meta_pixel_id),
+            "pixel_id": meta_pixel_id,
+            "event_name": campaign.meta_event_name or DEFAULT_META_EVENT_NAME,
+        },
     }
 
 
@@ -1118,6 +1178,18 @@ async def list_campaign_clients(
     return {"count": len(clients), "clients": clients}
 
 
+@campaigns_router.get("/meta/defaults", response_model=CampaignMetaDefaultsResponse)
+async def get_campaign_meta_defaults() -> CampaignMetaDefaultsResponse:
+    """Return the automatic Meta tracking defaults used by owned campaign forms."""
+    pixel_id, source = _default_meta_pixel_id()
+    return CampaignMetaDefaultsResponse(
+        meta_events_available=bool(pixel_id),
+        meta_event_name=DEFAULT_META_EVENT_NAME,
+        pixel_source=source,
+        pixel_label=_meta_pixel_label(pixel_id),
+    )
+
+
 @campaigns_router.get("/geo/search")
 async def search_campaign_geo(
     country_code: str = Query(default="AR", min_length=2, max_length=2),
@@ -1180,6 +1252,7 @@ async def create_campaign(request: Request, command: LeadCaptureCampaignCommand)
         platform_campaign_id = platform_campaign.id
 
     campaign_info, location_label = _campaign_info_with_geo(command)
+    meta_pixel_id = _campaign_meta_pixel_id(command.meta_pixel_id, events_enabled=command.meta_events_enabled)
     try:
         campaign = LeadCaptureCampaign.add(
             client_id=client_id,
@@ -1197,8 +1270,8 @@ async def create_campaign(request: Request, command: LeadCaptureCampaignCommand)
             thank_you_title=command.thank_you_title,
             thank_you_body=command.thank_you_body,
             destination_url=command.destination_url or "",
-            meta_pixel_id=command.meta_pixel_id or "",
-            meta_event_name=command.meta_event_name,
+            meta_pixel_id=meta_pixel_id,
+            meta_event_name=command.meta_event_name or DEFAULT_META_EVENT_NAME,
             meta_events_enabled=command.meta_events_enabled,
             meta_test_event_code=command.meta_test_event_code or "",
         )
@@ -1246,6 +1319,12 @@ async def patch_campaign(
     linked_client = _validate_campaign_client_link(next_client_id, next_status)
     if "client_id" in updates and linked_client is not None:
         updates["funnel_id"] = linked_client.funnel_id
+    next_meta_enabled = bool(updates.get("meta_events_enabled", current.meta_events_enabled))
+    requested_pixel_id = updates.get("meta_pixel_id", current.meta_pixel_id)
+    if next_meta_enabled and not _clean_meta_pixel_id(requested_pixel_id):
+        updates["meta_pixel_id"] = _campaign_meta_pixel_id(None, events_enabled=True)
+    if "meta_event_name" in updates and not str(updates.get("meta_event_name") or "").strip():
+        updates["meta_event_name"] = DEFAULT_META_EVENT_NAME
     try:
         campaign = LeadCaptureCampaign.update(campaign_id, **updates)
     except ValueError as error:
@@ -1378,7 +1457,6 @@ async def submit_public_campaign_form(
             email=email,
             answers=answers,
             tracking=tracking,
-            meta_event_id=f"lead-capture-{campaign.id}-{secrets.token_urlsafe(10)}",
             meta_event_status="pending",
         )
     except ValueError as error:
@@ -1513,6 +1591,7 @@ def render_public_form_html(campaign: dict[str, Any]) -> str:
   </main>
   <script>
     const campaign = {payload_json};
+    const metaTracking = campaign.meta || {{}};
     const fields = campaign.form_schema?.fields || [];
     const state = {{ index: 0, answers: {{}}, idempotencyKey: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) }};
     const stepsEl = document.getElementById("steps");
@@ -1524,6 +1603,32 @@ def render_public_form_html(campaign: dict[str, Any]) -> str:
     const htmlEscapes = {{ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }};
     document.getElementById("campaignTitle").textContent = campaign.name || "Consulta";
 
+    function installMetaPixel() {{
+      if (!metaTracking.events_enabled || !metaTracking.pixel_id) return;
+      if (!window.fbq) {{
+        (function(f, b, e, v, n, t, s) {{
+          n = f.fbq = function() {{
+            n.callMethod ? n.callMethod.apply(n, arguments) : n.queue.push(arguments);
+          }};
+          if (!f._fbq) f._fbq = n;
+          n.push = n;
+          n.loaded = true;
+          n.version = "2.0";
+          n.queue = [];
+          t = b.createElement(e);
+          t.async = true;
+          t.src = v;
+          s = b.getElementsByTagName(e)[0];
+          s.parentNode.insertBefore(t, s);
+        }})(window, document, "script", "https://connect.facebook.net/en_US/fbevents.js");
+      }}
+      window.fbq("init", metaTracking.pixel_id);
+      window.fbq("track", "PageView");
+    }}
+    function trackMetaLead(payload) {{
+      if (!metaTracking.events_enabled || !window.fbq || payload?.duplicate || !payload?.submission?.id) return;
+      window.fbq("track", metaTracking.event_name || "Lead", {{}}, {{ eventID: String(payload.submission.id) }});
+    }}
     function escapeHtml(value) {{
       return String(value ?? "").replace(/[&<>"']/g, (char) => htmlEscapes[char]);
     }}
@@ -1633,6 +1738,7 @@ def render_public_form_html(campaign: dict[str, Any]) -> str:
           throw new Error(payload.detail || "No se pudo enviar.");
         }}
         const payload = await response.json();
+        trackMetaLead(payload);
         document.getElementById("leadForm").style.display = "none";
         document.getElementById("thanksTitle").textContent = payload.thank_you?.title || campaign.thank_you_title || "Gracias";
         document.getElementById("thanksBody").textContent = payload.thank_you?.body || campaign.thank_you_body || "";
@@ -1643,6 +1749,7 @@ def render_public_form_html(campaign: dict[str, Any]) -> str:
         errorEl.textContent = error.message || "No se pudo enviar.";
       }}
     }});
+    installMetaPixel();
     renderSteps();
     showStep();
   </script>

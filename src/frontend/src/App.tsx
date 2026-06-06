@@ -2650,6 +2650,20 @@ type CampaignGeoSearchResponse = {
   suggestions: CampaignGeoArea[];
 };
 
+type CampaignMetaDefaults = {
+  meta_events_available: boolean;
+  meta_event_name: string;
+  pixel_source: string;
+  pixel_label: string;
+};
+
+const emptyCampaignMetaDefaults: CampaignMetaDefaults = {
+  meta_events_available: false,
+  meta_event_name: "Lead",
+  pixel_source: "",
+  pixel_label: "",
+};
+
 const campaignFieldTypes = [
   { value: "text", label: "Text" },
   { value: "textarea", label: "Long text" },
@@ -3004,9 +3018,8 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
   const [creativeMediaUploading, setCreativeMediaUploading] = useState(false);
   const [creativeMediaDropActive, setCreativeMediaDropActive] = useState(false);
   const [destinationUrl, setDestinationUrl] = useState("");
-  const [metaPixelId, setMetaPixelId] = useState("");
-  const [metaEventName, setMetaEventName] = useState("Lead");
   const [metaEventsEnabled, setMetaEventsEnabled] = useState(false);
+  const [metaDefaults, setMetaDefaults] = useState<CampaignMetaDefaults>(emptyCampaignMetaDefaults);
   const [fields, setFields] = useState<CampaignFieldDraft[]>(defaultCampaignFields);
 
   const selectedCampaign = campaigns.find((campaign) => campaign.id === selectedCampaignId) ?? campaigns[0] ?? null;
@@ -3138,13 +3151,15 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
   async function loadCampaigns() {
     setLoading(true);
     try {
-      const [campaignPayload, clientPayload] = await Promise.all([
+      const [campaignPayload, clientPayload, metaDefaultsPayload] = await Promise.all([
         apiFetch<{ campaigns: LeadCaptureCampaignItem[] }>("/api/campaigns?limit=120"),
         apiFetch<{ clients: CampaignClientItem[] }>("/api/campaigns/clients?limit=300"),
+        apiFetch<CampaignMetaDefaults>("/api/campaigns/meta/defaults").catch(() => emptyCampaignMetaDefaults),
       ]);
       const nextCampaigns = campaignPayload.campaigns ?? [];
       setCampaigns(nextCampaigns);
       setClients(clientPayload.clients ?? []);
+      setMetaDefaults(metaDefaultsPayload);
       const nextSelected = selectedCampaignId && nextCampaigns.some((campaign) => campaign.id === selectedCampaignId)
         ? selectedCampaignId
         : nextCampaigns[0]?.id ?? null;
@@ -3173,6 +3188,15 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
     } catch (reason) {
       onError(reason instanceof Error ? reason.message : "Could not load campaign submissions.");
     }
+  }
+
+  function toggleCreatePanel() {
+    if (createOpen) {
+      setCreateOpen(false);
+      return;
+    }
+    setMetaEventsEnabled(Boolean(metaDefaults.meta_events_available));
+    setCreateOpen(true);
   }
 
   function updateField(index: number, patch: Partial<CampaignFieldDraft>) {
@@ -3269,8 +3293,7 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
         creative_brief: creativeSummary || null,
         form_schema: campaignFormSchema(fields),
         destination_url: destinationUrl.trim() || null,
-        meta_pixel_id: metaPixelId.trim() || null,
-        meta_event_name: metaEventName.trim() || "Lead",
+        meta_event_name: "Lead",
         meta_events_enabled: metaEventsEnabled,
       };
       const payload = await apiFetch<{ campaign: LeadCaptureCampaignItem }>("/api/campaigns", {
@@ -3290,9 +3313,7 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
       setCreativeAssets([]);
       setCreativeMediaUrl("");
       setDestinationUrl("");
-      setMetaPixelId("");
-      setMetaEventName("Lead");
-      setMetaEventsEnabled(false);
+      setMetaEventsEnabled(Boolean(metaDefaults.meta_events_available));
       setClientMode("new");
       setExistingClientId("");
       setNewClientName("");
@@ -3359,7 +3380,7 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
             <ArrowsClockwise size={14} weight="bold" />
             Refresh
           </button>
-          <button type="button" className="ct-btn" onClick={() => setCreateOpen((current) => !current)}>
+          <button type="button" className="ct-btn" onClick={toggleCreatePanel}>
             <Plus size={14} weight="bold" />
             Campaign
           </button>
@@ -3716,22 +3737,27 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
                 <span className="campaign-section-icon"><Pulse size={16} weight="bold" /></span>
                 <div>
                   <strong>6. Meta</strong>
-                  <small>Pixel and events</small>
+                  <small>Submit tracking</small>
                 </div>
               </div>
               <div className="campaign-section-body campaign-meta-grid">
-                <label className="ct-field">
-                  <span>Meta Pixel ID</span>
-                  <input value={metaPixelId} onChange={(event) => setMetaPixelId(event.target.value)} placeholder="123456789012345" />
+                <label className="campaign-meta-card">
+                  <span className="campaign-meta-card-main">
+                    <span>
+                      <strong>Meta Pixel</strong>
+                      <small>{metaEventsEnabled ? "Lead event on submit" : "Disabled for this campaign"}</small>
+                    </span>
+                    <span className="ct-field-toggle campaign-meta-switch">
+                      <input type="checkbox" checked={metaEventsEnabled} onChange={(event) => setMetaEventsEnabled(event.target.checked)} />
+                    </span>
+                  </span>
+                  <em>{metaDefaults.meta_events_available ? metaDefaults.pixel_label || "Automatic pixel ready" : "No synced pixel yet"}</em>
                 </label>
-                <label className="ct-field">
-                  <span>Event name</span>
-                  <input value={metaEventName} onChange={(event) => setMetaEventName(event.target.value)} placeholder="Lead" />
-                </label>
-                <label className="ct-field ct-field-toggle campaign-meta-toggle">
-                  <input type="checkbox" checked={metaEventsEnabled} onChange={(event) => setMetaEventsEnabled(event.target.checked)} />
-                  <span>Send Meta event on lead</span>
-                </label>
+                <div className="campaign-meta-event-card">
+                  <span>Event</span>
+                  <strong>Lead</strong>
+                  <small>Pixel browser + server CAPI</small>
+                </div>
               </div>
             </section>
           </div>
@@ -3787,7 +3813,7 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
                 <div><dt>Client</dt><dd>{clientMode === "existing" ? (selectedClient?.display_name || "Existing") : (newClientName.trim() || "New client")}</dd></div>
                 <div><dt>Form fields</dt><dd>{fields.length} fields</dd></div>
                 <div><dt>Creative</dt><dd>{creativeSummary ? "Copy ready" : "Empty"}</dd></div>
-                <div><dt>Meta event</dt><dd>{metaEventsEnabled ? metaEventName || "Lead" : "Off"}</dd></div>
+                <div><dt>Meta event</dt><dd>{metaEventsEnabled ? "Lead" : "Off"}</dd></div>
               </dl>
             </section>
 

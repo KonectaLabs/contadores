@@ -168,9 +168,13 @@ duplicate geography values, more than 20 locations, more than 20 regions or
 20 cities per location, and unsafe characters before creating the campaign.
 
 Submissions dedupe on `idempotency_key`, record the raw answers, queue Client
-Lead Delivery with existing helpers, and track Meta CAPI only when both the
-campaign has `meta_events_enabled=true` and the existing
-`META_MARKETING_LIVE_WRITES_ENABLED` gate allows live writes.
+Lead Delivery with existing helpers, and can track Meta when
+`meta_events_enabled=true`. Campaign creation auto-resolves the pixel from
+`META_PIXEL_ID`, `META_DEFAULT_PIXEL_ID`, `META_MARKETING_PIXEL_ID`, or the
+latest `sync_meta_inventory` snapshot, so operators do not need to paste a
+pixel per campaign. Public forms load browser Pixel on accepted submissions;
+server CAPI uses the same submission `event_id` and still requires the existing
+`META_MARKETING_LIVE_WRITES_ENABLED` gate for live writes.
 
 ## CLI Commands
 
