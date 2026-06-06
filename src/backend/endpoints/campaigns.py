@@ -1433,46 +1433,54 @@ def render_public_form_html(campaign: dict[str, Any]) -> str:
   <style>
     :root {{
       color-scheme: light;
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: #f5f7f8;
-      color: #16201d;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #fbfbf8;
+      color: #18211e;
     }}
     * {{ box-sizing: border-box; }}
-    body {{ margin: 0; min-height: 100vh; background: #f5f7f8; }}
-    main {{ min-height: 100vh; display: grid; place-items: center; padding: 18px; }}
-    .form-shell {{ width: min(100%, 560px); background: #fff; border: 1px solid #dfe7e4; border-radius: 8px; box-shadow: 0 18px 50px rgba(23, 37, 35, .10); overflow: hidden; }}
-    .header {{ padding: 22px 20px 14px; border-bottom: 1px solid #e8eeec; }}
-    .eyebrow {{ margin: 0 0 8px; font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #4b6d61; }}
-    h1 {{ margin: 0; font-size: clamp(24px, 8vw, 38px); line-height: 1.04; letter-spacing: 0; }}
-    .progress {{ height: 4px; background: #e8eeec; }}
-    .progress > div {{ height: 100%; width: 0%; background: #128262; transition: width .2s ease; }}
-    form {{ padding: 22px 20px 20px; }}
-    .step {{ display: none; min-height: 260px; }}
-    .step.active {{ display: block; }}
-    label {{ display: block; font-size: 20px; font-weight: 760; line-height: 1.18; margin: 0 0 14px; }}
-    input, textarea, select {{ width: 100%; min-height: 54px; border: 1px solid #c9d7d2; border-radius: 7px; padding: 14px 14px; font: inherit; font-size: 18px; color: #16201d; background: #fff; }}
-    textarea {{ min-height: 140px; resize: vertical; }}
-    input:focus, textarea:focus, select:focus {{ outline: 3px solid rgba(18, 130, 98, .18); border-color: #128262; }}
-    .options {{ display: grid; gap: 10px; }}
-    .option {{ min-height: 50px; border: 1px solid #c9d7d2; border-radius: 7px; padding: 13px 14px; font-size: 17px; background: #fff; cursor: pointer; }}
-    .option.selected {{ border-color: #128262; background: #eaf6f1; }}
-    .actions {{ display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 24px; }}
-    button {{ min-height: 46px; border: 0; border-radius: 7px; padding: 0 16px; font: inherit; font-weight: 750; cursor: pointer; }}
-    .back {{ background: #ecf1ef; color: #31433d; }}
-    .next, .submit {{ background: #128262; color: #fff; }}
-    .next:disabled, .submit:disabled {{ opacity: .58; cursor: not-allowed; }}
-    .error {{ min-height: 22px; color: #a03722; font-size: 14px; margin-top: 12px; }}
-    .thanks {{ display: none; padding: 28px 22px 30px; }}
+    body {{ margin: 0; min-height: 100vh; background: radial-gradient(circle at top left, #eef6f1 0, transparent 32rem), #fbfbf8; }}
+    main {{ min-height: 100dvh; display: grid; place-items: center; padding: clamp(18px, 4vw, 54px); }}
+    .form-shell {{ width: min(100%, 860px); min-height: min(760px, calc(100dvh - 36px)); display: grid; grid-template-rows: auto auto 1fr; overflow: hidden; border: 1px solid #dde8e3; border-radius: 8px; background: rgba(255, 255, 255, .92); box-shadow: 0 28px 80px rgba(24, 33, 30, .10), inset 0 1px 0 rgba(255, 255, 255, .88); }}
+    .header {{ display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 24px clamp(22px, 5vw, 58px) 18px; border-bottom: 1px solid #edf2ef; }}
+    .eyebrow {{ margin: 0; font-size: 11px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: #527469; }}
+    h1 {{ max-width: 46ch; margin: 0; overflow: hidden; font-size: clamp(16px, 2.4vw, 22px); line-height: 1.12; letter-spacing: 0; text-overflow: ellipsis; white-space: nowrap; }}
+    .progress {{ height: 2px; background: #e9f0ed; }}
+    .progress > div {{ height: 100%; width: 0%; background: #0f7a5d; transition: width .28s cubic-bezier(.16, 1, .3, 1); }}
+    form {{ display: grid; align-content: center; min-height: 0; padding: clamp(30px, 7vw, 78px) clamp(24px, 8vw, 96px) clamp(24px, 5vw, 54px); }}
+    .step {{ display: none; min-height: 360px; align-content: center; }}
+    .step.active {{ display: grid; animation: step-in .32s cubic-bezier(.16, 1, .3, 1); }}
+    .step::before {{ content: attr(data-number); display: block; margin-bottom: 18px; color: #0f7a5d; font-size: 12px; font-weight: 850; letter-spacing: .08em; }}
+    label {{ display: block; max-width: 760px; font-size: clamp(32px, 6.4vw, 58px); font-weight: 820; line-height: .98; letter-spacing: 0; margin: 0 0 clamp(24px, 4vw, 40px); }}
+    input, textarea, select {{ width: 100%; min-height: 64px; border: 0; border-bottom: 2px solid #b9c9c3; border-radius: 0; padding: 12px 0; font: inherit; font-size: clamp(22px, 3vw, 30px); font-weight: 560; color: #18211e; background: transparent; }}
+    textarea {{ min-height: 150px; resize: vertical; line-height: 1.25; }}
+    input::placeholder, textarea::placeholder {{ color: #8ca19a; }}
+    input:focus, textarea:focus, select:focus {{ outline: none; border-color: #0f7a5d; }}
+    .options {{ display: grid; gap: 10px; max-width: 620px; }}
+    .option {{ min-height: 58px; border: 1px solid #cbd9d4; border-radius: 8px; padding: 0 18px; font-size: 18px; background: rgba(255, 255, 255, .7); color: #18211e; cursor: pointer; text-align: left; transition: transform .18s cubic-bezier(.16, 1, .3, 1), border-color .18s ease, background .18s ease; }}
+    .option:hover {{ transform: translateY(-1px); border-color: #8eb5a8; background: #fff; }}
+    .option.selected {{ border-color: #0f7a5d; background: #eaf6f1; }}
+    .actions {{ display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: clamp(20px, 4vw, 42px); }}
+    button {{ min-height: 48px; border: 0; border-radius: 8px; padding: 0 18px; font: inherit; font-weight: 780; cursor: pointer; }}
+    .back {{ background: transparent; color: #52655f; }}
+    .next, .submit {{ background: #0f7a5d; color: #fff; box-shadow: 0 12px 26px rgba(15, 122, 93, .18); }}
+    .next:disabled, .submit:disabled {{ opacity: .58; cursor: not-allowed; box-shadow: none; }}
+    .error {{ min-height: 22px; color: #9d3a24; font-size: 14px; font-weight: 700; margin-top: 12px; }}
+    .thanks {{ display: none; align-content: center; min-height: 420px; padding: clamp(32px, 8vw, 86px); }}
     .thanks.active {{ display: block; }}
-    .thanks h2 {{ margin: 0 0 10px; font-size: 30px; letter-spacing: 0; }}
-    .thanks p {{ margin: 0; color: #4f625c; font-size: 17px; line-height: 1.45; }}
+    .thanks h2 {{ margin: 0 0 12px; font-size: clamp(34px, 7vw, 62px); line-height: 1; letter-spacing: 0; }}
+    .thanks p {{ max-width: 46ch; margin: 0; color: #4f625c; font-size: 19px; line-height: 1.45; }}
     .hidden {{ position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }}
+    @keyframes step-in {{ from {{ opacity: 0; transform: translateY(10px); }} to {{ opacity: 1; transform: translateY(0); }} }}
     @media (max-width: 520px) {{
       main {{ padding: 0; place-items: stretch; }}
-      .form-shell {{ min-height: 100vh; border: 0; border-radius: 0; box-shadow: none; }}
-      form {{ padding: 24px 18px; }}
-      .step {{ min-height: calc(100vh - 240px); }}
-      .actions {{ position: sticky; bottom: 0; background: #fff; padding-top: 12px; }}
+      .form-shell {{ min-height: 100dvh; border: 0; border-radius: 0; box-shadow: none; }}
+      .header {{ display: grid; padding: 22px 20px 16px; }}
+      h1 {{ white-space: normal; }}
+      form {{ padding: 34px 22px 22px; }}
+      .step {{ min-height: calc(100dvh - 246px); }}
+      label {{ font-size: clamp(31px, 10vw, 44px); }}
+      input, textarea, select {{ font-size: 23px; }}
+      .actions {{ position: sticky; bottom: 0; background: linear-gradient(180deg, rgba(255, 255, 255, .72), #fff 38%); padding-top: 14px; }}
     }}
   </style>
 </head>
@@ -1537,7 +1545,7 @@ def render_public_form_html(campaign: dict[str, Any]) -> str:
 
     function renderSteps() {{
       stepsEl.innerHTML = fields.map((field, idx) => `
-        <section class="step" data-index="${{idx}}" data-field="${{escapeAttr(field.id)}}">
+        <section class="step" data-index="${{idx}}" data-field="${{escapeAttr(field.id)}}" data-number="${{String(idx + 1).padStart(2, "0")}}">
           <label for="field-${{escapeAttr(field.id)}}">${{escapeHtml(field.label || field.id)}}${{field.required ? " *" : ""}}</label>
           ${{fieldInput(field)}}
         </section>

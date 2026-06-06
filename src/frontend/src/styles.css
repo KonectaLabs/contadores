@@ -3822,6 +3822,20 @@ body.ct-resizing {
   font: 800 14px/1.2 var(--font-sans);
 }
 
+#contadoresView .campaign-form-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(420px, .8fr);
+  gap: 14px;
+  align-items: start;
+  min-width: 0;
+}
+
+#contadoresView .campaign-field-list {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
 #contadoresView .campaign-field-card {
   display: grid;
   gap: 10px;
@@ -3935,6 +3949,190 @@ body.ct-resizing {
 
 #contadoresView .campaign-required-toggle:has(input:disabled) {
   opacity: .72;
+}
+
+#contadoresView .campaign-form-preview {
+  position: sticky;
+  top: 16px;
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  overflow: hidden;
+  padding: 22px;
+  border: 1px solid color-mix(in srgb, var(--ct-accent) 16%, var(--ct-line));
+  border-radius: 8px;
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--ct-accent) 7%, var(--ct-surface)) 0%, var(--ct-surface) 46%, var(--ct-surface-2) 100%);
+  box-shadow: 0 18px 44px -32px #20212466;
+}
+
+#contadoresView .campaign-form-preview::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  box-shadow: inset 0 1px 0 #ffffff8f;
+}
+
+#contadoresView .campaign-preview-head,
+#contadoresView .campaign-preview-foot {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+#contadoresView .campaign-preview-head {
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--ct-line-soft);
+}
+
+#contadoresView .campaign-preview-head span {
+  display: block;
+  color: var(--ct-ink-muted);
+  font: 800 10px/1 var(--font-mono);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+#contadoresView .campaign-preview-head strong {
+  display: block;
+  margin-top: 5px;
+  overflow: hidden;
+  color: var(--ct-ink);
+  font: 850 17px/1.15 var(--font-sans);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#contadoresView .campaign-preview-pages {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  max-height: 520px;
+  overflow: auto;
+  padding-right: 2px;
+  scrollbar-width: thin;
+}
+
+#contadoresView .campaign-preview-question {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 24px 18px;
+  border: 0;
+  border-top: 1px solid var(--ct-line-soft);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+#contadoresView .campaign-preview-question:first-child {
+  min-height: 260px;
+  align-content: center;
+  padding-top: 30px;
+  border-top: 0;
+}
+
+#contadoresView .campaign-preview-question-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+#contadoresView .campaign-preview-question-head span,
+#contadoresView .campaign-preview-question-head small {
+  min-height: 22px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  font: 800 10px/1 var(--font-mono);
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+#contadoresView .campaign-preview-question-head span {
+  color: var(--ct-accent);
+}
+
+#contadoresView .campaign-preview-question-head small {
+  padding: 0 7px;
+  border: 1px solid color-mix(in srgb, var(--ct-accent) 26%, var(--ct-line));
+  background: color-mix(in srgb, var(--ct-accent) 6%, var(--ct-surface));
+  color: var(--ct-accent);
+}
+
+#contadoresView .campaign-preview-question strong {
+  color: var(--ct-ink);
+  font: 850 23px/1.14 var(--font-sans);
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+}
+
+#contadoresView .campaign-preview-question:first-child strong {
+  font-size: 32px;
+  line-height: 1.08;
+}
+
+#contadoresView .campaign-preview-question em {
+  color: var(--ct-ink-muted);
+  font: 700 12px/1.35 var(--font-sans);
+  font-style: normal;
+  overflow-wrap: anywhere;
+}
+
+#contadoresView .campaign-preview-input {
+  width: 100%;
+  height: 52px;
+  border: 0;
+  border-bottom: 2px solid color-mix(in srgb, var(--ct-ink) 22%, var(--ct-line));
+  background: linear-gradient(90deg, color-mix(in srgb, var(--ct-accent) 16%, transparent), transparent 74%);
+  opacity: .72;
+}
+
+#contadoresView .campaign-preview-input.is-long {
+  height: 76px;
+}
+
+#contadoresView .campaign-preview-options {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+#contadoresView .campaign-preview-options span {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  padding: 0 13px;
+  border: 1px solid color-mix(in srgb, var(--ct-accent) 22%, var(--ct-line));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--ct-surface) 88%, white);
+  color: var(--ct-ink);
+  font: 750 12px/1.2 var(--font-sans);
+  overflow-wrap: anywhere;
+}
+
+#contadoresView .campaign-preview-foot {
+  padding-top: 12px;
+  border-top: 1px solid var(--ct-line-soft);
+}
+
+#contadoresView .campaign-preview-foot .ct-btn {
+  opacity: 1;
+}
+
+#contadoresView .campaign-preview-foot span {
+  color: var(--ct-ink-muted);
+  font: 700 11px/1.3 var(--font-sans);
+  text-align: right;
 }
 
 #contadoresView .campaign-manager-grid {
@@ -5843,6 +6041,14 @@ body.ct-resizing {
     grid-template-columns: 1fr;
   }
 
+  #contadoresView .campaign-form-shell {
+    grid-template-columns: 1fr;
+  }
+
+  #contadoresView .campaign-form-preview {
+    position: static;
+  }
+
   #contadoresView .campaign-field-editor {
     grid-template-columns: minmax(0, 1fr) minmax(120px, .7fr);
   }
@@ -5976,6 +6182,7 @@ body.ct-resizing {
 
   #contadoresView .campaign-field-card-head,
   #contadoresView .campaign-field-editor,
+  #contadoresView .campaign-preview-foot,
   #contadoresView .campaign-location-grid,
   #contadoresView .campaign-location-compose,
   #contadoresView .campaign-submission-row,
