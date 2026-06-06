@@ -1672,9 +1672,10 @@ def render_public_form_html(campaign: dict[str, Any]) -> str:
         const options = (field.options || []).map((option) => `<button type="button" class="option" data-value="${{escapeAttr(option)}}">${{escapeHtml(option)}}</button>`).join("");
         return `<div class="options" data-field="${{safeFieldId}}" data-multi="${{field.type === "multi_select"}}">${{options}}</div>`;
       }}
-      const inputType = field.type === "email" ? "email" : field.type === "phone" ? "tel" : "text";
+      const inputType = field.type === "phone" ? "tel" : "text";
       const autocomplete = field.type === "email" ? "email" : field.type === "phone" ? "tel" : "name";
-      return `<input id="${{safeId}}" type="${{inputType}}" autocomplete="${{autocomplete}}" placeholder="${{safePlaceholder}}">`;
+      const inputMode = field.type === "email" ? "email" : field.type === "phone" ? "tel" : "text";
+      return `<input id="${{safeId}}" type="${{inputType}}" inputmode="${{inputMode}}" autocomplete="${{autocomplete}}" placeholder="${{safePlaceholder}}">`;
     }}
 
     function renderSteps() {{

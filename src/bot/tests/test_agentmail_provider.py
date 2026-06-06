@@ -240,3 +240,6 @@ def test_send_message_rejects_invalid_recipient_before_provider_call() -> None:
 def test_is_valid_email_address_rejects_invalid_domain() -> None:
     assert is_valid_email_address("info@automotoress") is False
     assert is_valid_email_address("info@example.com") is True
+    assert is_valid_email_address("leadñ@gmail.com") is True
+    assert is_valid_email_address("ventas@mañana.com") is True
+    assert is_valid_email_address("bad space@gmail.com") is False

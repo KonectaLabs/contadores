@@ -11,6 +11,7 @@ from backend.database import (
     PlatformAdCampaign,
     PlatformMetaInventorySnapshot,
     WorkstationClient,
+    normalize_email,
 )
 from backend.main import app
 from backend.tests.test_contadores import configure_contadores_db
@@ -48,6 +49,13 @@ def campaign_payload() -> dict[str, object]:
             ],
         },
     }
+
+
+def test_normalize_email_accepts_internationalized_addresses() -> None:
+    """Email normalization should support international mailbox characters."""
+    assert normalize_email("Lead Ñ <leadñ@gmail.com>") == "leadñ@gmail.com"
+    assert normalize_email("ventas@mañana.com") == "ventas@mañana.com"
+    assert normalize_email("bad space@gmail.com") == ""
 
 
 def test_campaign_api_creates_converted_client_and_queues_delivery(monkeypatch, tmp_path) -> None:
@@ -99,7 +107,7 @@ def test_campaign_api_creates_converted_client_and_queues_delivery(monkeypatch, 
                 "answers": {
                     "full_name": "Lead Capturado",
                     "phone": "+5491199988877",
-                    "email": "lead@example.com",
+                    "email": "leadñ@gmail.com",
                     "necesidad": "Quiero mas informacion",
                 },
                 "idempotency_key": "campaign-submit-1",
@@ -129,6 +137,8 @@ def test_campaign_api_creates_converted_client_and_queues_delivery(monkeypatch, 
         deliveries = ClientLeadDelivery.list_by_source(campaign["client_lead_source_id"])
         assert len(submissions) == 1
         assert len(deliveries) == 1
+        assert submissions[0].email == "leadñ@gmail.com"
+        assert deliveries[0].raw_row["email"] == "leadñ@gmail.com"
         assert deliveries[0].raw_row["necesidad"] == "Quiero mas informacion"
         assert submissions[0].meta_event_status == "disabled"
 

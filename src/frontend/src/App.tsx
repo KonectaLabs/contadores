@@ -3573,7 +3573,7 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
                       </label>
                       <label className="ct-field">
                         <span>Email</span>
-                        <input value={newClientEmail} onChange={(event) => setNewClientEmail(event.target.value)} type="email" placeholder="cliente@email.com" />
+                        <input value={newClientEmail} onChange={(event) => setNewClientEmail(event.target.value)} type="text" inputMode="email" autoComplete="email" placeholder="cliente@email.com" />
                       </label>
                     </div>
                     <label className="ct-field">

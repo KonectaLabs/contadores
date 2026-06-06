@@ -48,10 +48,7 @@ AGENTMAIL_WEBHOOK_EVENT_TYPES = [
     "message.rejected",
 ]
 WHATSAPP_MEDIA_TYPES = ("image", "video", "audio", "document", "sticker")
-EMAIL_ADDRESS_PATTERN = re.compile(
-    r"^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+$",
-    re.IGNORECASE,
-)
+EMAIL_LOCAL_DISALLOWED_CHARACTERS = set('<>,;:"[]\\()')
 
 
 class InvalidRecipientEmailError(ValueError):
@@ -63,19 +60,52 @@ def normalize_email_address(value: str) -> str:
     return parseaddr(value or "")[1].strip().lower()
 
 
+def _has_unsafe_email_character(value: str) -> bool:
+    """Return True when text has whitespace or control characters."""
+    return any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in value)
+
+
+def _is_valid_email_local_part(value: str) -> bool:
+    """Validate an unquoted local part, including international characters."""
+    if not value or len(value) > 64 or value.startswith(".") or value.endswith(".") or ".." in value:
+        return False
+    if "@" in value or _has_unsafe_email_character(value):
+        return False
+    return not any(char in EMAIL_LOCAL_DISALLOWED_CHARACTERS for char in value)
+
+
+def _is_valid_email_domain(value: str) -> bool:
+    """Validate a domain using IDNA so internationalized domains work."""
+    if not value or len(value) > 253 or "." not in value:
+        return False
+    if value.startswith(".") or value.endswith(".") or "@" in value or _has_unsafe_email_character(value):
+        return False
+
+    ascii_labels: list[str] = []
+    for label in value.split("."):
+        if not label:
+            return False
+        try:
+            ascii_label = label.encode("idna").decode("ascii").lower()
+        except UnicodeError:
+            return False
+        if not ascii_label or len(ascii_label) > 63:
+            return False
+        if ascii_label.startswith("-") or ascii_label.endswith("-"):
+            return False
+        if re.fullmatch(r"[a-z0-9-]+", ascii_label) is None:
+            return False
+        ascii_labels.append(ascii_label)
+    return len(".".join(ascii_labels)) <= 253
+
+
 def is_valid_email_address(value: str) -> bool:
     """Return True when an outbound email address is syntactically complete."""
     clean = normalize_email_address(value)
     if not clean or len(clean) > 254 or clean.count("@") != 1 or ".." in clean:
         return False
     local_part, domain = clean.rsplit("@", 1)
-    if not local_part or not domain or "." not in domain:
-        return False
-    if domain.startswith(".") or domain.endswith("."):
-        return False
-    if any(not label or label.startswith("-") or label.endswith("-") for label in domain.split(".")):
-        return False
-    return EMAIL_ADDRESS_PATTERN.fullmatch(clean) is not None
+    return _is_valid_email_local_part(local_part) and _is_valid_email_domain(domain)
 
 
 def default_phone_region() -> str:
