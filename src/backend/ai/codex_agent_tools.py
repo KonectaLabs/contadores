@@ -458,6 +458,7 @@ class MetaAdSetPlan(BaseModel):
     optimization_goal: str = "LEAD_GENERATION"
     billing_event: str = "IMPRESSIONS"
     bid_strategy: str = "LOWEST_COST_WITHOUT_CAP"
+    promoted_object: dict[str, Any] = Field(default_factory=dict)
     targeting: dict[str, Any] = Field(default_factory=dict)
     placements: list[str] = Field(default_factory=list)
     facebook_positions: list[str] = Field(default_factory=list)
@@ -1880,6 +1881,81 @@ def _client_lead_source_live_publish_gaps(source_id: str) -> list[str]:
     return gaps
 
 
+def _campaign_meta_optimization_for_publish_plan(campaign_id: str) -> dict[str, Any]:
+    """Return campaign-level pixel optimization settings for Meta publish plans."""
+    clean_campaign_id = campaign_id.strip()
+    if not clean_campaign_id:
+        return {}
+    campaign = PlatformAdCampaign.get_by_id(clean_campaign_id)
+    if campaign is None:
+        return {}
+
+    candidates: list[Any] = []
+    creative_testing = campaign.creative_testing()
+    candidates.append(creative_testing.get("meta_optimization"))
+    creative_benchmark = campaign.creative_benchmark()
+    campaign_info = creative_benchmark.get("campaign_info") if isinstance(creative_benchmark, dict) else None
+    if isinstance(campaign_info, dict):
+        candidates.append(campaign_info.get("meta_optimization"))
+
+    for candidate in candidates:
+        if not isinstance(candidate, dict) or not candidate.get("enabled"):
+            continue
+        pixel_id = _clean_text(candidate.get("pixel_id"))
+        if not pixel_id:
+            continue
+        custom_event_type = _clean_text(candidate.get("custom_event_type")) or "LEAD"
+        promoted_object = candidate.get("promoted_object") if isinstance(candidate.get("promoted_object"), dict) else {}
+        return {
+            "enabled": True,
+            "pixel_id": pixel_id,
+            "event_name": _clean_text(candidate.get("event_name")) or "Lead",
+            "custom_event_type": custom_event_type,
+            "optimization_goal": _clean_text(candidate.get("optimization_goal")) or "OFFSITE_CONVERSIONS",
+            "billing_event": _clean_text(candidate.get("billing_event")) or "IMPRESSIONS",
+            "promoted_object": promoted_object or {"pixel_id": pixel_id, "custom_event_type": custom_event_type},
+        }
+    return {}
+
+
+def _ad_set_with_campaign_meta_optimization(
+    ad_set: dict[str, Any],
+    meta_optimization: dict[str, Any],
+    destination: MetaLeadDestinationPlan,
+) -> dict[str, Any]:
+    """Apply campaign pixel optimization to one landing-page ad set when enabled."""
+    next_ad_set = dict(ad_set)
+    if destination.destination_type != "landing_page" or not meta_optimization.get("enabled"):
+        return next_ad_set
+    promoted_object = meta_optimization.get("promoted_object")
+    if not isinstance(promoted_object, dict) or not promoted_object:
+        promoted_object = {
+            "pixel_id": _clean_text(meta_optimization.get("pixel_id")),
+            "custom_event_type": _clean_text(meta_optimization.get("custom_event_type")) or "LEAD",
+        }
+    next_ad_set["optimization_goal"] = _clean_text(meta_optimization.get("optimization_goal")) or "OFFSITE_CONVERSIONS"
+    next_ad_set["billing_event"] = _clean_text(meta_optimization.get("billing_event")) or "IMPRESSIONS"
+    next_ad_set["promoted_object"] = promoted_object
+    next_ad_set["optimization_event_name"] = _clean_text(meta_optimization.get("event_name")) or "Lead"
+    return next_ad_set
+
+
+def _plan_args_with_campaign_meta_optimization(
+    args: StageMetaPublishPlanArgs,
+) -> tuple[StageMetaPublishPlanArgs, dict[str, Any]]:
+    """Return plan args with campaign-level Meta pixel optimization applied."""
+    meta_optimization = _campaign_meta_optimization_for_publish_plan(args.campaign_id)
+    if not meta_optimization:
+        return args, {}
+    payload = args.model_dump(mode="json")
+    payload["ad_sets"] = [
+        _ad_set_with_campaign_meta_optimization(ad_set, meta_optimization, args.destination)
+        for ad_set in payload.get("ad_sets", [])
+        if isinstance(ad_set, dict)
+    ]
+    return StageMetaPublishPlanArgs.model_validate(payload), meta_optimization
+
+
 def _missing_meta_plan_fields(args: StageMetaPublishPlanArgs) -> list[str]:
     """Return gaps that must be resolved before live Meta API writes."""
     missing: list[str] = []
@@ -1927,6 +2003,12 @@ def _missing_meta_plan_fields(args: StageMetaPublishPlanArgs) -> list[str]:
             missing.append(f"{prefix}.budget")
         if not ad_set.targeting:
             missing.append(f"{prefix}.targeting")
+        optimization_goal = ad_set.optimization_goal.strip().upper()
+        if optimization_goal in {"OFFSITE_CONVERSIONS", "CONVERSIONS"}:
+            if not _clean_text(ad_set.promoted_object.get("pixel_id")):
+                missing.append(f"{prefix}.promoted_object.pixel_id")
+            if not _clean_text(ad_set.promoted_object.get("custom_event_type")):
+                missing.append(f"{prefix}.promoted_object.custom_event_type")
         if not ad_set.ads:
             missing.append(f"{prefix}.ads")
         for ad_index, ad in enumerate(ad_set.ads, start=1):
@@ -1982,7 +2064,12 @@ def _meta_lead_routing_payload(args: StageMetaPublishPlanArgs) -> dict[str, Any]
     }
 
 
-def _meta_publish_plan_payload(args: StageMetaPublishPlanArgs, missing_fields: list[str]) -> dict[str, Any]:
+def _meta_publish_plan_payload(
+    args: StageMetaPublishPlanArgs,
+    missing_fields: list[str],
+    *,
+    campaign_meta_optimization: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Build the canonical staged payload that a future publisher executes."""
     return {
         "schema_version": "konecta.meta_publish_plan.v1",
@@ -2003,6 +2090,7 @@ def _meta_publish_plan_payload(args: StageMetaPublishPlanArgs, missing_fields: l
         },
         "destination": args.destination.model_dump(mode="json"),
         "lead_routing": _meta_lead_routing_payload(args),
+        "meta_optimization": campaign_meta_optimization or {},
         "ad_sets": [ad_set.model_dump(mode="json") for ad_set in args.ad_sets],
         "required_before_live_publish": missing_fields,
         "live_execution_policy": {
@@ -2025,13 +2113,18 @@ def _meta_publish_plan_payload(args: StageMetaPublishPlanArgs, missing_fields: l
 
 def stage_meta_publish_plan(arguments: dict[str, Any]) -> dict[str, Any]:
     args = StageMetaPublishPlanArgs.model_validate(arguments)
+    args, campaign_meta_optimization = _plan_args_with_campaign_meta_optimization(args)
     missing_fields = _missing_meta_plan_fields(args)
     try:
         row = PlatformMetaPublishAttempt.add(
             campaign_id=args.campaign_id,
             status="blocked" if missing_fields else "staged",
             approval_status="needs_preflight" if missing_fields else args.approval_status,
-            request_payload=_meta_publish_plan_payload(args, missing_fields),
+            request_payload=_meta_publish_plan_payload(
+                args,
+                missing_fields,
+                campaign_meta_optimization=campaign_meta_optimization,
+            ),
             response_payload={},
             error="Missing live publish fields: " + ", ".join(missing_fields) if missing_fields else "",
             idempotency_key=args.idempotency_key,

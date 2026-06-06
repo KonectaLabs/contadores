@@ -243,7 +243,11 @@ Use this order:
    initial `PAUSED` status, lead-routing contract, and missing fields before
    live publish. For Click-to-WhatsApp, include the funnel and any existing
    `destination.whatsapp_referral_source_id`; for instant forms, include
-   `destination.client_lead_source_id`.
+   `destination.client_lead_source_id`. Owned campaign landing-page plans inherit
+   `creative_testing.meta_optimization` from the `PlatformAdCampaign`; when it is
+   enabled, the Ad Set must use `optimization_goal=OFFSITE_CONVERSIONS`,
+   `billing_event=IMPRESSIONS`, and `promoted_object.pixel_id` +
+   `custom_event_type=LEAD`.
 5. `sync_meta_inventory` to read available ad accounts, Pages, lead forms,
    pixels, WhatsApp numbers, and existing campaigns before asking for IDs. Call
    it even without arguments; it falls back to configured server Meta IDs. If

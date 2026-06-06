@@ -147,7 +147,10 @@ habilitado, el backend toma el pixel automaticamente desde `META_PIXEL_ID` /
 `META_DEFAULT_PIXEL_ID` / `META_MARKETING_PIXEL_ID` o desde el ultimo
 `sync_meta_inventory`; el formulario publico carga browser Pixel y el backend
 intenta CAPI con el mismo `event_id` de submission. CAPI sigue respetando el
-gate existente `META_MARKETING_LIVE_WRITES_ENABLED`.
+gate existente `META_MARKETING_LIVE_WRITES_ENABLED`. Si la UI tiene prendido
+`Optimize Ad Set`, la campaña guarda `campaign_info.meta_optimization` y el
+publish plan de Meta convierte el Ad Set a `OFFSITE_CONVERSIONS` con
+`promoted_object.pixel_id` + `custom_event_type=LEAD`.
 
 Cada campaña owned tiene Delivery inline: un toggle prende/apaga el envio de
 templates WhatsApp cuando llega una submission, el cliente de la campaña queda
@@ -255,6 +258,10 @@ Flujo Meta agent-native:
    presupuesto, targeting o creatividades, el resultado incluye
    `required_before_live_publish` y el agente debe usar `ask_human_question` en
    vez de inventar datos.
+   Para campañas owned con `campaign_info.meta_optimization.enabled=true`,
+   `stage_meta_publish_plan` hereda el pixel/evento del `PlatformAdCampaign` y
+   deja los Ad Sets de landing page optimizados por `OFFSITE_CONVERSIONS` /
+   evento `Lead`.
 10. `preflight_meta_publish_plan` convierte el plan staged en operaciones
    ordenadas `campaign -> ad_set -> creative -> ad`, guarda el resultado en el
    intento y bloquea cualquier live write si faltan credenciales, aprobacion o

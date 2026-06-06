@@ -4080,7 +4080,7 @@ body.ct-resizing {
 }
 
 #contadoresView .campaign-meta-grid {
-  grid-template-columns: minmax(260px, 1fr) minmax(180px, .45fr);
+  grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr) minmax(160px, .42fr);
   align-items: stretch;
 }
 

@@ -2568,7 +2568,9 @@ type LeadCaptureCampaignItem = {
   delivery_source?: ClientLeadSource | null;
   delivery_sources?: ClientLeadSource[];
   meta_pixel_id: string;
+  meta_event_name: string;
   meta_events_enabled: boolean;
+  meta_optimization?: CampaignMetaOptimization;
   created_at: string | null;
   updated_at: string | null;
 };
@@ -2665,6 +2667,16 @@ type CampaignMetaDefaults = {
   meta_event_name: string;
   pixel_source: string;
   pixel_label: string;
+};
+
+type CampaignMetaOptimization = {
+  enabled: boolean;
+  pixel_id?: string;
+  event_name?: string;
+  custom_event_type?: string;
+  optimization_goal?: string;
+  billing_event?: string;
+  promoted_object?: Record<string, string>;
 };
 
 type CampaignDeliveryContact = {
@@ -3053,6 +3065,7 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
   const [creativeMediaDropActive, setCreativeMediaDropActive] = useState(false);
   const [destinationUrl, setDestinationUrl] = useState("");
   const [metaEventsEnabled, setMetaEventsEnabled] = useState(false);
+  const [metaOptimizeForPixel, setMetaOptimizeForPixel] = useState(false);
   const [metaDefaults, setMetaDefaults] = useState<CampaignMetaDefaults>(emptyCampaignMetaDefaults);
   const [deliveryEnabled, setDeliveryEnabled] = useState(true);
   const [deliveryContactIds, setDeliveryContactIds] = useState<string[]>(["client"]);
@@ -3239,8 +3252,24 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
       setCreateOpen(false);
       return;
     }
-    setMetaEventsEnabled(Boolean(metaDefaults.meta_events_available));
+    const metaReady = Boolean(metaDefaults.meta_events_available);
+    setMetaEventsEnabled(metaReady);
+    setMetaOptimizeForPixel(metaReady);
     setCreateOpen(true);
+  }
+
+  function updateMetaEventsEnabled(enabled: boolean) {
+    setMetaEventsEnabled(enabled);
+    if (!enabled) {
+      setMetaOptimizeForPixel(false);
+    }
+  }
+
+  function updateMetaOptimizeForPixel(enabled: boolean) {
+    setMetaOptimizeForPixel(enabled);
+    if (enabled) {
+      setMetaEventsEnabled(true);
+    }
   }
 
   function buildCreateDeliveryConfig(): CampaignDeliveryConfig {
@@ -3456,7 +3485,12 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
         form_schema: campaignFormSchema(fields),
         destination_url: destinationUrl.trim() || null,
         meta_event_name: "Lead",
-        meta_events_enabled: metaEventsEnabled,
+        meta_events_enabled: metaEventsEnabled || metaOptimizeForPixel,
+        meta_optimize_for_pixel: metaOptimizeForPixel,
+        meta_optimization: {
+          enabled: metaOptimizeForPixel,
+          event_name: "Lead",
+        },
         delivery_config: buildCreateDeliveryConfig(),
       };
       const payload = await apiFetch<{ campaign: LeadCaptureCampaignItem }>("/api/campaigns", {
@@ -3475,6 +3509,7 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
       setCreativeMediaUrl("");
       setDestinationUrl("");
       setMetaEventsEnabled(Boolean(metaDefaults.meta_events_available));
+      setMetaOptimizeForPixel(Boolean(metaDefaults.meta_events_available));
       setDeliveryEnabled(true);
       setDeliveryContactIds(["client"]);
       setDeliveryCustomContacts([]);
@@ -3977,10 +4012,31 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
                       <small>{metaEventsEnabled ? "Lead event on submit" : "Disabled for this campaign"}</small>
                     </span>
                     <span className="ct-field-toggle campaign-meta-switch">
-                      <input type="checkbox" checked={metaEventsEnabled} onChange={(event) => setMetaEventsEnabled(event.target.checked)} />
+                      <input
+                        type="checkbox"
+                        checked={metaEventsEnabled}
+                        onChange={(event) => updateMetaEventsEnabled(event.target.checked)}
+                      />
                     </span>
                   </span>
                   <em>{metaDefaults.meta_events_available ? metaDefaults.pixel_label || "Automatic pixel ready" : "No synced pixel yet"}</em>
+                </label>
+                <label className="campaign-meta-card">
+                  <span className="campaign-meta-card-main">
+                    <span>
+                      <strong>Optimize Ad Set</strong>
+                      <small>{metaOptimizeForPixel ? "Meta optimizes for Lead" : "Manual optimization later"}</small>
+                    </span>
+                    <span className="ct-field-toggle campaign-meta-switch">
+                      <input
+                        type="checkbox"
+                        checked={metaOptimizeForPixel}
+                        disabled={!metaDefaults.meta_events_available}
+                        onChange={(event) => updateMetaOptimizeForPixel(event.target.checked)}
+                      />
+                    </span>
+                  </span>
+                  <em>{metaOptimizeForPixel ? "OFFSITE_CONVERSIONS · Lead" : "No pixel optimization"}</em>
                 </label>
                 <div className="campaign-meta-event-card">
                   <span>Event</span>
@@ -4042,6 +4098,7 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
                 <div><dt>Form fields</dt><dd>{fields.length} fields</dd></div>
                 <div><dt>Creative</dt><dd>{creativeSummary ? "Copy ready" : "Empty"}</dd></div>
                 <div><dt>Meta event</dt><dd>{metaEventsEnabled ? "Lead" : "Off"}</dd></div>
+                <div><dt>Optimize</dt><dd>{metaOptimizeForPixel ? "Pixel Lead" : "Off"}</dd></div>
               </dl>
             </section>
 

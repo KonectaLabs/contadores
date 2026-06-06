@@ -267,6 +267,13 @@ class CampaignDeliveryConfigCommand(BaseModel):
     contacts: list[CampaignDeliveryContactCommand] = Field(default_factory=list, max_length=12)
 
 
+class CampaignMetaOptimizationCommand(BaseModel):
+    """Meta ad-set optimization for one owned campaign."""
+
+    enabled: bool = False
+    event_name: str = DEFAULT_META_EVENT_NAME
+
+
 class LeadCaptureCampaignCommand(BaseModel):
     """Create an owned lead-capture campaign."""
 
@@ -288,6 +295,8 @@ class LeadCaptureCampaignCommand(BaseModel):
     meta_pixel_id: str | None = None
     meta_event_name: str = "Lead"
     meta_events_enabled: bool = False
+    meta_optimization: CampaignMetaOptimizationCommand | None = None
+    meta_optimize_for_pixel: bool = False
     meta_test_event_code: str | None = None
     stage_platform_campaign: bool = True
     delivery_config: CampaignDeliveryConfigCommand | None = None
@@ -313,6 +322,8 @@ class LeadCaptureCampaignPatchCommand(BaseModel):
     meta_pixel_id: str | None = None
     meta_event_name: str | None = None
     meta_events_enabled: bool | None = None
+    meta_optimization: CampaignMetaOptimizationCommand | None = None
+    meta_optimize_for_pixel: bool | None = None
     meta_test_event_code: str | None = None
     meta_campaign_id: str | None = None
     meta_adset_id: str | None = None
@@ -408,6 +419,96 @@ def _campaign_meta_pixel_id(requested_pixel_id: str | None, *, events_enabled: b
         return clean_pixel_id
     default_pixel_id, _source = _default_meta_pixel_id()
     return default_pixel_id
+
+
+def _meta_standard_event_type(event_name: str | None) -> str:
+    """Return the Meta standard event enum used in ad-set promoted objects."""
+    clean = " ".join(str(event_name or DEFAULT_META_EVENT_NAME).split()).strip()
+    if not clean:
+        clean = DEFAULT_META_EVENT_NAME
+    if clean.lower() == "lead":
+        return "LEAD"
+    return re.sub(r"[^A-Z0-9]+", "_", clean.upper()).strip("_") or "LEAD"
+
+
+def _normalize_campaign_meta_optimization(
+    raw_config: Any,
+    *,
+    pixel_id: str,
+    event_name: str,
+    enabled: bool | None = None,
+) -> dict[str, Any]:
+    """Return the owned-campaign Meta ad-set optimization settings."""
+    if isinstance(raw_config, CampaignMetaOptimizationCommand):
+        raw = raw_config.model_dump(mode="json")
+    elif isinstance(raw_config, dict):
+        raw = raw_config
+    else:
+        raw = {}
+
+    requested_enabled = bool(raw.get("enabled", False)) if enabled is None else bool(enabled)
+    clean_event_name = " ".join(str(raw.get("event_name") or event_name or DEFAULT_META_EVENT_NAME).split()).strip()
+    clean_pixel_id = _clean_meta_pixel_id(raw.get("pixel_id") or pixel_id)
+    custom_event_type = _meta_standard_event_type(clean_event_name)
+    return {
+        "enabled": requested_enabled,
+        "pixel_id": clean_pixel_id if requested_enabled else "",
+        "event_name": clean_event_name or DEFAULT_META_EVENT_NAME,
+        "custom_event_type": custom_event_type,
+        "optimization_goal": "OFFSITE_CONVERSIONS",
+        "billing_event": "IMPRESSIONS",
+        "promoted_object": (
+            {"pixel_id": clean_pixel_id, "custom_event_type": custom_event_type}
+            if requested_enabled and clean_pixel_id
+            else {}
+        ),
+    }
+
+
+def _campaign_info_with_meta_optimization(
+    campaign_info: dict[str, Any],
+    meta_optimization: CampaignMetaOptimizationCommand | dict[str, Any] | None,
+    *,
+    pixel_id: str,
+    event_name: str,
+    enabled: bool,
+) -> dict[str, Any]:
+    """Merge Meta ad-set optimization settings into campaign info."""
+    next_info = dict(campaign_info or {})
+    next_info["meta_optimization"] = _normalize_campaign_meta_optimization(
+        meta_optimization,
+        pixel_id=pixel_id,
+        event_name=event_name,
+        enabled=enabled,
+    )
+    return next_info
+
+
+def _requested_meta_optimization_enabled(
+    meta_optimization: CampaignMetaOptimizationCommand | dict[str, Any] | None,
+    meta_optimize_for_pixel: bool | None,
+    *,
+    default: bool = False,
+) -> bool:
+    """Return whether the operator requested pixel-optimized Meta ad sets."""
+    if meta_optimization is not None:
+        if isinstance(meta_optimization, CampaignMetaOptimizationCommand):
+            return bool(meta_optimization.enabled)
+        if isinstance(meta_optimization, dict):
+            return bool(meta_optimization.get("enabled", default))
+    if meta_optimize_for_pixel is not None:
+        return bool(meta_optimize_for_pixel)
+    return default
+
+
+def _campaign_meta_optimization_config(campaign: LeadCaptureCampaign) -> dict[str, Any]:
+    """Return normalized Meta optimization settings for an existing campaign."""
+    raw = campaign.campaign_info.get("meta_optimization") if isinstance(campaign.campaign_info, dict) else None
+    return _normalize_campaign_meta_optimization(
+        raw,
+        pixel_id=campaign.meta_pixel_id,
+        event_name=campaign.meta_event_name or DEFAULT_META_EVENT_NAME,
+    )
 
 
 def _default_public_campaign_slug(platform_campaign_id: str) -> str:
@@ -899,6 +1000,7 @@ def _campaign_payload(
         "meta_pixel_id": campaign.meta_pixel_id,
         "meta_event_name": campaign.meta_event_name,
         "meta_events_enabled": campaign.meta_events_enabled,
+        "meta_optimization": _campaign_meta_optimization_config(campaign),
         "meta_campaign_id": campaign.meta_campaign_id,
         "meta_adset_id": campaign.meta_adset_id,
         "meta_ad_id": campaign.meta_ad_id,
@@ -1118,13 +1220,29 @@ def ensure_campaign_delivery_source(campaign: LeadCaptureCampaign) -> ClientLead
     return sources[0] if sources else None
 
 
-def _stage_platform_ad_campaign(command: LeadCaptureCampaignCommand, *, client_id: str, funnel_id: str) -> PlatformAdCampaign:
+def _stage_platform_ad_campaign(
+    command: LeadCaptureCampaignCommand,
+    *,
+    client_id: str,
+    funnel_id: str,
+    meta_pixel_id: str,
+    meta_events_enabled: bool,
+    meta_optimization_enabled: bool,
+) -> PlatformAdCampaign:
     campaign_info, location_label = _campaign_info_with_geo(command)
     campaign_info = _campaign_info_with_delivery(
         campaign_info,
         command.delivery_config,
         client_id=client_id,
     )
+    campaign_info = _campaign_info_with_meta_optimization(
+        campaign_info,
+        command.meta_optimization,
+        pixel_id=meta_pixel_id,
+        event_name=command.meta_event_name or DEFAULT_META_EVENT_NAME,
+        enabled=meta_optimization_enabled,
+    )
+    meta_optimization = campaign_info["meta_optimization"]
     return PlatformAdCampaign.add(
         client_id=client_id,
         funnel_id=funnel_id,
@@ -1135,7 +1253,12 @@ def _stage_platform_ad_campaign(command: LeadCaptureCampaignCommand, *, client_i
         target_segments=_campaign_meta_target_segments(campaign_info, location_label),
         angles=[command.creative_brief] if command.creative_brief else [],
         creative_benchmark={"source": "owned_campaign_form", "campaign_info": campaign_info},
-        creative_testing={"destination": "owned_form", "default_status": "PAUSED"},
+        creative_testing={
+            "destination": "owned_form",
+            "default_status": "PAUSED",
+            "meta_events_enabled": meta_events_enabled,
+            "meta_optimization": meta_optimization,
+        },
         approval_status="not_requested",
         idempotency_key=f"lead-capture:{client_id}:{command.name}",
     )
@@ -1460,6 +1583,14 @@ async def create_campaign(request: Request, command: LeadCaptureCampaignCommand)
         client_id = str(client_payload["client"]["id"])
     linked_client = _validate_campaign_client_link(client_id, command.status)
     funnel_id = command.client.funnel_id if command.client else (linked_client.funnel_id if linked_client else "contadores")
+    meta_optimization_enabled = _requested_meta_optimization_enabled(
+        command.meta_optimization,
+        command.meta_optimize_for_pixel,
+    )
+    meta_events_enabled = bool(command.meta_events_enabled or meta_optimization_enabled)
+    meta_pixel_id = _campaign_meta_pixel_id(command.meta_pixel_id, events_enabled=meta_events_enabled)
+    if meta_optimization_enabled and not meta_pixel_id:
+        raise HTTPException(status_code=400, detail="Meta pixel is required to optimize ad sets by Lead event.")
 
     platform_campaign_id = ""
     if command.stage_platform_campaign and client_id:
@@ -1468,6 +1599,9 @@ async def create_campaign(request: Request, command: LeadCaptureCampaignCommand)
                 command,
                 client_id=client_id,
                 funnel_id=funnel_id,
+                meta_pixel_id=meta_pixel_id,
+                meta_events_enabled=meta_events_enabled,
+                meta_optimization_enabled=meta_optimization_enabled,
             )
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
@@ -1480,9 +1614,15 @@ async def create_campaign(request: Request, command: LeadCaptureCampaignCommand)
             command.delivery_config,
             client_id=client_id,
         )
+        campaign_info = _campaign_info_with_meta_optimization(
+            campaign_info,
+            command.meta_optimization,
+            pixel_id=meta_pixel_id,
+            event_name=command.meta_event_name or DEFAULT_META_EVENT_NAME,
+            enabled=meta_optimization_enabled,
+        )
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
-    meta_pixel_id = _campaign_meta_pixel_id(command.meta_pixel_id, events_enabled=command.meta_events_enabled)
     try:
         campaign = LeadCaptureCampaign.add(
             client_id=client_id,
@@ -1502,7 +1642,7 @@ async def create_campaign(request: Request, command: LeadCaptureCampaignCommand)
             destination_url=command.destination_url or "",
             meta_pixel_id=meta_pixel_id,
             meta_event_name=command.meta_event_name or DEFAULT_META_EVENT_NAME,
-            meta_events_enabled=command.meta_events_enabled,
+            meta_events_enabled=meta_events_enabled,
             meta_test_event_code=command.meta_test_event_code or "",
         )
     except ValueError as error:
@@ -1545,15 +1685,44 @@ async def patch_campaign(
     current = _get_campaign_or_404(campaign_id)
     updates = command.model_dump(exclude_unset=True)
     delivery_config = updates.pop("delivery_config", None)
+    meta_optimization = updates.pop("meta_optimization", None)
+    meta_optimize_for_pixel = updates.pop("meta_optimize_for_pixel", None)
     next_client_id = str(updates.get("client_id", current.client_id) or "").strip()
     next_status = str(updates.get("status", current.status) or "draft").strip().lower()
     linked_client = _validate_campaign_client_link(next_client_id, next_status)
     if "client_id" in updates and linked_client is not None:
         updates["funnel_id"] = linked_client.funnel_id
+    current_meta_optimization = _campaign_meta_optimization_config(current)
+    meta_optimization_changed = (
+        meta_optimization is not None
+        or meta_optimize_for_pixel is not None
+        or "meta_pixel_id" in updates
+        or "meta_event_name" in updates
+        or "meta_events_enabled" in updates
+    )
+    default_meta_optimization_enabled = bool(current_meta_optimization.get("enabled"))
+    if (
+        updates.get("meta_events_enabled") is False
+        and meta_optimization is None
+        and meta_optimize_for_pixel is None
+    ):
+        default_meta_optimization_enabled = False
+    next_meta_optimization_enabled = _requested_meta_optimization_enabled(
+        meta_optimization,
+        meta_optimize_for_pixel,
+        default=default_meta_optimization_enabled,
+    )
+    if next_meta_optimization_enabled:
+        updates["meta_events_enabled"] = True
     next_meta_enabled = bool(updates.get("meta_events_enabled", current.meta_events_enabled))
+    if not next_meta_enabled:
+        next_meta_optimization_enabled = False
     requested_pixel_id = updates.get("meta_pixel_id", current.meta_pixel_id)
-    if next_meta_enabled and not _clean_meta_pixel_id(requested_pixel_id):
+    if (next_meta_enabled or next_meta_optimization_enabled) and not _clean_meta_pixel_id(requested_pixel_id):
         updates["meta_pixel_id"] = _campaign_meta_pixel_id(None, events_enabled=True)
+        requested_pixel_id = updates["meta_pixel_id"]
+    if next_meta_optimization_enabled and not _clean_meta_pixel_id(requested_pixel_id):
+        raise HTTPException(status_code=400, detail="Meta pixel is required to optimize ad sets by Lead event.")
     if "meta_event_name" in updates and not str(updates.get("meta_event_name") or "").strip():
         updates["meta_event_name"] = DEFAULT_META_EVENT_NAME
     if delivery_config is not None:
@@ -1565,6 +1734,14 @@ async def patch_campaign(
             )
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
+    if meta_optimization_changed:
+        updates["campaign_info"] = _campaign_info_with_meta_optimization(
+            updates.get("campaign_info") if isinstance(updates.get("campaign_info"), dict) else current.campaign_info,
+            meta_optimization if meta_optimization is not None else current_meta_optimization,
+            pixel_id=_clean_meta_pixel_id(requested_pixel_id),
+            event_name=str(updates.get("meta_event_name", current.meta_event_name) or DEFAULT_META_EVENT_NAME),
+            enabled=next_meta_optimization_enabled,
+        )
     try:
         campaign = LeadCaptureCampaign.update(campaign_id, **updates)
     except ValueError as error:
@@ -1611,8 +1788,27 @@ async def list_campaign_submissions(
 async def stage_campaign_meta_plan(request: Request, campaign_id: str) -> dict[str, Any]:
     """Stage or link the local PlatformAdCampaign record used before Meta publish."""
     campaign = _get_campaign_or_404(campaign_id)
+    meta_optimization = _campaign_meta_optimization_config(campaign)
+    creative_testing = {
+        "destination_url": _public_url(request, campaign),
+        "default_status": "PAUSED",
+        "meta_events_enabled": campaign.meta_events_enabled,
+        "meta_optimization": meta_optimization,
+    }
+    creative_benchmark = {"source": "owned_campaign_form", "campaign_info": campaign.campaign_info}
+    target_segments = _campaign_meta_target_segments(campaign.campaign_info, campaign.location)
     if campaign.platform_ad_campaign_id and PlatformAdCampaign.get_by_id(campaign.platform_ad_campaign_id):
-        platform_campaign = PlatformAdCampaign.get_by_id(campaign.platform_ad_campaign_id)
+        platform_campaign = PlatformAdCampaign.update(
+            campaign.platform_ad_campaign_id,
+            client_id=campaign.client_id,
+            funnel_id=campaign.funnel_id,
+            budget_daily_usd=campaign.daily_budget_usd,
+            budget_currency=campaign.budget_currency,
+            target_segments=target_segments,
+            angles=[campaign.creative_brief] if campaign.creative_brief else [],
+            creative_benchmark=creative_benchmark,
+            creative_testing=creative_testing,
+        )
     else:
         platform_campaign = PlatformAdCampaign.add(
             client_id=campaign.client_id,
@@ -1621,10 +1817,10 @@ async def stage_campaign_meta_plan(request: Request, campaign_id: str) -> dict[s
             objective="lead_capture_form",
             budget_daily_usd=campaign.daily_budget_usd,
             budget_currency=campaign.budget_currency,
-            target_segments=_campaign_meta_target_segments(campaign.campaign_info, campaign.location),
+            target_segments=target_segments,
             angles=[campaign.creative_brief] if campaign.creative_brief else [],
-            creative_benchmark={"source": "owned_campaign_form", "campaign_info": campaign.campaign_info},
-            creative_testing={"destination_url": _public_url(request, campaign), "default_status": "PAUSED"},
+            creative_benchmark=creative_benchmark,
+            creative_testing=creative_testing,
             approval_status="not_requested",
             idempotency_key=f"lead-capture:{campaign.id}",
         )

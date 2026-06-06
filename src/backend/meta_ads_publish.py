@@ -455,6 +455,15 @@ def _plan_blockers(plan: dict[str, Any]) -> list[str]:
         has_budget = bool(_money_to_minor_units(ad_set.get("budget_daily_usd")) or _money_to_minor_units(ad_set.get("budget_total_usd")))
         _require(has_budget, f"{prefix}.budget", blocked)
         _require(isinstance(ad_set.get("targeting"), dict) and bool(ad_set.get("targeting")), f"{prefix}.targeting", blocked)
+        optimization_goal = _clean(ad_set.get("optimization_goal")).upper()
+        if optimization_goal in {"OFFSITE_CONVERSIONS", "CONVERSIONS"}:
+            promoted_object = _ad_set_promoted_object(destination, ad_set)
+            _require(bool(_clean(promoted_object.get("pixel_id"))), f"{prefix}.promoted_object.pixel_id", blocked)
+            _require(
+                bool(_clean(promoted_object.get("custom_event_type"))),
+                f"{prefix}.promoted_object.custom_event_type",
+                blocked,
+            )
         ads = ad_set.get("ads") if isinstance(ad_set.get("ads"), list) else []
         _require(bool(ads), f"{prefix}.ads", blocked)
         for ad_index, ad in enumerate(ads, start=1):
@@ -641,6 +650,19 @@ def _destination_promoted_object(destination: dict[str, Any]) -> dict[str, Any]:
     return {"page_id": _clean(destination.get("page_id")), "landing_page_url": _clean(destination.get("landing_page_url"))}
 
 
+def _ad_set_promoted_object(destination: dict[str, Any], ad_set: dict[str, Any]) -> dict[str, Any]:
+    """Return an ad-set promoted object, preferring explicit pixel optimization."""
+    promoted_object = ad_set.get("promoted_object") if isinstance(ad_set.get("promoted_object"), dict) else {}
+    clean_promoted_object = {
+        str(key): _clean(value)
+        for key, value in promoted_object.items()
+        if _clean(value)
+    }
+    if clean_promoted_object:
+        return clean_promoted_object
+    return _destination_promoted_object(destination)
+
+
 def _creative_params(plan: dict[str, Any], creative: dict[str, Any], name: str) -> dict[str, Any]:
     destination = plan.get("destination") if isinstance(plan.get("destination"), dict) else {}
     destination_type = _clean(destination.get("destination_type")) or "whatsapp"
@@ -732,7 +754,7 @@ def build_meta_publish_operations(plan: dict[str, Any], *, live_write: bool = Fa
             "billing_event": _clean(ad_set.get("billing_event")) or "IMPRESSIONS",
             "bid_strategy": _clean(ad_set.get("bid_strategy")) or "LOWEST_COST_WITHOUT_CAP",
             "targeting": ad_set.get("targeting") if isinstance(ad_set.get("targeting"), dict) else {},
-            "promoted_object": _destination_promoted_object(destination),
+            "promoted_object": _ad_set_promoted_object(destination, ad_set),
         }
         daily_budget = _money_to_minor_units(ad_set.get("budget_daily_usd"))
         total_budget = _money_to_minor_units(ad_set.get("budget_total_usd"))

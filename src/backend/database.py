@@ -4363,6 +4363,53 @@ class PlatformAdCampaign(SQLModel, table=True):
                 session.expunge(row)
             return rows
 
+    @classmethod
+    def update(
+        cls,
+        campaign_id: str,
+        **updates: Any,
+    ) -> Optional["PlatformAdCampaign"]:
+        """Patch one staged ad campaign."""
+        with Session(engine) as session:
+            row = session.get(cls, campaign_id)
+            if row is None:
+                return None
+            simple_strings = [
+                "client_id",
+                "funnel_id",
+                "status",
+                "objective",
+                "budget_currency",
+                "meta_campaign_id",
+                "approval_status",
+            ]
+            for field_name in simple_strings:
+                if field_name in updates and updates[field_name] is not None:
+                    value = str(updates[field_name] or "").strip()
+                    if field_name == "budget_currency":
+                        value = value.upper()[:12] or "USD"
+                    setattr(row, field_name, value)
+            if "budget_daily_usd" in updates:
+                value = updates["budget_daily_usd"]
+                row.budget_daily_usd = value if value and int(value) > 0 else None
+            if "budget_total_usd" in updates:
+                value = updates["budget_total_usd"]
+                row.budget_total_usd = value if value and int(value) > 0 else None
+            if "target_segments" in updates and updates["target_segments"] is not None:
+                row.target_segments_json = _json_dumps(updates["target_segments"])
+            if "angles" in updates and updates["angles"] is not None:
+                row.angles_json = _json_dumps(updates["angles"])
+            if "creative_benchmark" in updates and updates["creative_benchmark"] is not None:
+                row.creative_benchmark_json = _json_dumps(updates["creative_benchmark"])
+            if "creative_testing" in updates and updates["creative_testing"] is not None:
+                row.creative_testing_json = _json_dumps(updates["creative_testing"])
+            row.updated_at = datetime.now(timezone.utc)
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            session.expunge(row)
+            return row
+
     def target_segments(self) -> list[Any]:
         """Return parsed targeting segments."""
         return _json_array(self.target_segments_json)

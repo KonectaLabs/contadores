@@ -673,6 +673,52 @@ def test_campaign_meta_tracking_uses_automatic_pixel(monkeypatch, tmp_path) -> N
         assert submission.meta_event_status == "blocked"
 
 
+def test_campaign_meta_optimization_uses_automatic_pixel(monkeypatch, tmp_path) -> None:
+    """Pixel optimization should configure the owned campaign and staged Meta campaign together."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("META_PIXEL_ID", "pixel-optimize-1234")
+
+    with TestClient(app) as client:
+        create_response = client.post(
+            "/api/campaigns",
+            json={**campaign_payload(), "meta_optimize_for_pixel": True},
+        )
+        assert create_response.status_code == 200, create_response.text
+        campaign = create_response.json()["campaign"]
+        assert campaign["meta_events_enabled"] is True
+        assert campaign["meta_pixel_id"] == "pixel-optimize-1234"
+        assert campaign["meta_optimization"]["enabled"] is True
+        assert campaign["meta_optimization"]["optimization_goal"] == "OFFSITE_CONVERSIONS"
+        assert campaign["meta_optimization"]["promoted_object"] == {
+            "pixel_id": "pixel-optimize-1234",
+            "custom_event_type": "LEAD",
+        }
+
+        platform_campaign = PlatformAdCampaign.get_by_id(campaign["platform_ad_campaign_id"])
+        assert platform_campaign is not None
+        creative_testing = platform_campaign.creative_testing()
+        assert creative_testing["meta_events_enabled"] is True
+        assert creative_testing["meta_optimization"]["promoted_object"] == {
+            "pixel_id": "pixel-optimize-1234",
+            "custom_event_type": "LEAD",
+        }
+
+
+def test_campaign_meta_optimization_requires_pixel(monkeypatch, tmp_path) -> None:
+    """Optimized Meta ad sets need a pixel before campaign creation can proceed."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    for env_name in ("META_PIXEL_ID", "META_DEFAULT_PIXEL_ID", "META_MARKETING_PIXEL_ID"):
+        monkeypatch.delenv(env_name, raising=False)
+
+    with TestClient(app) as client:
+        create_response = client.post(
+            "/api/campaigns",
+            json={**campaign_payload(), "meta_optimize_for_pixel": True},
+        )
+        assert create_response.status_code == 400
+        assert "Meta pixel is required" in create_response.json()["detail"]
+
+
 def test_campaign_meta_defaults_can_use_latest_inventory_pixel(monkeypatch, tmp_path) -> None:
     """Automatic pixel resolution should fall back to the latest synced Meta inventory."""
     configure_contadores_db(monkeypatch, tmp_path)

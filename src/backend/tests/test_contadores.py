@@ -44,7 +44,6 @@ from backend.database import (
     ContadoresLead,
     ContadoresLeadStage,
     ContadoresMessage,
-    ContadoresRuntimeAlert,
     MessageDeliveryStatus,
     PlatformAdCampaign,
     PlatformClientProfile,
@@ -1012,6 +1011,91 @@ def test_meta_creative_asset_upload_blocks_without_credentials(monkeypatch, tmp_
     assert "META_MARKETING_API_VERSION" in blockers
     assert "asset.file_path.exists" in blockers
     assert PlatformCreativeAsset.get_by_id(asset.id).status == "upload_blocked"
+
+
+def test_meta_publish_plan_applies_campaign_pixel_optimization(monkeypatch, tmp_path) -> None:
+    """Owned campaign pixel optimization should become Meta ad-set params."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("META_MARKETING_API_VERSION", "v25.0")
+    monkeypatch.setenv("META_MARKETING_ACCESS_TOKEN", "test-token")
+    campaign = PlatformAdCampaign.add(
+        client_id="client-pixel-opt-1",
+        funnel_id="contadores",
+        status="draft",
+        objective="lead_capture_form",
+        creative_testing={
+            "destination": "owned_form",
+            "meta_optimization": {
+                "enabled": True,
+                "pixel_id": "1234567890",
+                "event_name": "Lead",
+                "custom_event_type": "LEAD",
+                "optimization_goal": "OFFSITE_CONVERSIONS",
+                "billing_event": "IMPRESSIONS",
+                "promoted_object": {"pixel_id": "1234567890", "custom_event_type": "LEAD"},
+            },
+        },
+    )
+
+    plan_result = call_tool(
+        run_id="agent-run-meta-pixel-optimization",
+        tool_name="stage_meta_publish_plan",
+        arguments={
+            "campaign_id": campaign.id,
+            "client_id": "client-pixel-opt-1",
+            "funnel_id": "contadores",
+            "ad_account_id": "act_pixel_opt_1",
+            "campaign_name": "Contadores pixel optimized",
+            "objective": "OUTCOME_LEADS",
+            "destination": {
+                "destination_type": "landing_page",
+                "page_id": "page_pixel_opt_1",
+                "landing_page_url": "https://crm.fgoiriz.com/c/opaque-id/",
+            },
+            "ad_sets": [
+                {
+                    "name": "Pixel optimized leads",
+                    "budget_daily_usd": 20,
+                    "targeting": {"geo_locations": {"countries": ["AR"]}},
+                    "ads": [
+                        {
+                            "name": "Lead form ad",
+                            "creative": {
+                                "image_hash": "hash_pixel_opt_1",
+                                "primary_text": "Completa el formulario y te contactamos.",
+                                "headline": "Recibi asesoramiento",
+                            },
+                        }
+                    ],
+                }
+            ],
+            "idempotency_key": "publish-plan-pixel-opt-agent-1",
+        },
+    )
+    assert plan_result["ok"] is True
+    assert plan_result["result"]["required_before_live_publish"] == []
+    attempt_id = plan_result["result"]["attempt"]["id"]
+    plan_payload = PlatformMetaPublishAttempt.get_by_id(attempt_id).request_payload()
+    ad_set = plan_payload["ad_sets"][0]
+    assert plan_payload["meta_optimization"]["enabled"] is True
+    assert ad_set["optimization_goal"] == "OFFSITE_CONVERSIONS"
+    assert ad_set["billing_event"] == "IMPRESSIONS"
+    assert ad_set["promoted_object"] == {"pixel_id": "1234567890", "custom_event_type": "LEAD"}
+
+    preflight_result = call_tool(
+        run_id="agent-run-meta-pixel-optimization",
+        tool_name="preflight_meta_publish_plan",
+        arguments={"attempt_id": attempt_id},
+    )
+    assert preflight_result["ok"] is True
+    ad_set_operation = preflight_result["result"]["preflight"]["operations"][1]
+    assert ad_set_operation["object_type"] == "ad_set"
+    assert ad_set_operation["params"]["optimization_goal"] == "OFFSITE_CONVERSIONS"
+    assert ad_set_operation["params"]["billing_event"] == "IMPRESSIONS"
+    assert ad_set_operation["params"]["promoted_object"] == {
+        "pixel_id": "1234567890",
+        "custom_event_type": "LEAD",
+    }
 
 
 def test_meta_publish_approval_gate_requires_inventory_and_budget(monkeypatch, tmp_path) -> None:
@@ -5866,7 +5950,7 @@ def test_workstation_creation_mirrors_existing_whatsapp_images(monkeypatch, tmp_
 def test_contadores_reply_after_24h_followup_still_advances_to_offer(monkeypatch, tmp_path) -> None:
     """A reply after the 24-hour reminder should use the usual next stage and offer copy."""
     configure_contadores_db(monkeypatch, tmp_path)
-    config = ContadoresConfig.update(
+    ContadoresConfig.update(
         enabled=True,
         initial_reply_quiet_seconds=1,
     )
