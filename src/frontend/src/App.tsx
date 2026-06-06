@@ -2650,10 +2650,10 @@ const campaignGeoNamePattern = /^[A-Za-zÀ-ÖØ-öø-ÿ0-9][A-Za-zÀ-ÖØ-öø-�
 
 function defaultCampaignFields(): CampaignFieldDraft[] {
   return [
-    { id: "full_name", label: "Nombre", type: "text", required: true, placeholder: "Tu nombre", optionsText: "" },
-    { id: "phone", label: "WhatsApp", type: "phone", required: true, placeholder: "+54 9 ...", optionsText: "" },
-    { id: "email", label: "Email", type: "email", required: false, placeholder: "tu@email.com", optionsText: "" },
-    { id: "necesidad", label: "Que necesitas?", type: "textarea", required: true, placeholder: "", optionsText: "" },
+    { id: "full_name", label: "Cual es tu nombre?", type: "text", required: true, placeholder: "Nombre completo", optionsText: "" },
+    { id: "phone", label: "Cual es tu numero de WhatsApp?", type: "phone", required: true, placeholder: "+54 9 ...", optionsText: "" },
+    { id: "email", label: "Cual es tu email?", type: "email", required: false, placeholder: "nombre@email.com", optionsText: "" },
+    { id: "necesidad", label: "Que servicio necesitas?", type: "textarea", required: true, placeholder: "Contanos brevemente", optionsText: "" },
   ];
 }
 
