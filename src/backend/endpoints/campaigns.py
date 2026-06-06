@@ -63,7 +63,7 @@ PUBLIC_MAX_ANSWER_BYTES = 20_000
 PUBLIC_MAX_FIELD_TEXT = 2_000
 PUBLIC_MAX_TRACKING_TEXT = 1_000
 PUBLISHABLE_CAMPAIGN_STATUSES = {"active", "published"}
-CAMPAIGN_GEO_SUPPORTED_COUNTRIES = {"AR", "UY", "CL", "PY", "BO", "PE", "CO", "EC", "MX", "US", "ES"}
+CAMPAIGN_GEO_SUPPORTED_COUNTRIES = {"AR", "UY", "CL", "PY", "BO", "PE", "CO", "EC", "MX", "US", "ES", "DE"}
 CAMPAIGN_GEO_MAX_AREAS_PER_KIND = 20
 CAMPAIGN_GEO_MAX_LOCATIONS = 20
 CAMPAIGN_GEO_NAME_MAX_LENGTH = 96
@@ -117,6 +117,20 @@ CAMPAIGN_GEO_FALLBACKS: dict[str, dict[str, list[str]]] = {
     "MX": {"region": ["Ciudad de Mexico", "Jalisco", "Nuevo Leon"], "city": ["Ciudad de Mexico", "Guadalajara", "Monterrey"]},
     "US": {"region": ["Florida", "California", "Texas", "New York"], "city": ["Miami", "Los Angeles", "Houston", "New York"]},
     "ES": {"region": ["Madrid", "Cataluna", "Andalucia", "Valencia"], "city": ["Madrid", "Barcelona", "Valencia", "Sevilla"]},
+    "DE": {
+        "region": [
+            "Baden-Wurttemberg",
+            "Bavaria",
+            "Berlin",
+            "Brandenburg",
+            "Hamburg",
+            "Hesse",
+            "Lower Saxony",
+            "North Rhine-Westphalia",
+            "Saxony",
+        ],
+        "city": ["Berlin", "Hamburg", "Munich", "Cologne", "Frankfurt"],
+    },
 }
 
 

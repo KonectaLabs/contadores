@@ -110,9 +110,9 @@ Campañas, clientes convertidos y formularios owned:
 
 ```bash
 contadores-agent clients create --name "Cliente" --whatsapp "+549..."
-contadores-agent campaigns geo-search cordoba --country-code AR --kind city
-contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --status active --country-code AR --region "Buenos Aires" --city "Cordoba=OPTION_KEY"
-contadores-agent campaigns create --name "Campaña multi pais" --client-id CLIENT_ID --geo-targeting-json '{"locations":[{"country_code":"AR"},{"country_code":"EC","cities":[{"name":"Quito","key":"OPTION_KEY"}]}]}'
+contadores-agent campaigns geo-search bavaria --country-code DE --kind region
+contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --status active --country-code AR --region "Buenos Aires=OPTION_KEY"
+contadores-agent campaigns create --name "Campaña multi pais" --client-id CLIENT_ID --geo-targeting-json '{"locations":[{"country_code":"AR"},{"country_code":"DE","regions":[{"name":"Bavaria","key":"OPTION_KEY"}]}]}'
 contadores-agent campaigns get CAMPAIGN_ID
 contadores-agent campaigns delivery-source CAMPAIGN_ID
 contadores-agent campaigns submissions CAMPAIGN_ID --limit 20
@@ -128,16 +128,16 @@ media URL, destination URL y `creative_brief` compatible con la API actual. Las 
 videos que se eligen, arrastran o pegan desde clipboard se guardan como
 `PlatformCreativeAsset` bajo `data/platform/creative-assets` y quedan
 referenciados en `campaign_info.creative.media`. Una
-localizacion se arma como pais entero, pais + provincias/regiones, o pais +
-ciudades; despues se agrega a la lista y se puede repetir para mas paises.
-Regiones y ciudades se seleccionan con buscador: primero intenta Meta Targeting
-Search cuando hay credenciales, y si no usa sugerencias locales marcadas como
-`Local`. Si no se elige provincia ni ciudad, se guarda el pais entero como
-`geo_locations.countries`; si se elige provincia o ciudad, no se targetea todo
-el pais, solo las regiones/cities que tengan `key`. La CLI tambien expone
-`campaigns geo-search`; para multi-pais se puede pasar `--geo-targeting-json`
-con `locations`. La UI, CLI y API rechazan paises no soportados, geografias
-duplicadas y caracteres no seguros antes de crear la campaña. La API de
+localizacion se arma desde una lista guardada: se busca el pais, se guarda el
+pais entero o se elige una provincia/region, y se vuelve a la lista para sumar
+o quitar selecciones. La UI ya no crea targets por ciudad. Las provincias se
+buscan con Meta Targeting Search cuando hay credenciales, y si no usa
+sugerencias locales. Un pais entero se guarda como `geo_locations.countries`;
+una provincia/region se guarda como region especifica sin targetear todo el
+pais. La CLI tambien expone `campaigns geo-search`; para multi-pais se puede
+pasar `--geo-targeting-json` con `locations`. La UI, CLI y API rechazan paises
+no soportados, geografias duplicadas y caracteres no seguros antes de crear la
+campaña. La API de
 operadores es
 `/api/campaigns`, y cada campaña publica `/c/{public_slug}` como formulario
 mobile-first. Las submissions entran al flujo normal de Client Lead Delivery;

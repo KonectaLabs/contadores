@@ -27,8 +27,8 @@ contadores-agent messages LEAD_ID
 contadores-agent send LEAD_ID "..."
 contadores-agent action LEAD_ID mark-answered
 contadores-agent clients create --name "Cliente" --whatsapp "+549..."
-contadores-agent campaigns geo-search cordoba --country-code AR --kind city
-contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --status active --country-code AR --region "Buenos Aires" --city "Cordoba=OPTION_KEY"
+contadores-agent campaigns geo-search buenos --country-code AR --kind region
+contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --status active --country-code AR --region "Buenos Aires=OPTION_KEY"
 contadores-agent campaigns get CAMPAIGN_ID
 contadores-agent tool call get_lead_context --json '{"lead_id":"..."}'
 ```
@@ -58,8 +58,8 @@ form, or inspect submissions:
 contadores-agent clients list --query Cliente
 contadores-agent clients create --name "Cliente" --whatsapp "+549..." --email cliente@example.com
 contadores-agent campaigns list --status active
-contadores-agent campaigns geo-search cordoba --country-code AR --kind city
-contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --status active --country-code AR --region "Buenos Aires" --city "Cordoba=OPTION_KEY"
+contadores-agent campaigns geo-search buenos --country-code AR --kind region
+contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --status active --country-code AR --region "Buenos Aires=OPTION_KEY"
 contadores-agent campaigns delivery-source CAMPAIGN_ID
 contadores-agent campaigns submissions CAMPAIGN_ID --limit 20
 contadores-agent meta readiness
@@ -73,18 +73,16 @@ to paste a pixel per campaign: campaign creation auto-resolves the pixel from
 `META_PIXEL_ID`, `META_DEFAULT_PIXEL_ID`, `META_MARKETING_PIXEL_ID`, or the
 latest `sync_meta_inventory` snapshot. Public owned forms also load browser
 Pixel on accepted submissions and use the same submission `event_id` as CAPI.
-When creating campaigns, pass `--country-code` plus repeated `--region` and
-`--city` values instead of one freeform location string. Search first with
-`contadores-agent campaigns geo-search QUERY --country-code AR --kind city` or
-`--kind region`; selected Meta options can be passed as `--city "Name=KEY"` or
-`--region "Name=KEY"`. For multi-country targeting, pass
-`--geo-targeting-json` with `locations`, for example one country-only location
-and another location with selected cities. A country-only location maps to Meta
-`geo_locations.countries`; a region/city location should not also target the
-whole country unless that country-only location is explicitly added. The CLI
-rejects unsupported country codes, duplicate geography values, unsafe
-characters, more than 20 locations, and more than 20 regions or 20 cities per
-location.
+When creating campaigns, use country-only or country-plus-region targeting.
+Search first with `contadores-agent campaigns geo-search QUERY --country-code
+AR --kind region`; selected Meta options can be passed as `--region
+"Name=KEY"`. For multi-country targeting, pass `--geo-targeting-json` with
+`locations`, for example one country-only location and another location with a
+selected region. A country-only location maps to Meta
+`geo_locations.countries`; a region location should not also target the whole
+country unless that country-only location is explicitly added. The CLI rejects
+unsupported country codes, duplicate geography values, unsafe characters, more
+than 20 locations, and more than 20 regions per location.
 
 ## Internal Tool Runner
 

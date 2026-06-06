@@ -196,14 +196,14 @@ def test_campaign_geo_targeting_supports_country_only_locations(monkeypatch, tmp
             json={
                 **campaign_payload(),
                 "name": "Country Only Campaign",
-                "geo_targeting": {"locations": [{"country_code": "AR"}, {"country_code": "EC"}]},
+                "geo_targeting": {"locations": [{"country_code": "AR"}, {"country_code": "DE"}]},
             },
         )
         assert response.status_code == 200, response.text
         campaign = response.json()["campaign"]
-        assert campaign["location"] == "AR | EC"
-        assert campaign["campaign_info"]["location_countries"] == ["AR", "EC"]
-        assert campaign["campaign_info"]["meta_targeting"]["geo_locations"]["countries"] == ["AR", "EC"]
+        assert campaign["location"] == "AR | DE"
+        assert campaign["campaign_info"]["location_countries"] == ["AR", "DE"]
+        assert campaign["campaign_info"]["meta_targeting"]["geo_locations"]["countries"] == ["AR", "DE"]
 
 
 def test_campaign_geo_search_returns_selectable_locations(monkeypatch, tmp_path) -> None:
@@ -228,6 +228,10 @@ def test_campaign_geo_search_returns_selectable_locations(monkeypatch, tmp_path)
         ecuador_response = client.get("/api/campaigns/geo/search", params={"country_code": "EC", "kind": "city", "q": "q"})
         assert ecuador_response.status_code == 200
         assert ecuador_response.json()["suggestions"][0]["name"] == "Quito"
+
+        germany_response = client.get("/api/campaigns/geo/search", params={"country_code": "DE", "kind": "region", "q": "ba"})
+        assert germany_response.status_code == 200
+        assert germany_response.json()["suggestions"][0]["name"] == "Baden-Wurttemberg"
 
         bad_country = client.get("/api/campaigns/geo/search", params={"country_code": "XX", "kind": "city", "q": "x"})
         assert bad_country.status_code == 400

@@ -133,8 +133,8 @@ HTTP CLI/API contract:
 
 ```bash
 contadores-agent clients create --name "Cliente" --whatsapp "+549..." --email cliente@example.com
-contadores-agent campaigns geo-search quito --country-code EC --kind city
-contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --status active --geo-targeting-json '{"locations":[{"country_code":"AR"},{"country_code":"EC","cities":[{"name":"Quito","key":"OPTION_KEY"}]}]}'
+contadores-agent campaigns geo-search bavaria --country-code DE --kind region
+contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --status active --geo-targeting-json '{"locations":[{"country_code":"AR"},{"country_code":"DE","regions":[{"name":"Bavaria","key":"OPTION_KEY"}]}]}'
 contadores-agent campaigns submissions CAMPAIGN_ID --limit 20
 ```
 
