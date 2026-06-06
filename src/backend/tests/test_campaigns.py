@@ -8,6 +8,7 @@ from backend.database import (
     ClientLeadDelivery,
     ClientLeadDeliveryStatus,
     ClientLeadSource,
+    LeadCaptureCampaign,
     LeadCaptureSubmission,
     PlatformAdCampaign,
     PlatformMetaInventorySnapshot,
@@ -357,6 +358,31 @@ def test_campaign_meta_plan_graph_crud_duplicate_and_stage(monkeypatch, tmp_path
             "pixel_id": "1234567890",
             "custom_event_type": "LEAD",
         }
+
+
+def test_campaign_create_dry_run_with_graph_does_not_write(monkeypatch, tmp_path) -> None:
+    """Campaign create dry-run should validate the graph without creating rows."""
+    configure_contadores_db(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/campaigns",
+            json={
+                **campaign_payload(),
+                "dry_run": True,
+                "meta_plan_graph": {"strategy": "1x3x3"},
+            },
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["dry_run"] is True
+        assert payload["campaign"]["id"] == ""
+        graph = payload["campaign"]["meta_plan_graph"]
+        assert len(graph["campaigns"]) == 1
+        assert len(graph["campaigns"][0]["ad_sets"]) == 3
+        assert len(graph["campaigns"][0]["ad_sets"][0]["ads"]) == 3
+        assert LeadCaptureCampaign.list_recent(limit=10) == []
+        assert WorkstationClient.list_recent(limit=10) == []
 
 
 def test_public_submission_skips_delivery_when_campaign_delivery_disabled(monkeypatch, tmp_path) -> None:

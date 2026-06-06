@@ -334,6 +334,7 @@ class LeadCaptureCampaignCommand(BaseModel):
     meta_optimize_for_pixel: bool = False
     meta_test_event_code: str | None = None
     stage_platform_campaign: bool = True
+    dry_run: bool = False
     delivery_config: CampaignDeliveryConfigCommand | None = None
 
 
@@ -1093,6 +1094,83 @@ def _public_campaign_payload(campaign: LeadCaptureCampaign, *, request: Request)
     }
 
 
+def _campaign_create_dry_run_payload(
+    request: Request,
+    command: LeadCaptureCampaignCommand,
+    *,
+    client_id: str,
+    linked_client: WorkstationClient | None,
+    meta_pixel_id: str,
+    meta_events_enabled: bool,
+    meta_optimization_enabled: bool,
+) -> dict[str, Any]:
+    """Return the normalized create payload without writing campaign state."""
+    funnel_id = command.client.funnel_id if command.client else (linked_client.funnel_id if linked_client else "contadores")
+    public_slug = command.public_slug or _default_public_campaign_slug("")
+    destination_url = command.destination_url or f"{_request_origin(request)}/c/{public_slug}"
+    try:
+        campaign_info, location_label = _campaign_info_with_geo(command)
+        campaign_info = _campaign_info_with_delivery(
+            campaign_info,
+            command.delivery_config,
+            client_id=client_id,
+        )
+        campaign_info = _campaign_info_with_meta_optimization(
+            campaign_info,
+            command.meta_optimization,
+            pixel_id=meta_pixel_id,
+            event_name=command.meta_event_name or DEFAULT_META_EVENT_NAME,
+            enabled=meta_optimization_enabled,
+        )
+        campaign_info = campaign_info_with_meta_plan_graph(
+            campaign_info,
+            command.meta_plan_graph,
+            campaign_name=command.name,
+            daily_budget_usd=command.daily_budget_usd,
+            destination_url=destination_url,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+    return {
+        "dry_run": True,
+        "campaign": {
+            "id": "",
+            "client_id": client_id,
+            "funnel_id": funnel_id,
+            "name": command.name,
+            "status": command.status,
+            "public_slug": public_slug,
+            "public_url": f"{_request_origin(request)}/c/{public_slug}",
+            "daily_budget_usd": command.daily_budget_usd,
+            "budget_currency": command.budget_currency,
+            "location": location_label,
+            "campaign_info": campaign_info,
+            "meta_plan_graph": normalize_meta_plan_graph(
+                campaign_info.get(META_PLAN_GRAPH_KEY),
+                campaign_name=command.name,
+                daily_budget_usd=command.daily_budget_usd,
+                campaign_info=campaign_info,
+                destination_url=destination_url,
+            ),
+            "creative_brief": command.creative_brief or "",
+            "form_schema": command.form_schema,
+            "thank_you_title": command.thank_you_title,
+            "thank_you_body": command.thank_you_body,
+            "destination_url": destination_url,
+            "meta_pixel_id": meta_pixel_id,
+            "meta_event_name": command.meta_event_name or DEFAULT_META_EVENT_NAME,
+            "meta_events_enabled": meta_events_enabled,
+            "meta_optimization": _normalize_campaign_meta_optimization(
+                command.meta_optimization,
+                pixel_id=meta_pixel_id,
+                event_name=command.meta_event_name or DEFAULT_META_EVENT_NAME,
+                enabled=meta_optimization_enabled,
+            ),
+        },
+    }
+
+
 def _get_campaign_or_404(campaign_id: str) -> LeadCaptureCampaign:
     campaign = LeadCaptureCampaign.get_by_id(campaign_id)
     if campaign is None:
@@ -1645,11 +1723,7 @@ async def list_campaigns(
 async def create_campaign(request: Request, command: LeadCaptureCampaignCommand) -> dict[str, Any]:
     """Create one owned lead-capture campaign."""
     client_id = (command.client_id or "").strip()
-    if not client_id and command.client is not None:
-        client_payload = create_or_reuse_converted_client(command.client)
-        client_id = str(client_payload["client"]["id"])
-    linked_client = _validate_campaign_client_link(client_id, command.status)
-    funnel_id = command.client.funnel_id if command.client else (linked_client.funnel_id if linked_client else "contadores")
+    linked_client = _validate_campaign_client_link(client_id, command.status) if client_id else None
     meta_optimization_enabled = _requested_meta_optimization_enabled(
         command.meta_optimization,
         command.meta_optimize_for_pixel,
@@ -1658,6 +1732,23 @@ async def create_campaign(request: Request, command: LeadCaptureCampaignCommand)
     meta_pixel_id = _campaign_meta_pixel_id(command.meta_pixel_id, events_enabled=meta_events_enabled)
     if meta_optimization_enabled and not meta_pixel_id:
         raise HTTPException(status_code=400, detail="Meta pixel is required to optimize ad sets by Lead event.")
+
+    if command.dry_run:
+        return _campaign_create_dry_run_payload(
+            request,
+            command,
+            client_id=client_id,
+            linked_client=linked_client,
+            meta_pixel_id=meta_pixel_id,
+            meta_events_enabled=meta_events_enabled,
+            meta_optimization_enabled=meta_optimization_enabled,
+        )
+
+    if not client_id and command.client is not None:
+        client_payload = create_or_reuse_converted_client(command.client)
+        client_id = str(client_payload["client"]["id"])
+    linked_client = _validate_campaign_client_link(client_id, command.status)
+    funnel_id = command.client.funnel_id if command.client else (linked_client.funnel_id if linked_client else "contadores")
 
     platform_campaign_id = ""
     if command.stage_platform_campaign and client_id:
