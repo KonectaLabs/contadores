@@ -2635,6 +2635,14 @@ type CampaignCreativeAssetItem = {
   updated_at: string | null;
 };
 
+type CampaignStoredCreativeMedia = {
+  key: string;
+  name: string;
+  media_url: string;
+  asset_type: string;
+  source: string;
+};
+
 type CampaignGeoTargetingDraft = {
   locations: CampaignGeoLocation[];
 };
@@ -2950,6 +2958,81 @@ function campaignCreativeAssetPayload(asset: CampaignCreativeAssetItem): Record<
   };
 }
 
+function campaignRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function campaignString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function campaignMediaType(value: string, fallback: string = "image"): string {
+  const cleanValue = value.toLowerCase();
+  if (fallback.toLowerCase().includes("video") || /\.(mov|mp4|webm)(\?|#|$)/i.test(cleanValue)) {
+    return "video";
+  }
+  if (fallback.toLowerCase().includes("image") || /\.(avif|gif|heic|jpeg|jpg|png|webp)(\?|#|$)/i.test(cleanValue)) {
+    return "image";
+  }
+  return fallback || "image";
+}
+
+function campaignMediaName(media: Record<string, unknown>, fallbackIndex: number): string {
+  const refs = Array.isArray(media.source_refs) ? media.source_refs : [];
+  const uploadRef = refs.find((item) => campaignRecord(item)?.original_filename);
+  const originalFilename = campaignString(campaignRecord(uploadRef)?.original_filename);
+  if (originalFilename) {
+    return originalFilename;
+  }
+  const filePath = campaignString(media.asset_file_path) || campaignString(media.file_path);
+  if (filePath) {
+    return filePath.split("/").filter(Boolean).pop() || filePath;
+  }
+  const mediaUrl = campaignString(media.media_url);
+  if (mediaUrl) {
+    return mediaUrl.split(/[/?#]/).filter(Boolean).pop() || `Ad media ${fallbackIndex + 1}`;
+  }
+  return `Ad media ${fallbackIndex + 1}`;
+}
+
+function campaignStoredCreativeMedia(campaign: LeadCaptureCampaignItem | null): CampaignStoredCreativeMedia[] {
+  const campaignInfo = campaignRecord(campaign?.campaign_info);
+  const creative = campaignRecord(campaignInfo?.creative);
+  const rawMedia = Array.isArray(creative?.media) ? creative.media : [];
+  const mediaRows = rawMedia
+    .map((item, index) => {
+      const media = campaignRecord(item);
+      if (!media) {
+        return null;
+      }
+      const mediaUrl = campaignString(media.media_url);
+      const assetId = campaignString(media.creative_asset_id);
+      const assetPath = campaignString(media.asset_file_path);
+      const source = campaignString(media.source) || (assetId ? "upload" : "url");
+      const assetType = campaignMediaType(mediaUrl || assetPath, campaignString(media.asset_type));
+      return {
+        key: assetId || assetPath || mediaUrl || `media-${index}`,
+        name: campaignMediaName(media, index),
+        media_url: mediaUrl,
+        asset_type: assetType,
+        source,
+      };
+    })
+    .filter((item): item is CampaignStoredCreativeMedia => Boolean(item));
+
+  const primaryMediaUrl = campaignString(creative?.primary_media_url);
+  if (primaryMediaUrl && !mediaRows.some((item) => item.media_url === primaryMediaUrl)) {
+    mediaRows.unshift({
+      key: primaryMediaUrl,
+      name: primaryMediaUrl.split(/[/?#]/).filter(Boolean).pop() || "Primary media",
+      media_url: primaryMediaUrl,
+      asset_type: campaignMediaType(primaryMediaUrl),
+      source: "primary",
+    });
+  }
+  return mediaRows;
+}
+
 function campaignCreativeFileAllowed(file: File): boolean {
   const type = file.type.toLowerCase();
   if (type.startsWith("image/") || type.startsWith("video/")) {
@@ -3076,11 +3159,14 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
   const [detailDeliveryPhone, setDetailDeliveryPhone] = useState("");
   const [fields, setFields] = useState<CampaignFieldDraft[]>(defaultCampaignFields);
 
+  const activeCampaigns = campaigns.filter((campaign) => campaign.status !== "archived");
+  const archivedCampaigns = campaigns.filter((campaign) => campaign.status === "archived");
   const hasCampaigns = campaigns.length > 0;
   const showCampaignEmpty = !loading && !createOpen && !hasCampaigns;
-  const selectedCampaign = campaigns.find((campaign) => campaign.id === selectedCampaignId) ?? campaigns[0] ?? null;
+  const selectedCampaign = campaigns.find((campaign) => campaign.id === selectedCampaignId) ?? activeCampaigns[0] ?? archivedCampaigns[0] ?? null;
   const selectedClient = clients.find((client) => client.id === existingClientId) ?? null;
   const selectedCampaignDelivery = campaignDeliveryConfigOrDefault(selectedCampaign);
+  const selectedCampaignMedia = campaignStoredCreativeMedia(selectedCampaign);
   const countryMatches = filteredCampaignCountries(countryQuery);
   const draftCountryLabel = draftCountryCode ? campaignCountryLabels[draftCountryCode] || draftCountryCode : "";
   const creativeDraft: CampaignCreativeDraft = {
@@ -3219,7 +3305,7 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
       setMetaDefaults(metaDefaultsPayload);
       const nextSelected = selectedCampaignId && nextCampaigns.some((campaign) => campaign.id === selectedCampaignId)
         ? selectedCampaignId
-        : nextCampaigns[0]?.id ?? null;
+        : nextCampaigns.find((campaign) => campaign.status !== "archived")?.id ?? nextCampaigns[0]?.id ?? null;
       setSelectedCampaignId(nextSelected);
       if (nextSelected) {
         await loadCampaignSubmissions(nextSelected);
@@ -3547,6 +3633,17 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
     }
   }
 
+  async function archiveCampaign(campaign: LeadCaptureCampaignItem) {
+    if (!window.confirm(`Archive ${campaign.name}?`)) {
+      return;
+    }
+    await patchCampaignStatus(campaign, "archived");
+  }
+
+  async function restoreCampaign(campaign: LeadCaptureCampaignItem) {
+    await patchCampaignStatus(campaign, "paused");
+  }
+
   async function refreshDeliverySource(campaign: LeadCaptureCampaignItem) {
     setSaving(true);
     try {
@@ -3563,6 +3660,27 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
     await navigator.clipboard.writeText(campaign.public_url);
   }
 
+  function renderCampaignCard(campaign: LeadCaptureCampaignItem) {
+    const archived = campaign.status === "archived";
+    return (
+      <button
+        type="button"
+        className={`campaign-card ${archived ? "is-archived" : ""} ${selectedCampaign?.id === campaign.id ? "active" : ""}`}
+        key={campaign.id}
+        onClick={() => void selectCampaign(campaign.id)}
+      >
+        <div>
+          <strong>{campaign.name}</strong>
+          <span>{campaign.client?.display_name || "No client"} · {campaign.location || "No location"}</span>
+        </div>
+        <span className="delivery-status-pill" data-tone={campaign.status === "active" ? "success" : campaign.status === "paused" ? "warn" : "muted"}>
+          {humanize(campaign.status)}
+        </span>
+        <small>{compactNumber(campaign.submission_count)} leads</small>
+      </button>
+    );
+  }
+
   return (
     <section className={`ct-surface campaign-manager-surface ${showCampaignEmpty ? "is-empty" : ""}`}>
       <div className="ct-simple-head campaign-manager-head">
@@ -3573,7 +3691,8 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
         </div>
         <div className="ct-simple-metrics campaign-manager-metrics">
           <span><strong>{compactNumber(campaigns.reduce((total, campaign) => total + (campaign.submission_count || 0), 0))}</strong>Leads</span>
-          <span><strong>{compactNumber(campaigns.filter((campaign) => campaign.status === "active").length)}</strong>Active</span>
+          <span><strong>{compactNumber(activeCampaigns.filter((campaign) => campaign.status === "active").length)}</strong>Active</span>
+          <span><strong>{compactNumber(archivedCampaigns.length)}</strong>Archived</span>
           <span><strong>{compactNumber(clients.length)}</strong>Clients</span>
         </div>
         <div className="campaign-manager-actions">
@@ -4136,25 +4255,23 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
           <div className="campaign-list">
             {loading && !campaigns.length ? (
               <CtEmptyState compact loading title="Loading campaigns" message="Checking owned forms." />
-            ) : campaigns.length ? campaigns.map((campaign) => (
-              <button
-                type="button"
-                className={`campaign-card ${selectedCampaign?.id === campaign.id ? "active" : ""}`}
-                key={campaign.id}
-                onClick={() => void selectCampaign(campaign.id)}
-              >
-                <div>
-                  <strong>{campaign.name}</strong>
-                  <span>{campaign.client?.display_name || "No client"} · {campaign.location || "No location"}</span>
-                </div>
-                <span className="delivery-status-pill" data-tone={campaign.status === "active" ? "success" : campaign.status === "paused" ? "warn" : "muted"}>
-                  {humanize(campaign.status)}
-                </span>
-                <small>{compactNumber(campaign.submission_count)} leads</small>
-              </button>
-            )) : (
-              <CtEmptyState compact title="No campaign forms yet" message="Create the first owned form." />
-            )}
+            ) : campaigns.length ? (
+              <>
+                {activeCampaigns.length ? activeCampaigns.map(renderCampaignCard) : (
+                  <CtEmptyState compact title="No live campaign forms" message="Archived forms stay below." />
+                )}
+                {archivedCampaigns.length ? (
+                  <div className="campaign-archive-group">
+                    <div className="campaign-archive-head">
+                      <FolderOpen size={14} weight="bold" />
+                      <span>Archived</span>
+                      <strong>{compactNumber(archivedCampaigns.length)}</strong>
+                    </div>
+                    {archivedCampaigns.map(renderCampaignCard)}
+                  </div>
+                ) : null}
+              </>
+            ) : <CtEmptyState compact title="No campaign forms yet" message="Create the first owned form." />}
           </div>
 
           <div className="campaign-detail-panel">
@@ -4184,10 +4301,55 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
               </div>
 
               <div className="campaign-detail-controls">
-                <button type="button" className="ct-btn ct-btn-ghost" disabled={saving || selectedCampaign.status === "active"} onClick={() => void patchCampaignStatus(selectedCampaign, "active")}>Activate</button>
-                <button type="button" className="ct-btn ct-btn-ghost" disabled={saving || selectedCampaign.status === "paused"} onClick={() => void patchCampaignStatus(selectedCampaign, "paused")}>Pause</button>
-                <button type="button" className="ct-btn ct-btn-ghost" disabled={saving} onClick={() => void refreshDeliverySource(selectedCampaign)}>Delivery source</button>
+                {selectedCampaign.status === "archived" ? (
+                  <button type="button" className="ct-btn ct-btn-ghost" disabled={saving} onClick={() => void restoreCampaign(selectedCampaign)}>Restore</button>
+                ) : (
+                  <>
+                    <button type="button" className="ct-btn ct-btn-ghost" disabled={saving || selectedCampaign.status === "active"} onClick={() => void patchCampaignStatus(selectedCampaign, "active")}>Activate</button>
+                    <button type="button" className="ct-btn ct-btn-ghost" disabled={saving || selectedCampaign.status === "paused"} onClick={() => void patchCampaignStatus(selectedCampaign, "paused")}>Pause</button>
+                    <button type="button" className="ct-btn ct-btn-ghost" disabled={saving} onClick={() => void archiveCampaign(selectedCampaign)}>
+                      <Trash size={13} weight="bold" />
+                      Archive
+                    </button>
+                  </>
+                )}
+                <button type="button" className="ct-btn ct-btn-ghost" disabled={saving || selectedCampaign.status === "archived"} onClick={() => void refreshDeliverySource(selectedCampaign)}>Delivery source</button>
               </div>
+
+              <section className="campaign-media-panel">
+                <div className="campaign-submissions-head">
+                  <strong>Ad media</strong>
+                  <span>{compactNumber(selectedCampaignMedia.length)} files</span>
+                </div>
+                {selectedCampaignMedia.length ? (
+                  <div className="campaign-media-grid">
+                    {selectedCampaignMedia.map((media) => (
+                      <article className="campaign-media-card" key={media.key}>
+                        <div className="campaign-media-preview">
+                          {media.media_url && media.asset_type === "image" ? (
+                            <img src={media.media_url} alt={media.name} loading="lazy" />
+                          ) : media.media_url && media.asset_type === "video" ? (
+                            <video src={media.media_url} controls preload="metadata" />
+                          ) : (
+                            <Camera size={22} weight="bold" />
+                          )}
+                        </div>
+                        <div>
+                          <strong>{media.name}</strong>
+                          <span>{humanize(media.asset_type)} · {humanize(media.source)}</span>
+                        </div>
+                        {media.media_url ? (
+                          <button type="button" className="ct-icon-btn" onClick={() => window.open(media.media_url, "_blank", "noopener,noreferrer")} aria-label="Open ad media">
+                            <ArrowSquareOut size={13} weight="bold" />
+                          </button>
+                        ) : null}
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <CtEmptyState compact title="No ad media" message="Uploaded images and videos will appear here." />
+                )}
+              </section>
 
               <section className="campaign-delivery-panel">
                 <div className="campaign-submissions-head">

@@ -142,7 +142,10 @@ campaña. La API de operadores es `/api/campaigns`, y cada campaña publica
 `public_slug` es opaco: usa el id del `PlatformAdCampaign` local propio cuando
 existe, o un token random si todavia no hay ad local; no se genera desde el
 nombre de la campaña. Las submissions entran al flujo normal de Client Lead Delivery;
-no se insertan mensajes ni se saltean helpers. Cuando el tracking Meta esta
+no se insertan mensajes ni se saltean helpers. El boton de borrar en Ads archiva
+la campaña (`status=archived`) en vez de eliminar filas: queda fuera del listado
+principal, pero sigue disponible bajo `Archived` con sus submissions y media
+subida. Cuando el tracking Meta esta
 habilitado, el backend toma el pixel automaticamente desde `META_PIXEL_ID` /
 `META_DEFAULT_PIXEL_ID` / `META_MARKETING_PIXEL_ID` o desde el ultimo
 `sync_meta_inventory`; el formulario publico carga browser Pixel y el backend

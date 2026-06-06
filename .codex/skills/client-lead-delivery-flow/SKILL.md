@@ -109,7 +109,9 @@ recipient list. They store Delivery settings in `campaign_info.delivery`; the
 Ads UI toggle enables/disables delivery, the campaign client is the default
 recipient, and multiple preset or custom recipients expand to one
 `ClientLeadSource` per recipient. Each public owned-form submission queues one
-`ClientLeadDelivery` per selected recipient.
+`ClientLeadDelivery` per selected recipient. Deleting an owned campaign from Ads
+archives it (`status=archived`) instead of removing rows, so submissions and ad
+media remain visible under the archived campaign list.
 
 If the user gives multiple campaign spreadsheets for the same client, put them
 in `sheets`. Each item supports `id`, `label`, `sheet_url`, `sheet_gid`, and
