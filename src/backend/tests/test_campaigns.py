@@ -63,6 +63,8 @@ def test_campaign_api_creates_converted_client_and_queues_delivery(monkeypatch, 
         assert campaign["client"]["lead"]["normalized_phone"]
         assert campaign["client_lead_source_id"]
         assert campaign["platform_ad_campaign_id"]
+        assert campaign["public_slug"] == campaign["platform_ad_campaign_id"]
+        assert campaign["public_slug"] != "campania-test"
         assert campaign["location"] == "AR · Buenos Aires, Cordoba · CABA, La Plata | EC · Quito"
         assert "countries" not in campaign["campaign_info"]["meta_targeting"]["geo_locations"]
         assert campaign["campaign_info"]["meta_targeting"]["geo_locations"]["cities"] == [
@@ -204,6 +206,28 @@ def test_campaign_geo_targeting_supports_country_only_locations(monkeypatch, tmp
         assert campaign["location"] == "AR | DE"
         assert campaign["campaign_info"]["location_countries"] == ["AR", "DE"]
         assert campaign["campaign_info"]["meta_targeting"]["geo_locations"]["countries"] == ["AR", "DE"]
+
+
+def test_campaign_public_slug_falls_back_to_opaque_token(monkeypatch, tmp_path) -> None:
+    """Campaign links should stay opaque even when no local ad campaign is staged."""
+    configure_contadores_db(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/campaigns",
+            json={
+                **campaign_payload(),
+                "name": "Readable Human Campaign",
+                "status": "draft",
+                "client": None,
+                "stage_platform_campaign": False,
+            },
+        )
+        assert response.status_code == 200, response.text
+        campaign = response.json()["campaign"]
+        assert campaign["platform_ad_campaign_id"] == ""
+        assert campaign["public_slug"] != "readable-human-campaign"
+        assert len(campaign["public_slug"]) >= 16
 
 
 def test_campaign_geo_search_returns_selectable_locations(monkeypatch, tmp_path) -> None:

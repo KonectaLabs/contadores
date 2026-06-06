@@ -386,6 +386,14 @@ def _campaign_meta_pixel_id(requested_pixel_id: str | None, *, events_enabled: b
     return default_pixel_id
 
 
+def _default_public_campaign_slug(platform_campaign_id: str) -> str:
+    """Return an opaque public slug for new owned campaign form links."""
+    clean_platform_id = " ".join(str(platform_campaign_id or "").split()).strip()
+    if clean_platform_id:
+        return clean_platform_id
+    return secrets.token_urlsafe(16)
+
+
 def _meta_graph_get(path: str, params: dict[str, Any]) -> dict[str, Any]:
     """Read Meta Graph when marketing credentials are configured."""
     api_version = str(os.getenv("META_MARKETING_API_VERSION") or "").strip().strip("/")
@@ -1274,7 +1282,7 @@ async def create_campaign(request: Request, command: LeadCaptureCampaignCommand)
             funnel_id=funnel_id,
             name=command.name,
             status=command.status,
-            public_slug=command.public_slug,
+            public_slug=command.public_slug or _default_public_campaign_slug(platform_campaign_id),
             daily_budget_usd=command.daily_budget_usd,
             budget_currency=command.budget_currency,
             location=location_label,

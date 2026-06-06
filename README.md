@@ -137,10 +137,11 @@ una provincia/region se guarda como region especifica sin targetear todo el
 pais. La CLI tambien expone `campaigns geo-search`; para multi-pais se puede
 pasar `--geo-targeting-json` con `locations`. La UI, CLI y API rechazan paises
 no soportados, geografias duplicadas y caracteres no seguros antes de crear la
-campaña. La API de
-operadores es
-`/api/campaigns`, y cada campaña publica `/c/{public_slug}` como formulario
-mobile-first. Las submissions entran al flujo normal de Client Lead Delivery;
+campaña. La API de operadores es `/api/campaigns`, y cada campaña publica
+`/c/{public_slug}` como formulario mobile-first. Para campañas nuevas, ese
+`public_slug` es opaco: usa el id del `PlatformAdCampaign` local propio cuando
+existe, o un token random si todavia no hay ad local; no se genera desde el
+nombre de la campaña. Las submissions entran al flujo normal de Client Lead Delivery;
 no se insertan mensajes ni se saltean helpers. Cuando el tracking Meta esta
 habilitado, el backend toma el pixel automaticamente desde `META_PIXEL_ID` /
 `META_DEFAULT_PIXEL_ID` / `META_MARKETING_PIXEL_ID` o desde el ultimo
