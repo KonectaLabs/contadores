@@ -5029,20 +5029,20 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
                           {media.media_url && media.asset_type === "image" ? (
                             <img src={media.media_url} alt={media.name} loading="lazy" />
                           ) : media.media_url && media.asset_type === "video" ? (
-                            <video src={media.media_url} controls preload="metadata" />
+                            <video src={media.media_url} controls playsInline preload="metadata" />
                           ) : (
                             <Camera size={22} weight="bold" />
                           )}
+                          {media.media_url ? (
+                            <button type="button" className="ct-icon-btn campaign-media-open" onClick={() => window.open(media.media_url, "_blank", "noopener,noreferrer")} aria-label="Open ad media">
+                              <ArrowSquareOut size={13} weight="bold" />
+                            </button>
+                          ) : null}
                         </div>
-                        <div>
+                        <div className="campaign-media-meta">
                           <strong>{media.name}</strong>
                           <span>{humanize(media.asset_type)} · {humanize(media.source)}</span>
                         </div>
-                        {media.media_url ? (
-                          <button type="button" className="ct-icon-btn" onClick={() => window.open(media.media_url, "_blank", "noopener,noreferrer")} aria-label="Open ad media">
-                            <ArrowSquareOut size={13} weight="bold" />
-                          </button>
-                        ) : null}
                       </article>
                     ))}
                   </div>
