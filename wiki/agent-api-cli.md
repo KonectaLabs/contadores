@@ -132,6 +132,16 @@ configured server IDs. It persists the same audited inventory snapshot as the
 `pages_manage_ads`; CRM-owned public forms do not.
 
 The operator API exposes the same product surface under `/api/campaigns`.
+Creative media uploaded from the Ads creator uses platform asset endpoints:
+
+```text
+POST /api/platform/creative-assets/upload
+GET  /api/platform/creative-assets/{asset_id}/file
+```
+
+The upload endpoint accepts image/video `multipart/form-data`, stores the file
+under `data/platform/creative-assets`, creates a `PlatformCreativeAsset`, and
+returns `media_url` so the UI can preview it before creating the campaign.
 Public lead capture is intentionally smaller:
 
 ```text

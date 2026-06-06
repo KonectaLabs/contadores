@@ -123,8 +123,11 @@ contadores-agent meta inventory --limit 20
 El CRM tambien expone la pestaña `Ads` para crear campañas owned desde la UI:
 cliente existente o cliente convertido nuevo, presupuesto, localizaciones,
 creativo Meta-style, campos del formulario y Pixel/CAPI opcional. El creativo
-se guarda como texto principal, headline, descripcion, notas de imagen/video,
-destination URL y `creative_brief` compatible con la API actual. Una
+se guarda como texto principal, headline, descripcion, media subida, media URL,
+destination URL y `creative_brief` compatible con la API actual. Las imagenes y
+videos que se eligen, arrastran o pegan desde clipboard se guardan como
+`PlatformCreativeAsset` bajo `data/platform/creative-assets` y quedan
+referenciados en `campaign_info.creative.media`. Una
 localizacion se arma como pais entero, pais + provincias/regiones, o pais +
 ciudades; despues se agrega a la lista y se puede repetir para mas paises.
 Regiones y ciudades se seleccionan con buscador: primero intenta Meta Targeting

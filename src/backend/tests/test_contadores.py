@@ -1802,6 +1802,32 @@ def test_platform_lifecycle_endpoints_support_agent_native_workflow(monkeypatch,
     assert events.json()["events"][0]["event_type"] == "human_question.answered"
 
 
+def test_platform_creative_asset_upload_persists_media(monkeypatch, tmp_path) -> None:
+    """Operators should be able to upload ad images/videos instead of only typing notes."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setattr(database_module, "DATA_DIR", tmp_path / "data")
+    client = TestClient(app)
+
+    image_bytes = b"\x89PNG\r\n\x1a\ncreative-image"
+    response = client.post(
+        "/api/platform/creative-assets/upload",
+        data={"client_id": "client-123", "prompt": "Imagen principal del anuncio."},
+        files={"file": ("anuncio.png", image_bytes, "image/png")},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["asset_type"] == "image"
+    assert payload["client_id"] == "client-123"
+    assert payload["file_path"].startswith("data/platform/creative-assets/")
+    assert payload["media_url"].endswith(f"/api/platform/creative-assets/{payload['id']}/file")
+    assert PlatformCreativeAsset.get_by_id(payload["id"]).file_path == payload["file_path"]
+
+    file_response = client.get(f"/api/platform/creative-assets/{payload['id']}/file")
+    assert file_response.status_code == 200
+    assert file_response.content == image_bytes
+
+
 def test_codex_agent_lifecycle_tools_work_without_ui(monkeypatch, tmp_path) -> None:
     """Agent tools should cover post-conversion, ads, delivery updates, and doubts."""
     configure_contadores_db(monkeypatch, tmp_path)

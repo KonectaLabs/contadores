@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import mimetypes
+import re
+import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, Query
+import backend.database as database_module
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from backend.database import (
@@ -33,6 +39,9 @@ from backend.meta_ads_publish import (
 from backend.meta_ads_inventory import MetaInventoryError, sync_meta_inventory
 
 platform_router = APIRouter(prefix="/api/platform", tags=["platform"])
+
+CREATIVE_ASSET_MAX_UPLOAD_BYTES = 250 * 1024 * 1024
+CREATIVE_ASSET_FILENAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
 
 class PlatformEventResponse(BaseModel):
@@ -321,6 +330,7 @@ class PlatformCreativeAssetResponse(BaseModel):
     video_id: str
     meta_upload_response: dict[str, Any]
     failure_reason: str
+    media_url: str = ""
     created_at: datetime
     updated_at: datetime
 
@@ -731,7 +741,76 @@ def serialize_ad_campaign(row: PlatformAdCampaign) -> PlatformAdCampaignResponse
     )
 
 
-def serialize_creative_asset(row: PlatformCreativeAsset) -> PlatformCreativeAssetResponse:
+def creative_asset_root() -> Path:
+    """Return the upload folder for operator-supplied creative assets."""
+    root = database_module.DATA_DIR / "platform" / "creative-assets"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def safe_creative_asset_filename(filename: str | None) -> str:
+    """Return a readable upload filename that cannot escape the creative folder."""
+    name = Path(filename or "creative-asset").name.strip() or "creative-asset"
+    safe_name = CREATIVE_ASSET_FILENAME_RE.sub("-", name).strip(".-")
+    return safe_name[:160] or "creative-asset"
+
+
+def relative_data_path(path: Path) -> str:
+    """Return a stable data/... path for files under the shared data volume."""
+    data_dir = database_module.DATA_DIR.expanduser().resolve()
+    resolved = path.expanduser().resolve()
+    try:
+        relative = resolved.relative_to(data_dir)
+    except ValueError:
+        return str(resolved)
+    return str(Path("data") / relative)
+
+
+def resolve_creative_asset_file(file_path: str | None) -> Path | None:
+    """Resolve an uploaded creative asset path inside the creative asset folder."""
+    clean_path = (file_path or "").strip()
+    if not clean_path:
+        return None
+    candidate = Path(clean_path).expanduser()
+    data_dir = database_module.DATA_DIR.expanduser().resolve()
+    if candidate.is_absolute():
+        resolved = candidate.resolve()
+    else:
+        parts = candidate.parts
+        relative_parts = parts[1:] if parts and parts[0] == "data" else parts
+        resolved = data_dir.joinpath(*relative_parts).resolve()
+    try:
+        resolved.relative_to(creative_asset_root().resolve())
+    except ValueError:
+        return None
+    return resolved
+
+
+def creative_asset_media_url(row: PlatformCreativeAsset, request: Request | None) -> str:
+    """Return a URL for uploaded assets when a request context is available."""
+    if request is None:
+        return ""
+    file_path = resolve_creative_asset_file(row.file_path)
+    if file_path is None or not file_path.is_file():
+        return ""
+    return str(request.url_for("get_creative_asset_file", asset_id=row.id))
+
+
+def classify_creative_asset_type(content_type: str | None, filename: str) -> str:
+    """Map one uploaded media file to the creative asset family."""
+    media_type = (content_type or mimetypes.guess_type(filename)[0] or "").lower()
+    if media_type.startswith("image/"):
+        return "image"
+    if media_type.startswith("video/"):
+        return "video"
+    raise HTTPException(status_code=400, detail="Upload an image or video file.")
+
+
+def serialize_creative_asset(
+    row: PlatformCreativeAsset,
+    *,
+    request: Request | None = None,
+) -> PlatformCreativeAssetResponse:
     """Serialize one creative asset."""
     return PlatformCreativeAssetResponse(
         id=row.id,
@@ -748,6 +827,7 @@ def serialize_creative_asset(row: PlatformCreativeAsset) -> PlatformCreativeAsse
         video_id=row.video_id,
         meta_upload_response=row.meta_upload_response(),
         failure_reason=row.failure_reason,
+        media_url=creative_asset_media_url(row, request),
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -1151,6 +1231,7 @@ async def create_ad_campaign(command: PlatformAdCampaignCommand) -> PlatformAdCa
 
 @platform_router.get("/creative-assets", response_model=PlatformCreativeAssetListResponse)
 async def list_creative_assets(
+    request: Request,
     campaign_id: str | None = Query(default=None),
     client_id: str | None = Query(default=None),
     status: str | None = Query(default=None),
@@ -1163,11 +1244,11 @@ async def list_creative_assets(
         status=status,
         limit=limit,
     )
-    return PlatformCreativeAssetListResponse(assets=[serialize_creative_asset(row) for row in rows])
+    return PlatformCreativeAssetListResponse(assets=[serialize_creative_asset(row, request=request) for row in rows])
 
 
 @platform_router.post("/creative-assets", response_model=PlatformCreativeAssetResponse)
-async def create_creative_asset(command: PlatformCreativeAssetCommand) -> PlatformCreativeAssetResponse:
+async def create_creative_asset(request: Request, command: PlatformCreativeAssetCommand) -> PlatformCreativeAssetResponse:
     """Create one creative asset record."""
     row = PlatformCreativeAsset.add(**command.model_dump())
     emit_lifecycle_event(
@@ -1178,7 +1259,80 @@ async def create_creative_asset(command: PlatformCreativeAssetCommand) -> Platfo
         summary=f"Staged creative asset {row.id}.",
         payload={"campaign_id": row.campaign_id, "client_id": row.client_id, "asset_type": row.asset_type},
     )
-    return serialize_creative_asset(row)
+    return serialize_creative_asset(row, request=request)
+
+
+@platform_router.post("/creative-assets/upload", response_model=PlatformCreativeAssetResponse)
+async def upload_creative_asset_file(
+    request: Request,
+    file: UploadFile = File(...),
+    campaign_id: str = Form(default=""),
+    client_id: str = Form(default=""),
+    prompt: str = Form(default=""),
+) -> PlatformCreativeAssetResponse:
+    """Upload one image or video and register it as a creative asset."""
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    if len(contents) > CREATIVE_ASSET_MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=400, detail="Creative media is too large.")
+
+    original_filename = Path(file.filename or "creative-asset").name
+    safe_name = safe_creative_asset_filename(original_filename)
+    content_type = file.content_type or mimetypes.guess_type(safe_name)[0]
+    asset_type = classify_creative_asset_type(content_type, safe_name)
+    stored_filename = f"{uuid.uuid4().hex[:12]}-{safe_name}"
+    target_path = creative_asset_root() / stored_filename
+    target_path.write_bytes(contents)
+
+    row = PlatformCreativeAsset.add(
+        campaign_id=campaign_id,
+        client_id=client_id,
+        status="uploaded",
+        asset_type=asset_type,
+        prompt=prompt,
+        file_path=relative_data_path(target_path),
+        source_refs=[
+            {
+                "source": "operator_upload",
+                "original_filename": original_filename,
+                "content_type": content_type,
+                "size_bytes": len(contents),
+            }
+        ],
+    )
+    emit_lifecycle_event(
+        event_type="creative_asset.uploaded",
+        lifecycle_stage="ads",
+        target_type="creative_asset",
+        target_id=row.id,
+        summary=f"Uploaded creative asset {row.id}.",
+        payload={
+            "campaign_id": row.campaign_id,
+            "client_id": row.client_id,
+            "asset_type": row.asset_type,
+            "file_path": row.file_path,
+        },
+    )
+    return serialize_creative_asset(row, request=request)
+
+
+@platform_router.get("/creative-assets/{asset_id}/file")
+async def get_creative_asset_file(asset_id: str) -> FileResponse:
+    """Serve one uploaded creative asset file through authenticated backend access."""
+    row = PlatformCreativeAsset.get_by_id(asset_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Creative asset not found.")
+    file_path = resolve_creative_asset_file(row.file_path)
+    if file_path is None or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Creative asset file not found.")
+    media_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+    return FileResponse(
+        file_path,
+        media_type=media_type,
+        filename=file_path.name,
+        content_disposition_type="inline",
+    )
 
 
 @platform_router.post(

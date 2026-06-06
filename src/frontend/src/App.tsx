@@ -2603,7 +2603,24 @@ type CampaignCreativeDraft = {
   description: string;
   assetBrief: string;
   destinationUrl: string;
+  mediaCount: number;
+  mediaUrl: string;
   callToAction: string;
+};
+
+type CampaignCreativeAssetItem = {
+  id: string;
+  campaign_id: string;
+  client_id: string;
+  status: string;
+  asset_type: string;
+  prompt: string;
+  file_path: string;
+  dimensions: string;
+  source_refs: Array<Record<string, unknown>>;
+  media_url: string;
+  created_at: string | null;
+  updated_at: string | null;
 };
 
 type CampaignGeoTargetingDraft = {
@@ -2800,6 +2817,8 @@ function campaignCreativeBriefSummary(creative: CampaignCreativeDraft): string {
     creative.headline.trim() ? `Headline: ${creative.headline.trim()}` : "",
     creative.description.trim() ? `Description: ${creative.description.trim()}` : "",
     creative.assetBrief.trim() ? `Creative asset: ${creative.assetBrief.trim()}` : "",
+    creative.mediaCount ? `Media files: ${creative.mediaCount}` : "",
+    creative.mediaUrl.trim() ? `Media URL: ${creative.mediaUrl.trim()}` : "",
     creative.destinationUrl.trim() ? `Destination URL: ${creative.destinationUrl.trim()}` : "",
   ].filter(Boolean);
   if (!creativeLines.length) {
@@ -2809,6 +2828,32 @@ function campaignCreativeBriefSummary(creative: CampaignCreativeDraft): string {
     creativeLines.push(`Call to action: ${creative.callToAction.trim()}`);
   }
   return creativeLines.join("\n");
+}
+
+function campaignCreativeAssetName(asset: CampaignCreativeAssetItem): string {
+  const uploadRef = asset.source_refs.find((item) => typeof item.original_filename === "string");
+  const originalFilename = uploadRef?.original_filename;
+  if (typeof originalFilename === "string" && originalFilename.trim()) {
+    return originalFilename.trim();
+  }
+  return asset.file_path.split("/").pop() || asset.id;
+}
+
+function campaignCreativeAssetPayload(asset: CampaignCreativeAssetItem): Record<string, string> {
+  return {
+    creative_asset_id: asset.id,
+    asset_file_path: asset.file_path,
+    asset_type: asset.asset_type,
+    media_url: asset.media_url,
+  };
+}
+
+function campaignCreativeFileAllowed(file: File): boolean {
+  const type = file.type.toLowerCase();
+  if (type.startsWith("image/") || type.startsWith("video/")) {
+    return true;
+  }
+  return /\.(avif|gif|heic|jpeg|jpg|mov|mp4|png|webm|webp)$/i.test(file.name);
 }
 
 function CampaignGeoSelector({
@@ -2954,6 +2999,10 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
   const [creativeHeadline, setCreativeHeadline] = useState("");
   const [creativeDescription, setCreativeDescription] = useState("");
   const [creativeAssetBrief, setCreativeAssetBrief] = useState("");
+  const [creativeAssets, setCreativeAssets] = useState<CampaignCreativeAssetItem[]>([]);
+  const [creativeMediaUrl, setCreativeMediaUrl] = useState("");
+  const [creativeMediaUploading, setCreativeMediaUploading] = useState(false);
+  const [creativeMediaDropActive, setCreativeMediaDropActive] = useState(false);
   const [destinationUrl, setDestinationUrl] = useState("");
   const [metaPixelId, setMetaPixelId] = useState("");
   const [metaEventName, setMetaEventName] = useState("Lead");
@@ -2970,6 +3019,8 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
     description: creativeDescription,
     assetBrief: creativeAssetBrief,
     destinationUrl,
+    mediaCount: creativeAssets.length,
+    mediaUrl: creativeMediaUrl,
     callToAction: "LEARN_MORE",
   };
   const creativeSummary = campaignCreativeBriefSummary(creativeDraft);
@@ -2984,6 +3035,104 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
     } finally {
       setSubmissionsLoading(false);
     }
+  }
+
+  async function uploadCampaignCreativeFile(file: File) {
+    if (!campaignCreativeFileAllowed(file)) {
+      onError("Upload an image or video file for the ad creative.");
+      return;
+    }
+    const form = new FormData();
+    form.append("file", file);
+    form.append("client_id", clientMode === "existing" ? existingClientId : "");
+    form.append("prompt", creativeAssetBrief.trim() || creativeBrief.trim());
+    setCreativeMediaUploading(true);
+    try {
+      const asset = await apiFetch<CampaignCreativeAssetItem>("/api/platform/creative-assets/upload", {
+        method: "POST",
+        body: form,
+      });
+      setCreativeAssets((current) => {
+        if (current.some((item) => item.id === asset.id)) {
+          return current;
+        }
+        return [...current, asset];
+      });
+      if (!creativeAssetBrief.trim()) {
+        setCreativeAssetBrief(campaignCreativeAssetName(asset));
+      }
+    } catch (reason) {
+      onError(reason instanceof Error ? reason.message : "Could not upload creative media.");
+    } finally {
+      setCreativeMediaUploading(false);
+    }
+  }
+
+  async function uploadCampaignCreativeFiles(files: File[]) {
+    const usableFiles = files.filter((file) => file.size > 0);
+    if (!usableFiles.length) {
+      return;
+    }
+    for (const file of usableFiles) {
+      await uploadCampaignCreativeFile(file);
+    }
+  }
+
+  function campaignCreativeFilesFromClipboard(event: ClipboardEvent<HTMLElement>): File[] {
+    const directFiles = Array.from(event.clipboardData.files).filter((file) => file.size > 0);
+    if (directFiles.length) {
+      return directFiles;
+    }
+    const files: File[] = [];
+    for (const item of Array.from(event.clipboardData.items)) {
+      const pastedFile = item.kind === "file" ? item.getAsFile() : null;
+      if (pastedFile && pastedFile.size > 0) {
+        files.push(pastedFile);
+      }
+    }
+    return files;
+  }
+
+  function handleCampaignCreativeDragOver(event: DragEvent<HTMLElement>) {
+    if (!Array.from(event.dataTransfer.types).includes("Files")) {
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = creativeMediaUploading ? "none" : "copy";
+    setCreativeMediaDropActive(true);
+  }
+
+  function handleCampaignCreativeDragLeave(event: DragEvent<HTMLElement>) {
+    const nextTarget = event.relatedTarget;
+    if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) {
+      return;
+    }
+    setCreativeMediaDropActive(false);
+  }
+
+  function handleCampaignCreativeDrop(event: DragEvent<HTMLElement>) {
+    if (!Array.from(event.dataTransfer.types).includes("Files")) {
+      return;
+    }
+    event.preventDefault();
+    setCreativeMediaDropActive(false);
+    if (creativeMediaUploading) {
+      return;
+    }
+    void uploadCampaignCreativeFiles(Array.from(event.dataTransfer.files));
+  }
+
+  function handleCampaignCreativePaste(event: ClipboardEvent<HTMLElement>) {
+    const files = campaignCreativeFilesFromClipboard(event);
+    if (!files.length || creativeMediaUploading) {
+      return;
+    }
+    event.preventDefault();
+    void uploadCampaignCreativeFiles(files);
+  }
+
+  function removeCampaignCreativeAsset(assetId: string) {
+    setCreativeAssets((current) => current.filter((asset) => asset.id !== assetId));
   }
 
   async function loadCampaigns() {
@@ -3093,6 +3242,10 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
       onError(geoError);
       return;
     }
+    const creativeMedia = [
+      ...creativeAssets.map(campaignCreativeAssetPayload),
+      creativeMediaUrl.trim() ? { source: "external_url", media_url: creativeMediaUrl.trim() } : null,
+    ].filter(Boolean);
     setSaving(true);
     try {
       const body = {
@@ -3108,6 +3261,8 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
             headline: creativeHeadline.trim(),
             description: creativeDescription.trim(),
             asset_brief: creativeAssetBrief.trim(),
+            media: creativeMedia,
+            primary_media_url: creativeAssets[0]?.media_url || creativeMediaUrl.trim(),
             call_to_action: creativeDraft.callToAction,
           },
         },
@@ -3132,6 +3287,8 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
       setCreativeHeadline("");
       setCreativeDescription("");
       setCreativeAssetBrief("");
+      setCreativeAssets([]);
+      setCreativeMediaUrl("");
       setDestinationUrl("");
       setMetaPixelId("");
       setMetaEventName("Lead");
@@ -3399,10 +3556,66 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
                 <span className="campaign-section-icon"><Camera size={16} weight="bold" /></span>
                 <div>
                   <strong>4. Creative</strong>
-                  <small>Copy and asset notes</small>
+                  <small>Media and copy</small>
                 </div>
               </div>
               <div className="campaign-section-body campaign-creative-grid">
+                <div
+                  className={`campaign-creative-upload ${creativeMediaDropActive ? "drag-active" : ""}`}
+                  onDragOver={handleCampaignCreativeDragOver}
+                  onDragLeave={handleCampaignCreativeDragLeave}
+                  onDrop={handleCampaignCreativeDrop}
+                  onPaste={handleCampaignCreativePaste}
+                  tabIndex={0}
+                >
+                  <div>
+                    <strong>Upload image or video</strong>
+                    <span>Choose a file, drag it here, or paste media from the clipboard.</span>
+                  </div>
+                  <label className="ct-btn ct-btn-primary campaign-creative-upload-button">
+                    <UploadSimple size={15} weight="bold" />
+                    {creativeMediaUploading ? "Uploading..." : "Upload media"}
+                    <input
+                      type="file"
+                      accept="image/*,video/*"
+                      multiple
+                      disabled={creativeMediaUploading}
+                      onChange={(event) => {
+                        const files = Array.from(event.target.files ?? []);
+                        event.currentTarget.value = "";
+                        void uploadCampaignCreativeFiles(files);
+                      }}
+                    />
+                  </label>
+                </div>
+                {creativeAssets.length ? (
+                  <div className="campaign-creative-assets">
+                    {creativeAssets.map((asset) => (
+                      <article className="campaign-creative-asset" key={asset.id}>
+                        <div className="campaign-creative-asset-preview">
+                          {asset.asset_type === "image" && asset.media_url ? (
+                            <img src={asset.media_url} alt={campaignCreativeAssetName(asset)} loading="lazy" />
+                          ) : asset.asset_type === "video" && asset.media_url ? (
+                            <video src={asset.media_url} controls preload="metadata" />
+                          ) : (
+                            <FolderOpen size={22} weight="bold" />
+                          )}
+                        </div>
+                        <div>
+                          <strong>{campaignCreativeAssetName(asset)}</strong>
+                          <span>{humanize(asset.asset_type)} uploaded</span>
+                        </div>
+                        <button type="button" className="ct-icon-btn" onClick={() => removeCampaignCreativeAsset(asset.id)} aria-label="Remove creative media">
+                          <X size={13} weight="bold" />
+                        </button>
+                      </article>
+                    ))}
+                  </div>
+                ) : null}
+                <label className="ct-field campaign-creative-primary">
+                  <span>Media URL (optional)</span>
+                  <input value={creativeMediaUrl} onChange={(event) => setCreativeMediaUrl(event.target.value)} placeholder="https://.../ad-image.png" />
+                </label>
                 <label className="ct-field campaign-creative-primary">
                   <span>Primary text</span>
                   <textarea value={creativeBrief} onChange={(event) => setCreativeBrief(event.target.value)} rows={3} placeholder="Main ad text shown above the image/video" />
@@ -3416,7 +3629,7 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
                   <input value={creativeDescription} onChange={(event) => setCreativeDescription(event.target.value)} placeholder="Optional supporting line" />
                 </label>
                 <label className="ct-field campaign-creative-primary">
-                  <span>Image / video asset</span>
+                  <span>Asset notes</span>
                   <textarea value={creativeAssetBrief} onChange={(event) => setCreativeAssetBrief(event.target.value)} rows={2} placeholder="Contador en oficina, testimonial corto, placa de beneficios..." />
                 </label>
                 <label className="ct-field campaign-creative-primary">
