@@ -27,7 +27,7 @@ INTERNAL_TOKEN_ENV = "CONTADORES_AGENT_INTERNAL_TOKEN"
 CONFIG_MODE = stat.S_IRUSR | stat.S_IWUSR
 API_PREFIX = "/api/agent"
 LOCAL_CALLBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
-CAMPAIGN_GEO_SUPPORTED_COUNTRIES = {"AR", "UY", "CL", "PY", "BO", "PE", "CO", "MX", "US", "ES"}
+CAMPAIGN_GEO_SUPPORTED_COUNTRIES = {"AR", "UY", "CL", "PY", "BO", "PE", "CO", "EC", "MX", "US", "ES"}
 CAMPAIGN_GEO_MAX_AREAS_PER_KIND = 20
 CAMPAIGN_GEO_NAME_MAX_LENGTH = 96
 CAMPAIGN_GEO_NAME_RE = re.compile(r"^[A-Za-zÀ-ÖØ-öø-ÿ0-9][A-Za-zÀ-ÖØ-öø-ÿ0-9 .,'()/-]{0,95}$")
@@ -893,6 +893,7 @@ def campaigns_create(
     country_code: str = typer.Option("AR", "--country-code", help="Two-letter Meta country code, for example AR."),
     regions: list[str] = typer.Option([], "--region", help="Region/province name. Repeat for multiple."),
     cities: list[str] = typer.Option([], "--city", help="City name. Repeat for multiple."),
+    geo_targeting_json: str | None = typer.Option(None, "--geo-targeting-json", help="Advanced geo targeting JSON object with locations."),
     location: str | None = typer.Option(None, "--location", help="Legacy display-only location fallback."),
     creative_brief: str | None = typer.Option(None, "--creative-brief"),
     campaign_info_json: str = typer.Option("{}", "--campaign-info-json", help="Campaign metadata JSON object."),
@@ -910,6 +911,7 @@ def campaigns_create(
     try:
         campaign_info = parse_json_object(campaign_info_json)
         form_schema = parse_json_object(form_schema_json)
+        geo_targeting_override = parse_json_object(geo_targeting_json) if geo_targeting_json else None
     except AgentCliError as error:
         exit_with_error(error)
 
@@ -926,7 +928,7 @@ def campaigns_create(
             }
         )
     try:
-        geo_targeting = {
+        geo_targeting = geo_targeting_override or {
             "country_code": clean_country_code(country_code),
             "regions": clean_geo_names(regions, option_name="--region"),
             "cities": clean_geo_names(cities, option_name="--city"),

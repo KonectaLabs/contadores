@@ -143,17 +143,19 @@ POST /api/public/campaigns/{public_slug}/submissions
 Converted client creation requires `name` and `whatsapp`; `email` and
 `extra_info` are optional. Campaigns can link to an existing client with
 `client_id` or create one inline with `client_name` and `client_whatsapp`.
-Campaign geography uses structured fields: `country_code`, repeated `region`
-values, and repeated `city` values. The UI uses search-and-select controls,
-not persisted freeform text: the API first tries Meta Targeting Search when
-credentials exist, then falls back to local suggestions marked as `Local`.
-Country codes are directly staged as Meta `geo_locations.countries`; regions
-and cities stay structured and are only sent as Meta `regions`/`cities` when a
-Meta `key` is present. Use `contadores-agent campaigns geo-search ...` before
-CLI creation; selected values can be passed as `--city "Name=KEY"` or
-`--region "Name=KEY"`. The CLI and API reject unsupported country codes,
-duplicate geography values, more than 20 regions or 20 cities, and unsafe
-characters before creating the campaign.
+Campaign geography uses structured `locations`. Each location can be a whole
+country, country + regions/provinces, or country + cities. The UI uses
+search-and-select controls, not persisted freeform text: the API first tries
+Meta Targeting Search when credentials exist, then falls back to local
+suggestions marked as `Local`. Whole-country locations are staged as Meta
+`geo_locations.countries`; region/city locations are only sent as Meta
+`regions`/`cities` when a Meta `key` is present, and they do not imply the
+whole country. Use `contadores-agent campaigns geo-search ...` before CLI
+creation; selected values can be passed as `--city "Name=KEY"` or
+`--region "Name=KEY"`, or use `--geo-targeting-json` with `locations` for
+multi-country campaigns. The CLI and API reject unsupported country codes,
+duplicate geography values, more than 20 locations, more than 20 regions or
+20 cities per location, and unsafe characters before creating the campaign.
 
 Submissions dedupe on `idempotency_key`, record the raw answers, queue Client
 Lead Delivery with existing helpers, and track Meta CAPI only when both the

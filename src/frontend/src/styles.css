@@ -3513,6 +3513,61 @@ body.ct-resizing {
   min-width: 0;
 }
 
+#contadoresView .campaign-location-builder {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+#contadoresView .campaign-location-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--ct-line);
+  border-radius: 8px;
+  background: var(--ct-surface);
+}
+
+#contadoresView .campaign-location-actions > span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ct-ink-muted);
+  font: 750 12px/1.2 var(--font-sans);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#contadoresView .campaign-location-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+#contadoresView .campaign-location-chip {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 100%;
+  padding: 5px 8px;
+  border: 1px solid var(--ct-line);
+  border-radius: 8px;
+  background: var(--ct-surface);
+  color: var(--ct-ink);
+  font: 750 12px/1.1 var(--font-sans);
+}
+
+#contadoresView .campaign-location-chip span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 #contadoresView .campaign-geo-picker {
   display: grid;
   align-content: start;

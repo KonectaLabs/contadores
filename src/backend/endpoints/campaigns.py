@@ -63,8 +63,9 @@ PUBLIC_MAX_ANSWER_BYTES = 20_000
 PUBLIC_MAX_FIELD_TEXT = 2_000
 PUBLIC_MAX_TRACKING_TEXT = 1_000
 PUBLISHABLE_CAMPAIGN_STATUSES = {"active", "published"}
-CAMPAIGN_GEO_SUPPORTED_COUNTRIES = {"AR", "UY", "CL", "PY", "BO", "PE", "CO", "MX", "US", "ES"}
+CAMPAIGN_GEO_SUPPORTED_COUNTRIES = {"AR", "UY", "CL", "PY", "BO", "PE", "CO", "EC", "MX", "US", "ES"}
 CAMPAIGN_GEO_MAX_AREAS_PER_KIND = 20
+CAMPAIGN_GEO_MAX_LOCATIONS = 20
 CAMPAIGN_GEO_NAME_MAX_LENGTH = 96
 CAMPAIGN_GEO_KEY_MAX_LENGTH = 80
 CAMPAIGN_GEO_NAME_RE = re.compile(r"^[A-Za-zÀ-ÖØ-öø-ÿ0-9][A-Za-zÀ-ÖØ-öø-ÿ0-9 .,'()/-]{0,95}$")
@@ -110,6 +111,7 @@ CAMPAIGN_GEO_FALLBACKS: dict[str, dict[str, list[str]]] = {
     "BO": {"region": ["La Paz", "Santa Cruz", "Cochabamba"], "city": ["La Paz", "Santa Cruz de la Sierra", "Cochabamba"]},
     "PE": {"region": ["Lima", "Arequipa", "La Libertad"], "city": ["Lima", "Arequipa", "Trujillo"]},
     "CO": {"region": ["Bogota", "Antioquia", "Valle del Cauca"], "city": ["Bogota", "Medellin", "Cali"]},
+    "EC": {"region": ["Pichincha", "Guayas", "Azuay", "Manabi"], "city": ["Quito", "Guayaquil", "Cuenca", "Manta"]},
     "MX": {"region": ["Ciudad de Mexico", "Jalisco", "Nuevo Leon"], "city": ["Ciudad de Mexico", "Guadalajara", "Monterrey"]},
     "US": {"region": ["Florida", "California", "Texas", "New York"], "city": ["Miami", "Los Angeles", "Houston", "New York"]},
     "ES": {"region": ["Madrid", "Cataluna", "Andalucia", "Valencia"], "city": ["Madrid", "Barcelona", "Valencia", "Sevilla"]},
@@ -176,8 +178,8 @@ class CampaignGeoAreaCommand(BaseModel):
         return _validate_country_code(value)
 
 
-class CampaignGeoTargetingCommand(BaseModel):
-    """Structured geography for Meta-compatible owned campaign planning."""
+class CampaignGeoLocationCommand(BaseModel):
+    """One complete target location: country, optional regions, optional cities."""
 
     country_code: str = Field(default="AR", min_length=2, max_length=2)
     regions: list[CampaignGeoAreaCommand] = Field(default_factory=list, max_length=CAMPAIGN_GEO_MAX_AREAS_PER_KIND)
@@ -189,7 +191,7 @@ class CampaignGeoTargetingCommand(BaseModel):
         return _validate_country_code(value)
 
     @model_validator(mode="after")
-    def validate_geo_shape(self) -> "CampaignGeoTargetingCommand":
+    def validate_geo_shape(self) -> "CampaignGeoLocationCommand":
         seen: set[tuple[str, str]] = set()
         for kind, items in (("region", self.regions), ("city", self.cities)):
             for item in items:
@@ -197,6 +199,33 @@ class CampaignGeoTargetingCommand(BaseModel):
                 if duplicate_key in seen:
                     raise ValueError(f"duplicate {kind}: {item.name}")
                 seen.add(duplicate_key)
+        return self
+
+
+class CampaignGeoTargetingCommand(BaseModel):
+    """Structured geography for Meta-compatible owned campaign planning."""
+
+    country_code: str = Field(default="AR", min_length=2, max_length=2)
+    regions: list[CampaignGeoAreaCommand] = Field(default_factory=list, max_length=CAMPAIGN_GEO_MAX_AREAS_PER_KIND)
+    cities: list[CampaignGeoAreaCommand] = Field(default_factory=list, max_length=CAMPAIGN_GEO_MAX_AREAS_PER_KIND)
+    locations: list[CampaignGeoLocationCommand] = Field(default_factory=list, max_length=CAMPAIGN_GEO_MAX_LOCATIONS)
+
+    @field_validator("country_code")
+    @classmethod
+    def validate_country_code(cls, value: str) -> str:
+        return _validate_country_code(value)
+
+    @model_validator(mode="after")
+    def validate_geo_shape(self) -> "CampaignGeoTargetingCommand":
+        locations = self.locations or [
+            CampaignGeoLocationCommand(country_code=self.country_code, regions=self.regions, cities=self.cities)
+        ]
+        seen_locations: set[str] = set()
+        for location in locations:
+            location_key = json.dumps(location.model_dump(mode="json"), sort_keys=True)
+            if location_key in seen_locations:
+                raise ValueError(f"duplicate location: {location.country_code}")
+            seen_locations.add(location_key)
         return self
 
 
@@ -373,6 +402,7 @@ def _meta_geo_suggestions(*, country: str, kind: str, query: str, limit: int) ->
         if dedupe_key not in seen:
             suggestions.append(suggestion)
             seen.add(dedupe_key)
+    suggestions.sort(key=lambda item: _geo_search_match_score(item["name"], query))
     return suggestions[:limit], None
 
 
@@ -389,6 +419,13 @@ def _clean_geo_area(area: CampaignGeoAreaCommand, *, fallback_country: str) -> d
     return item
 
 
+def _campaign_geo_locations(command: CampaignGeoTargetingCommand) -> list[CampaignGeoLocationCommand]:
+    """Return new multi-location targeting or one legacy location."""
+    if command.locations:
+        return command.locations
+    return [CampaignGeoLocationCommand(country_code=command.country_code, regions=command.regions, cities=command.cities)]
+
+
 def _build_geo_targeting(command: CampaignGeoTargetingCommand | None, fallback_location: str | None = None) -> dict[str, Any]:
     """Build Meta-shaped geo targeting without pretending unresolved labels are Meta IDs."""
     if command is None:
@@ -396,32 +433,60 @@ def _build_geo_targeting(command: CampaignGeoTargetingCommand | None, fallback_l
         return {
             "label": fallback,
             "targeting": {},
+            "locations": [],
+            "countries": [],
+            "regions": [],
+            "cities": [],
             "unresolved": {"regions": [], "cities": []},
         }
-    country = _clean_country_code(command.country_code)
-    regions = [_clean_geo_area(area, fallback_country=country) for area in command.regions if " ".join(area.name.split()).strip()]
-    cities = [_clean_geo_area(area, fallback_country=country) for area in command.cities if " ".join(area.name.split()).strip()]
-    geo_locations: dict[str, Any] = {"countries": [country]}
-    keyed_regions = [item for item in regions if item.get("key")]
-    keyed_cities = [item for item in cities if item.get("key")]
+
+    full_countries: list[str] = []
+    all_regions: list[dict[str, str]] = []
+    all_cities: list[dict[str, str]] = []
+    clean_locations: list[dict[str, Any]] = []
+    label_parts: list[str] = []
+    for location in _campaign_geo_locations(command):
+        country = _clean_country_code(location.country_code)
+        regions = [_clean_geo_area(area, fallback_country=country) for area in location.regions if " ".join(area.name.split()).strip()]
+        cities = [_clean_geo_area(area, fallback_country=country) for area in location.cities if " ".join(area.name.split()).strip()]
+        if not regions and not cities:
+            full_countries.append(country)
+        all_regions.extend(regions)
+        all_cities.extend(cities)
+        location_label_parts = [country]
+        if regions:
+            location_label_parts.append(", ".join(item["name"] for item in regions))
+        if cities:
+            location_label_parts.append(", ".join(item["name"] for item in cities))
+        label_parts.append(" · ".join(location_label_parts))
+        clean_locations.append(
+            {
+                "country_code": country,
+                "regions": regions,
+                "cities": cities,
+            }
+        )
+
+    geo_locations: dict[str, Any] = {}
+    if full_countries:
+        geo_locations["countries"] = sorted(set(full_countries))
+    keyed_regions = [item for item in all_regions if item.get("key")]
+    keyed_cities = [item for item in all_cities if item.get("key")]
     if keyed_regions:
         geo_locations["regions"] = keyed_regions
     if keyed_cities:
         geo_locations["cities"] = keyed_cities
     unresolved = {
-        "regions": [item for item in regions if not item.get("key")],
-        "cities": [item for item in cities if not item.get("key")],
+        "regions": [item for item in all_regions if not item.get("key")],
+        "cities": [item for item in all_cities if not item.get("key")],
     }
-    label_parts = [country]
-    if regions:
-        label_parts.append(", ".join(item["name"] for item in regions))
-    if cities:
-        label_parts.append(", ".join(item["name"] for item in cities))
     return {
-        "label": " · ".join(label_parts),
-        "country_code": country,
-        "regions": regions,
-        "cities": cities,
+        "label": " | ".join(label_parts),
+        "country_code": clean_locations[0]["country_code"] if clean_locations else "",
+        "countries": sorted(set(full_countries)),
+        "locations": clean_locations,
+        "regions": all_regions,
+        "cities": all_cities,
         "targeting": {"geo_locations": geo_locations},
         "unresolved": unresolved,
     }
@@ -435,6 +500,8 @@ def _campaign_info_with_geo(command: LeadCaptureCampaignCommand) -> tuple[dict[s
     geo = _build_geo_targeting(command.geo_targeting, command.location)
     if command.geo_targeting is not None:
         campaign_info["location_country"] = geo["country_code"]
+        campaign_info["location_countries"] = geo["countries"]
+        campaign_info["location_locations"] = geo["locations"]
         campaign_info["location_regions"] = geo["regions"]
         campaign_info["location_cities"] = geo["cities"]
         campaign_info["location_unresolved"] = geo["unresolved"]

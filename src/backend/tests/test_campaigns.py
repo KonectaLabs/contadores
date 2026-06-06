@@ -29,9 +29,14 @@ def campaign_payload() -> dict[str, object]:
         },
         "daily_budget_usd": 15,
         "geo_targeting": {
-            "country_code": "AR",
-            "regions": [{"name": "Buenos Aires"}, {"name": "Cordoba"}],
-            "cities": [{"name": "CABA"}, {"name": "La Plata"}],
+            "locations": [
+                {
+                    "country_code": "AR",
+                    "regions": [{"name": "Buenos Aires"}, {"name": "Cordoba"}],
+                    "cities": [{"name": "CABA"}, {"name": "La Plata"}],
+                },
+                {"country_code": "EC", "cities": [{"name": "Quito", "key": "242229"}]},
+            ],
         },
         "creative_brief": "Problema primero, formulario propio.",
         "form_schema": {
@@ -58,8 +63,13 @@ def test_campaign_api_creates_converted_client_and_queues_delivery(monkeypatch, 
         assert campaign["client"]["lead"]["normalized_phone"]
         assert campaign["client_lead_source_id"]
         assert campaign["platform_ad_campaign_id"]
-        assert campaign["location"] == "AR · Buenos Aires, Cordoba · CABA, La Plata"
-        assert campaign["campaign_info"]["meta_targeting"]["geo_locations"]["countries"] == ["AR"]
+        assert campaign["location"] == "AR · Buenos Aires, Cordoba · CABA, La Plata | EC · Quito"
+        assert "countries" not in campaign["campaign_info"]["meta_targeting"]["geo_locations"]
+        assert campaign["campaign_info"]["meta_targeting"]["geo_locations"]["cities"] == [
+            {"name": "Quito", "key": "242229", "country": "EC"}
+        ]
+        assert campaign["campaign_info"]["location_countries"] == []
+        assert campaign["campaign_info"]["location_locations"][1]["country_code"] == "EC"
         assert campaign["campaign_info"]["location_regions"] == [
             {"name": "Buenos Aires", "country": "AR"},
             {"name": "Cordoba", "country": "AR"},
@@ -67,13 +77,14 @@ def test_campaign_api_creates_converted_client_and_queues_delivery(monkeypatch, 
         assert campaign["campaign_info"]["location_cities"] == [
             {"name": "CABA", "country": "AR"},
             {"name": "La Plata", "country": "AR"},
+            {"name": "Quito", "key": "242229", "country": "EC"},
         ]
         assert campaign["public_url"].endswith(f"/c/{campaign['public_slug']}")
         assert WorkstationClient.get_by_id(campaign["client_id"]) is not None
         assert ClientLeadSource.get_by_id(campaign["client_lead_source_id"]) is not None
         platform_campaign = PlatformAdCampaign.get_by_id(campaign["platform_ad_campaign_id"])
         assert platform_campaign is not None
-        assert platform_campaign.target_segments()[0]["targeting"]["geo_locations"]["countries"] == ["AR"]
+        assert platform_campaign.target_segments()[0]["targeting"]["geo_locations"]["cities"][0]["name"] == "Quito"
         assert platform_campaign.target_segments()[1]["regions"][0]["name"] == "Buenos Aires"
 
         public_response = client.get(f"/api/public/campaigns/{campaign['public_slug']}")
@@ -175,6 +186,26 @@ def test_campaign_geo_targeting_rejects_invalid_values(monkeypatch, tmp_path) ->
         assert "duplicate city" in duplicate_city.text
 
 
+def test_campaign_geo_targeting_supports_country_only_locations(monkeypatch, tmp_path) -> None:
+    """A location with only country_code should target the whole country."""
+    configure_contadores_db(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/campaigns",
+            json={
+                **campaign_payload(),
+                "name": "Country Only Campaign",
+                "geo_targeting": {"locations": [{"country_code": "AR"}, {"country_code": "EC"}]},
+            },
+        )
+        assert response.status_code == 200, response.text
+        campaign = response.json()["campaign"]
+        assert campaign["location"] == "AR | EC"
+        assert campaign["campaign_info"]["location_countries"] == ["AR", "EC"]
+        assert campaign["campaign_info"]["meta_targeting"]["geo_locations"]["countries"] == ["AR", "EC"]
+
+
 def test_campaign_geo_search_returns_selectable_locations(monkeypatch, tmp_path) -> None:
     """Geography search should return option objects instead of requiring free text."""
     configure_contadores_db(monkeypatch, tmp_path)
@@ -193,6 +224,10 @@ def test_campaign_geo_search_returns_selectable_locations(monkeypatch, tmp_path)
             "type": "city",
             "source": "local",
         }
+
+        ecuador_response = client.get("/api/campaigns/geo/search", params={"country_code": "EC", "kind": "city", "q": "q"})
+        assert ecuador_response.status_code == 200
+        assert ecuador_response.json()["suggestions"][0]["name"] == "Quito"
 
         bad_country = client.get("/api/campaigns/geo/search", params={"country_code": "XX", "kind": "city", "q": "x"})
         assert bad_country.status_code == 400

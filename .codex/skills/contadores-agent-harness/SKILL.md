@@ -74,10 +74,14 @@ When creating campaigns, pass `--country-code` plus repeated `--region` and
 `--city` values instead of one freeform location string. Search first with
 `contadores-agent campaigns geo-search QUERY --country-code AR --kind city` or
 `--kind region`; selected Meta options can be passed as `--city "Name=KEY"` or
-`--region "Name=KEY"`. Country codes map to Meta
-`geo_locations.countries`; region/city names remain structured until a Meta key
-is available. The CLI rejects unsupported country codes, duplicate geography
-values, unsafe characters, and more than 20 regions or 20 cities.
+`--region "Name=KEY"`. For multi-country targeting, pass
+`--geo-targeting-json` with `locations`, for example one country-only location
+and another location with selected cities. A country-only location maps to Meta
+`geo_locations.countries`; a region/city location should not also target the
+whole country unless that country-only location is explicitly added. The CLI
+rejects unsupported country codes, duplicate geography values, unsafe
+characters, more than 20 locations, and more than 20 regions or 20 cities per
+location.
 
 ## Internal Tool Runner
 

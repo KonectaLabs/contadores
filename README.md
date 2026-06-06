@@ -112,6 +112,7 @@ Campañas, clientes convertidos y formularios owned:
 contadores-agent clients create --name "Cliente" --whatsapp "+549..."
 contadores-agent campaigns geo-search cordoba --country-code AR --kind city
 contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --status active --country-code AR --region "Buenos Aires" --city "Cordoba=OPTION_KEY"
+contadores-agent campaigns create --name "Campaña multi pais" --client-id CLIENT_ID --geo-targeting-json '{"locations":[{"country_code":"AR"},{"country_code":"EC","cities":[{"name":"Quito","key":"OPTION_KEY"}]}]}'
 contadores-agent campaigns get CAMPAIGN_ID
 contadores-agent campaigns delivery-source CAMPAIGN_ID
 contadores-agent campaigns submissions CAMPAIGN_ID --limit 20
@@ -120,17 +121,19 @@ contadores-agent meta inventory --limit 20
 ```
 
 El CRM tambien expone la pestaña `Ads` para crear campañas owned desde la UI:
-cliente existente o cliente convertido nuevo, presupuesto, pais, regiones,
-ciudades, brief, campos del formulario y Pixel/CAPI opcional. Regiones y
-ciudades se seleccionan con buscador: primero intenta Meta Targeting Search
-cuando hay credenciales, y si no usa sugerencias locales marcadas como `Local`.
-El pais se guarda como codigo Meta-compatible (`geo_locations.countries`);
-regiones y ciudades se guardan como listas estructuradas y solo se publican
-como regiones/cities de Meta cuando tienen `key`. La CLI tambien expone
-`campaigns geo-search`; al crear se puede pasar `--city "Nombre=KEY"` o
-`--region "Nombre=KEY"` para preservar una opcion Meta. La UI, CLI y API
-rechazan paises no soportados, geografias duplicadas y caracteres no seguros
-antes de crear la campaña. La API de operadores es
+cliente existente o cliente convertido nuevo, presupuesto, localizaciones,
+brief, campos del formulario y Pixel/CAPI opcional. Una localizacion se arma
+como pais entero, pais + provincias/regiones, o pais + ciudades; despues se
+agrega a la lista y se puede repetir para mas paises. Regiones y ciudades se
+seleccionan con buscador: primero intenta Meta Targeting Search cuando hay
+credenciales, y si no usa sugerencias locales marcadas como `Local`. Si no se
+elige provincia ni ciudad, se guarda el pais entero como
+`geo_locations.countries`; si se elige provincia o ciudad, no se targetea todo
+el pais, solo las regiones/cities que tengan `key`. La CLI tambien expone
+`campaigns geo-search`; para multi-pais se puede pasar `--geo-targeting-json`
+con `locations`. La UI, CLI y API rechazan paises no soportados, geografias
+duplicadas y caracteres no seguros antes de crear la campaña. La API de
+operadores es
 `/api/campaigns`, y cada campaña publica `/c/{public_slug}` como formulario
 mobile-first. Las submissions entran al flujo normal de Client Lead Delivery;
 no se insertan mensajes ni se saltean helpers. Meta CAPI usa el pixel de la
