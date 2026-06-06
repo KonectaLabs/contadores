@@ -80,6 +80,12 @@ PUBLIC_PATHS_WITHOUT_SESSION = {
     "/api/meta-leads/webhook",
     "/api/agent/auth/cli/exchange",
 }
+PUBLIC_HTTPS_HOSTS = {
+    host.strip().lower()
+    for host in os.getenv("PUBLIC_HTTPS_HOSTS", "crm.fgoiriz.com,chatterface.fgoiriz.com").split(",")
+    if host.strip()
+}
+STRICT_TRANSPORT_SECURITY = "max-age=31536000"
 
 
 def is_internal_bot_api_path(path: str) -> bool:
@@ -115,6 +121,24 @@ def login_redirect_for_request(request: Request) -> RedirectResponse:
         url=f"/login?next={quote(safe_local_redirect_path(target), safe='')}",
         status_code=303,
     )
+
+
+def public_request_scheme(request: Request) -> str:
+    """Return the browser-facing scheme reported by Cloudflare/proxies."""
+    forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
+    if forwarded_proto in {"http", "https"}:
+        return forwarded_proto
+    cf_visitor = request.headers.get("cf-visitor", "").replace(" ", "").lower()
+    if '"scheme":"http"' in cf_visitor:
+        return "http"
+    if '"scheme":"https"' in cf_visitor:
+        return "https"
+    return ""
+
+
+def public_request_host(request: Request) -> str:
+    """Return the browser-facing host without port."""
+    return request.headers.get("host", "").split(":", 1)[0].strip().lower()
 
 
 def resolve_bearer_session_user(header_value: str | None) -> str | None:
@@ -224,6 +248,20 @@ app.include_router(meta_leads_router)
 app.include_router(platform_router)
 app.include_router(campaigns_router)
 app.include_router(workstation_router)
+
+
+@app.middleware("http")
+async def force_public_https(request: Request, call_next):
+    """Redirect public Cloudflare HTTP visits to HTTPS without looping Flexible SSL."""
+    if public_request_host(request) in PUBLIC_HTTPS_HOSTS:
+        browser_scheme = public_request_scheme(request)
+        if browser_scheme == "http":
+            return RedirectResponse(url=str(request.url.replace(scheme="https")), status_code=308)
+        response = await call_next(request)
+        if browser_scheme == "https":
+            response.headers.setdefault("Strict-Transport-Security", STRICT_TRANSPORT_SECURITY)
+        return response
+    return await call_next(request)
 
 
 @app.middleware("http")
