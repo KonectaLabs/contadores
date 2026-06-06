@@ -165,7 +165,9 @@ Cada campaña owned tiene Delivery inline: un toggle prende/apaga el envio de
 templates WhatsApp cuando llega una submission, el cliente de la campaña queda
 como destinatario por default y se pueden sumar varios contactos predefinidos o
 custom. El backend expande esos contactos a fuentes `ClientLeadSource` por
-destinatario y crea una fila `ClientLeadDelivery` por cada contacto. La vista
+destinatario y crea una fila `ClientLeadDelivery` por cada contacto. La seleccion
+se respeta por contacto elegido, no por telefono, para que el preset `Facu`
+siga visible aunque comparta numero con el cliente default. La vista
 de submissions en Ads se muestra como tabla, con fecha y los leads mas recientes
 abajo.
 

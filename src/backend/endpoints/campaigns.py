@@ -780,15 +780,16 @@ def _normalize_campaign_delivery_config(
         contacts_input = [{"id": "client", "kind": "client"}]
 
     contacts: list[dict[str, Any]] = []
-    seen_phones: set[str] = set()
+    seen_contacts: set[str] = set()
     for index, raw_contact in enumerate(contacts_input):
         contact = _normalize_delivery_contact(raw_contact, client_id=client_id, index=index)
         if contact is None:
             continue
         normalized_phone = normalize_phone(contact.get("phone") or "")
-        if not normalized_phone or normalized_phone in seen_phones:
+        contact_key = str(contact.get("id") or normalized_phone).strip().lower()
+        if not normalized_phone or contact_key in seen_contacts:
             continue
-        seen_phones.add(normalized_phone)
+        seen_contacts.add(contact_key)
         contact["normalized_phone"] = normalized_phone
         contacts.append(contact)
 

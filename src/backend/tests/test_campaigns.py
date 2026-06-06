@@ -232,6 +232,35 @@ def test_public_submission_queues_delivery_for_each_campaign_contact(monkeypatch
         assert {item["delivery_status"] for item in submission_payload["delivery_statuses"]} == {"pending"}
 
 
+def test_campaign_delivery_keeps_facu_preset_when_client_uses_same_phone(monkeypatch, tmp_path) -> None:
+    """Explicit Delivery contacts should not disappear when they share a phone."""
+    configure_contadores_db(monkeypatch, tmp_path)
+
+    payload = campaign_payload()
+    payload["client"] = {
+        "name": "Facundo cliente",
+        "whatsapp": "5491153484587",
+        "email": "facu@example.com",
+    }
+    payload["delivery_config"] = {
+        "enabled": True,
+        "contacts": [
+            {"id": "client", "kind": "client"},
+            {"id": "facu"},
+        ],
+    }
+
+    with TestClient(app) as client:
+        create_response = client.post("/api/campaigns", json=payload)
+        assert create_response.status_code == 200, create_response.text
+        campaign = create_response.json()["campaign"]
+
+        assert [item["id"] for item in campaign["delivery_config"]["contacts"]] == ["client", "facu"]
+        assert [item["label"] for item in campaign["delivery_config"]["contacts"]] == ["Facundo cliente", "Facu"]
+        assert {item["recipient_name"] for item in campaign["delivery_sources"]} == {"Facundo cliente", "Facu"}
+        assert {item["recipient_phone"] for item in campaign["delivery_sources"]} == {"5491153484587"}
+
+
 def test_public_submission_skips_delivery_when_campaign_delivery_disabled(monkeypatch, tmp_path) -> None:
     """Disabled campaign Delivery should accept the form without queueing notifications."""
     configure_contadores_db(monkeypatch, tmp_path)
