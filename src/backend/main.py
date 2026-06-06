@@ -125,14 +125,14 @@ def login_redirect_for_request(request: Request) -> RedirectResponse:
 
 def public_request_scheme(request: Request) -> str:
     """Return the browser-facing scheme reported by Cloudflare/proxies."""
-    forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
-    if forwarded_proto in {"http", "https"}:
-        return forwarded_proto
     cf_visitor = request.headers.get("cf-visitor", "").replace(" ", "").lower()
     if '"scheme":"http"' in cf_visitor:
         return "http"
     if '"scheme":"https"' in cf_visitor:
         return "https"
+    forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
+    if forwarded_proto in {"http", "https"}:
+        return forwarded_proto
     return ""
 
 

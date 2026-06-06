@@ -41,7 +41,7 @@ def test_public_cloudflare_https_requests_do_not_redirect() -> None:
     with TestClient(app) as client:
         response = client.get(
             "/health",
-            headers={"host": "crm.fgoiriz.com", "x-forwarded-proto": "https"},
+            headers={"host": "crm.fgoiriz.com", "cf-visitor": '{"scheme":"https"}', "x-forwarded-proto": "http"},
         )
 
     assert response.status_code == 200
