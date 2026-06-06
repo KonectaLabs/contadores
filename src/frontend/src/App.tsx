@@ -3022,6 +3022,8 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
   const [metaDefaults, setMetaDefaults] = useState<CampaignMetaDefaults>(emptyCampaignMetaDefaults);
   const [fields, setFields] = useState<CampaignFieldDraft[]>(defaultCampaignFields);
 
+  const hasCampaigns = campaigns.length > 0;
+  const showCampaignEmpty = !loading && !createOpen && !hasCampaigns;
   const selectedCampaign = campaigns.find((campaign) => campaign.id === selectedCampaignId) ?? campaigns[0] ?? null;
   const selectedClient = clients.find((client) => client.id === existingClientId) ?? null;
   const currentLocation = currentGeoLocation();
@@ -3363,7 +3365,7 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
   }
 
   return (
-    <section className="ct-surface campaign-manager-surface">
+    <section className={`ct-surface campaign-manager-surface ${showCampaignEmpty ? "is-empty" : ""}`}>
       <div className="ct-simple-head campaign-manager-head">
         <div className="ct-simple-title">
           <span>Campaigns</span>
@@ -3380,10 +3382,12 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
             <ArrowsClockwise size={14} weight="bold" />
             Refresh
           </button>
-          <button type="button" className="ct-btn" onClick={toggleCreatePanel}>
-            <Plus size={14} weight="bold" />
-            Campaign
-          </button>
+          {hasCampaigns || createOpen ? (
+            <button type="button" className="ct-btn" onClick={toggleCreatePanel}>
+              <Plus size={14} weight="bold" />
+              Campaign
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -3825,34 +3829,56 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
         </form>
       ) : null}
 
-      <div className="campaign-manager-grid">
-        <div className="campaign-list">
-          {loading && !campaigns.length ? (
-            <CtEmptyState compact loading title="Loading campaigns" message="Checking owned forms." />
-          ) : campaigns.length ? campaigns.map((campaign) => (
-            <button
-              type="button"
-              className={`campaign-card ${selectedCampaign?.id === campaign.id ? "active" : ""}`}
-              key={campaign.id}
-              onClick={() => void selectCampaign(campaign.id)}
-            >
-              <div>
-                <strong>{campaign.name}</strong>
-                <span>{campaign.client?.display_name || "No client"} · {campaign.location || "No location"}</span>
-              </div>
-              <span className="delivery-status-pill" data-tone={campaign.status === "active" ? "success" : campaign.status === "paused" ? "warn" : "muted"}>
-                {humanize(campaign.status)}
-              </span>
-              <small>{compactNumber(campaign.submission_count)} leads</small>
-            </button>
-          )) : (
-            <CtEmptyState compact title="No campaign forms yet" message="Create the first owned form." />
-          )}
-        </div>
+      {showCampaignEmpty ? (
+        <section className="campaign-empty-launchpad" aria-label="Create first campaign">
+          <div className="campaign-empty-mark" aria-hidden="true">
+            <Megaphone size={34} weight="duotone" />
+          </div>
+          <div className="campaign-empty-copy">
+            <span>Owned forms</span>
+            <strong>Create the first campaign</strong>
+            <p>Targeting, client, creative media and the lead form live in one clean flow.</p>
+          </div>
+          <button type="button" className="ct-btn campaign-empty-primary" onClick={toggleCreatePanel}>
+            <Plus size={16} weight="bold" />
+            Create campaign
+          </button>
+          <div className="campaign-empty-chips" aria-hidden="true">
+            <span>Targeting</span>
+            <span>Media</span>
+            <span>Lead form</span>
+            <span>Meta Lead</span>
+          </div>
+        </section>
+      ) : (
+        <div className="campaign-manager-grid">
+          <div className="campaign-list">
+            {loading && !campaigns.length ? (
+              <CtEmptyState compact loading title="Loading campaigns" message="Checking owned forms." />
+            ) : campaigns.length ? campaigns.map((campaign) => (
+              <button
+                type="button"
+                className={`campaign-card ${selectedCampaign?.id === campaign.id ? "active" : ""}`}
+                key={campaign.id}
+                onClick={() => void selectCampaign(campaign.id)}
+              >
+                <div>
+                  <strong>{campaign.name}</strong>
+                  <span>{campaign.client?.display_name || "No client"} · {campaign.location || "No location"}</span>
+                </div>
+                <span className="delivery-status-pill" data-tone={campaign.status === "active" ? "success" : campaign.status === "paused" ? "warn" : "muted"}>
+                  {humanize(campaign.status)}
+                </span>
+                <small>{compactNumber(campaign.submission_count)} leads</small>
+              </button>
+            )) : (
+              <CtEmptyState compact title="No campaign forms yet" message="Create the first owned form." />
+            )}
+          </div>
 
-        <div className="campaign-detail-panel">
-          {selectedCampaign ? (
-            <>
+          <div className="campaign-detail-panel">
+            {selectedCampaign ? (
+              <>
               <div className="campaign-detail-head">
                 <div>
                   <span>Public form</span>
@@ -3909,12 +3935,13 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
                   <CtEmptyState compact title="No submissions yet" message="Captured leads will appear here." />
                 )}
               </div>
-            </>
-          ) : (
-            <CtEmptyState compact title="No selected campaign" message="Create or select a campaign form." />
-          )}
+              </>
+            ) : (
+              <CtEmptyState compact title="No selected campaign" message="Create or select a campaign form." />
+            )}
+          </div>
         </div>
-      </div>
+      )}
     </section>
   );
 }
