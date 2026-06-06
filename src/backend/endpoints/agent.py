@@ -932,13 +932,6 @@ async def list_agent_campaigns(
 @agent_router.post("/campaigns")
 async def create_agent_campaign(request: Request, command: AgentCampaignCreateCommand) -> dict[str, Any]:
     """Create one owned lead-capture campaign."""
-    if command.dry_run:
-        return {
-            "ok": True,
-            "dry_run": True,
-            "would_create": True,
-            "campaign": command.model_dump(exclude={"dry_run"}, mode="json"),
-        }
     return await create_owned_campaign(request, command)
 
 
