@@ -4131,7 +4131,7 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
   }
 
   async function deleteCampaign(campaign: LeadCaptureCampaignItem) {
-    if (!window.confirm(`Delete ${campaign.name} permanently?`)) {
+    if (!window.confirm(`Delete ${campaign.name} permanently? If it has live Meta ads, the CRM will pause them first.`)) {
       return;
     }
     setSaving(true);

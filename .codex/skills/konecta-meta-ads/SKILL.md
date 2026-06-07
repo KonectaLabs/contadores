@@ -70,6 +70,10 @@ CRM-owned Ads workspace rule:
   public question; drafts can remain incomplete. Reserved answer keys such as
   `campaign_name`, `id`, or `phone_number` must be stored as `answer_<key>` so
   delivery metadata remains trustworthy.
+- Once Meta provider IDs exist, pausing, archiving, or deleting the CRM campaign
+  must pause the Meta Campaign/Ad Set/Ad objects first (`status=PAUSED`). If
+  Meta cannot confirm, leave the CRM campaign visible instead of hiding possible
+  live spend.
 
 Validated local Meta defaults for Contadores/Konecta as of 2026-05-31:
 

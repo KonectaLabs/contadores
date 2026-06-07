@@ -166,7 +166,10 @@ campaña; usan copy generico de consulta y conservan el nombre solo en la API de
 operadores. Las
 submissions entran al flujo normal de Client Lead Delivery;
 no se insertan mensajes ni se saltean helpers. El boton de borrar en Ads elimina
-realmente la campaña y sus filas propias de DB, no la archiva. La UI de Ads
+realmente la campaña y sus filas propias de DB, no la archiva. Antes de pausar,
+archivar o borrar una campaña con IDs reales de Meta, el backend pone esos
+Campaign/Ad Set/Ad en `PAUSED`; si Meta no confirma, la accion local queda
+bloqueada para no esconder una campaña que podria seguir gastando. La UI de Ads
 separa dos vistas claras: `Mis campañas` para listar,
 inspeccionar, borrar y ver leads/media, y `Crear campaña` para el formulario
 de alta; no se crea una campaña dentro del listado y la accion final de crear
@@ -323,6 +326,10 @@ Flujo Meta agent-native:
    Click-to-WhatsApp, tambien persiste los IDs de anuncios creados como
    `whatsapp_referral_source_ids` del funnel, para que los webhooks entrantes
    vuelvan al mismo flujo.
+   Una vez que esos provider IDs existen, `Pause`, `Archive` y `Delete` de la
+   campaña CRM intentan pausar primero los objetos Meta con `status=PAUSED`. Si
+   faltan credenciales/live writes o Meta devuelve error, la accion local falla
+   con conflicto y la campaña sigue visible para que no quede gasto oculto.
 13. Cuando un instant form genera un `leadgen_id`, el webhook publico
    `GET/POST /api/meta-leads/webhook` verifica el challenge con
    `META_LEAD_WEBHOOK_VERIFY_TOKEN`, resuelve la fuente por `meta_lead_form_id`

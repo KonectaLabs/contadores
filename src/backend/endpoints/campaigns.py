@@ -52,6 +52,7 @@ from backend.endpoints.client_leads import (
     format_timestamp_seconds,
 )
 from backend.meta_conversions import build_user_data, send_meta_conversion_event
+from backend.meta_ads_lifecycle import MetaCampaignLifecycleError, pause_meta_objects_for_campaign
 from backend.ai.codex_agent_tools import stage_meta_publish_plan
 
 
@@ -1881,10 +1882,15 @@ async def get_campaign(request: Request, campaign_id: str) -> dict[str, Any]:
 @campaigns_router.delete("/{campaign_id}")
 async def delete_campaign(campaign_id: str) -> dict[str, Any]:
     """Permanently delete one owned campaign and its owned DB records."""
+    campaign = _get_campaign_or_404(campaign_id)
+    try:
+        meta_pause = pause_meta_objects_for_campaign(campaign, actor="operator", source="campaign_api")
+    except MetaCampaignLifecycleError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
     counts = LeadCaptureCampaign.delete_hard(campaign_id)
     if counts is None:
         raise HTTPException(status_code=404, detail="Campaign not found.")
-    return {"ok": True, "campaign_id": campaign_id, "deleted": counts}
+    return {"ok": True, "campaign_id": campaign_id, "deleted": counts, "meta_pause": meta_pause}
 
 
 @campaigns_router.patch("/{campaign_id}")
@@ -1967,6 +1973,11 @@ async def patch_campaign(
     next_form_schema = updates.get("form_schema", current.form_schema)
     if _campaign_status_needs_public_form(next_status) and not _campaign_form_has_fields(next_form_schema):
         raise HTTPException(status_code=400, detail="Active campaigns need at least one public form question.")
+    if next_status in {"paused", "archived"} and next_status != current.status:
+        try:
+            pause_meta_objects_for_campaign(current, actor="operator", source="campaign_api")
+        except MetaCampaignLifecycleError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
     try:
         campaign = LeadCaptureCampaign.update(campaign_id, **updates)
     except ValueError as error:

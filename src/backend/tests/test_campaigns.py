@@ -19,6 +19,7 @@ from backend.database import (
     WorkstationClient,
     normalize_email,
 )
+from backend import meta_ads_lifecycle
 from backend.main import app
 from backend.tests.test_contadores import configure_contadores_db
 
@@ -233,6 +234,91 @@ def test_campaign_delete_hard_removes_owned_rows(monkeypatch, tmp_path) -> None:
         assert PlatformEvent.list_recent(target_type="ad_campaign", target_id=platform_campaign_id) == []
         assert client.get(f"/api/public/campaigns/{campaign['public_slug']}").status_code == 404
         assert client.delete(f"/api/campaigns/{campaign['id']}").status_code == 404
+
+
+def test_pausing_campaign_pauses_live_meta_objects_first(monkeypatch, tmp_path) -> None:
+    """Local pause should stop known live Meta objects before changing CRM state."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("META_MARKETING_LIVE_WRITES_ENABLED", "true")
+    monkeypatch.setenv("META_MARKETING_ACCESS_TOKEN", "test-token")
+    monkeypatch.setenv("META_MARKETING_API_VERSION", "v25.0")
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def fake_graph_post(path: str, params: dict[str, object]) -> dict[str, object]:
+        calls.append((path, params))
+        return {"success": True}
+
+    monkeypatch.setattr(
+        meta_ads_lifecycle,
+        "_default_graph_poster",
+        lambda *, api_version, access_token: fake_graph_post,
+    )
+
+    with TestClient(app) as client:
+        create_response = client.post("/api/campaigns", json=campaign_payload())
+        assert create_response.status_code == 200, create_response.text
+        campaign = create_response.json()["campaign"]
+        PlatformMetaPublishAttempt.add(
+            campaign_id=campaign["platform_ad_campaign_id"],
+            status="submitted",
+            approval_status="approved",
+            response_payload={
+                "schema_version": "konecta.meta_publish_execution.v1",
+                "attempt_id": "attempt-1",
+                "campaign_id": campaign["platform_ad_campaign_id"],
+                "status": "submitted",
+                "live_write_executed": True,
+                "operation_results": [
+                    {"object_type": "campaign", "status": "executed", "provider_id": "meta-campaign-1"},
+                    {"object_type": "ad_set", "status": "executed", "provider_id": "meta-adset-1"},
+                    {"object_type": "ad", "status": "executed", "provider_id": "meta-ad-1"},
+                ],
+            },
+        )
+
+        pause_response = client.patch(f"/api/campaigns/{campaign['id']}", json={"status": "paused"})
+        assert pause_response.status_code == 200, pause_response.text
+        assert pause_response.json()["campaign"]["status"] == "paused"
+
+    assert calls == [
+        ("/meta-ad-1", {"status": "PAUSED"}),
+        ("/meta-adset-1", {"status": "PAUSED"}),
+        ("/meta-campaign-1", {"status": "PAUSED"}),
+    ]
+    pause_events = [
+        event for event in PlatformEvent.list_recent(target_type="lead_capture_campaign", limit=20)
+        if event.event_type == "meta_campaign.pause_checked"
+    ]
+    assert pause_events
+    assert pause_events[0].payload_dict()["status"] == "paused"
+
+
+def test_deleting_campaign_blocks_when_live_meta_pause_fails(monkeypatch, tmp_path) -> None:
+    """Delete should not hide a campaign locally if known Meta spend could remain live."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("META_MARKETING_LIVE_WRITES_ENABLED", "true")
+    monkeypatch.setenv("META_MARKETING_ACCESS_TOKEN", "test-token")
+    monkeypatch.setenv("META_MARKETING_API_VERSION", "v25.0")
+
+    def fake_graph_post(path: str, params: dict[str, object]) -> dict[str, object]:
+        raise RuntimeError(f"Meta rejected pause for {path}")
+
+    monkeypatch.setattr(
+        meta_ads_lifecycle,
+        "_default_graph_poster",
+        lambda *, api_version, access_token: fake_graph_post,
+    )
+
+    with TestClient(app) as client:
+        create_response = client.post("/api/campaigns", json=campaign_payload())
+        assert create_response.status_code == 200, create_response.text
+        campaign = create_response.json()["campaign"]
+        LeadCaptureCampaign.update(campaign["id"], meta_campaign_id="meta-campaign-delete")
+
+        delete_response = client.delete(f"/api/campaigns/{campaign['id']}")
+        assert delete_response.status_code == 409
+        assert "not fully paused" in delete_response.json()["detail"]
+        assert LeadCaptureCampaign.get_by_id(campaign["id"]) is not None
 
 
 def test_public_submission_queues_delivery_for_each_campaign_contact(monkeypatch, tmp_path) -> None:

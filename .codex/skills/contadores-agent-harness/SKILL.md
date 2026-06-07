@@ -99,6 +99,10 @@ Public JSON/HTML must not expose the internal campaign name. Campaigns in
 can stay incomplete. If a submitted public answer reuses a reserved delivery key
 such as `campaign_name`, `id`, or `phone_number`, preserve the internal metadata
 and store the submitted value as `answer_<key>`.
+If a campaign has real Meta provider IDs, pausing, archiving, or deleting it
+must pause the Meta Campaign/Ad Set/Ad objects first (`status=PAUSED`). If Meta
+cannot confirm the pause, keep the local campaign visible and blocked rather
+than hiding a campaign that may keep spending.
 Campaign Delivery is configured inline on the campaign: a toggle enables or
 disables WhatsApp template delivery, the campaign client is the default
 recipient, and multiple preset or custom recipients can be selected. The backend
