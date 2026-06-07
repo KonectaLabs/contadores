@@ -8944,7 +8944,7 @@ function buildBlankClientLeadSourceDraft(): ClientLeadSourceDraft {
     sheet_poll_seconds: 10,
     recipient_name: "",
     recipient_phone: "",
-    template_name: "konecta_client_lead_alert_es",
+    template_name: "konecta_delivery_lead_alert_es",
     template_language: "es",
     column_mapping_text: JSON.stringify({
       source_id: "id",

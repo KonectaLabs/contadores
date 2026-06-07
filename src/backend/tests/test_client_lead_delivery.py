@@ -40,7 +40,7 @@ def source_payload(**overrides):
         "sheet_poll_seconds": 30,
         "recipient_name": "Cliente MMB",
         "recipient_phone": "+5491122223333",
-        "template_name": "konecta_client_lead_alert_es",
+        "template_name": "konecta_delivery_lead_alert_es",
         "template_language": "es",
         "column_mapping": {
             "source_id": "id",
@@ -115,7 +115,7 @@ def test_client_lead_source_sync_queues_existing_valid_rows(monkeypatch, tmp_pat
 
         pending = client.get("/api/client-lead-deliveries/pending").json()["notifications"]
         assert len(pending) == 1
-        assert pending[0]["template_name"] == "konecta_client_lead_alert_es"
+        assert pending[0]["template_name"] == "konecta_delivery_lead_alert_es"
         assert pending[0]["template_body_params"] == [
             "MMB Ads",
             "Nombre: Ana Perez; WhatsApp: 5491111111111; Email: ana@example.com",
@@ -204,7 +204,7 @@ def test_client_lead_context_fields_are_added_to_pending_template(monkeypatch, t
         )
         assert created.status_code == 200
         source = created.json()
-        assert source["template_name"] == "konecta_client_lead_alert_context_es"
+        assert source["template_name"] == "konecta_delivery_lead_alert_context_es"
         assert source["context_field_mapping"] == {
             "Tipo de deuda": "¿qué_tipo_de_deuda_tiene_pendiente?",
             "Caso": "breve_descripción_de_su_caso",
@@ -215,7 +215,7 @@ def test_client_lead_context_fields_are_added_to_pending_template(monkeypatch, t
 
         pending = client.get("/api/client-lead-deliveries/pending").json()["notifications"]
         assert len(pending) == 1
-        assert pending[0]["template_name"] == "konecta_client_lead_alert_context_es"
+        assert pending[0]["template_name"] == "konecta_delivery_lead_alert_context_es"
         assert pending[0]["template_body_params"] == [
             "Rodrigo Monges Luces · Deuda",
             (
@@ -266,14 +266,14 @@ def test_client_lead_context_template_keeps_three_params_when_values_are_blank(m
         )
         assert created.status_code == 200
         source = created.json()
-        assert source["template_name"] == "konecta_client_lead_alert_context_es"
+        assert source["template_name"] == "konecta_delivery_lead_alert_context_es"
 
         sync = client.post(f"/api/client-lead-sources/{source['id']}/sync")
         assert sync.status_code == 200
 
         pending = client.get("/api/client-lead-deliveries/pending").json()["notifications"]
         assert len(pending) == 1
-        assert pending[0]["template_name"] == "konecta_client_lead_alert_context_es"
+        assert pending[0]["template_name"] == "konecta_delivery_lead_alert_context_es"
         assert pending[0]["template_body_params"] == [
             "Rodrigo Monges Luces · Deuda",
             "Nombre: Carlos Lopez; WhatsApp: 595981111222; Email: -",
@@ -339,7 +339,7 @@ def test_meta_lead_form_import_queues_delivery_and_dedupes(monkeypatch, tmp_path
 
         pending = client.get("/api/client-lead-deliveries/pending").json()["notifications"]
         assert len(pending) == 1
-        assert pending[0]["template_name"] == "konecta_client_lead_alert_context_es"
+        assert pending[0]["template_name"] == "konecta_delivery_lead_alert_context_es"
         assert pending[0]["template_body_params"] == [
             "Abogados laborales",
             (
@@ -704,7 +704,7 @@ def test_client_lead_clearing_context_fields_resets_template(monkeypatch, tmp_pa
         )
         assert created.status_code == 200
         source = created.json()
-        assert source["template_name"] == "konecta_client_lead_alert_context_es"
+        assert source["template_name"] == "konecta_delivery_lead_alert_context_es"
 
         updated = client.put(
             f"/api/client-lead-sources/{source['id']}",
@@ -715,7 +715,7 @@ def test_client_lead_clearing_context_fields_resets_template(monkeypatch, tmp_pa
         )
         assert updated.status_code == 200
         updated_source = updated.json()
-        assert updated_source["template_name"] == "konecta_client_lead_alert_es"
+        assert updated_source["template_name"] == "konecta_delivery_lead_alert_es"
         assert updated_source["context_field_mapping"] == {}
 
 
@@ -919,7 +919,7 @@ def test_client_lead_sources_load_from_config_file(monkeypatch, tmp_path) -> Non
         "campaign_name": "campaign_name",
         "ad_name": "ad_name",
     }
-    assert sources["mmb-ads-simple-luis"]["template_name"] == "konecta_client_lead_alert_context_es"
+    assert sources["mmb-ads-simple-luis"]["template_name"] == "konecta_delivery_lead_alert_context_es"
 
 
 def test_client_lead_config_reload_preserves_existing_context_when_omitted(monkeypatch, tmp_path) -> None:
@@ -964,4 +964,4 @@ def test_client_lead_config_reload_preserves_existing_context_when_omitted(monke
 
     sources = {source["id"]: source for source in payload["sources"]}
     assert sources["mmb-ads"]["context_field_mapping"] == {"Ciudad": "city"}
-    assert sources["mmb-ads"]["template_name"] == "konecta_client_lead_alert_context_es"
+    assert sources["mmb-ads"]["template_name"] == "konecta_delivery_lead_alert_context_es"

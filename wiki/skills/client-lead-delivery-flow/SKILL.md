@@ -38,12 +38,12 @@ parameter.
 
 Default template:
 
-- name: `konecta_client_lead_alert_es`
+- name: `konecta_delivery_lead_alert_es`
 - language: `es`
 
 Context template, used when `context_field_mapping` is configured:
 
-- name: `konecta_client_lead_alert_context_es`
+- name: `konecta_delivery_lead_alert_context_es`
 - language: `es`
 - params: campaign title, one lead-data block, and the plain `https://wa.me/`
   link. The lead-data param joins `key: value` fields with `; ` for Meta safety;
@@ -80,7 +80,7 @@ Schema:
       "recipients": [
         {"id": "owner", "name": "Owner", "phone": "+5491122223333"}
       ],
-      "template_name": "konecta_client_lead_alert_es",
+      "template_name": "konecta_delivery_lead_alert_es",
       "template_language": "es",
       "column_mapping": {
         "source_id": "id",
@@ -147,12 +147,12 @@ Reply links in templates must be direct plain `https://wa.me/{phone}` chat links
 without a `text=` parameter.
 
 When context fields are configured, the source should use
-`konecta_client_lead_alert_context_es`. The backend auto-selects that
+`konecta_delivery_lead_alert_context_es`. The backend auto-selects that
 template when a source still has the default template and context is added. The
 context template uses the same 3-param shape as the default template: campaign
 title, one lead-data block, and the plain `https://wa.me/` link. Context fields
 are appended inside the lead-data block as `key: value`; if context is removed,
-the backend resets the source to `konecta_client_lead_alert_es`.
+the backend resets the source to `konecta_delivery_lead_alert_es`.
 
 Use `enabled: false` when the template is not approved yet or when historical
 rows should not be notified until the user confirms.
@@ -175,7 +175,7 @@ curl -fsS -X POST -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
 
 ```bash
 uv run python src/scripts/whatsapp_templates.py check \
-  --spec-file src/scripts/whatsapp_template_specs/konecta_client_lead_alert_es.json \
+  --spec-file src/scripts/whatsapp_template_specs/konecta_delivery_lead_alert_es.json \
   --fail-on-unapproved
 ```
 
@@ -183,7 +183,7 @@ For context-enabled sources, also verify:
 
 ```bash
 uv run python src/scripts/whatsapp_templates.py check \
-  --spec-file src/scripts/whatsapp_template_specs/konecta_client_lead_alert_context_es.json \
+  --spec-file src/scripts/whatsapp_template_specs/konecta_delivery_lead_alert_context_es.json \
   --fail-on-unapproved
 ```
 

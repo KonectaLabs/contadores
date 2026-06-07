@@ -1,14 +1,14 @@
 {
   "templates": [
     {
-      "name": "konecta_client_lead_alert_es",
+      "name": "konecta_delivery_lead_alert_context_es",
       "language": "es",
       "category": "UTILITY",
       "parameter_format": "POSITIONAL",
       "body": "Nuevo Lead: {{1}}.\n\ndatos del Lead:\n{{2}}\n\nPara abrir el chat:\n{{3}}\nPara abrir el chat entrar al link.",
       "example_values": [
         "Shark Fafu",
-        "Nombre: pepe; WhatsApp: 5491153484587; Email: sans@gmail.com",
+        "Nombre: pepe; WhatsApp: 5491153484587; Email: sans@gmail.com; Ciudad: Buenos Aires; Servicio: Delivery",
         "https://wa.me/5491153484587"
       ]
     }

@@ -599,8 +599,8 @@ en `client_lead_deliveries`; no contamina `contadores_leads`,
 La configuracion puede hacerse por UI/API o por archivo versionado:
 `config/default-client-lead-sources.json` como seed y
 `CLIENT_LEAD_SOURCES_CONFIG_PATH` / `data/client-lead-sources.json` como
-override del server. El flujo actual usa `konecta_client_lead_alert_es` y,
-cuando hay `context_field_mapping`, `konecta_client_lead_alert_context_es`.
+override del server. El flujo actual usa `konecta_delivery_lead_alert_es` y,
+cuando hay `context_field_mapping`, `konecta_delivery_lead_alert_context_es`.
 
 La referencia operativa completa esta en la seccion `Client Lead Delivery` mas
 abajo y en las skills `contadores-rollout` y `contadores-spreadsheet`.
@@ -941,8 +941,8 @@ Client Lead Delivery:
   `contadores_leads`, alertas humanas ni Workstation.
 - `context_field_mapping` permite elegir una vez por fuente que columnas del
   sheet se agregan al WhatsApp como `Nombre del campo: valor`. Si una fuente
-  tiene contexto, usar `konecta_client_lead_alert_context_es`; si no, seguir
-  con `konecta_client_lead_alert_es`. Ambos templates llevan 3 parametros:
+  tiene contexto, usar `konecta_delivery_lead_alert_context_es`; si no, seguir
+  con `konecta_delivery_lead_alert_es`. Ambos templates llevan 3 parametros:
   nombre de campaña, un bloque unico de datos del lead y el link `https://wa.me/`.
   El bloque de datos se ve como lineas `Nombre: valor` en auditoria/UI; para
   Meta se manda en un solo parametro unido con `; `.
@@ -1048,7 +1048,7 @@ Ejemplo con dos sheets para el mismo destinatario:
   `GET /api/client-leads/{id}/copy-all`,
   `POST /api/client-leads/{id}/retry`.
 - El bot consume `/api/client-lead-deliveries/pending`, manda el template
-  `konecta_client_lead_alert_es` por Meta y registra `sent`, `delivered` o
+  `konecta_delivery_lead_alert_es` por Meta y registra `sent`, `delivered` o
   `failed` por id externo del provider.
 - Para sheets privados, configurar `CONTADORES_GOOGLE_SERVICE_ACCOUNT_FILE` o
   reutilizar `GOOGLE_SERVICE_ACCOUNT_FILE`.

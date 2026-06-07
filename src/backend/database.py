@@ -2363,8 +2363,8 @@ class ContadoresMessage(SQLModel, table=True):
             return row
 
 
-CLIENT_LEAD_DEFAULT_TEMPLATE_NAME = "konecta_client_lead_alert_es"
-CLIENT_LEAD_CONTEXT_TEMPLATE_NAME = "konecta_client_lead_alert_context_es"
+CLIENT_LEAD_DEFAULT_TEMPLATE_NAME = "konecta_delivery_lead_alert_es"
+CLIENT_LEAD_CONTEXT_TEMPLATE_NAME = "konecta_delivery_lead_alert_context_es"
 CLIENT_LEAD_DEFAULT_TEMPLATE_LANGUAGE = "es"
 CLIENT_LEAD_DEFAULT_COLUMN_MAPPING = {
     "source_id": "id",
