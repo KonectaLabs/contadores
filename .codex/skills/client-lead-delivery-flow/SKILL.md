@@ -45,8 +45,9 @@ Context template, used when `context_field_mapping` is configured:
 
 - name: `konecta_client_lead_alert_context_es`
 - language: `es`
-- param 6: context in one line, with fields joined by `; ` because Meta rejects
-  newline/tab characters inside template params.
+- params: campaign title, one lead-data block, and the plain `https://wa.me/`
+  link. The lead-data param joins `key: value` fields with `; ` for Meta safety;
+  audit/copy text renders the same data as multiline `key: value` lines.
 
 ## Config File
 
@@ -148,9 +149,10 @@ without a `text=` parameter.
 When context fields are configured, the source should use
 `konecta_client_lead_alert_context_es`. The backend auto-selects that
 template when a source still has the default template and context is added. The
-context template always needs 6 body params; when mapped values are blank, the
-backend sends `-` as the sixth param. If context is removed, the backend resets
-the source to `konecta_client_lead_alert_es`.
+context template uses the same 3-param shape as the default template: campaign
+title, one lead-data block, and the plain `https://wa.me/` link. Context fields
+are appended inside the lead-data block as `key: value`; if context is removed,
+the backend resets the source to `konecta_client_lead_alert_es`.
 
 Use `enabled: false` when the template is not approved yet or when historical
 rows should not be notified until the user confirms.

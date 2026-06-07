@@ -116,19 +116,20 @@ def test_client_lead_source_sync_queues_existing_valid_rows(monkeypatch, tmp_pat
         pending = client.get("/api/client-lead-deliveries/pending").json()["notifications"]
         assert len(pending) == 1
         assert pending[0]["template_name"] == "konecta_client_lead_alert_es"
-        assert pending[0]["template_body_params"][0] == "MMB Ads"
-        assert pending[0]["template_body_params"][1] == "Ana Perez"
-        assert pending[0]["template_body_params"][4] == "https://wa.me/5491111111111"
+        assert pending[0]["template_body_params"] == [
+            "MMB Ads",
+            "Nombre: Ana Perez; WhatsApp: 5491111111111; Email: ana@example.com",
+            "https://wa.me/5491111111111",
+        ]
         assert pending[0]["delivered_text"] == (
             "Nuevo Lead: MMB Ads.\n\n"
-            "Datos del lead:\n"
+            "datos del Lead:\n"
             "Nombre: Ana Perez\n"
             "WhatsApp: 5491111111111\n"
             "Email: ana@example.com\n\n"
             "Para abrir el chat:\n"
-            "https://wa.me/5491111111111\n\n"
-            "Revisalo apenas puedas y responde al lead desde WhatsApp.\n"
-            "Si el enlace no abre automaticamente, copia el telefono y responde manualmente."
+            "https://wa.me/5491111111111\n"
+            "Para abrir el chat entrar al link."
         )
 
         sent = client.put(
@@ -215,16 +216,14 @@ def test_client_lead_context_fields_are_added_to_pending_template(monkeypatch, t
         pending = client.get("/api/client-lead-deliveries/pending").json()["notifications"]
         assert len(pending) == 1
         assert pending[0]["template_name"] == "konecta_client_lead_alert_context_es"
-        assert pending[0]["template_body_params"][:5] == [
+        assert pending[0]["template_body_params"] == [
             "Rodrigo Monges Luces · Deuda",
-            "Graciela Medina",
-            "595972490441",
-            "migramed.27@hotmail.com",
+            (
+                "Nombre: Graciela Medina; WhatsApp: 595972490441; Email: migramed.27@hotmail.com; "
+                "Tipo de deuda: Tarjeta de credito; Caso: Me estafaron con una compra online"
+            ),
             "https://wa.me/595972490441",
         ]
-        assert pending[0]["template_body_params"][5] == (
-            "Tipo de deuda: Tarjeta de credito; Caso: Me estafaron con una compra online"
-        )
         assert "Contexto:" not in pending[0]["delivered_text"]
         assert "Tipo de deuda: Tarjeta de credito" in pending[0]["delivered_text"]
         assert "Caso: Me estafaron con una compra online" in pending[0]["delivered_text"]
@@ -235,8 +234,8 @@ def test_client_lead_context_fields_are_added_to_pending_template(monkeypatch, t
         assert "Caso: Me estafaron con una compra online" in copy_all.json()["text"]
 
 
-def test_client_lead_context_template_keeps_six_params_when_values_are_blank(monkeypatch, tmp_path) -> None:
-    """The 6-param context template must always receive its sixth body param."""
+def test_client_lead_context_template_keeps_three_params_when_values_are_blank(monkeypatch, tmp_path) -> None:
+    """The context template sends lead data as one body param."""
     configure_delivery_db(monkeypatch, tmp_path)
 
     async def fake_fetch_sheet_records(source):
@@ -277,11 +276,8 @@ def test_client_lead_context_template_keeps_six_params_when_values_are_blank(mon
         assert pending[0]["template_name"] == "konecta_client_lead_alert_context_es"
         assert pending[0]["template_body_params"] == [
             "Rodrigo Monges Luces · Deuda",
-            "Carlos Lopez",
-            "595981111222",
-            "-",
+            "Nombre: Carlos Lopez; WhatsApp: 595981111222; Email: -",
             "https://wa.me/595981111222",
-            "-",
         ]
 
 
@@ -344,16 +340,14 @@ def test_meta_lead_form_import_queues_delivery_and_dedupes(monkeypatch, tmp_path
         pending = client.get("/api/client-lead-deliveries/pending").json()["notifications"]
         assert len(pending) == 1
         assert pending[0]["template_name"] == "konecta_client_lead_alert_context_es"
-        assert pending[0]["template_body_params"][:5] == [
+        assert pending[0]["template_body_params"] == [
             "Abogados laborales",
-            "Ana Perez",
-            "5491111111111",
-            "ana@example.com",
+            (
+                "Nombre: Ana Perez; WhatsApp: 5491111111111; Email: ana@example.com; "
+                "Campaña: Abogados laborales; Servicio: Despido laboral"
+            ),
             "https://wa.me/5491111111111",
         ]
-        assert pending[0]["template_body_params"][5] == (
-            "Campaña: Abogados laborales; Servicio: Despido laboral"
-        )
 
         events = PlatformEvent.list_recent(target_type="client_lead_source", target_id=source_id)
         assert [event.event_type for event in events] == ["client_lead.meta_form_imported"]
@@ -698,7 +692,7 @@ def test_codex_tool_fetches_meta_lead_form_to_delivery(monkeypatch, tmp_path) ->
 
 
 def test_client_lead_clearing_context_fields_resets_template(monkeypatch, tmp_path) -> None:
-    """Clearing context in the UI payload should not leave a 6-param template selected."""
+    """Clearing context in the UI payload should reset the context template."""
     configure_delivery_db(monkeypatch, tmp_path)
 
     with TestClient(app) as client:

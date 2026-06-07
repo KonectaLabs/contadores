@@ -159,8 +159,8 @@ Each configured source supports:
   `phone_number`, and `email`
 - `context_field_mapping`, optional mapping of WhatsApp display label to sheet
   column, rendered as `label: value` in the Delivery alert. The UI/audit text
-  can show multiple context lines, but the sixth Meta template param must be a
-  single line joined with `; `. Blank context values render as `-`.
+  can show multiple context lines; the Meta template receives one lead-data
+  param joined with `; ` for safety.
 
 Delivery stores each imported row's full sheet payload in `raw_row`. The
 operator UI must render sheet leads by sheet/campaign and show those real

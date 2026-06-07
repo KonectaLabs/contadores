@@ -495,11 +495,6 @@ def build_context_lines_from_row(source: ClientLeadSource, row: dict[str, str]) 
     return lines
 
 
-def build_context_lines(source: ClientLeadSource, item: ClientLeadDelivery) -> list[str]:
-    """Build configured context lines for one Delivery alert."""
-    return build_context_lines_from_row(source, item.raw_row)
-
-
 def build_context_text_from_row(source: ClientLeadSource, row: dict[str, str]) -> str:
     """Build the multiline context block from one raw sheet row."""
     lines = build_context_lines_from_row(source, row)
@@ -514,17 +509,6 @@ def build_context_text_from_row(source: ClientLeadSource, row: dict[str, str]) -
 def build_context_text(source: ClientLeadSource, item: ClientLeadDelivery) -> str:
     """Build the multiline context block used by WhatsApp and audit text."""
     return build_context_text_from_row(source, item.raw_row)
-
-
-def build_template_context_param(source: ClientLeadSource, item: ClientLeadDelivery) -> str:
-    """Build the one-line context param accepted by Meta template sends."""
-    lines = build_context_lines(source, item)
-    if not lines:
-        return ""
-    text = "; ".join(lines)
-    if len(text) <= MAX_CONTEXT_BLOCK_CHARS:
-        return text
-    return f"{text[:MAX_CONTEXT_BLOCK_CHARS - 3].rstrip()}..."
 
 
 def parse_datetime(value: str | None) -> datetime | None:
@@ -599,39 +583,63 @@ def build_notification_text(
     parts = [
         f"Nuevo Lead: {title or source.label}.",
         "",
-        "Datos del lead:",
+        "datos del Lead:",
+        build_lead_data_text(name=name, phone=phone, email=email, context_text=context_text),
+        "",
+        "Para abrir el chat:",
+        wa_link or "-",
+        "Para abrir el chat entrar al link.",
+    ]
+    return "\n".join(parts)
+
+
+def build_lead_data_lines(
+    *,
+    name: str,
+    phone: str,
+    email: str | None,
+    context_text: str = "",
+) -> list[str]:
+    """Build lead data lines for the single WhatsApp template param."""
+    lines = [
         f"Nombre: {name or '-'}",
         f"WhatsApp: {phone or '-'}",
         f"Email: {email or '-'}",
     ]
     if context_text:
-        parts.extend(context_text.splitlines())
-    parts.extend(
-        [
-            "",
-            "Para abrir el chat:",
-            wa_link or "-",
-            "",
-            "Revisalo apenas puedas y responde al lead desde WhatsApp.",
-            "Si el enlace no abre automaticamente, copia el telefono y responde manualmente.",
-        ]
+        lines.extend(line for line in context_text.splitlines() if line.strip())
+    return lines
+
+
+def build_lead_data_text(
+    *,
+    name: str,
+    phone: str,
+    email: str | None,
+    context_text: str = "",
+) -> str:
+    """Build the multiline lead data block shown in Delivery audit surfaces."""
+    return "\n".join(build_lead_data_lines(name=name, phone=phone, email=email, context_text=context_text))
+
+
+def build_lead_data_template_param(source: ClientLeadSource, item: ClientLeadDelivery) -> str:
+    """Build the single Meta-safe template param containing all lead data."""
+    lines = build_lead_data_lines(
+        name=item.full_name or "",
+        phone=item.normalized_phone or item.phone_number,
+        email=item.email,
+        context_text=build_context_text(source, item),
     )
-    return "\n".join(parts)
+    return "; ".join(lines) or "-"
 
 
 def build_template_params(source: ClientLeadSource, item: ClientLeadDelivery) -> list[str]:
     """Build positional params for the approved client lead alert template."""
-    params = [
+    return [
         build_notification_title(source, raw_row=item.raw_row),
-        item.full_name or "Sin nombre",
-        item.normalized_phone or item.phone_number or "-",
-        item.email or "-",
+        build_lead_data_template_param(source, item),
         item.wa_link or "-",
     ]
-    context_param = build_template_context_param(source, item)
-    if source.template_name == CLIENT_LEAD_CONTEXT_TEMPLATE_NAME or context_param:
-        params.append(context_param or "-")
-    return params
 
 
 def build_delivery_notification_text(source: ClientLeadSource, item: ClientLeadDelivery) -> str:

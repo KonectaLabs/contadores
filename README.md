@@ -942,10 +942,10 @@ Client Lead Delivery:
 - `context_field_mapping` permite elegir una vez por fuente que columnas del
   sheet se agregan al WhatsApp como `Nombre del campo: valor`. Si una fuente
   tiene contexto, usar `konecta_client_lead_alert_context_es`; si no, seguir
-  con `konecta_client_lead_alert_es`. El template con contexto siempre lleva
-  6 parametros; el sexto parametro va en una sola linea para cumplir las reglas
-  de Meta. Si las columnas vienen vacias, el backend manda `-` como sexto
-  parametro.
+  con `konecta_client_lead_alert_es`. Ambos templates llevan 3 parametros:
+  nombre de campaña, un bloque unico de datos del lead y el link `https://wa.me/`.
+  El bloque de datos se ve como lineas `Nombre: valor` en auditoria/UI; para
+  Meta se manda en un solo parametro unido con `; `.
 - Primer sync: importa todas las filas validas existentes y deja sus
   notificaciones `pending`. Los siguientes syncs son idempotentes por
   `(source_id, source_row_key)` y solo agregan filas nuevas.

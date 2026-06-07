@@ -35,23 +35,19 @@ def test_fetch_and_dispatch_client_lead_notifications(monkeypatch) -> None:
                             "template_language": "es",
                             "template_body_params": [
                                 "MMB Ads",
-                                "Ana Perez",
-                                "5491111111111",
-                                "ana@example.com",
+                                "Nombre: Ana Perez; WhatsApp: 5491111111111; Email: ana@example.com; Ciudad: Quito",
                                 "https://wa.me/5491111111111",
-                                "Ciudad: Quito",
                             ],
                             "delivered_text": (
                                 "Nuevo Lead: MMB Ads.\n\n"
-                                "Datos del lead:\n"
+                                "datos del Lead:\n"
                                 "Nombre: Ana Perez\n"
                                 "WhatsApp: 5491111111111\n"
                                 "Email: ana@example.com\n"
                                 "Ciudad: Quito\n\n"
                                 "Para abrir el chat:\n"
-                                "https://wa.me/5491111111111\n\n"
-                                "Revisalo apenas puedas y responde al lead desde WhatsApp.\n"
-                                "Si el enlace no abre automaticamente, copia el telefono y responde manualmente."
+                                "https://wa.me/5491111111111\n"
+                                "Para abrir el chat entrar al link."
                             ),
                         }
                     ]
@@ -86,23 +82,19 @@ def test_fetch_and_dispatch_client_lead_notifications(monkeypatch) -> None:
             "template_language": "es",
             "body_params": [
                 "MMB Ads",
-                "Ana Perez",
-                "5491111111111",
-                "ana@example.com",
+                "Nombre: Ana Perez; WhatsApp: 5491111111111; Email: ana@example.com; Ciudad: Quito",
                 "https://wa.me/5491111111111",
-                "Ciudad: Quito",
             ],
             "delivered_text": (
                 "Nuevo Lead: MMB Ads.\n\n"
-                "Datos del lead:\n"
+                "datos del Lead:\n"
                 "Nombre: Ana Perez\n"
                 "WhatsApp: 5491111111111\n"
                 "Email: ana@example.com\n"
                 "Ciudad: Quito\n\n"
                 "Para abrir el chat:\n"
-                "https://wa.me/5491111111111\n\n"
-                "Revisalo apenas puedas y responde al lead desde WhatsApp.\n"
-                "Si el enlace no abre automaticamente, copia el telefono y responde manualmente."
+                "https://wa.me/5491111111111\n"
+                "Para abrir el chat entrar al link."
             ),
         }
     ]
@@ -114,15 +106,14 @@ def test_fetch_and_dispatch_client_lead_notifications(monkeypatch) -> None:
             "external_id": "wamid.delivery.1",
             "sent_text": (
                 "Nuevo Lead: MMB Ads.\n\n"
-                "Datos del lead:\n"
+                "datos del Lead:\n"
                 "Nombre: Ana Perez\n"
                 "WhatsApp: 5491111111111\n"
                 "Email: ana@example.com\n"
                 "Ciudad: Quito\n\n"
                 "Para abrir el chat:\n"
-                "https://wa.me/5491111111111\n\n"
-                "Revisalo apenas puedas y responde al lead desde WhatsApp.\n"
-                "Si el enlace no abre automaticamente, copia el telefono y responde manualmente."
+                "https://wa.me/5491111111111\n"
+                "Para abrir el chat entrar al link."
             ),
         },
     )
