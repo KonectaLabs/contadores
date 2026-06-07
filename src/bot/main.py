@@ -160,56 +160,80 @@ async def run_worker_iteration(
             continue
         if funnel.kind == "inbox":
             continue
-        automation_summary = await run_contadores_automation_iteration(
-            backend_client,
-            funnel_id=funnel.id,
-        )
+        try:
+            automation_summary = await run_contadores_automation_iteration(
+                backend_client,
+                funnel_id=funnel.id,
+            )
+        except httpx.HTTPStatusError as exc:
+            status_code = exc.response.status_code if exc.response else "unknown"
+            detail = exc.response.text[:300] if exc.response else ""
+            logger.warning("%s automation tick failed with HTTP %s. %s", funnel.label, status_code, detail)
+        except Exception:
+            logger.exception("%s automation tick failed.", funnel.label)
+        else:
+            if any(
+                automation_summary.get(key)
+                for key in [
+                    "opener_sent",
+                    "loom_sent",
+                    "video_checks_sent",
+                    "ai_replies_sent",
+                    "scheduling_detail_requests_sent",
+                    "scheduling_handoffs",
+                    "human_handoffs",
+                    "closed_by_ai",
+                    "page_examples_sent",
+                    "workstation_solo_page_started",
+                    "classified_wants_to_proceed",
+                    "video_confirmation_recaps_sent",
+                    "classified_needs_human",
+                    "calendly_sent",
+                    "codex_fallback_alerts",
+                ]
+            ):
+                logger.info("%s automation summary: %s", funnel.label, automation_summary)
+
+        try:
+            alert_results = await send_contadores_pending_alerts(
+                backend_client,
+                email_provider=email_provider,
+                funnel_id=funnel.id,
+                funnel_label=funnel.label,
+            )
+        except httpx.HTTPStatusError as exc:
+            status_code = exc.response.status_code if exc.response else "unknown"
+            detail = exc.response.text[:300] if exc.response else ""
+            logger.warning("%s alert delivery failed with HTTP %s. %s", funnel.label, status_code, detail)
+        except Exception:
+            logger.exception("%s alert delivery failed.", funnel.label)
+        else:
+            sent_alerts = [item for item in alert_results if item.get("status") == "sent"]
+            if sent_alerts:
+                logger.info("%s alerts sent: %s", funnel.label, sent_alerts)
+
+    try:
+        workstation_summary = await run_workstation_automation_iteration(backend_client)
+    except httpx.HTTPStatusError as exc:
+        status_code = exc.response.status_code if exc.response else "unknown"
+        detail = exc.response.text[:300] if exc.response else ""
+        logger.warning("Workstation automation failed with HTTP %s. %s", status_code, detail)
+    except Exception:
+        logger.exception("Workstation automation failed.")
+    else:
         if any(
-            automation_summary.get(key)
+            workstation_summary.get(key)
             for key in [
-                "opener_sent",
-                "loom_sent",
-                "video_checks_sent",
-                "ai_replies_sent",
-                "scheduling_detail_requests_sent",
-                "scheduling_handoffs",
+                "intake_messages_sent",
+                "drafts_generated",
+                "revision_videos_sent",
+                "approvals",
+                "pings_sent",
                 "human_handoffs",
-                "closed_by_ai",
-                "page_examples_sent",
-                "workstation_solo_page_started",
-                "classified_wants_to_proceed",
-                "video_confirmation_recaps_sent",
-                "classified_needs_human",
-                "calendly_sent",
-                "codex_fallback_alerts",
+                "failures",
             ]
         ):
-            logger.info("%s automation summary: %s", funnel.label, automation_summary)
-
-        alert_results = await send_contadores_pending_alerts(
-            backend_client,
-            email_provider=email_provider,
-            funnel_id=funnel.id,
-            funnel_label=funnel.label,
-        )
-        sent_alerts = [item for item in alert_results if item.get("status") == "sent"]
-        if sent_alerts:
-            logger.info("%s alerts sent: %s", funnel.label, sent_alerts)
-
-    workstation_summary = await run_workstation_automation_iteration(backend_client)
-    if any(
-        workstation_summary.get(key)
-        for key in [
-            "intake_messages_sent",
-            "drafts_generated",
-            "revision_videos_sent",
-            "approvals",
-            "pings_sent",
-            "human_handoffs",
-            "failures",
-        ]
-    ):
-        logger.info("Workstation automation summary: %s", workstation_summary)
+            logger.info("Workstation automation summary: %s", workstation_summary)
 
     pending_contadores = await fetch_pending_contadores_outbound(backend_client, limit=200)
     contadores_dispatch_results = await dispatch_pending_contadores_messages(
