@@ -4191,86 +4191,122 @@ body.ct-resizing {
   cursor: not-allowed;
 }
 
-#contadoresView .campaign-delivery-preset-grid {
+#contadoresView .campaign-delivery-current,
+#contadoresView .campaign-delivery-add-panel {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
   gap: 8px;
   min-width: 0;
 }
 
-#contadoresView .campaign-delivery-preset-grid button {
+#contadoresView .campaign-delivery-current-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   min-width: 0;
-  min-height: 54px;
+}
+
+#contadoresView .campaign-delivery-current-head strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ct-ink);
+  font: 850 12px/1.2 var(--font-sans);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#contadoresView .campaign-delivery-current-head .ct-btn {
+  min-height: 31px;
+  padding-inline: 10px;
+}
+
+#contadoresView .campaign-delivery-contact-list,
+#contadoresView .campaign-delivery-suggestion-grid {
   display: grid;
-  align-content: center;
-  gap: 5px;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 180px), 260px));
+  justify-content: start;
+  gap: 8px;
+  min-width: 0;
+}
+
+#contadoresView .campaign-delivery-contact-card,
+#contadoresView .campaign-delivery-suggestion-grid button {
+  min-width: 0;
+  min-height: 56px;
+  display: grid;
+  gap: 8px;
+  align-items: center;
   padding: 9px 10px;
   border: 1px solid color-mix(in srgb, #2f80ed 18%, var(--ct-line));
   border-radius: var(--ct-radius-sm);
-  background: rgba(255, 255, 255, .72);
+  background: rgba(255, 255, 255, .78);
   color: var(--ct-ink);
+}
+
+#contadoresView .campaign-delivery-contact-card {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+#contadoresView .campaign-delivery-suggestion-grid button {
+  grid-template-columns: minmax(0, 1fr);
   cursor: pointer;
   text-align: left;
 }
 
-#contadoresView .campaign-delivery-preset-grid button:hover:not(:disabled) {
+#contadoresView .campaign-delivery-suggestion-grid button:hover:not(:disabled) {
   border-color: color-mix(in srgb, #2f80ed 42%, var(--ct-line));
   background: #f3f9ff;
 }
 
-#contadoresView .campaign-delivery-preset-grid button.active {
-  border-color: color-mix(in srgb, var(--ct-accent) 44%, var(--ct-line));
-  background: color-mix(in srgb, var(--ct-accent) 10%, var(--ct-surface));
-  color: var(--ct-accent-strong);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ct-accent) 12%, transparent);
+#contadoresView .campaign-delivery-contact-card div,
+#contadoresView .campaign-delivery-suggestion-grid button {
+  min-width: 0;
 }
 
-#contadoresView .campaign-delivery-preset-grid span,
-#contadoresView .campaign-delivery-preset-grid small {
+#contadoresView .campaign-delivery-contact-card strong,
+#contadoresView .campaign-delivery-contact-card span,
+#contadoresView .campaign-delivery-suggestion-grid span,
+#contadoresView .campaign-delivery-suggestion-grid small {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-#contadoresView .campaign-delivery-preset-grid span {
+#contadoresView .campaign-delivery-contact-card strong,
+#contadoresView .campaign-delivery-suggestion-grid span {
+  display: block;
+  color: var(--ct-ink);
   font: 850 13px/1.15 var(--font-sans);
 }
 
-#contadoresView .campaign-delivery-preset-grid small {
+#contadoresView .campaign-delivery-contact-card span,
+#contadoresView .campaign-delivery-suggestion-grid small {
+  display: block;
+  margin-top: 4px;
   color: var(--ct-ink-muted);
   font: 800 10px/1 var(--font-mono);
   letter-spacing: 0;
 }
 
-#contadoresView .campaign-delivery-selected,
+#contadoresView .campaign-delivery-contact-card .ct-icon-btn {
+  width: 29px;
+  height: 29px;
+  color: var(--ct-ink-muted);
+}
+
+#contadoresView .campaign-delivery-add-panel {
+  padding: 9px;
+  border: 1px dashed color-mix(in srgb, #2f80ed 32%, var(--ct-line));
+  border-radius: var(--ct-radius);
+  background: rgba(255, 255, 255, .58);
+}
+
 #contadoresView .campaign-submission-delivery {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   min-width: 0;
-}
-
-#contadoresView .campaign-delivery-selected button {
-  max-width: 100%;
-  min-height: 28px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 8px;
-  border: 1px solid color-mix(in srgb, var(--ct-accent) 24%, var(--ct-line));
-  border-radius: 999px;
-  background: var(--ct-accent-soft);
-  color: var(--ct-accent-strong);
-  cursor: pointer;
-  font: 800 10px/1 var(--font-mono);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-#contadoresView .campaign-delivery-selected svg {
-  flex: 0 0 auto;
 }
 
 #contadoresView .campaign-delivery-custom {
