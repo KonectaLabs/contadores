@@ -157,8 +157,10 @@ no soportados, geografias duplicadas y caracteres no seguros antes de crear la
 campaña. La API de operadores es `/api/campaigns`, y cada campaña publica
 `/c/{public_slug}` como formulario mobile-first. Para campañas nuevas, ese
 `public_slug` es opaco: usa el id del `PlatformAdCampaign` local propio cuando
-existe, o un token random si todavia no hay ad local; no se genera desde el
-nombre de la campaña. Las submissions entran al flujo normal de Client Lead Delivery;
+existe, o un ID random si todavia no hay ad local; no se genera desde el
+nombre de la campaña o cliente. Si una API/CLI manda un slug legible al crear,
+el backend lo ignora; si intenta cambiarlo por uno legible, lo rechaza. Las
+submissions entran al flujo normal de Client Lead Delivery;
 no se insertan mensajes ni se saltean helpers. El boton de borrar en Ads archiva
 la campaña (`status=archived`) en vez de eliminar filas: queda fuera del listado
 principal, pero sigue disponible bajo `Archived` con sus submissions y media

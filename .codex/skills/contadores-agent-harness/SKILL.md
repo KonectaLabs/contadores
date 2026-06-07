@@ -91,6 +91,8 @@ stage-meta-plan`. Campaign nodes own budget/objective, ad-set nodes own
 audience/destination/Page/performance goal, and ad nodes own media/copy/CTA/URL.
 Destination `form` means the CRM public form and stages as `landing_page`, so
 Meta can optimize for the owned form submit event when pixel optimization is on.
+Public form slugs must stay opaque backend IDs; never set them from the client
+name, campaign name, niche, or creative concept.
 Campaign Delivery is configured inline on the campaign: a toggle enables or
 disables WhatsApp template delivery, the campaign client is the default
 recipient, and multiple preset or custom recipients can be selected. The backend

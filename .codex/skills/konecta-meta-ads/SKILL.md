@@ -63,6 +63,8 @@ CRM-owned Ads workspace rule:
 - Destination `form` means the CRM public form URL, not a native Meta instant
   form. It stages as `landing_page` so browser Pixel + server CAPI can optimize
   for the owned form submit event `Lead`.
+- Public form slugs must stay opaque backend IDs. Do not set readable slugs from
+  the client name, campaign name, niche, or creative concept.
 
 Validated local Meta defaults for Contadores/Konecta as of 2026-05-31:
 

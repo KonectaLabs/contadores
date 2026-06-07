@@ -167,6 +167,10 @@ GET  /api/public/campaigns/{public_slug}
 POST /api/public/campaigns/{public_slug}/submissions
 ```
 
+`public_slug` is always an opaque backend ID. Campaign creation ignores readable
+requested slugs, and patching rejects readable slugs, so public form URLs do not
+expose the client or campaign name.
+
 Converted client creation requires `name` and `whatsapp`; `email` and
 `extra_info` are optional. Campaigns can link to an existing client with
 `client_id` or create one inline with `client_name` and `client_whatsapp`.

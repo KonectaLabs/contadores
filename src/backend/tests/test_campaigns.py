@@ -594,6 +594,7 @@ def test_campaign_public_slug_falls_back_to_opaque_token(monkeypatch, tmp_path) 
             json={
                 **campaign_payload(),
                 "name": "Readable Human Campaign",
+                "public_slug": "readable-human-campaign",
                 "status": "draft",
                 "client": None,
                 "stage_platform_campaign": False,
@@ -603,7 +604,18 @@ def test_campaign_public_slug_falls_back_to_opaque_token(monkeypatch, tmp_path) 
         campaign = response.json()["campaign"]
         assert campaign["platform_ad_campaign_id"] == ""
         assert campaign["public_slug"] != "readable-human-campaign"
-        assert len(campaign["public_slug"]) >= 16
+        assert len(campaign["public_slug"]) == 32
+
+        patch_response = client.patch(
+            f"/api/campaigns/{campaign['id']}",
+            json={"public_slug": "another-readable-campaign"},
+        )
+        assert patch_response.status_code == 400
+        assert "opaque internal id" in patch_response.text
+
+    direct = LeadCaptureCampaign.add(name="Client Name Should Not Leak")
+    assert direct.public_slug != "client-name-should-not-leak"
+    assert len(direct.public_slug) == 32
 
 
 def test_campaign_geo_search_returns_selectable_locations(monkeypatch, tmp_path) -> None:

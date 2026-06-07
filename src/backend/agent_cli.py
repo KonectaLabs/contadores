@@ -905,7 +905,7 @@ def campaigns_create(
     client_email: str | None = typer.Option(None, "--client-email"),
     client_extra_info: str | None = typer.Option(None, "--client-extra-info"),
     status: str = typer.Option("draft", "--status"),
-    public_slug: str | None = typer.Option(None, "--public-slug"),
+    public_slug: str | None = typer.Option(None, "--public-slug", help="Deprecated; public form slugs are opaque backend IDs."),
     daily_budget_usd: int | None = typer.Option(None, "--daily-budget-usd", min=1),
     country_code: str = typer.Option("AR", "--country-code", help="Two-letter Meta country code, for example AR."),
     regions: list[str] = typer.Option([], "--region", help="Region/province name. Repeat for multiple."),

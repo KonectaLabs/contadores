@@ -34,6 +34,7 @@ from backend.database import (
     WorkstationClientWorkType,
     normalize_email,
     normalize_phone,
+    random_lead_capture_public_slug,
 )
 from backend.campaign_meta_plan import (
     META_PLAN_GRAPH_KEY,
@@ -553,7 +554,7 @@ def _default_public_campaign_slug(platform_campaign_id: str) -> str:
     clean_platform_id = " ".join(str(platform_campaign_id or "").split()).strip()
     if clean_platform_id:
         return clean_platform_id
-    return secrets.token_urlsafe(16)
+    return random_lead_capture_public_slug()
 
 
 def _meta_graph_get(path: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -1106,7 +1107,7 @@ def _campaign_create_dry_run_payload(
 ) -> dict[str, Any]:
     """Return the normalized create payload without writing campaign state."""
     funnel_id = command.client.funnel_id if command.client else (linked_client.funnel_id if linked_client else "contadores")
-    public_slug = command.public_slug or _default_public_campaign_slug("")
+    public_slug = _default_public_campaign_slug("")
     destination_url = command.destination_url or f"{_request_origin(request)}/c/{public_slug}"
     try:
         campaign_info, location_label = _campaign_info_with_geo(command)
@@ -1795,7 +1796,7 @@ async def create_campaign(request: Request, command: LeadCaptureCampaignCommand)
             funnel_id=funnel_id,
             name=command.name,
             status=command.status,
-            public_slug=command.public_slug or _default_public_campaign_slug(platform_campaign_id),
+            public_slug=_default_public_campaign_slug(platform_campaign_id),
             daily_budget_usd=command.daily_budget_usd,
             budget_currency=command.budget_currency,
             location=location_label,

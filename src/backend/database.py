@@ -3022,6 +3022,23 @@ def normalize_lead_capture_slug(value: str | None) -> str:
     return normalized[:96] or uuid.uuid4().hex[:12]
 
 
+def random_lead_capture_public_slug() -> str:
+    """Return an opaque public campaign form slug."""
+    return uuid.uuid4().hex
+
+
+def is_opaque_lead_capture_slug(value: str | None) -> bool:
+    """Return True when a slug looks like an internal random ID."""
+    clean = normalize_lead_capture_slug(value)
+    return bool(
+        re.fullmatch(r"[a-f0-9]{32}", clean)
+        or re.fullmatch(
+            r"[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}",
+            clean,
+        )
+    )
+
+
 def default_lead_capture_form_schema() -> dict[str, Any]:
     """Return the default mobile form schema for owned lead capture."""
     return {
@@ -3134,15 +3151,14 @@ class LeadCaptureCampaign(SQLModel, table=True):
 
     @classmethod
     def unique_slug(cls, value: str) -> str:
-        """Return a slug that does not already exist."""
-        base_slug = normalize_lead_capture_slug(value)
-        slug = base_slug
-        suffix = 2
+        """Return a unique opaque public slug."""
+        requested_slug = normalize_lead_capture_slug(value)
+        first_slug = requested_slug if is_opaque_lead_capture_slug(requested_slug) else random_lead_capture_public_slug()
         with Session(engine) as session:
+            slug = first_slug
             while session.exec(select(cls).where(cls.public_slug == slug).limit(1)).first() is not None:
-                slug = f"{base_slug[:84]}-{suffix}"
-                suffix += 1
-        return slug
+                slug = random_lead_capture_public_slug()
+            return slug
 
     @classmethod
     def add(
@@ -3281,6 +3297,8 @@ class LeadCaptureCampaign(SQLModel, table=True):
             if "public_slug" in updates and updates["public_slug"] is not None:
                 next_slug = normalize_lead_capture_slug(str(updates["public_slug"]))
                 if next_slug != row.public_slug:
+                    if not is_opaque_lead_capture_slug(next_slug):
+                        raise ValueError("public_slug must be an opaque internal id")
                     existing = session.exec(select(cls).where(cls.public_slug == next_slug).limit(1)).first()
                     if existing is not None and existing.id != row.id:
                         raise ValueError("public_slug is already in use")
