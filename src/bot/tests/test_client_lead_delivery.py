@@ -31,7 +31,7 @@ def test_fetch_and_dispatch_client_lead_notifications(monkeypatch) -> None:
                             "source_label": "MMB Ads",
                             "recipient_phone": "+5491122223333",
                             "normalized_recipient_phone": "5491122223333",
-                            "template_name": "konecta_client_lead_alert_context_es_v1",
+                            "template_name": "konecta_client_lead_alert_context_es",
                             "template_language": "es",
                             "template_body_params": [
                                 "MMB Ads",
@@ -39,9 +39,18 @@ def test_fetch_and_dispatch_client_lead_notifications(monkeypatch) -> None:
                                 "5491111111111",
                                 "ana@example.com",
                                 "https://wa.me/5491111111111",
-                                "Ciudad = Quito",
+                                "Ciudad: Quito",
                             ],
-                            "delivered_text": "Nueva consulta de MMB Ads",
+                            "delivered_text": (
+                                "Nuevo Lead MMB Ads\n\n"
+                                "Datos del lead:\n"
+                                "Nombre: Ana Perez\n"
+                                "WhatsApp: 5491111111111\n"
+                                "Email: ana@example.com\n"
+                                "Ciudad: Quito\n\n"
+                                "Para abrir el chat:\n"
+                                "https://wa.me/5491111111111"
+                            ),
                         }
                     ]
                 },
@@ -71,7 +80,7 @@ def test_fetch_and_dispatch_client_lead_notifications(monkeypatch) -> None:
     assert sent_templates == [
         {
             "to": "+5491122223333",
-            "template_name": "konecta_client_lead_alert_context_es_v1",
+            "template_name": "konecta_client_lead_alert_context_es",
             "template_language": "es",
             "body_params": [
                 "MMB Ads",
@@ -79,9 +88,18 @@ def test_fetch_and_dispatch_client_lead_notifications(monkeypatch) -> None:
                 "5491111111111",
                 "ana@example.com",
                 "https://wa.me/5491111111111",
-                "Ciudad = Quito",
+                "Ciudad: Quito",
             ],
-            "delivered_text": "Nueva consulta de MMB Ads",
+            "delivered_text": (
+                "Nuevo Lead MMB Ads\n\n"
+                "Datos del lead:\n"
+                "Nombre: Ana Perez\n"
+                "WhatsApp: 5491111111111\n"
+                "Email: ana@example.com\n"
+                "Ciudad: Quito\n\n"
+                "Para abrir el chat:\n"
+                "https://wa.me/5491111111111"
+            ),
         }
     ]
     assert requests[-1] == (
@@ -90,7 +108,16 @@ def test_fetch_and_dispatch_client_lead_notifications(monkeypatch) -> None:
         {
             "status": "sent",
             "external_id": "wamid.delivery.1",
-            "sent_text": "Nueva consulta de MMB Ads",
+            "sent_text": (
+                "Nuevo Lead MMB Ads\n\n"
+                "Datos del lead:\n"
+                "Nombre: Ana Perez\n"
+                "WhatsApp: 5491111111111\n"
+                "Email: ana@example.com\n"
+                "Ciudad: Quito\n\n"
+                "Para abrir el chat:\n"
+                "https://wa.me/5491111111111"
+            ),
         },
     )
 

@@ -11,6 +11,10 @@ from backend.database import (
     LeadCaptureCampaign,
     LeadCaptureSubmission,
     PlatformAdCampaign,
+    PlatformClientUpdate,
+    PlatformCreativeAsset,
+    PlatformEvent,
+    PlatformMetaPublishAttempt,
     PlatformMetaInventorySnapshot,
     WorkstationClient,
     normalize_email,
@@ -147,6 +151,78 @@ def test_campaign_api_creates_converted_client_and_queues_delivery(monkeypatch, 
         sync_response = client.post(f"/api/client-lead-sources/{campaign['client_lead_source_id']}/sync")
         assert sync_response.status_code == 200
         assert sync_response.json()["source"]["last_sync_note"] == "owned campaign form source; submissions arrive directly"
+
+
+def test_campaign_delete_hard_removes_owned_rows(monkeypatch, tmp_path) -> None:
+    """Deleting a campaign should remove it, its submissions, delivery rows, and owned platform rows."""
+    configure_contadores_db(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        create_response = client.post("/api/campaigns", json=campaign_payload())
+        assert create_response.status_code == 200, create_response.text
+        campaign = create_response.json()["campaign"]
+
+        submit_response = client.post(
+            f"/api/public/campaigns/{campaign['public_slug']}/submissions",
+            json={
+                "answers": {
+                    "full_name": "Lead Delete",
+                    "phone": "+5491199988877",
+                    "email": "delete@example.com",
+                    "necesidad": "Borrar todo",
+                },
+                "idempotency_key": "campaign-submit-delete",
+            },
+        )
+        assert submit_response.status_code == 200, submit_response.text
+        submission_id = submit_response.json()["submission"]["id"]
+        source_id = campaign["client_lead_source_id"]
+        platform_campaign_id = campaign["platform_ad_campaign_id"]
+
+        PlatformCreativeAsset.add(campaign_id=platform_campaign_id, client_id=campaign["client_id"], file_path="media/test.png")
+        PlatformMetaPublishAttempt.add(
+            campaign_id=platform_campaign_id,
+            request_payload={"campaign_id": platform_campaign_id},
+            idempotency_key="delete-campaign-publish-attempt",
+        )
+        PlatformClientUpdate.add(campaign_id=campaign["id"], client_id=campaign["client_id"], summary_text="Update")
+        PlatformEvent.add(
+            event_type="lead_capture_campaign.test",
+            lifecycle_stage="lead_capture",
+            target_type="lead_capture_campaign",
+            target_id=campaign["id"],
+            summary="Test event",
+        )
+
+        assert LeadCaptureCampaign.get_by_id(campaign["id"]) is not None
+        assert LeadCaptureSubmission.get_by_id(submission_id) is not None
+        assert ClientLeadSource.get_by_id(source_id) is not None
+        assert ClientLeadDelivery.list_by_source(source_id)
+        assert PlatformAdCampaign.get_by_id(platform_campaign_id) is not None
+
+        delete_response = client.delete(f"/api/campaigns/{campaign['id']}")
+        assert delete_response.status_code == 200, delete_response.text
+        deleted = delete_response.json()["deleted"]
+        assert deleted["lead_capture_campaigns"] == 1
+        assert deleted["lead_capture_submissions"] == 1
+        assert deleted["client_lead_sources"] == 1
+        assert deleted["client_lead_deliveries"] == 1
+        assert deleted["platform_ad_campaigns"] == 1
+        assert deleted["platform_creative_assets"] == 1
+        assert deleted["platform_meta_publish_attempts"] == 1
+        assert deleted["platform_client_updates"] == 1
+
+        assert LeadCaptureCampaign.get_by_id(campaign["id"]) is None
+        assert LeadCaptureSubmission.get_by_id(submission_id) is None
+        assert ClientLeadSource.get_by_id(source_id) is None
+        assert ClientLeadDelivery.list_by_source(source_id) == []
+        assert PlatformAdCampaign.get_by_id(platform_campaign_id) is None
+        assert PlatformCreativeAsset.list_recent(campaign_id=platform_campaign_id) == []
+        assert PlatformMetaPublishAttempt.list_recent(campaign_id=platform_campaign_id) == []
+        assert PlatformClientUpdate.list_recent(campaign_id=campaign["id"]) == []
+        assert PlatformEvent.list_recent(target_type="lead_capture_campaign", target_id=campaign["id"]) == []
+        assert client.get(f"/api/public/campaigns/{campaign['public_slug']}").status_code == 404
+        assert client.delete(f"/api/campaigns/{campaign['id']}").status_code == 404
 
 
 def test_public_submission_queues_delivery_for_each_campaign_contact(monkeypatch, tmp_path) -> None:

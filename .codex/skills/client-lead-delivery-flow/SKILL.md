@@ -31,19 +31,19 @@ Get or infer:
 - whether first sync should notify existing rows;
 - optional column mapping.
 - optional context fields to include in the WhatsApp alert as
-  `Display label = sheet value`.
+  `Display label: sheet value`.
 
 Delivery sends a plain `https://wa.me/{phone}` chat link without a `text=`
 parameter.
 
 Default template:
 
-- name: `konecta_client_lead_alert_es_v2`
+- name: `konecta_client_lead_alert_es`
 - language: `es`
 
 Context template, used when `context_field_mapping` is configured:
 
-- name: `konecta_client_lead_alert_context_es_v1`
+- name: `konecta_client_lead_alert_context_es`
 - language: `es`
 - param 6: context in one line, with fields joined by `; ` because Meta rejects
   newline/tab characters inside template params.
@@ -79,7 +79,7 @@ Schema:
       "recipients": [
         {"id": "owner", "name": "Owner", "phone": "+5491122223333"}
       ],
-      "template_name": "konecta_client_lead_alert_es_v2",
+      "template_name": "konecta_client_lead_alert_es",
       "template_language": "es",
       "column_mapping": {
         "source_id": "id",
@@ -99,7 +99,7 @@ Schema:
 
 `context_field_mapping` maps the label shown in WhatsApp to the source sheet
 column. A short form is also accepted as `context_fields: ["city"]`, which
-renders `city = <value>`.
+renders `city: <value>`.
 
 If the user gives multiple WhatsApp numbers, put them in `recipients`. The
 backend expands them into one Delivery source per recipient.
@@ -112,9 +112,8 @@ recipient, and multiple preset or custom recipients expand to one
 `ClientLeadDelivery` per selected recipient. Preserve explicitly selected
 contacts by contact id, not by phone number, so choosing the Facu preset remains
 visible even when the campaign client has Facu's phone. Deleting an owned
-campaign from Ads
-archives it (`status=archived`) instead of removing rows, so submissions and ad
-media remain visible under the archived campaign list. Keep the Ads UI split
+campaign from Ads hard-deletes the campaign-owned DB rows instead of archiving.
+Keep the Ads UI split
 into two explicit views: `Mis campañas` for list/detail/leads/media and
 `Crear campaña` for the creation form; campaign creation should not render
 inside the campaign list/detail view. The creation form must keep its final
@@ -147,11 +146,11 @@ Reply links in templates must be direct plain `https://wa.me/{phone}` chat links
 without a `text=` parameter.
 
 When context fields are configured, the source should use
-`konecta_client_lead_alert_context_es_v1`. The backend auto-selects that
+`konecta_client_lead_alert_context_es`. The backend auto-selects that
 template when a source still has the default template and context is added. The
 context template always needs 6 body params; when mapped values are blank, the
 backend sends `-` as the sixth param. If context is removed, the backend resets
-the source to `konecta_client_lead_alert_es_v2`.
+the source to `konecta_client_lead_alert_es`.
 
 Use `enabled: false` when the template is not approved yet or when historical
 rows should not be notified until the user confirms.
@@ -174,7 +173,7 @@ curl -fsS -X POST -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
 
 ```bash
 uv run python src/scripts/whatsapp_templates.py check \
-  --spec-file src/scripts/whatsapp_template_specs/konecta_client_lead_alert_es_v2.json \
+  --spec-file src/scripts/whatsapp_template_specs/konecta_client_lead_alert_es.json \
   --fail-on-unapproved
 ```
 
@@ -182,7 +181,7 @@ For context-enabled sources, also verify:
 
 ```bash
 uv run python src/scripts/whatsapp_templates.py check \
-  --spec-file src/scripts/whatsapp_template_specs/konecta_client_lead_alert_context_es_v1.json \
+  --spec-file src/scripts/whatsapp_template_specs/konecta_client_lead_alert_context_es.json \
   --fail-on-unapproved
 ```
 

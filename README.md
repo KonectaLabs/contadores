@@ -114,6 +114,7 @@ contadores-agent campaigns geo-search bavaria --country-code DE --kind region
 contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --status active --country-code AR --region "Buenos Aires=OPTION_KEY"
 contadores-agent campaigns create --name "Campaña multi pais" --client-id CLIENT_ID --geo-targeting-json '{"locations":[{"country_code":"AR"},{"country_code":"DE","regions":[{"name":"Bavaria","key":"OPTION_KEY"}]}]}'
 contadores-agent campaigns get CAMPAIGN_ID
+contadores-agent campaigns delete CAMPAIGN_ID
 contadores-agent campaigns graph get CAMPAIGN_ID
 contadores-agent campaigns graph set CAMPAIGN_ID --graph-json @meta-plan.json
 contadores-agent campaigns graph duplicate CAMPAIGN_ID --node-type ad --node-id AD_ID --overrides-json '{"headline":"Variante"}'
@@ -161,11 +162,10 @@ existe, o un ID random si todavia no hay ad local; no se genera desde el
 nombre de la campaña o cliente. Si una API/CLI manda un slug legible al crear,
 el backend lo ignora; si intenta cambiarlo por uno legible, lo rechaza. Las
 submissions entran al flujo normal de Client Lead Delivery;
-no se insertan mensajes ni se saltean helpers. El boton de borrar en Ads archiva
-la campaña (`status=archived`) en vez de eliminar filas: queda fuera del listado
-principal, pero sigue disponible bajo `Archived` con sus submissions y media
-subida. La UI de Ads separa dos vistas claras: `Mis campañas` para listar,
-inspeccionar, archivar y ver leads/media, y `Crear campaña` para el formulario
+no se insertan mensajes ni se saltean helpers. El boton de borrar en Ads elimina
+realmente la campaña y sus filas propias de DB, no la archiva. La UI de Ads
+separa dos vistas claras: `Mis campañas` para listar,
+inspeccionar, borrar y ver leads/media, y `Crear campaña` para el formulario
 de alta; no se crea una campaña dentro del listado y la accion final de crear
 debe quedar visible en el header/sticky action bar del form. Cuando el tracking Meta esta
 habilitado, el backend toma el pixel automaticamente desde `META_PIXEL_ID` /
@@ -596,8 +596,8 @@ en `client_lead_deliveries`; no contamina `contadores_leads`,
 La configuracion puede hacerse por UI/API o por archivo versionado:
 `config/default-client-lead-sources.json` como seed y
 `CLIENT_LEAD_SOURCES_CONFIG_PATH` / `data/client-lead-sources.json` como
-override del server. El flujo actual usa `konecta_client_lead_alert_es_v2` y,
-cuando hay `context_field_mapping`, `konecta_client_lead_alert_context_es_v1`.
+override del server. El flujo actual usa `konecta_client_lead_alert_es` y,
+cuando hay `context_field_mapping`, `konecta_client_lead_alert_context_es`.
 
 La referencia operativa completa esta en la seccion `Client Lead Delivery` mas
 abajo y en las skills `contadores-rollout` y `contadores-spreadsheet`.
@@ -937,9 +937,9 @@ Client Lead Delivery:
   `client_lead_sources` y `client_lead_deliveries`. No contaminan
   `contadores_leads`, alertas humanas ni Workstation.
 - `context_field_mapping` permite elegir una vez por fuente que columnas del
-  sheet se agregan al WhatsApp como `Nombre del campo = valor`. Si una fuente
-  tiene contexto, usar `konecta_client_lead_alert_context_es_v1`; si no, seguir
-  con `konecta_client_lead_alert_es_v2`. El template con contexto siempre lleva
+  sheet se agregan al WhatsApp como `Nombre del campo: valor`. Si una fuente
+  tiene contexto, usar `konecta_client_lead_alert_context_es`; si no, seguir
+  con `konecta_client_lead_alert_es`. El template con contexto siempre lleva
   6 parametros; el sexto parametro va en una sola linea para cumplir las reglas
   de Meta. Si las columnas vienen vacias, el backend manda `-` como sexto
   parametro.
@@ -1045,7 +1045,7 @@ Ejemplo con dos sheets para el mismo destinatario:
   `GET /api/client-leads/{id}/copy-all`,
   `POST /api/client-leads/{id}/retry`.
 - El bot consume `/api/client-lead-deliveries/pending`, manda el template
-  `konecta_client_lead_alert_es_v2` por Meta y registra `sent`, `delivered` o
+  `konecta_client_lead_alert_es` por Meta y registra `sent`, `delivered` o
   `failed` por id externo del provider.
 - Para sheets privados, configurar `CONTADORES_GOOGLE_SERVICE_ACCOUNT_FILE` o
   reutilizar `GOOGLE_SERVICE_ACCOUNT_FILE`.

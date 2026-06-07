@@ -21,7 +21,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import phonenumbers
 from pydantic import BaseModel, Field as PydanticField, field_serializer
 from phonenumbers import NumberParseException
-from sqlalchemy import Column, Enum as SQLAlchemyEnum, String, UniqueConstraint, and_, event, inspect, or_
+from sqlalchemy import Column, Enum as SQLAlchemyEnum, String, UniqueConstraint, and_, delete, event, inspect, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import aliased
 from sqlmodel import Field, Session, SQLModel, create_engine, select
@@ -2363,8 +2363,8 @@ class ContadoresMessage(SQLModel, table=True):
             return row
 
 
-CLIENT_LEAD_DEFAULT_TEMPLATE_NAME = "konecta_client_lead_alert_es_v2"
-CLIENT_LEAD_CONTEXT_TEMPLATE_NAME = "konecta_client_lead_alert_context_es_v1"
+CLIENT_LEAD_DEFAULT_TEMPLATE_NAME = "konecta_client_lead_alert_es"
+CLIENT_LEAD_CONTEXT_TEMPLATE_NAME = "konecta_client_lead_alert_context_es"
 CLIENT_LEAD_DEFAULT_TEMPLATE_LANGUAGE = "es"
 CLIENT_LEAD_DEFAULT_COLUMN_MAPPING = {
     "source_id": "id",
@@ -3343,6 +3343,154 @@ class LeadCaptureCampaign(SQLModel, table=True):
             session.refresh(row)
             session.expunge(row)
             return row
+
+    @classmethod
+    def delete_hard(cls, campaign_id: str) -> Optional[dict[str, int]]:
+        """Permanently delete one campaign and DB records owned by it."""
+        clean_campaign_id = (campaign_id or "").strip()
+        if not clean_campaign_id:
+            return None
+
+        def delete_count(session: Session, statement: Any) -> int:
+            result = session.exec(statement)
+            return int(getattr(result, "rowcount", 0) or 0)
+
+        with Session(engine) as session:
+            row = session.get(cls, clean_campaign_id)
+            if row is None:
+                return None
+
+            campaign_refs = {row.id}
+            if row.platform_ad_campaign_id:
+                campaign_refs.add(row.platform_ad_campaign_id)
+
+            submission_rows = list(
+                session.exec(select(LeadCaptureSubmission).where(LeadCaptureSubmission.campaign_id == row.id)).all()
+            )
+            submission_ids = {item.id for item in submission_rows}
+            delivery_ids = {
+                item.client_lead_delivery_id
+                for item in submission_rows
+                if (item.client_lead_delivery_id or "").strip()
+            }
+
+            source_prefix = f"campaign-{row.public_slug}"
+            source_statement = select(ClientLeadSource.id).where(ClientLeadSource.id.like(f"{source_prefix}%"))
+            source_ids = {str(source_id) for source_id in session.exec(source_statement).all()}
+            if row.client_lead_source_id:
+                source_ids.add(row.client_lead_source_id)
+            delivery_lookup_conditions = []
+            if delivery_ids:
+                delivery_lookup_conditions.append(ClientLeadDelivery.id.in_(delivery_ids))
+            if submission_ids:
+                delivery_lookup_conditions.append(
+                    ClientLeadDelivery.source_row_key.in_(
+                        {f"campaign-submission:{submission_id}" for submission_id in submission_ids}
+                    )
+                )
+            if delivery_lookup_conditions:
+                delivery_rows = list(session.exec(select(ClientLeadDelivery).where(or_(*delivery_lookup_conditions))).all())
+                delivery_ids.update(item.id for item in delivery_rows)
+                source_ids.update(item.source_id for item in delivery_rows)
+
+            target_ids = set(campaign_refs) | submission_ids
+            target_types = {
+                "campaign",
+                "lead_capture_campaign",
+                "lead_capture_submission",
+                "platform_ad_campaign",
+            }
+            run_ids = set(
+                session.exec(
+                    select(AgentRun.id)
+                    .where(AgentRun.target_type.in_(target_types))
+                    .where(AgentRun.target_id.in_(target_ids))
+                ).all()
+            )
+
+            counts: dict[str, int] = {}
+            if run_ids:
+                counts["agent_tool_calls"] = delete_count(
+                    session,
+                    delete(AgentToolCall).where(
+                        or_(
+                            AgentToolCall.run_id.in_(run_ids),
+                            and_(
+                                AgentToolCall.target_type.in_(target_types),
+                                AgentToolCall.target_id.in_(target_ids),
+                            ),
+                        )
+                    ),
+                )
+                counts["agent_runs"] = delete_count(session, delete(AgentRun).where(AgentRun.id.in_(run_ids)))
+            else:
+                counts["agent_tool_calls"] = delete_count(
+                    session,
+                    delete(AgentToolCall)
+                    .where(AgentToolCall.target_type.in_(target_types))
+                    .where(AgentToolCall.target_id.in_(target_ids)),
+                )
+                counts["agent_runs"] = 0
+
+            counts["scheduled_agent_tasks"] = delete_count(
+                session,
+                delete(ScheduledAgentTask)
+                .where(ScheduledAgentTask.target_type.in_(target_types))
+                .where(ScheduledAgentTask.target_id.in_(target_ids)),
+            )
+            counts["platform_human_questions"] = delete_count(
+                session,
+                delete(PlatformHumanQuestion)
+                .where(PlatformHumanQuestion.target_type.in_(target_types))
+                .where(PlatformHumanQuestion.target_id.in_(target_ids)),
+            )
+            counts["platform_events"] = delete_count(
+                session,
+                delete(PlatformEvent)
+                .where(PlatformEvent.target_type.in_(target_types))
+                .where(PlatformEvent.target_id.in_(target_ids)),
+            )
+            counts["platform_client_updates"] = delete_count(
+                session, delete(PlatformClientUpdate).where(PlatformClientUpdate.campaign_id.in_(campaign_refs))
+            )
+            counts["platform_meta_publish_attempts"] = delete_count(
+                session,
+                delete(PlatformMetaPublishAttempt).where(PlatformMetaPublishAttempt.campaign_id.in_(campaign_refs)),
+            )
+            counts["platform_creative_assets"] = delete_count(
+                session, delete(PlatformCreativeAsset).where(PlatformCreativeAsset.campaign_id.in_(campaign_refs))
+            )
+            counts["platform_ad_campaigns"] = delete_count(
+                session, delete(PlatformAdCampaign).where(PlatformAdCampaign.id.in_(campaign_refs - {row.id}))
+            )
+
+            if source_ids or delivery_ids:
+                delivery_conditions = []
+                if source_ids:
+                    delivery_conditions.append(ClientLeadDelivery.source_id.in_(source_ids))
+                if delivery_ids:
+                    delivery_conditions.append(ClientLeadDelivery.id.in_(delivery_ids))
+                counts["client_lead_deliveries"] = delete_count(
+                    session,
+                    delete(ClientLeadDelivery).where(or_(*delivery_conditions)),
+                )
+            else:
+                counts["client_lead_deliveries"] = 0
+
+            counts["lead_capture_submissions"] = delete_count(
+                session, delete(LeadCaptureSubmission).where(LeadCaptureSubmission.campaign_id == row.id)
+            )
+            if source_ids:
+                counts["client_lead_sources"] = delete_count(
+                    session, delete(ClientLeadSource).where(ClientLeadSource.id.in_(source_ids))
+                )
+            else:
+                counts["client_lead_sources"] = 0
+
+            session.delete(row)
+            counts["lead_capture_campaigns"] = 1
+            session.commit()
+            return counts
 
     @property
     def campaign_info(self) -> dict[str, Any]:

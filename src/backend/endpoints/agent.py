@@ -44,6 +44,7 @@ from backend.endpoints.campaigns import (
     _submission_payload,
     create_campaign as create_owned_campaign,
     create_or_reuse_converted_client,
+    delete_campaign as delete_owned_campaign,
     duplicate_campaign_meta_plan_node as duplicate_owned_campaign_meta_plan_node,
     get_campaign_meta_plan_graph as get_owned_campaign_meta_plan_graph,
     refresh_campaign_delivery_source as refresh_owned_campaign_delivery_source,
@@ -953,6 +954,12 @@ async def get_agent_campaign(request: Request, campaign_id: str) -> dict[str, An
     if campaign is None:
         raise HTTPException(status_code=404, detail="Campaign not found.")
     return {"campaign": _campaign_payload(campaign, request=request, include_submissions=True)}
+
+
+@agent_router.delete("/campaigns/{campaign_id}")
+async def delete_agent_campaign(campaign_id: str) -> dict[str, Any]:
+    """Permanently delete one owned lead-capture campaign."""
+    return await delete_owned_campaign(campaign_id)
 
 
 @agent_router.patch("/campaigns/{campaign_id}")

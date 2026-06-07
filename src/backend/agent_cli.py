@@ -872,6 +872,12 @@ def campaigns_get(campaign_id: str) -> None:
     run_api_call(lambda client: client.request("GET", api_path("campaigns", campaign_id)))
 
 
+@campaigns_app.command("delete")
+def campaigns_delete(campaign_id: str) -> None:
+    """Permanently delete one owned campaign and its owned records."""
+    run_api_call(lambda client: client.request("DELETE", api_path("campaigns", campaign_id)))
+
+
 @campaigns_app.command("geo-search")
 def campaigns_geo_search(
     query: str = typer.Argument("", help="Location search text, for example 'cordoba'."),

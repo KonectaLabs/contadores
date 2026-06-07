@@ -3465,12 +3465,11 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
   }));
   const [selectedMetaNode, setSelectedMetaNode] = useState<MetaPlanNodeSelection>(() => campaignMetaPlanSelection(metaPlanGraph));
 
-  const activeCampaigns = campaigns.filter((campaign) => campaign.status !== "archived");
-  const archivedCampaigns = campaigns.filter((campaign) => campaign.status === "archived");
+  const activeCampaignCount = campaigns.filter((campaign) => campaign.status === "active").length;
   const hasCampaigns = campaigns.length > 0;
   const isCreateView = campaignView === "create";
   const showCampaignEmpty = !loading && !hasCampaigns;
-  const selectedCampaign = campaigns.find((campaign) => campaign.id === selectedCampaignId) ?? activeCampaigns[0] ?? archivedCampaigns[0] ?? null;
+  const selectedCampaign = campaigns.find((campaign) => campaign.id === selectedCampaignId) ?? campaigns[0] ?? null;
   const selectedClient = clients.find((client) => client.id === existingClientId) ?? null;
   const selectedCampaignDelivery = campaignDeliveryConfigOrDefault(selectedCampaign);
   const selectedCampaignMedia = campaignStoredCreativeMedia(selectedCampaign);
@@ -4038,11 +4037,23 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
     }
   }
 
-  async function archiveCampaign(campaign: LeadCaptureCampaignItem) {
-    if (!window.confirm(`Archive ${campaign.name}?`)) {
+  async function deleteCampaign(campaign: LeadCaptureCampaignItem) {
+    if (!window.confirm(`Delete ${campaign.name} permanently?`)) {
       return;
     }
-    await patchCampaignStatus(campaign, "archived");
+    setSaving(true);
+    try {
+      await apiFetch(`/api/campaigns/${encodeURIComponent(campaign.id)}`, { method: "DELETE" });
+      setCampaigns((current) => current.filter((item) => item.id !== campaign.id));
+      if (selectedCampaignId === campaign.id) {
+        setSelectedCampaignId(null);
+      }
+      await loadCampaigns();
+    } catch (reason) {
+      onError(reason instanceof Error ? reason.message : "Could not delete campaign.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function restoreCampaign(campaign: LeadCaptureCampaignItem) {
@@ -4272,8 +4283,7 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
         </div>
         <div className="ct-simple-metrics campaign-manager-metrics">
           <span><strong>{compactNumber(campaigns.reduce((total, campaign) => total + (campaign.submission_count || 0), 0))}</strong>Leads</span>
-          <span><strong>{compactNumber(activeCampaigns.filter((campaign) => campaign.status === "active").length)}</strong>Active</span>
-          <span><strong>{compactNumber(archivedCampaigns.length)}</strong>Archived</span>
+          <span><strong>{compactNumber(activeCampaignCount)}</strong>Active</span>
           <span><strong>{compactNumber(clients.length)}</strong>Clients</span>
         </div>
         <div className="campaign-manager-actions">
@@ -4927,21 +4937,7 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
             {loading && !campaigns.length ? (
               <CtEmptyState compact loading title="Loading campaigns" message="Checking owned forms." />
             ) : campaigns.length ? (
-              <>
-                {activeCampaigns.length ? activeCampaigns.map(renderCampaignCard) : (
-                  <CtEmptyState compact title="No live campaign forms" message="Archived forms stay below." />
-                )}
-                {archivedCampaigns.length ? (
-                  <div className="campaign-archive-group">
-                    <div className="campaign-archive-head">
-                      <FolderOpen size={14} weight="bold" />
-                      <span>Archived</span>
-                      <strong>{compactNumber(archivedCampaigns.length)}</strong>
-                    </div>
-                    {archivedCampaigns.map(renderCampaignCard)}
-                  </div>
-                ) : null}
-              </>
+              campaigns.map(renderCampaignCard)
             ) : <CtEmptyState compact title="No campaign forms yet" message="Create the first owned form." />}
           </div>
 
@@ -4978,12 +4974,12 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
                   <>
                     <button type="button" className="ct-btn ct-btn-ghost" disabled={saving || selectedCampaign.status === "active"} onClick={() => void patchCampaignStatus(selectedCampaign, "active")}>Activate</button>
                     <button type="button" className="ct-btn ct-btn-ghost" disabled={saving || selectedCampaign.status === "paused"} onClick={() => void patchCampaignStatus(selectedCampaign, "paused")}>Pause</button>
-                    <button type="button" className="ct-btn ct-btn-ghost" disabled={saving} onClick={() => void archiveCampaign(selectedCampaign)}>
-                      <Trash size={13} weight="bold" />
-                      Archive
-                    </button>
                   </>
                 )}
+                <button type="button" className="ct-btn ct-btn-ghost" disabled={saving} onClick={() => void deleteCampaign(selectedCampaign)}>
+                  <Trash size={13} weight="bold" />
+                  Delete
+                </button>
                 <button type="button" className="ct-btn ct-btn-ghost" disabled={saving || selectedCampaign.status === "archived"} onClick={() => void refreshDeliverySource(selectedCampaign)}>Delivery source</button>
               </div>
 
@@ -8847,7 +8843,7 @@ function buildBlankClientLeadSourceDraft(): ClientLeadSourceDraft {
     sheet_poll_seconds: 10,
     recipient_name: "",
     recipient_phone: "",
-    template_name: "konecta_client_lead_alert_es_v2",
+    template_name: "konecta_client_lead_alert_es",
     template_language: "es",
     column_mapping_text: JSON.stringify({
       source_id: "id",

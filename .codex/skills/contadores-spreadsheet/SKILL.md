@@ -153,12 +153,12 @@ Each configured source supports:
 - `recipient_phone`
 - or `recipients`, a list of `{id, name, phone}` entries. Multiple recipients
   are expanded into one DB source per recipient using the same sheet config.
-- `template_name`, default `konecta_client_lead_alert_es_v2`
+- `template_name`, default `konecta_client_lead_alert_es`
 - `template_language`, default `es`
 - `column_mapping` for `source_id`, `created_time`, `full_name`,
   `phone_number`, and `email`
 - `context_field_mapping`, optional mapping of WhatsApp display label to sheet
-  column, rendered as `label = value` in the Delivery alert. The UI/audit text
+  column, rendered as `label: value` in the Delivery alert. The UI/audit text
   can show multiple context lines, but the sixth Meta template param must be a
   single line joined with `; `. Blank context values render as `-`.
 
@@ -223,11 +223,11 @@ Endpoints:
 - `PUT /api/client-lead-deliveries/delivery/by-external-id`
 
 The default WhatsApp template spec is versioned at
-`src/scripts/whatsapp_template_specs/konecta_client_lead_alert_es_v2.json`.
+`src/scripts/whatsapp_template_specs/konecta_client_lead_alert_es.json`.
 It uses positional params: source label, lead name, lead phone, email, and the
 plain `https://wa.me/{phone}` chat link without a `text=` parameter.
 Context-enabled sources use
-`src/scripts/whatsapp_template_specs/konecta_client_lead_alert_context_es_v1.json`
+`src/scripts/whatsapp_template_specs/konecta_client_lead_alert_context_es.json`
 with the same first five params plus a single-line context param.
 
 ## Quick Start

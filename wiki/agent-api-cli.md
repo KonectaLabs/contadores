@@ -15,6 +15,7 @@ contadores-agent clients create --name "Cliente" --whatsapp "+549..."
 contadores-agent campaigns geo-search buenos --country-code AR --kind region
 contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --status active --country-code AR --region "Buenos Aires=OPTION_KEY"
 contadores-agent campaigns get CAMPAIGN_ID
+contadores-agent campaigns delete CAMPAIGN_ID
 contadores-agent campaigns graph get CAMPAIGN_ID
 contadores-agent campaigns graph stage-meta-plan CAMPAIGN_ID --ad-account-id act_123
 contadores-agent tool call get_lead_context --json '{"lead_id":"..."}'
@@ -222,6 +223,7 @@ contadores-agent clients list --query Cliente
 contadores-agent clients create --name "Cliente" --whatsapp "+549..." --email cliente@example.com
 contadores-agent campaigns list --status active
 contadores-agent campaigns get CAMPAIGN_ID
+contadores-agent campaigns delete CAMPAIGN_ID
 contadores-agent campaigns geo-search buenos --country-code AR --kind region
 contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --status active --country-code AR --region "Buenos Aires=OPTION_KEY"
 contadores-agent campaigns create --name "Campaña" --client-id CLIENT_ID --graph-json @meta-plan.json

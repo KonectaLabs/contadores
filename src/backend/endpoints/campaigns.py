@@ -45,6 +45,7 @@ from backend.campaign_meta_plan import (
 )
 from backend.endpoints.client_leads import (
     build_context_text_from_row,
+    build_notification_title,
     build_notification_text,
     build_source_response,
     build_wa_link,
@@ -1569,6 +1570,7 @@ def _queue_deliveries_for_submission(
             email=submission.email,
             wa_link=wa_link,
             context_text=build_context_text_from_row(source, raw_row),
+            title=build_notification_title(source, raw_row=raw_row),
         )
         delivery, _created = ClientLeadDelivery.upsert_from_sheet_row(
             source=source,
@@ -1850,6 +1852,15 @@ async def create_campaign(request: Request, command: LeadCaptureCampaignCommand)
 async def get_campaign(request: Request, campaign_id: str) -> dict[str, Any]:
     """Return one owned campaign."""
     return {"campaign": _campaign_payload(_get_campaign_or_404(campaign_id), request=request, include_submissions=True)}
+
+
+@campaigns_router.delete("/{campaign_id}")
+async def delete_campaign(campaign_id: str) -> dict[str, Any]:
+    """Permanently delete one owned campaign and its owned DB records."""
+    counts = LeadCaptureCampaign.delete_hard(campaign_id)
+    if counts is None:
+        raise HTTPException(status_code=404, detail="Campaign not found.")
+    return {"ok": True, "campaign_id": campaign_id, "deleted": counts}
 
 
 @campaigns_router.patch("/{campaign_id}")

@@ -368,6 +368,13 @@ def test_agent_commands_call_expected_methods_paths_and_bodies(
             None,
         ),
         (
+            ["campaigns", "delete", "campaign-1"],
+            "DELETE",
+            "/api/agent/campaigns/campaign-1",
+            None,
+            None,
+        ),
+        (
             ["campaigns", "geo-search", "pla", "--country-code", "AR", "--kind", "city", "--limit", "5"],
             "GET",
             "/api/agent/campaigns/geo/search",

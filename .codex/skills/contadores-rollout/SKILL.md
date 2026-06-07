@@ -177,8 +177,8 @@ because the backend has the data.
 
 Client Lead Delivery rollout is separate from the funnel readiness check. It
 uses dedicated tables (`client_lead_sources`, `client_lead_deliveries`). The
-default template is `konecta_client_lead_alert_es_v2`; sources with
-`context_field_mapping` use `konecta_client_lead_alert_context_es_v1`. Reply
+default template is `konecta_client_lead_alert_es`; sources with
+`context_field_mapping` use `konecta_client_lead_alert_context_es`. Reply
 URLs sent in those templates should be direct plain `https://wa.me/{phone}` chat
 links without a `text=` parameter. The context template always needs 6 body
 params; the sixth param must be one line because Meta rejects template params
@@ -226,7 +226,7 @@ Before enabling a live Delivery source:
 
 ```bash
 uv run python src/scripts/whatsapp_templates.py create \
-  --spec-file src/scripts/whatsapp_template_specs/konecta_client_lead_alert_es_v2.json \
+  --spec-file src/scripts/whatsapp_template_specs/konecta_client_lead_alert_es.json \
   --dry-run
 ```
 
@@ -234,7 +234,7 @@ uv run python src/scripts/whatsapp_templates.py create \
 
 ```bash
 uv run python src/scripts/whatsapp_templates.py check \
-  --spec-file src/scripts/whatsapp_template_specs/konecta_client_lead_alert_es_v2.json \
+  --spec-file src/scripts/whatsapp_template_specs/konecta_client_lead_alert_es.json \
   --fail-on-unapproved
 ```
 
@@ -242,7 +242,7 @@ For context-enabled sources, also check:
 
 ```bash
 uv run python src/scripts/whatsapp_templates.py check \
-  --spec-file src/scripts/whatsapp_template_specs/konecta_client_lead_alert_context_es_v1.json \
+  --spec-file src/scripts/whatsapp_template_specs/konecta_client_lead_alert_context_es.json \
   --fail-on-unapproved
 ```
 

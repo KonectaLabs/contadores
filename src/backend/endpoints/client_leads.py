@@ -491,7 +491,7 @@ def build_context_lines_from_row(source: ClientLeadSource, row: dict[str, str]) 
     for label, column_name in mapping.items():
         value = clean_context_value(get_configured_row_value(row, column_name))
         if value:
-            lines.append(f"{label} = {value}")
+            lines.append(f"{label}: {value}")
     return lines
 
 
@@ -574,6 +574,17 @@ def build_wa_link(*, phone: str) -> str:
     return f"https://wa.me/{normalized_phone}" if normalized_phone else ""
 
 
+def build_notification_title(
+    source: ClientLeadSource,
+    *,
+    raw_row: dict[str, str] | None = None,
+) -> str:
+    """Return the public campaign name when present, else the source label."""
+    row = raw_row or {}
+    campaign_name = " ".join(str(row.get("campaign_name") or "").split()).strip()
+    return campaign_name or source.label
+
+
 def build_notification_text(
     source: ClientLeadSource,
     *,
@@ -582,24 +593,27 @@ def build_notification_text(
     email: str | None,
     wa_link: str,
     context_text: str = "",
+    title: str | None = None,
 ) -> str:
     """Build the operator-visible notification copy stored for audit/UI."""
     parts = [
-        f"Nueva consulta de {source.label}",
+        f"Nuevo Lead {title or source.label}",
+        "",
+        "Datos del lead:",
         f"Nombre: {name or '-'}",
         f"WhatsApp: {phone or '-'}",
         f"Email: {email or '-'}",
     ]
     if context_text:
-        parts.extend(["", "Contexto:", context_text])
-    parts.extend(["", f"Chat: {wa_link or '-'}"])
+        parts.extend(context_text.splitlines())
+    parts.extend(["", "Para abrir el chat:", wa_link or "-"])
     return "\n".join(parts)
 
 
 def build_template_params(source: ClientLeadSource, item: ClientLeadDelivery) -> list[str]:
     """Build positional params for the approved client lead alert template."""
     params = [
-        source.label,
+        build_notification_title(source, raw_row=item.raw_row),
         item.full_name or "Sin nombre",
         item.normalized_phone or item.phone_number or "-",
         item.email or "-",
@@ -620,6 +634,7 @@ def build_delivery_notification_text(source: ClientLeadSource, item: ClientLeadD
         email=item.email,
         wa_link=item.wa_link,
         context_text=build_context_text(source, item),
+        title=build_notification_title(source, raw_row=item.raw_row),
     )
 
 
@@ -1156,6 +1171,7 @@ def import_sheet_records(source: ClientLeadSource, records: list[dict[str, str]]
             email=email,
             wa_link=wa_link,
             context_text=build_context_text_from_row(source, row),
+            title=build_notification_title(source, raw_row=row),
         )
         item, created = ClientLeadDelivery.upsert_from_sheet_row(
             source=source,
