@@ -337,11 +337,9 @@ def delete_templates(
                 )
                 continue
             deleted_count = 0
-            for template in templates:
-                template_id = str(getattr(template, "id", ""))
-                if not dry_run:
-                    wa.delete_template(template_name=name, template_id=template_id)
-                deleted_count += 1
+            if not dry_run:
+                wa.delete_template(template_name=name)
+            deleted_count = len(templates)
             results.append(
                 {
                     "name": name,
