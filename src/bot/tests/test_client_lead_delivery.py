@@ -42,14 +42,16 @@ def test_fetch_and_dispatch_client_lead_notifications(monkeypatch) -> None:
                                 "Ciudad: Quito",
                             ],
                             "delivered_text": (
-                                "Nuevo Lead MMB Ads\n\n"
+                                "Nuevo Lead: MMB Ads.\n\n"
                                 "Datos del lead:\n"
                                 "Nombre: Ana Perez\n"
                                 "WhatsApp: 5491111111111\n"
                                 "Email: ana@example.com\n"
                                 "Ciudad: Quito\n\n"
                                 "Para abrir el chat:\n"
-                                "https://wa.me/5491111111111"
+                                "https://wa.me/5491111111111\n\n"
+                                "Revisalo apenas puedas y responde al lead desde WhatsApp.\n"
+                                "Si el enlace no abre automaticamente, copia el telefono y responde manualmente."
                             ),
                         }
                     ]
@@ -91,14 +93,16 @@ def test_fetch_and_dispatch_client_lead_notifications(monkeypatch) -> None:
                 "Ciudad: Quito",
             ],
             "delivered_text": (
-                "Nuevo Lead MMB Ads\n\n"
+                "Nuevo Lead: MMB Ads.\n\n"
                 "Datos del lead:\n"
                 "Nombre: Ana Perez\n"
                 "WhatsApp: 5491111111111\n"
                 "Email: ana@example.com\n"
                 "Ciudad: Quito\n\n"
                 "Para abrir el chat:\n"
-                "https://wa.me/5491111111111"
+                "https://wa.me/5491111111111\n\n"
+                "Revisalo apenas puedas y responde al lead desde WhatsApp.\n"
+                "Si el enlace no abre automaticamente, copia el telefono y responde manualmente."
             ),
         }
     ]
@@ -109,14 +113,16 @@ def test_fetch_and_dispatch_client_lead_notifications(monkeypatch) -> None:
             "status": "sent",
             "external_id": "wamid.delivery.1",
             "sent_text": (
-                "Nuevo Lead MMB Ads\n\n"
+                "Nuevo Lead: MMB Ads.\n\n"
                 "Datos del lead:\n"
                 "Nombre: Ana Perez\n"
                 "WhatsApp: 5491111111111\n"
                 "Email: ana@example.com\n"
                 "Ciudad: Quito\n\n"
                 "Para abrir el chat:\n"
-                "https://wa.me/5491111111111"
+                "https://wa.me/5491111111111\n\n"
+                "Revisalo apenas puedas y responde al lead desde WhatsApp.\n"
+                "Si el enlace no abre automaticamente, copia el telefono y responde manualmente."
             ),
         },
     )

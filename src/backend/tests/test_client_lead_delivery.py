@@ -120,13 +120,15 @@ def test_client_lead_source_sync_queues_existing_valid_rows(monkeypatch, tmp_pat
         assert pending[0]["template_body_params"][1] == "Ana Perez"
         assert pending[0]["template_body_params"][4] == "https://wa.me/5491111111111"
         assert pending[0]["delivered_text"] == (
-            "Nuevo Lead MMB Ads\n\n"
+            "Nuevo Lead: MMB Ads.\n\n"
             "Datos del lead:\n"
             "Nombre: Ana Perez\n"
             "WhatsApp: 5491111111111\n"
             "Email: ana@example.com\n\n"
             "Para abrir el chat:\n"
-            "https://wa.me/5491111111111"
+            "https://wa.me/5491111111111\n\n"
+            "Revisalo apenas puedas y responde al lead desde WhatsApp.\n"
+            "Si el enlace no abre automaticamente, copia el telefono y responde manualmente."
         )
 
         sent = client.put(

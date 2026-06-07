@@ -597,7 +597,7 @@ def build_notification_text(
 ) -> str:
     """Build the operator-visible notification copy stored for audit/UI."""
     parts = [
-        f"Nuevo Lead {title or source.label}",
+        f"Nuevo Lead: {title or source.label}.",
         "",
         "Datos del lead:",
         f"Nombre: {name or '-'}",
@@ -606,7 +606,16 @@ def build_notification_text(
     ]
     if context_text:
         parts.extend(context_text.splitlines())
-    parts.extend(["", "Para abrir el chat:", wa_link or "-"])
+    parts.extend(
+        [
+            "",
+            "Para abrir el chat:",
+            wa_link or "-",
+            "",
+            "Revisalo apenas puedas y responde al lead desde WhatsApp.",
+            "Si el enlace no abre automaticamente, copia el telefono y responde manualmente.",
+        ]
+    )
     return "\n".join(parts)
 
 
