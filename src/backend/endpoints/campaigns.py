@@ -8,7 +8,6 @@ import os
 import re
 import secrets
 from datetime import datetime, timezone
-from html import escape
 from typing import Any
 
 import httpx
@@ -2264,14 +2263,15 @@ async def submit_public_campaign_form(
 
 def render_public_form_html(campaign: dict[str, Any]) -> str:
     """Render a self-contained public lead form."""
-    payload_json = json.dumps(campaign, ensure_ascii=False).replace("</", "<\\/")
-    title = escape(str(campaign.get("name") or "Consulta"))
+    public_campaign = dict(campaign)
+    public_campaign.pop("name", None)
+    payload_json = json.dumps(public_campaign, ensure_ascii=False).replace("</", "<\\/")
     return f"""<!doctype html>
 <html lang="es">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{title}</title>
+  <title>Consulta</title>
   <style>
     :root {{
       color-scheme: light;
@@ -2285,7 +2285,6 @@ def render_public_form_html(campaign: dict[str, Any]) -> str:
     .form-shell {{ width: min(100%, 1040px); min-height: 100dvh; display: grid; grid-template-rows: auto auto 1fr; overflow: hidden; margin: 0 auto; border: 0; border-radius: 0; background: transparent; box-shadow: none; }}
     .header {{ display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 28px clamp(24px, 7vw, 82px) 16px; border-bottom: 0; }}
     .eyebrow {{ margin: 0; font-size: 11px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: #85827b; }}
-    h1 {{ max-width: 46ch; margin: 0; overflow: hidden; color: #b7b1a7; font-size: clamp(14px, 1.8vw, 18px); font-weight: 650; line-height: 1.12; letter-spacing: 0; text-overflow: ellipsis; white-space: nowrap; }}
     .progress {{ height: 2px; margin: 0 clamp(24px, 7vw, 82px); background: #383735; }}
     .progress > div {{ height: 100%; width: 0%; background: #f3eee6; transition: width .28s cubic-bezier(.16, 1, .3, 1); }}
     form {{ display: grid; align-content: center; min-height: 0; padding: clamp(52px, 11vw, 132px) clamp(28px, 9vw, 112px) clamp(28px, 7vw, 72px); }}
@@ -2319,7 +2318,6 @@ def render_public_form_html(campaign: dict[str, Any]) -> str:
       main {{ padding: 0; place-items: stretch; }}
       .form-shell {{ min-height: 100dvh; border: 0; border-radius: 0; box-shadow: none; }}
       .header {{ display: grid; padding: 22px 20px 16px; }}
-      h1 {{ white-space: normal; }}
       .progress {{ margin: 0 20px; }}
       form {{ padding: 34px 24px 22px; }}
       .step {{ min-height: calc(100dvh - 246px); }}
@@ -2338,7 +2336,6 @@ def render_public_form_html(campaign: dict[str, Any]) -> str:
     <section class="form-shell">
       <div class="header">
         <p class="eyebrow">Consulta</p>
-        <h1 id="campaignTitle"></h1>
       </div>
       <div class="progress" aria-hidden="true"><div id="progressBar"></div></div>
       <form id="leadForm" novalidate>
@@ -2369,7 +2366,6 @@ def render_public_form_html(campaign: dict[str, Any]) -> str:
     const submitBtn = document.getElementById("submitBtn");
     const errorEl = document.getElementById("error");
     const htmlEscapes = {{ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }};
-    document.getElementById("campaignTitle").textContent = campaign.name || "Consulta";
 
     function installMetaPixel() {{
       if (!metaTracking.events_enabled || !metaTracking.pixel_id) return;

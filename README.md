@@ -161,6 +161,9 @@ campaña. La API de operadores es `/api/campaigns`, y cada campaña publica
 existe, o un ID random si todavia no hay ad local; no se genera desde el
 nombre de la campaña o cliente. Si una API/CLI manda un slug legible al crear,
 el backend lo ignora; si intenta cambiarlo por uno legible, lo rechaza. Las
+paginas publicas de leads tampoco muestran ni embeben el nombre interno de la
+campaña; usan copy generico de consulta y conservan el nombre solo en la API de
+operadores. Las
 submissions entran al flujo normal de Client Lead Delivery;
 no se insertan mensajes ni se saltean helpers. El boton de borrar en Ads elimina
 realmente la campaña y sus filas propias de DB, no la archiva. La UI de Ads

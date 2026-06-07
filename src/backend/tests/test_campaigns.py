@@ -512,6 +512,7 @@ def test_public_submission_accepts_custom_schema_without_name_or_phone(monkeypat
     configure_contadores_db(monkeypatch, tmp_path)
 
     payload = campaign_payload()
+    payload["name"] = "Nombre Interno De Campania"
     payload["form_schema"] = {
         "fields": [
             {
@@ -819,6 +820,9 @@ def test_public_form_html_escapes_configured_schema(monkeypatch, tmp_path) -> No
         html = html_response.text
 
         assert '</script><div id="owned">' not in html
+        assert "Nombre Interno De Campania" not in html
+        assert "<title>Consulta</title>" in html
+        assert "campaignTitle" not in html
         assert "${option}</button>" not in html
         assert ">OK</button>" not in html
         assert "Siguiente" in html
