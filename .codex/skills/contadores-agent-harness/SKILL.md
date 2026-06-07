@@ -94,6 +94,11 @@ Destination `form` means the CRM public form and stages as `landing_page`, so
 Meta can optimize for the owned form submit event when pixel optimization is on.
 Public form slugs must stay opaque backend IDs; never set them from the client
 name, campaign name, niche, or creative concept.
+Public JSON/HTML must not expose the internal campaign name. Campaigns in
+`active` or `published` status need at least one public form question; drafts
+can stay incomplete. If a submitted public answer reuses a reserved delivery key
+such as `campaign_name`, `id`, or `phone_number`, preserve the internal metadata
+and store the submitted value as `answer_<key>`.
 Campaign Delivery is configured inline on the campaign: a toggle enables or
 disables WhatsApp template delivery, the campaign client is the default
 recipient, and multiple preset or custom recipients can be selected. The backend

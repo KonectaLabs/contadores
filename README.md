@@ -180,6 +180,13 @@ gate existente `META_MARKETING_LIVE_WRITES_ENABLED`. Si la UI tiene prendido
 publish plan de Meta convierte el Ad Set a `OFFSITE_CONVERSIONS` con
 `promoted_object.pixel_id` + `custom_event_type=LEAD`.
 
+Las URLs publicas de campaña usan slugs opacos y el payload publico no expone el
+nombre interno de campaña. Las campañas `active` / `published` necesitan al
+menos una pregunta en `form_schema`; un draft puede quedar incompleto. Si una
+respuesta del formulario usa una clave interna como `campaign_name`, `id` o
+`phone_number`, Delivery conserva la metadata interna y guarda la respuesta como
+`answer_<clave>`.
+
 Cada campaña owned tiene Delivery inline: un toggle prende/apaga el envio de
 templates WhatsApp cuando llega una submission, el cliente de la campaña queda
 como destinatario por default y se pueden sumar varios contactos predefinidos o
@@ -188,7 +195,8 @@ destinatario y crea una fila `ClientLeadDelivery` por cada contacto. La seleccio
 se respeta por contacto elegido, no por telefono, para que el preset `Facu`
 siga visible aunque comparta numero con el cliente default. La vista
 de submissions en Ads se muestra como tabla, con fecha y los leads mas recientes
-abajo.
+abajo; si el formulario no pidio telefono real, la UI muestra `Sin WhatsApp` en
+vez del placeholder interno.
 
 ### Configurar sin UI, agent-native
 

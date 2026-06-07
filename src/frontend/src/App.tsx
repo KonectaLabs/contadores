@@ -2581,6 +2581,7 @@ type LeadCaptureSubmissionItem = {
   id: string;
   full_name: string | null;
   phone: string;
+  phone_missing?: boolean;
   email: string | null;
   answers: Record<string, unknown>;
   delivery_status: string;
@@ -2906,6 +2907,13 @@ function campaignFormSchema(fields: CampaignFieldDraft[]): { fields: CampaignFor
       };
     }),
   };
+}
+
+function campaignSubmissionPhoneLabel(submission: LeadCaptureSubmissionItem): string {
+  if (submission.phone_missing || submission.phone.startsWith("0000")) {
+    return "Sin WhatsApp";
+  }
+  return submission.phone || "-";
 }
 
 function validateCampaignGeoAreas(areas: CampaignGeoArea[], label: string): string | null {
@@ -3901,6 +3909,10 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
   }
 
   function removeField(index: number) {
+    if (fields.length <= 1) {
+      onError("Campaign forms need at least one question.");
+      return;
+    }
     setFields((current) => current.filter((_, fieldIndex) => fieldIndex !== index));
   }
 
@@ -3992,6 +4004,11 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
       onError("Elegi al menos un pais.");
       return;
     }
+    const nextFormSchema = campaignFormSchema(fields);
+    if (campaignStatus === "active" && !nextFormSchema.fields.length) {
+      onError("Active forms need at least one question.");
+      return;
+    }
     const locations = campaignLocations;
     const geoError = validateCampaignGeoLocations(locations);
     if (geoError) {
@@ -4027,7 +4044,7 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
           },
         },
         creative_brief: creativeSummary || null,
-        form_schema: campaignFormSchema(fields),
+        form_schema: nextFormSchema,
         destination_url: destinationUrl.trim() || null,
         meta_event_name: "Lead",
         meta_events_enabled: metaEventsEnabled || metaOptimizeForPixel,
@@ -4211,6 +4228,7 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
                     type="button"
                     key={item.value}
                     className={selectedGraphAdSet.destination_type === item.value ? "is-active" : ""}
+                    aria-pressed={selectedGraphAdSet.destination_type === item.value}
                     onClick={() => updateMetaPlanAdSet(selectedGraphAdSet.id, { destination_type: item.value as MetaPlanAdSet["destination_type"] })}
                   >
                     {item.label}
@@ -4408,6 +4426,7 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
                         type="button"
                         key={strategy.value}
                         className={metaPlanStrategy === strategy.value ? "is-active" : ""}
+                        aria-pressed={metaPlanStrategy === strategy.value}
                         onClick={() => rebuildMetaPlanGraph(strategy.value)}
                       >
                         {strategy.label}
@@ -4478,7 +4497,13 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
                   <span>Status</span>
                   <div className="campaign-segmented" role="group" aria-label="Campaign status">
                     {["draft", "active", "paused"].map((status) => (
-                      <button type="button" className={campaignStatus === status ? "is-active" : ""} key={status} onClick={() => setCampaignStatus(status)}>
+                      <button
+                        type="button"
+                        className={campaignStatus === status ? "is-active" : ""}
+                        key={status}
+                        aria-pressed={campaignStatus === status}
+                        onClick={() => setCampaignStatus(status)}
+                      >
                         {humanize(status)}
                       </button>
                     ))}
@@ -4584,6 +4609,7 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
                       type="button"
                       className={clientMode === "existing" ? "is-active" : ""}
                       disabled={!clients.length}
+                      aria-pressed={clientMode === "existing"}
                       onClick={() => {
                         setClientMode("existing");
                         setExistingClientId((current) => current || clients[0]?.id || "");
@@ -4594,6 +4620,7 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
                     <button
                       type="button"
                       className={clientMode === "new" ? "is-active" : ""}
+                      aria-pressed={clientMode === "new"}
                       onClick={() => {
                         setClientMode("new");
                         setExistingClientId("");
@@ -4939,7 +4966,7 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
             <section className="campaign-form-preview" aria-label="Campaign form preview">
               <div className="campaign-preview-head">
                 <span>Lead form preview</span>
-                <strong>{campaignName.trim() || "New campaign"}</strong>
+                  <strong>Consulta</strong>
               </div>
               <div className="campaign-preview-pages">
                 {fields.slice(0, 4).map((field, index) => {
@@ -4966,6 +4993,11 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
                     </section>
                   );
                 })}
+                {fields.length > 4 ? (
+                  <div className="campaign-preview-more">
+                    {fields.length - 4} more questions in this form
+                  </div>
+                ) : null}
               </div>
               <div className="campaign-preview-foot">
                 <button type="button" className="ct-btn" disabled>
@@ -4990,10 +5022,6 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
               </dl>
             </section>
 
-            <div className="campaign-create-actions">
-              <button type="button" className="ct-btn ct-btn-ghost" onClick={closeCreateView}>Cancel</button>
-              <button type="submit" className="ct-btn campaign-create-primary" disabled={saving}>{saving ? "Saving..." : "Create campaign"}</button>
-            </div>
           </aside>
         </form>
       ) : null}
@@ -5236,7 +5264,7 @@ function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onE
                           <tr key={submission.id}>
                             <td>{submission.created_at ? shortDate(submission.created_at) : "-"}</td>
                             <td>{submission.full_name || "-"}</td>
-                            <td>{submission.phone}</td>
+                            <td>{campaignSubmissionPhoneLabel(submission)}</td>
                             <td>{submission.email || "-"}</td>
                             <td>
                               <div className="campaign-submission-delivery">

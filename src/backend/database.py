@@ -3395,6 +3395,7 @@ class LeadCaptureCampaign(SQLModel, table=True):
 
             target_ids = set(campaign_refs) | submission_ids
             target_types = {
+                "ad_campaign",
                 "campaign",
                 "lead_capture_campaign",
                 "lead_capture_submission",

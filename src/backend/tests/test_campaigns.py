@@ -105,7 +105,9 @@ def test_campaign_api_creates_converted_client_and_queues_delivery(monkeypatch, 
 
         public_response = client.get(f"/api/public/campaigns/{campaign['public_slug']}")
         assert public_response.status_code == 200
-        assert public_response.json()["campaign"]["form_schema"]["fields"][0]["id"] == "full_name"
+        public_campaign = public_response.json()["campaign"]
+        assert "name" not in public_campaign
+        assert public_campaign["form_schema"]["fields"][0]["id"] == "full_name"
 
         submit_response = client.post(
             f"/api/public/campaigns/{campaign['public_slug']}/submissions",
@@ -193,6 +195,13 @@ def test_campaign_delete_hard_removes_owned_rows(monkeypatch, tmp_path) -> None:
             target_id=campaign["id"],
             summary="Test event",
         )
+        PlatformEvent.add(
+            event_type="ad_campaign.test",
+            lifecycle_stage="lead_capture",
+            target_type="ad_campaign",
+            target_id=platform_campaign_id,
+            summary="Ad campaign alias event",
+        )
 
         assert LeadCaptureCampaign.get_by_id(campaign["id"]) is not None
         assert LeadCaptureSubmission.get_by_id(submission_id) is not None
@@ -221,6 +230,7 @@ def test_campaign_delete_hard_removes_owned_rows(monkeypatch, tmp_path) -> None:
         assert PlatformMetaPublishAttempt.list_recent(campaign_id=platform_campaign_id) == []
         assert PlatformClientUpdate.list_recent(campaign_id=campaign["id"]) == []
         assert PlatformEvent.list_recent(target_type="lead_capture_campaign", target_id=campaign["id"]) == []
+        assert PlatformEvent.list_recent(target_type="ad_campaign", target_id=platform_campaign_id) == []
         assert client.get(f"/api/public/campaigns/{campaign['public_slug']}").status_code == 404
         assert client.delete(f"/api/campaigns/{campaign['id']}").status_code == 404
 
@@ -239,9 +249,17 @@ def test_public_submission_queues_delivery_for_each_campaign_contact(monkeypatch
     }
 
     with TestClient(app) as client:
+        payload = campaign_payload()
+        payload["form_schema"]["fields"].append(
+            {
+                "id": "campaign_name",
+                "label": "Campania que vio el lead",
+                "type": "text",
+            }
+        )
         create_response = client.post(
             "/api/campaigns",
-            json={**campaign_payload(), "delivery_config": delivery_config},
+            json={**payload, "delivery_config": delivery_config},
         )
         assert create_response.status_code == 200, create_response.text
         campaign = create_response.json()["campaign"]
@@ -267,6 +285,7 @@ def test_public_submission_queues_delivery_for_each_campaign_contact(monkeypatch
                     "phone": "+5491199988877",
                     "email": "lead3@example.com",
                     "necesidad": "Quiero coordinar una llamada",
+                    "campaign_name": "Nombre que mando el lead",
                 },
                 "idempotency_key": "campaign-submit-three-contacts",
             },
@@ -289,6 +308,8 @@ def test_public_submission_queues_delivery_for_each_campaign_contact(monkeypatch
         assert delivery_statuses == {"pending"}
         assert {delivery.raw_row["email"] for delivery in deliveries} == {"lead3@example.com"}
         assert {delivery.raw_row["necesidad"] for delivery in deliveries} == {"Quiero coordinar una llamada"}
+        assert {delivery.raw_row["campaign_name"] for delivery in deliveries} == {"Campania Test"}
+        assert {delivery.raw_row["answer_campaign_name"] for delivery in deliveries} == {"Nombre que mando el lead"}
 
         submissions_response = client.get(f"/api/campaigns/{campaign['id']}/submissions")
         assert submissions_response.status_code == 200
@@ -566,10 +587,13 @@ def test_public_submission_accepts_custom_schema_without_name_or_phone(monkeypat
         assert delivery.phone_number == ""
         assert delivery.raw_row["phone_number"] == ""
         assert delivery.raw_row["mensaje"] == "Necesito una consulta"
+        submissions_response = client.get(f"/api/campaigns/{campaign['id']}/submissions")
+        assert submissions_response.status_code == 200
+        assert submissions_response.json()["submissions"][0]["phone_missing"] is True
 
 
-def test_campaign_form_schema_can_be_empty_when_all_questions_are_deleted(monkeypatch, tmp_path) -> None:
-    """Deleting every default question should persist an intentionally empty form."""
+def test_active_campaign_form_schema_cannot_be_empty(monkeypatch, tmp_path) -> None:
+    """Active public forms need at least one question."""
     configure_contadores_db(monkeypatch, tmp_path)
 
     payload = campaign_payload()
@@ -577,17 +601,31 @@ def test_campaign_form_schema_can_be_empty_when_all_questions_are_deleted(monkey
 
     with TestClient(app) as client:
         create_response = client.post("/api/campaigns", json=payload)
-        assert create_response.status_code == 200, create_response.text
-        campaign = create_response.json()["campaign"]
+        assert create_response.status_code == 400
+        assert create_response.json()["detail"] == "Active campaigns need at least one public form question."
+
+        draft_response = client.post("/api/campaigns", json={**payload, "status": "draft"})
+        assert draft_response.status_code == 200, draft_response.text
+        campaign = draft_response.json()["campaign"]
         assert campaign["form_schema"] == {"fields": [], "layout": "multi_step"}
 
-        submit_response = client.post(
-            f"/api/public/campaigns/{campaign['public_slug']}/submissions",
-            json={"answers": {}, "idempotency_key": "empty-form"},
+        activate_response = client.patch(f"/api/campaigns/{campaign['id']}", json={"status": "active"})
+        assert activate_response.status_code == 400
+        assert activate_response.json()["detail"] == "Active campaigns need at least one public form question."
+
+        schema_response = client.patch(
+            f"/api/campaigns/{campaign['id']}",
+            json={
+                "status": "active",
+                "form_schema": {
+                    "fields": [{"id": "mensaje", "label": "Mensaje", "type": "textarea", "required": True}],
+                    "layout": "multi_step",
+                },
+            },
         )
-        assert submit_response.status_code == 200, submit_response.text
-        assert submit_response.json()["delivery_queued"] is False
-        assert len(LeadCaptureSubmission.list_by_campaign(campaign["id"])) == 1
+        assert schema_response.status_code == 200, schema_response.text
+        campaign = schema_response.json()["campaign"]
+        assert campaign["status"] == "active"
 
 
 def test_public_form_requires_active_campaign_and_valid_phone(monkeypatch, tmp_path) -> None:

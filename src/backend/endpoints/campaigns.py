@@ -31,6 +31,7 @@ from backend.database import (
     WorkstationClient,
     WorkstationClientStatus,
     WorkstationClientWorkType,
+    normalize_lead_capture_form_schema,
     normalize_email,
     normalize_phone,
     random_lead_capture_public_slug,
@@ -84,6 +85,16 @@ CAMPAIGN_GEO_SEARCH_LIMIT = 12
 DEFAULT_META_EVENT_NAME = "Lead"
 META_PIXEL_ENV_NAMES = ("META_PIXEL_ID", "META_DEFAULT_PIXEL_ID", "META_MARKETING_PIXEL_ID")
 SUBMISSION_PHONE_MISSING_TRACKING_KEY = "_lead_phone_missing"
+SUBMISSION_INTERNAL_RAW_ROW_KEYS = {
+    "id",
+    "created_time",
+    "campaign_id",
+    "campaign_name",
+    "campaign_slug",
+    "full_name",
+    "phone_number",
+    "email",
+}
 
 CAMPAIGN_GEO_FALLBACKS: dict[str, dict[str, list[str]]] = {
     "AR": {
@@ -981,6 +992,7 @@ def _submission_payload(submission: LeadCaptureSubmission) -> dict[str, Any]:
         "full_name": submission.full_name,
         "phone": submission.phone,
         "normalized_phone": submission.normalized_phone,
+        "phone_missing": _submission_phone_missing(submission),
         "email": submission.email,
         "answers": submission.answers,
         "tracking": submission.tracking,
@@ -1017,6 +1029,15 @@ def _public_submission_receipt(
             "created_at": format_timestamp_seconds(submission.created_at),
         }
     return receipt
+
+
+def _campaign_status_needs_public_form(status: str | None) -> bool:
+    return (status or "").strip().lower() in PUBLISHABLE_CAMPAIGN_STATUSES
+
+
+def _campaign_form_has_fields(form_schema: dict[str, Any] | None) -> bool:
+    normalized = normalize_lead_capture_form_schema(form_schema or {})
+    return bool(normalized.get("fields"))
 
 
 def _campaign_payload(
@@ -1080,7 +1101,6 @@ def _public_campaign_payload(campaign: LeadCaptureCampaign, *, request: Request)
     meta_pixel_id = _clean_meta_pixel_id(campaign.meta_pixel_id) if campaign.meta_events_enabled else ""
     return {
         "id": campaign.id,
-        "name": campaign.name,
         "status": campaign.status,
         "public_slug": campaign.public_slug,
         "public_url": _public_url(request, campaign),
@@ -1534,10 +1554,13 @@ def _raw_row_for_submission(campaign: LeadCaptureCampaign, submission: LeadCaptu
         "email": submission.email or "",
     }
     for key, value in submission.answers.items():
+        raw_key = str(key)
+        if raw_key in SUBMISSION_INTERNAL_RAW_ROW_KEYS:
+            raw_key = f"answer_{raw_key}"
         if isinstance(value, list):
-            raw[str(key)] = ", ".join(str(item) for item in value)
+            raw[raw_key] = ", ".join(str(item) for item in value)
         else:
-            raw[str(key)] = str(value or "")
+            raw[raw_key] = str(value or "")
     return raw
 
 
@@ -1724,6 +1747,8 @@ async def list_campaigns(
 @campaigns_router.post("")
 async def create_campaign(request: Request, command: LeadCaptureCampaignCommand) -> dict[str, Any]:
     """Create one owned lead-capture campaign."""
+    if _campaign_status_needs_public_form(command.status) and not _campaign_form_has_fields(command.form_schema):
+        raise HTTPException(status_code=400, detail="Active campaigns need at least one public form question.")
     client_id = (command.client_id or "").strip()
     linked_client = _validate_campaign_client_link(client_id, command.status) if client_id else None
     meta_optimization_enabled = _requested_meta_optimization_enabled(
@@ -1939,6 +1964,9 @@ async def patch_campaign(
             destination_url=str(updates.get("destination_url", current.destination_url) or ""),
             client_lead_source_id=current.client_lead_source_id,
         )
+    next_form_schema = updates.get("form_schema", current.form_schema)
+    if _campaign_status_needs_public_form(next_status) and not _campaign_form_has_fields(next_form_schema):
+        raise HTTPException(status_code=400, detail="Active campaigns need at least one public form question.")
     try:
         campaign = LeadCaptureCampaign.update(campaign_id, **updates)
     except ValueError as error:
@@ -2287,8 +2315,8 @@ def render_public_form_html(campaign: dict[str, Any]) -> str:
     .eyebrow {{ margin: 0; font-size: 11px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: #85827b; }}
     .progress {{ height: 2px; margin: 0 clamp(24px, 7vw, 82px); background: #383735; }}
     .progress > div {{ height: 100%; width: 0%; background: #f3eee6; transition: width .28s cubic-bezier(.16, 1, .3, 1); }}
-    form {{ display: grid; align-content: center; min-height: 0; padding: clamp(52px, 11vw, 132px) clamp(28px, 9vw, 112px) clamp(28px, 7vw, 72px); }}
-    .step {{ display: none; min-height: 420px; align-content: center; }}
+    form {{ display: grid; align-content: start; min-height: 0; padding: clamp(76px, 12dvh, 128px) clamp(28px, 9vw, 112px) clamp(28px, 7vw, 72px); }}
+    .step {{ display: none; min-height: 0; align-content: start; }}
     .step.active {{ display: grid; animation: step-in .32s cubic-bezier(.16, 1, .3, 1); }}
     label {{ display: block; max-width: 820px; color: #f3eee6; font-size: clamp(32px, 5vw, 52px); font-weight: 500; line-height: 1.12; letter-spacing: 0; margin: 0 0 clamp(34px, 5vw, 56px); }}
     label::before {{ content: attr(data-number); min-width: 30px; min-height: 30px; display: inline-flex; align-items: center; justify-content: center; margin-right: 16px; transform: translateY(-4px); border-radius: 7px; background: #f3eee6; color: #242423; font-size: 16px; font-weight: 850; line-height: 1; vertical-align: middle; }}
@@ -2300,7 +2328,7 @@ def render_public_form_html(campaign: dict[str, Any]) -> str:
     .option {{ min-height: 58px; border: 1px solid #5d5a54; border-radius: 8px; padding: 0 18px; font-size: 18px; background: transparent; color: #f3eee6; cursor: pointer; text-align: left; transition: transform .18s cubic-bezier(.16, 1, .3, 1), border-color .18s ease, background .18s ease; }}
     .option:hover {{ transform: translateY(-1px); border-color: #f3eee6; background: #2d2c2a; }}
     .option.selected {{ border-color: #f3eee6; background: #f3eee6; color: #242423; }}
-    .actions {{ display: grid; grid-template-columns: minmax(92px, auto) minmax(180px, 260px) minmax(92px, auto); align-items: center; justify-content: center; gap: 14px; margin-top: clamp(32px, 5vw, 60px); }}
+    .actions {{ display: grid; grid-template-columns: minmax(92px, auto) minmax(180px, 260px) minmax(92px, auto); align-items: center; justify-content: center; gap: 14px; margin-top: clamp(28px, 5dvh, 52px); }}
     button {{ min-height: 58px; border: 0; border-radius: 8px; padding: 0 24px; font: inherit; font-weight: 800; cursor: pointer; transition: transform .18s cubic-bezier(.16, 1, .3, 1), opacity .18s ease; }}
     button:active {{ transform: translateY(1px) scale(.99); }}
     .back {{ justify-self: end; background: transparent; color: #aaa49b; }}
@@ -2319,12 +2347,13 @@ def render_public_form_html(campaign: dict[str, Any]) -> str:
       .form-shell {{ min-height: 100dvh; border: 0; border-radius: 0; box-shadow: none; }}
       .header {{ display: grid; padding: 22px 20px 16px; }}
       .progress {{ margin: 0 20px; }}
-      form {{ padding: 34px 24px 22px; }}
-      .step {{ min-height: calc(100dvh - 246px); }}
-      label {{ font-size: clamp(29px, 8.8vw, 42px); }}
+      form {{ align-content: start; min-height: calc(100dvh - 53px); padding: 28px 24px 22px; }}
+      .step {{ min-height: auto; align-content: start; padding-top: clamp(28px, 6dvh, 52px); }}
+      label {{ font-size: clamp(28px, 8.3vw, 39px); }}
+      label {{ margin-bottom: 24px; }}
       label::before {{ min-width: 27px; min-height: 27px; margin-right: 11px; font-size: 14px; transform: translateY(-3px); }}
-      input, textarea, select {{ font-size: 26px; }}
-      .actions {{ position: sticky; bottom: 0; grid-template-columns: 58px minmax(0, 1fr) 58px; gap: 10px; background: linear-gradient(180deg, rgba(36, 36, 35, .68), #242423 38%); padding-top: 14px; }}
+      input, textarea, select {{ font-size: 24px; }}
+      .actions {{ position: sticky; bottom: 0; grid-template-columns: 58px minmax(0, 1fr) 58px; gap: 10px; margin-top: clamp(30px, 6dvh, 58px); background: linear-gradient(180deg, rgba(36, 36, 35, .68), #242423 38%); padding-top: 14px; }}
       .next, .submit {{ min-height: 64px; font-size: 18px; }}
       .back {{ width: 58px; min-height: 58px; padding: 0; overflow: hidden; color: transparent; }}
       .back::before {{ content: "\\2190"; color: #aaa49b; font-size: 27px; line-height: 1; }}
@@ -2405,10 +2434,10 @@ def render_public_form_html(campaign: dict[str, Any]) -> str:
       const safePlaceholder = escapeAttr(field.placeholder || "");
       const safeFieldId = escapeAttr(field.id);
       if (field.type === "textarea") return `<textarea id="${{safeId}}" placeholder="${{safePlaceholder}}"></textarea>`;
-      if (field.type === "yes_no") return `<div class="options" data-field="${{safeFieldId}}"><button type="button" class="option" data-value="Si">Si</button><button type="button" class="option" data-value="No">No</button></div>`;
+      if (field.type === "yes_no") return `<div id="${{safeId}}" class="options" role="group" aria-labelledby="${{safeId}}-label" data-field="${{safeFieldId}}"><button type="button" class="option" aria-pressed="false" data-value="Si">Si</button><button type="button" class="option" aria-pressed="false" data-value="No">No</button></div>`;
       if (field.type === "select" || field.type === "multi_select") {{
-        const options = (field.options || []).map((option) => `<button type="button" class="option" data-value="${{escapeAttr(option)}}">${{escapeHtml(option)}}</button>`).join("");
-        return `<div class="options" data-field="${{safeFieldId}}" data-multi="${{field.type === "multi_select"}}">${{options}}</div>`;
+        const options = (field.options || []).map((option) => `<button type="button" class="option" aria-pressed="false" data-value="${{escapeAttr(option)}}">${{escapeHtml(option)}}</button>`).join("");
+        return `<div id="${{safeId}}" class="options" role="group" aria-labelledby="${{safeId}}-label" data-field="${{safeFieldId}}" data-multi="${{field.type === "multi_select"}}">${{options}}</div>`;
       }}
       const inputType = field.type === "phone" ? "tel" : "text";
       const autocomplete = field.type === "email" ? "email" : field.type === "phone" ? "tel" : "name";
@@ -2419,7 +2448,7 @@ def render_public_form_html(campaign: dict[str, Any]) -> str:
     function renderSteps() {{
       stepsEl.innerHTML = fields.map((field, idx) => `
         <section class="step" data-index="${{idx}}" data-field="${{escapeAttr(field.id)}}">
-          <label for="field-${{escapeAttr(field.id)}}" data-number="${{idx + 1}}">${{escapeHtml(field.label || field.id)}}${{field.required ? " *" : ""}}</label>
+          <label id="field-${{escapeAttr(field.id)}}-label" for="field-${{escapeAttr(field.id)}}" data-number="${{idx + 1}}">${{escapeHtml(field.label || field.id)}}${{field.required ? " *" : ""}}</label>
           ${{fieldInput(field)}}
         </section>
       `).join("");
@@ -2430,10 +2459,15 @@ def render_public_form_html(campaign: dict[str, Any]) -> str:
             const multi = group.dataset.multi === "true";
             if (multi) {{
               button.classList.toggle("selected");
+              button.setAttribute("aria-pressed", button.classList.contains("selected") ? "true" : "false");
               state.answers[fieldId] = Array.from(group.querySelectorAll(".selected")).map((item) => item.dataset.value);
             }} else {{
-              group.querySelectorAll(".option").forEach((item) => item.classList.remove("selected"));
+              group.querySelectorAll(".option").forEach((item) => {{
+                item.classList.remove("selected");
+                item.setAttribute("aria-pressed", "false");
+              }});
               button.classList.add("selected");
+              button.setAttribute("aria-pressed", "true");
               state.answers[fieldId] = button.dataset.value || "";
             }}
           }});

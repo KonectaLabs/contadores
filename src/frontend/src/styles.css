@@ -3480,7 +3480,9 @@ body.ct-resizing {
 }
 
 #contadoresView .campaign-manager-head {
+  display: grid;
   grid-template-columns: minmax(180px, auto) auto minmax(0, 1fr) auto;
+  align-items: center;
   justify-content: space-between;
 }
 
@@ -3607,39 +3609,39 @@ body.ct-resizing {
 
 #contadoresView .campaign-section-basics {
   border-left-color: var(--ct-accent);
-  background: linear-gradient(90deg, color-mix(in srgb, var(--ct-accent) 7%, var(--ct-surface)), var(--ct-surface) 36%);
+  background: var(--ct-surface);
 }
 
 #contadoresView .campaign-section-plan {
   border-color: color-mix(in srgb, #138f8f 38%, var(--ct-line));
   border-left-color: #138f8f;
-  background: linear-gradient(90deg, #eefafa, var(--ct-surface) 42%);
+  background: var(--ct-surface);
 }
 
 #contadoresView .campaign-section-targeting {
   border-color: color-mix(in srgb, #2f80ed 38%, var(--ct-line));
   border-left-color: #2f80ed;
-  background: linear-gradient(90deg, #f1f7ff, var(--ct-surface) 48%);
+  background: var(--ct-surface);
 }
 
 #contadoresView .campaign-section-client {
   border-left-color: #35a982;
-  background: linear-gradient(90deg, #effbf5, var(--ct-surface) 42%);
+  background: var(--ct-surface);
 }
 
 #contadoresView .campaign-section-creative {
   border-left-color: #e4a23a;
-  background: linear-gradient(90deg, #fff8eb, var(--ct-surface) 42%);
+  background: var(--ct-surface);
 }
 
 #contadoresView .campaign-section-form {
   border-left-color: #9b7ae5;
-  background: linear-gradient(90deg, #f7f3ff, var(--ct-surface) 42%);
+  background: var(--ct-surface);
 }
 
 #contadoresView .campaign-section-meta {
   border-left-color: #eb7d52;
-  background: linear-gradient(90deg, #fff4ee, var(--ct-surface) 42%);
+  background: var(--ct-surface);
 }
 
 #contadoresView .campaign-meta-plan {
@@ -3995,12 +3997,17 @@ body.ct-resizing {
 }
 
 #contadoresView .campaign-creative-upload-button {
+  position: relative;
   min-height: 40px;
+  overflow: hidden;
   white-space: nowrap;
 }
 
 #contadoresView .campaign-creative-upload-button input {
-  display: none;
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
 }
 
 #contadoresView .campaign-creative-assets {
@@ -4557,7 +4564,18 @@ body.ct-resizing {
 
 #contadoresView .campaign-command-input input {
   width: 100%;
-  padding-right: 34px;
+  min-height: 48px;
+  padding: 0 34px 0 14px;
+  border: 1px solid var(--ct-line);
+  border-radius: 8px;
+  background: var(--ct-surface);
+  color: var(--ct-ink);
+  box-shadow: 0 1px 2px #2021240a;
+}
+
+#contadoresView .campaign-command-input input:focus {
+  border-color: color-mix(in srgb, #2f80ed 42%, var(--ct-line));
+  outline: 3px solid color-mix(in srgb, #2f80ed 14%, transparent);
 }
 
 #contadoresView .campaign-command-input svg {
@@ -5045,6 +5063,18 @@ body.ct-resizing {
   color: #f3eee6;
   font: 750 12px/1.2 var(--font-sans);
   overflow-wrap: anywhere;
+}
+
+#contadoresView .campaign-preview-more {
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-top: 1px solid #393836;
+  color: #aaa49b;
+  font: 800 11px/1 var(--font-mono);
+  letter-spacing: .04em;
+  text-transform: uppercase;
 }
 
 #contadoresView .campaign-preview-foot {
@@ -7394,6 +7424,10 @@ body.ct-resizing {
   #contadoresView .campaign-submissions-head {
     flex-wrap: wrap;
     justify-content: flex-start;
+  }
+
+  #contadoresView .campaign-manager-head {
+    grid-template-columns: 1fr;
   }
 
   #contadoresView .campaign-view-switch,

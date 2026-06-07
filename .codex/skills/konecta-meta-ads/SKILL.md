@@ -65,6 +65,11 @@ CRM-owned Ads workspace rule:
   for the owned form submit event `Lead`.
 - Public form slugs must stay opaque backend IDs. Do not set readable slugs from
   the client name, campaign name, niche, or creative concept.
+- Public campaign surfaces must not expose internal campaign names. A campaign
+  can only be `active` or `published` when the owned form has at least one
+  public question; drafts can remain incomplete. Reserved answer keys such as
+  `campaign_name`, `id`, or `phone_number` must be stored as `answer_<key>` so
+  delivery metadata remains trustworthy.
 
 Validated local Meta defaults for Contadores/Konecta as of 2026-05-31:
 
