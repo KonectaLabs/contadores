@@ -6,6 +6,12 @@ http:
       entryPoints:
         - web
       service: didactiqo-education
+    codex-approval:
+      rule: "Host(`codex-approval.fgoiriz.com`)"
+      priority: 100
+      entryPoints:
+        - web
+      service: codex-approval
     backend:
       rule: "(Host(`crm.fgoiriz.com`) || Host(`chatterface.fgoiriz.com`)) && PathPrefix(`/`)"
       priority: 1
@@ -23,6 +29,10 @@ http:
       loadBalancer:
         servers:
           - url: "http://host.docker.internal:3417"
+    codex-approval:
+      loadBalancer:
+        servers:
+          - url: "http://codex-approval:8765"
     backend:
       loadBalancer:
         servers:
