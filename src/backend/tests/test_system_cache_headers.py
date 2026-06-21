@@ -2,6 +2,7 @@
 
 from fastapi.testclient import TestClient
 
+import backend.main as backend_main
 from backend.main import app
 
 
@@ -46,6 +47,32 @@ def test_public_cloudflare_https_requests_do_not_redirect() -> None:
 
     assert response.status_code == 200
     assert response.headers["strict-transport-security"] == "max-age=31536000"
+
+
+def test_configured_public_crm_host_can_reach_public_route(monkeypatch) -> None:
+    """Approved public CRM hosts should reach the public route handler."""
+    monkeypatch.setattr(backend_main, "CRM_PUBLIC_HOSTS", {"crm.fgoiriz.com"})
+
+    with TestClient(app) as client:
+        response = client.get("/c/missing/", headers={"host": "crm.fgoiriz.com"})
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Campaign form not found."
+
+
+def test_configured_public_crm_host_blocks_unknown_host(monkeypatch) -> None:
+    """Public CRM routes should fail closed on unapproved hosts."""
+    monkeypatch.setattr(backend_main, "CRM_PUBLIC_HOSTS", {"crm.fgoiriz.com"})
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/c/missing/",
+            headers={"host": "unknown.fgoiriz.com", "x-forwarded-proto": "http"},
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Public CRM host not found."
 
 
 def test_public_image_generation_endpoint_is_removed() -> None:

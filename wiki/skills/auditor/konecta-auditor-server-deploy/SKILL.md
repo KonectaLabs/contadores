@@ -5,6 +5,9 @@ description: Canonical production deploy and log-check workflow for Konecta Audi
 
 # Konecta Auditor Server Deploy
 
+> Historical import: this wiki-only file references the old `konecta-auditor`
+> repository and server paths. Do not run its commands for Contadores deploys.
+
 ## Use This Skill When
 - deploying Konecta Auditor to the VPS,
 - checking production logs after a deploy,

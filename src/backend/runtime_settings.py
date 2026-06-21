@@ -6,6 +6,7 @@ import os
 from dataclasses import dataclass
 
 from backend.calendly import normalize_calendly_url
+from backend.redaction import redact_identifier, redact_path
 
 
 def _read_str(*names: str, default: str = "") -> str:
@@ -85,7 +86,8 @@ class RuntimeFunnelSettings:
             "enabled": self.enabled,
             "sheet_configured": self.sheet_configured,
             "sheet_url_configured": self.sheet_url_configured,
-            "sheet_gid": self.sheet_gid,
+            "sheet_gid_configured": bool(self.sheet_gid),
+            "sheet_gid_label": redact_identifier(self.sheet_gid),
             "sheet_poll_seconds": self.sheet_poll_seconds,
         }
 
@@ -144,12 +146,13 @@ class RuntimeSettings:
             "ready": not issues,
             "readiness_issues": issues,
             "sheet_configured": bool(ready_campaign_ids),
-            "sheet_gid": self.sheet_gid or (first_ready_funnel.sheet_gid if first_ready_funnel else ""),
+            "sheet_gid_configured": bool(self.sheet_gid or (first_ready_funnel.sheet_gid if first_ready_funnel else "")),
+            "sheet_gid_label": redact_identifier(self.sheet_gid or (first_ready_funnel.sheet_gid if first_ready_funnel else "")),
             "sheet_poll_seconds": self.sheet_poll_seconds,
             "loom_url_configured": bool(self.loom_url),
-            "calendly_base_url": self.calendly_base_url,
-            "alert_emails": self.alert_emails,
-            "funnel_config_path": self.funnel_config_path,
+            "calendly_base_url_configured": bool(self.calendly_base_url),
+            "alert_email_count": len(self.alert_emails),
+            "funnel_config_path_label": redact_path(self.funnel_config_path),
             "enabled_campaign_funnels": enabled_campaign_ids,
             "ready_campaign_funnels": ready_campaign_ids,
             "funnels": [funnel.public_dict() for funnel in self.funnels],

@@ -28,8 +28,17 @@ import {
   WarningCircle,
   X,
 } from "@phosphor-icons/react";
-import { apiFetch } from "./api";
+import { apiFetch as baseApiFetch } from "./api";
+import { parseActiveSection } from "./app/sections";
+import type { ActiveSection, OperationNavItem } from "./app/sections";
 import { compactNumber, humanize, lastInteractionAt, relativeTime, shortDate } from "./format";
+import { ClientLeadDeliveryView } from "./workspaces/delivery/ClientLeadDeliveryView";
+import { CampaignsPanel } from "./workspaces/campaigns/CampaignsPanel";
+import { campaignStatusConfirmText, shouldApplyGeoSearchResult } from "./workspaces/campaigns/helpers";
+import { CrmWorkspace } from "./workspaces/crm/CrmWorkspace";
+import { shouldApplyLatestRequest } from "./workspaces/delivery/helpers";
+import { OpsView } from "./workspaces/ops/OpsView";
+import { copyTextToClipboard, WorkstationView } from "./workspaces/workstation/WorkstationView";
 import type {
   BulkActionResponse,
   ClientLead,
@@ -50,6 +59,7 @@ import type {
   LeadSummary,
   ManualAttentionCountsResponse,
   MessageItem,
+  PlatformOverviewResponse,
   QuickActionResponse,
   RuntimeSettings,
   StrategyStatsItem,
@@ -65,8 +75,13 @@ import type {
 
 const REFRESH_MS = 12000;
 const WORKSTATION_DETAIL_REFRESH_MS = 4000;
-const DELIVERY_AUTO_SYNC_MS = 10000;
 const WHATSAPP_CUSTOM_WINDOW_MS = 24 * 60 * 60 * 1000;
+const CSRF_COOKIE_NAME = "contadores_csrf";
+const CSRF_HEADER_NAME = "X-CSRF-Token";
+const UNSAFE_API_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+const CRM_MANUAL_MEDIA_MAX_FILES = 5;
+const CRM_MANUAL_MEDIA_MAX_FILE_BYTES = 25 * 1024 * 1024;
+const CRM_MANUAL_MEDIA_MAX_TOTAL_BYTES = 50 * 1024 * 1024;
 const DASHBOARD_FUNNEL_STORAGE_KEY = "contadores.dashboard.selectedFunnelId";
 const DASHBOARD_LEAD_VIEW_FILTER_STORAGE_KEY = "contadores.dashboard.leadViewFilter";
 const LEGACY_DASHBOARD_STAGE_FILTER_STORAGE_KEY = "contadores.dashboard.stageFilter";
@@ -88,15 +103,13 @@ type LeadViewFilterOption = {
   metric?: keyof ContadoresMetrics;
   tone: "all" | "neutral" | "accent" | "success" | "warn" | "muted";
 };
-type ActiveSection = "crm" | "campaigns" | "workstation" | "delivery";
-type CampaignsPanelView = "campaigns" | "create";
 type LoadWorkstationDetailOptions = {
   syncNotes?: boolean;
   showLoading?: boolean;
 };
-type DeliveryEditorMode = "edit" | "create";
+export type DeliveryEditorMode = "edit" | "create";
 type ConfirmDialogTone = "danger" | "warn";
-type ConfirmDialogState = {
+export type ConfirmDialogState = {
   id: string;
   tone: ConfirmDialogTone;
   title: string;
@@ -106,6 +119,11 @@ type ConfirmDialogState = {
   busyKey: string;
   onConfirm: () => void | Promise<void>;
 };
+type ManualDraft = {
+  text: string;
+  files: File[];
+};
+const emptyManualDraft: ManualDraft = { text: "", files: [] };
 const CONFIRM_FOCUSABLE_SELECTOR = [
   "button:not([disabled])",
   "input:not([disabled])",
@@ -114,7 +132,7 @@ const CONFIRM_FOCUSABLE_SELECTOR = [
   "a[href]",
   "[tabindex]:not([tabindex='-1'])",
 ].join(",");
-type ClientLeadSourceDraft = {
+export type ClientLeadSourceDraft = {
   id: string;
   label: string;
   enabled: boolean;
@@ -122,6 +140,8 @@ type ClientLeadSourceDraft = {
   sheet_gid: string;
   sheet_tab_name: string;
   sheet_poll_seconds: number;
+  meta_page_id: string;
+  meta_lead_form_id: string;
   recipient_name: string;
   recipient_phone: string;
   template_name: string;
@@ -144,6 +164,8 @@ type ClientLeadSourceMutationPayload = {
   sheet_gid: string | null;
   sheet_tab_name: string | null;
   sheet_poll_seconds: number;
+  meta_page_id: string | null;
+  meta_lead_form_id: string | null;
   recipient_name: string | null;
   recipient_phone: string | null;
   template_name: string | null;
@@ -193,6 +215,29 @@ function writeStoredValue(storageKey: string, value: string) {
   }
 }
 
+function readCookieValue(name: string): string {
+  const prefix = `${name}=`;
+  const match = document.cookie
+    .split(";")
+    .map((item) => item.trim())
+    .find((item) => item.startsWith(prefix));
+  return match ? decodeURIComponent(match.slice(prefix.length)) : "";
+}
+
+function apiFetch<T>(path: string, options: RequestInit & { timeoutMs?: number } = {}): Promise<T> {
+  const method = String(options.method || "GET").toUpperCase();
+  if (!UNSAFE_API_METHODS.has(method)) {
+    return baseApiFetch<T>(path, options);
+  }
+
+  const headers = new Headers(options.headers);
+  const csrfToken = readCookieValue(CSRF_COOKIE_NAME);
+  if (csrfToken && !headers.has(CSRF_HEADER_NAME)) {
+    headers.set(CSRF_HEADER_NAME, csrfToken);
+  }
+  return baseApiFetch<T>(path, { ...options, headers });
+}
+
 function readStoredFunnelId(): string {
   return readStoredValue(DASHBOARD_FUNNEL_STORAGE_KEY) || "contadores";
 }
@@ -220,7 +265,7 @@ function readStoredCrmLeadsWidth(): number {
   return clampNumber(storedWidth, CRM_LEADS_MIN_WIDTH, CRM_LEADS_MAX_WIDTH);
 }
 
-function CtEmptyState({
+export function CtEmptyState({
   title,
   message,
   action,
@@ -259,21 +304,15 @@ function applyLeadViewFilter(params: URLSearchParams, filter: LeadViewFilterValu
 }
 
 function readStoredActiveSection(): ActiveSection {
-  const value = readStoredValue(DASHBOARD_SECTION_STORAGE_KEY);
-  if (value === "runner") {
-    return "crm";
-  }
-  if (value === "campaigns" || value === "workstation" || value === "delivery") {
-    return value;
-  }
-  return "crm";
+  return parseActiveSection(readStoredValue(DASHBOARD_SECTION_STORAGE_KEY));
 }
 
-const operations: Array<{
-  section: ActiveSection;
-  label: string;
-  icon: ReactNode;
-}> = [
+const operations: OperationNavItem[] = [
+  {
+    section: "ops",
+    label: "Ops",
+    icon: <Pulse size={15} weight="bold" />,
+  },
   {
     section: "crm",
     label: "CRM",
@@ -410,6 +449,8 @@ export function App() {
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [opsOverview, setOpsOverview] = useState<PlatformOverviewResponse | null>(null);
+  const [opsLoading, setOpsLoading] = useState(false);
   const [actionBusy, setActionBusy] = useState<string | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
   const [showConfig, setShowConfig] = useState(false);
@@ -420,8 +461,10 @@ export function App() {
   const [sendKind, setSendKind] = useState<SendKind>("custom");
   const [bulkSendKind, setBulkSendKind] = useState<BulkSendKind>("custom");
   const [bulkManualPingConfirmed, setBulkManualPingConfirmed] = useState(false);
-  const [manualText, setManualText] = useState("");
-  const [manualFiles, setManualFiles] = useState<File[]>([]);
+  const [manualDraftsByLeadId, setManualDraftsByLeadId] = useState<Record<string, ManualDraft>>({});
+  const [sendModalLeadId, setSendModalLeadId] = useState<string | null>(null);
+  const [sendModalText, setSendModalText] = useState("");
+  const [bulkManualText, setBulkManualText] = useState("");
   const [bulkTagsDraft, setBulkTagsDraft] = useState("");
   const [selectedLeadIds, setSelectedLeadIds] = useState<string[]>([]);
   const [workstationList, setWorkstationList] = useState<WorkstationClientListResponse | null>(null);
@@ -448,19 +491,32 @@ export function App() {
   const [deliveryRecipientChat, setDeliveryRecipientChat] = useState<ClientLeadRecipientChatResponse | null>(null);
   const [deliveryRecipientChatLoading, setDeliveryRecipientChatLoading] = useState(false);
   const [deliveryCopyStatus, setDeliveryCopyStatus] = useState("");
+  const [deliverySyncStatus, setDeliverySyncStatus] = useState("");
   const [campaignRefreshSignal, setCampaignRefreshSignal] = useState(0);
   const [acknowledgingDeliveryErrorIds, setAcknowledgingDeliveryErrorIds] = useState<number[]>([]);
   const [leadContextCopyStatus, setLeadContextCopyStatus] = useState("");
   const detailRequestId = useRef(0);
   const dashboardRequestId = useRef(0);
   const workstationDetailRequestId = useRef(0);
+  const workstationListRequestId = useRef(0);
   const workstationLoadingRequestId = useRef(0);
+  const selectedWorkstationClientIdRef = useRef<string | null>(null);
+  const workstationNotesDraftByClientId = useRef<Record<string, string>>({});
+  const workstationNotesSavedByClientId = useRef<Record<string, string>>({});
   const deliveryDraftSourceId = useRef<string | null>(null);
   const deliverySourcesRef = useRef<ClientLeadSource[]>([]);
+  const selectedDeliverySourceIdRef = useRef<string | null>(null);
+  const deliveryLeadsRequestId = useRef(0);
+  const deliveryRecipientChatRequestId = useRef(0);
   const previousFunnelIdRef = useRef(selectedFunnelId);
   const crmWorkspaceRef = useRef<HTMLDivElement | null>(null);
   const debouncedQuery = useDebouncedValue(query, 250);
   const debouncedWorkstationQuery = useDebouncedValue(workstationQuery, 250);
+
+  const workstationNotesDirty = Boolean(
+    selectedWorkstationClientId
+    && workstationNotesDraft !== (workstationNotesSavedByClientId.current[selectedWorkstationClientId] ?? ""),
+  );
 
   const metrics = leadList?.metrics;
   const tagOptions = leadList?.tag_options ?? [];
@@ -474,6 +530,7 @@ export function App() {
   const isContadoresFunnel = true;
   const isInboxFunnel = selectedFunnel?.kind === "inbox";
   const canEditLegacyRuntimeConfig = selectedFunnel?.id === "contadores";
+  const opsBlockerCount = opsOverview?.counts.active_blockers ?? 0;
 
   const selectedLead = useMemo(() => {
     if (detail?.lead.id === selectedLeadId) {
@@ -494,6 +551,13 @@ export function App() {
   );
   const selectedVisibleLeadIds = useMemo(() => selectedVisibleLeads.map((lead) => lead.id), [selectedVisibleLeads]);
   const selectedLeadCustomBlockReason = customMessageBlockReason(selectedLead);
+  const selectedManualDraft = selectedLeadId ? manualDraftsByLeadId[selectedLeadId] ?? emptyManualDraft : emptyManualDraft;
+  const sendModalLead = sendModalLeadId
+    ? (sendModalLeadId === selectedLead?.id ? selectedLead : leadList?.leads.find((lead) => lead.id === sendModalLeadId) ?? null)
+    : selectedLead;
+  const sendModalCustomBlockReason = sendModalLeadId === selectedLeadId
+    ? selectedLeadCustomBlockReason
+    : customMessageBlockReason(sendModalLead);
   const bulkCustomBlockedCount = selectedVisibleLeads.filter((lead) => customMessageBlockReason(lead)).length;
   const bulkClosedCount = selectedVisibleLeads.filter(isLeadClosed).length;
   const bulkConvertedCount = selectedVisibleLeads.filter(isLeadConverted).length;
@@ -505,6 +569,7 @@ export function App() {
   const selectedDeliverySource = deliveryEditorMode === "edit"
     ? deliverySources.find((source) => source.id === selectedDeliverySourceId) ?? null
     : null;
+  const deliverySourceDraftDirty = isDeliverySourceDraftDirty(deliverySourceDraft, selectedDeliverySource, deliveryEditorMode);
   const deliveryContactGroups = useMemo(() => buildDeliveryContactGroups(deliverySources), [deliverySources]);
   const deliveryLeadTotal = deliverySources.reduce((total, source) => total + deliverySourceCount(source, "total"), 0);
   const deliverySourceIssueCount = deliveryContactGroups.reduce((total, group) => total + group.issues, 0);
@@ -578,7 +643,43 @@ export function App() {
     });
   }, [debouncedQuery, selectedFunnelId, leadViewFilter, strategyFilter.step, strategyFilter.strategyId, tagFilter]);
 
+  const loadOpsOverview = useCallback(async () => {
+    setOpsLoading(true);
+    try {
+      const payload = await apiFetch<PlatformOverviewResponse>("/api/platform/overview");
+      setOpsOverview(payload);
+    } finally {
+      setOpsLoading(false);
+    }
+  }, []);
+
+  const syncWorkstationNotesFromServer = useCallback((clientId: string, notes: string, forceDraft = false) => {
+    const previousSaved = workstationNotesSavedByClientId.current[clientId] ?? "";
+    const previousDraft = workstationNotesDraftByClientId.current[clientId] ?? previousSaved;
+    const dirty = previousDraft !== previousSaved;
+    const nextDraft = forceDraft || !dirty ? notes : previousDraft;
+    workstationNotesSavedByClientId.current = { ...workstationNotesSavedByClientId.current, [clientId]: notes };
+    workstationNotesDraftByClientId.current = { ...workstationNotesDraftByClientId.current, [clientId]: nextDraft };
+    if (selectedWorkstationClientIdRef.current === clientId) {
+      setWorkstationNotesDraft(nextDraft);
+    }
+  }, []);
+
+  const updateSelectedWorkstationNotesDraft = useCallback((notes: string) => {
+    const clientId = selectedWorkstationClientIdRef.current;
+    if (clientId) {
+      workstationNotesDraftByClientId.current = { ...workstationNotesDraftByClientId.current, [clientId]: notes };
+    }
+    setWorkstationNotesDraft(notes);
+  }, []);
+
+  function cachedWorkstationNotesDraft(clientId: string): string {
+    return workstationNotesDraftByClientId.current[clientId] ?? workstationNotesSavedByClientId.current[clientId] ?? "";
+  }
+
   const loadWorkstation = useCallback(async () => {
+    const requestId = workstationListRequestId.current + 1;
+    workstationListRequestId.current = requestId;
     const params = new URLSearchParams({ limit: "500" });
     if (selectedFunnelId) {
       params.set("funnel_id", selectedFunnelId);
@@ -590,6 +691,9 @@ export function App() {
     setWorkstationListLoading(true);
     try {
       const payload = await apiFetch<WorkstationClientListResponse>(`/api/workstation/clients?${params.toString()}`);
+      if (workstationListRequestId.current !== requestId) {
+        return;
+      }
       setWorkstationList(payload);
       setSelectedWorkstationClientId((current) => {
         if (current && payload.clients.some((client) => client.id === current)) {
@@ -598,22 +702,28 @@ export function App() {
         return payload.clients[0]?.id ?? null;
       });
     } finally {
-      setWorkstationListLoading(false);
+      if (workstationListRequestId.current === requestId) {
+        setWorkstationListLoading(false);
+      }
     }
   }, [debouncedWorkstationQuery, selectedFunnelId]);
 
   const loadDeliverySources = useCallback(async () => {
     const payload = await apiFetch<ClientLeadSourceListResponse | ClientLeadSource[]>("/api/client-lead-sources");
     const sources = unpackClientLeadSources(payload).slice().sort(compareDeliverySources);
+    deliverySourcesRef.current = sources;
     setDeliverySources(sources);
     setSelectedDeliverySourceId((current) => {
+      let nextSelected: string | null;
       if (deliveryEditorMode === "create") {
-        return current;
+        nextSelected = current;
+      } else if (current && sources.some((source) => source.id === current)) {
+        nextSelected = current;
+      } else {
+        nextSelected = sources[0]?.id ?? null;
       }
-      if (current && sources.some((source) => source.id === current)) {
-        return current;
-      }
-      return sources[0]?.id ?? null;
+      selectedDeliverySourceIdRef.current = nextSelected;
+      return nextSelected;
     });
     return sources;
   }, [deliveryEditorMode]);
@@ -626,19 +736,34 @@ export function App() {
   }, []);
 
   const loadDeliveryLeadsForSources = useCallback(async (sourceIds: string[]) => {
+    const requestId = deliveryLeadsRequestId.current + 1;
+    deliveryLeadsRequestId.current = requestId;
+    const sourceKey = sourceIds.join("|");
     if (!sourceIds.length) {
-      setDeliveryLeads([]);
+      if (shouldApplyLatestRequest(requestId, deliveryLeadsRequestId.current)) {
+        setDeliveryLeads([]);
+      }
       return;
     }
     const batches = await Promise.all(sourceIds.map((sourceId) => fetchDeliveryLeads(sourceId)));
-    setDeliveryLeads(batches.flat().sort(compareClientLeads));
+    const currentSourceId = selectedDeliverySourceIdRef.current;
+    const currentSourceKey = currentSourceId
+      ? deliveryContactSourceIdsFor(deliverySourcesRef.current, currentSourceId).join("|")
+      : "";
+    if (shouldApplyLatestRequest(requestId, deliveryLeadsRequestId.current) && currentSourceKey === sourceKey) {
+      setDeliveryLeads(batches.flat().sort(compareClientLeads));
+    }
   }, [fetchDeliveryLeads]);
 
   const loadDeliveryRecipientChat = useCallback(async (sourceId: string) => {
+    const requestId = deliveryRecipientChatRequestId.current + 1;
+    deliveryRecipientChatRequestId.current = requestId;
     const payload = await apiFetch<ClientLeadRecipientChatResponse>(
       `/api/client-lead-sources/${encodeURIComponent(sourceId)}/recipient-chat`,
     );
-    setDeliveryRecipientChat(payload);
+    if (deliveryRecipientChatRequestId.current === requestId && selectedDeliverySourceIdRef.current === sourceId) {
+      setDeliveryRecipientChat(payload);
+    }
   }, []);
 
   const loadDetail = useCallback(async (leadId: string) => {
@@ -673,7 +798,7 @@ export function App() {
       if (workstationDetailRequestId.current === requestId) {
         setWorkstationDetail(payload);
         if (syncNotes) {
-          setWorkstationNotesDraft(payload.notes ?? "");
+          syncWorkstationNotesFromServer(clientId, payload.notes ?? "");
         }
         return payload;
       }
@@ -683,7 +808,7 @@ export function App() {
         setWorkstationLoading(false);
       }
     }
-  }, []);
+  }, [syncWorkstationNotesFromServer]);
 
   useEffect(() => {
     writeStoredValue(DASHBOARD_FUNNEL_STORAGE_KEY, selectedFunnelId);
@@ -706,6 +831,14 @@ export function App() {
   useEffect(() => {
     deliverySourcesRef.current = deliverySources;
   }, [deliverySources]);
+
+  useEffect(() => {
+    selectedDeliverySourceIdRef.current = selectedDeliverySourceId;
+  }, [selectedDeliverySourceId]);
+
+  useEffect(() => {
+    selectedWorkstationClientIdRef.current = selectedWorkstationClientId;
+  }, [selectedWorkstationClientId]);
 
   useEffect(() => {
     writeStoredValue(DASHBOARD_LEAD_VIEW_FILTER_STORAGE_KEY, leadViewFilter);
@@ -754,6 +887,9 @@ export function App() {
     const timer = window.setInterval(() => {
       if (document.visibilityState === "visible") {
         const loaders: Array<Promise<unknown>> = [loadDashboard()];
+        if (activeSection === "ops") {
+          loaders.push(loadOpsOverview());
+        }
         if (activeSection === "delivery") {
           loaders.push(loadDeliverySources());
           if (selectedDeliverySourceId) {
@@ -768,7 +904,16 @@ export function App() {
       }
     }, REFRESH_MS);
     return () => window.clearInterval(timer);
-  }, [activeSection, loadDashboard, loadDeliveryLeadsForSources, loadDeliveryRecipientChat, loadDeliverySources, selectedDeliverySourceId]);
+  }, [activeSection, loadDashboard, loadDeliveryLeadsForSources, loadDeliveryRecipientChat, loadDeliverySources, loadOpsOverview, selectedDeliverySourceId]);
+
+  useEffect(() => {
+    if (activeSection !== "ops") {
+      return;
+    }
+    loadOpsOverview().catch((reason) => {
+      setError(reason instanceof Error ? reason.message : "Could not load Ops overview.");
+    });
+  }, [activeSection, loadOpsOverview]);
 
   useEffect(() => {
     if (!selectedLeadId || !isContadoresFunnel) {
@@ -816,6 +961,8 @@ export function App() {
   useEffect(() => {
     if (deliveryEditorMode === "create") {
       deliveryDraftSourceId.current = null;
+      deliveryLeadsRequestId.current += 1;
+      deliveryRecipientChatRequestId.current += 1;
       setDeliveryLeads([]);
       setDeliveryRecipientChat(null);
       return;
@@ -824,6 +971,8 @@ export function App() {
     const source = deliverySources.find((item) => item.id === selectedDeliverySourceId) ?? null;
     if (!source) {
       deliveryDraftSourceId.current = null;
+      deliveryLeadsRequestId.current += 1;
+      deliveryRecipientChatRequestId.current += 1;
       setDeliverySourceDraft(buildBlankClientLeadSourceDraft());
       setDeliveryLeads([]);
       setDeliveryRecipientChat(null);
@@ -834,6 +983,8 @@ export function App() {
       deliveryDraftSourceId.current = source.id;
       setDeliverySourceDraft(clientLeadSourceToDraft(source));
       setDeliveryCopyStatus("");
+      setDeliveryLeads([]);
+      setDeliveryRecipientChat(null);
     }
     if (activeSection !== "delivery") {
       return;
@@ -869,6 +1020,8 @@ export function App() {
       setWorkstationNotesDraft("");
       return;
     }
+    selectedWorkstationClientIdRef.current = selectedWorkstationClientId;
+    setWorkstationNotesDraft(cachedWorkstationNotesDraft(selectedWorkstationClientId));
     loadWorkstationDetail(selectedWorkstationClientId).catch((reason) => {
       setError(reason instanceof Error ? reason.message : "Could not load the Workstation client.");
     });
@@ -904,61 +1057,6 @@ export function App() {
   }, [activeSection, loadWorkstation, loadWorkstationDetail, selectedWorkstationClientId]);
 
   useEffect(() => {
-    if (activeSection !== "delivery" || deliveryEditorMode !== "edit" || !selectedDeliverySourceId) {
-      return;
-    }
-
-    let cancelled = false;
-    let inFlight = false;
-
-    const autoSyncDelivery = async () => {
-      if (document.visibilityState !== "visible" || inFlight) {
-        return;
-      }
-
-      const sourceIds = deliveryContactSourceIdsFor(deliverySourcesRef.current, selectedDeliverySourceId);
-      if (!sourceIds.length) {
-        return;
-      }
-      inFlight = true;
-      try {
-        const syncResults = await Promise.allSettled(
-          sourceIds.map((sourceId) => apiFetch(`/api/client-lead-sources/${encodeURIComponent(sourceId)}/sync`, { method: "POST" })),
-        );
-        if (cancelled) {
-          return;
-        }
-        await Promise.all([
-          loadDeliverySources(),
-          loadDeliveryLeadsForSources(sourceIds),
-          loadDeliveryRecipientChat(selectedDeliverySourceId),
-        ]);
-        if (syncResults.every((result) => result.status === "rejected")) {
-          const reason = syncResults[0]?.reason;
-          setError(reason instanceof Error ? reason.message : "Could not auto-refresh Delivery.");
-        }
-      } catch (reason) {
-        if (!cancelled) {
-          setError(reason instanceof Error ? reason.message : "Could not auto-refresh Delivery.");
-        }
-      } finally {
-        inFlight = false;
-      }
-    };
-
-    const timer = window.setInterval(() => {
-      autoSyncDelivery();
-    }, DELIVERY_AUTO_SYNC_MS);
-
-    autoSyncDelivery();
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [activeSection, deliveryEditorMode, loadDeliveryLeadsForSources, loadDeliveryRecipientChat, loadDeliverySources, selectedDeliverySourceId]);
-
-  useEffect(() => {
     if (!professionalPhotoJob || !["queued", "running"].includes(professionalPhotoJob.status)) {
       return;
     }
@@ -975,7 +1073,9 @@ export function App() {
         setProfessionalPhotoJob(payload);
         if (payload.status === "completed") {
           await loadWorkstation();
-          await loadWorkstationDetail(payload.client_id);
+          if (selectedWorkstationClientIdRef.current === payload.client_id) {
+            await loadWorkstationDetail(payload.client_id);
+          }
         } else if (payload.status === "failed") {
           setError(payload.error || "Could not create professional photo.");
         }
@@ -1014,6 +1114,9 @@ export function App() {
           await loadDeliveryRecipientChat(selectedDeliverySourceId);
         }
       }
+      if (activeSection === "ops") {
+        await loadOpsOverview();
+      }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not refresh funnels.");
     } finally {
@@ -1023,6 +1126,43 @@ export function App() {
 
   function refreshCampaigns() {
     setCampaignRefreshSignal((current) => current + 1);
+  }
+
+  function updateManualDraft(leadId: string, patch: Partial<ManualDraft>) {
+    setManualDraftsByLeadId((current) => {
+      const currentDraft = current[leadId] ?? emptyManualDraft;
+      const nextDraft = {
+        text: patch.text ?? currentDraft.text,
+        files: patch.files ?? currentDraft.files,
+      };
+      const nextDraftHasContent = Boolean(nextDraft.text.trim() || nextDraft.files.length);
+      if (!nextDraftHasContent) {
+        const remaining = { ...current };
+        delete remaining[leadId];
+        return remaining;
+      }
+      return { ...current, [leadId]: nextDraft };
+    });
+  }
+
+  function clearManualDraft(leadId: string) {
+    setManualDraftsByLeadId((current) => {
+      const remaining = { ...current };
+      delete remaining[leadId];
+      return remaining;
+    });
+  }
+
+  function setSelectedManualText(text: string) {
+    if (selectedLeadId) {
+      updateManualDraft(selectedLeadId, { text });
+    }
+  }
+
+  function setSelectedManualFiles(files: File[]) {
+    if (selectedLeadId) {
+      updateManualDraft(selectedLeadId, { files });
+    }
   }
 
   async function copySelectedLeadContext() {
@@ -1049,15 +1189,88 @@ export function App() {
     }
   }
 
+  function guardDeliverySourceDraft(action: () => void) {
+    if (!deliverySourceDraftDirty) {
+      action();
+      return;
+    }
+    const label = selectedDeliverySource?.label || deliverySourceDraft.label || "this Delivery source";
+    setConfirmDialog({
+      id: `delivery-source-discard:${Date.now()}`,
+      tone: "warn",
+      title: "Discard Delivery edits?",
+      message: `Discard unsaved changes to ${label}? Sheet URL, recipient, template, and mapping edits will be lost.`,
+      confirmLabel: "Discard edits",
+      busyLabel: "Discarding...",
+      busyKey: "delivery-discard",
+      onConfirm: action,
+    });
+  }
+
+  function selectDeliverySource(sourceId: string) {
+    selectedDeliverySourceIdRef.current = sourceId;
+    setDeliverySourceEditorError("");
+    setDeliverySyncStatus("");
+    setDeliveryEditorMode("edit");
+    setSelectedDeliverySourceId(sourceId);
+  }
+
   function startNewDeliverySource() {
+    selectedDeliverySourceIdRef.current = null;
     setDeliveryEditorMode("create");
     setSelectedDeliverySourceId(null);
     deliveryDraftSourceId.current = null;
     setDeliveryLeads([]);
     setDeliveryRecipientChat(null);
     setDeliveryCopyStatus("");
+    setDeliverySyncStatus("");
     setDeliverySourceEditorError("");
     setDeliverySourceDraft(buildBlankClientLeadSourceDraft());
+  }
+
+  async function syncSelectedDeliverySources() {
+    if (!selectedDeliverySourceId || actionBusy) {
+      return;
+    }
+    const sourceIds = deliveryContactSourceIdsFor(deliverySourcesRef.current, selectedDeliverySourceId);
+    if (!sourceIds.length) {
+      return;
+    }
+
+    setActionBusy("delivery-sync");
+    setDeliverySyncStatus(`Syncing ${sourceIds.length} ${sourceIds.length === 1 ? "sheet" : "sheets"}...`);
+    try {
+      const results = await Promise.allSettled(
+        sourceIds.map((sourceId) => apiFetch<{ imported?: number; updated?: number; queued?: number }>(
+          `/api/client-lead-sources/${encodeURIComponent(sourceId)}/sync`,
+          { method: "POST" },
+        )),
+      );
+      const updatedSources = await loadDeliverySources();
+      const updatedSourceIds = deliveryContactSourceIdsFor(updatedSources, selectedDeliverySourceId);
+      await Promise.all([
+        loadDeliveryLeadsForSources(updatedSourceIds),
+        loadDeliveryRecipientChat(selectedDeliverySourceId),
+      ]);
+      const failures = results.filter((result) => result.status === "rejected");
+      const imported = results.reduce((total, result) => total + (result.status === "fulfilled" ? result.value.imported ?? 0 : 0), 0);
+      const updated = results.reduce((total, result) => total + (result.status === "fulfilled" ? result.value.updated ?? 0 : 0), 0);
+      const queued = results.reduce((total, result) => total + (result.status === "fulfilled" ? result.value.queued ?? 0 : 0), 0);
+      if (failures.length) {
+        const reason = failures[0].reason;
+        const message = reason instanceof Error ? reason.message : "Could not sync Delivery.";
+        setDeliverySyncStatus(`${results.length - failures.length}/${results.length} synced. ${message}`);
+        setError(message);
+      } else {
+        setDeliverySyncStatus(`Synced ${sourceIds.length} ${sourceIds.length === 1 ? "sheet" : "sheets"} · ${imported} new · ${updated} updated · ${queued} queued`);
+      }
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : "Could not sync Delivery.";
+      setDeliverySyncStatus(message);
+      setError(message);
+    } finally {
+      setActionBusy(null);
+    }
   }
 
   async function saveDeliverySource(event: FormEvent<HTMLFormElement>) {
@@ -1072,23 +1285,28 @@ export function App() {
     setActionBusy("delivery-save");
     try {
       const payload = clientLeadSourcePayloadFromDraft(deliverySourceDraft);
-      const existingSource = deliverySources.find((source) => source.id === payload.id);
-      const method = existingSource && deliveryEditorMode === "edit" ? "PUT" : "POST";
+      const editSourceId = deliveryEditorMode === "edit"
+        ? deliveryDraftSourceId.current ?? selectedDeliverySourceId ?? selectedDeliverySource?.id ?? null
+        : null;
+      const saveSourceId = editSourceId ?? payload.id;
+      const method = editSourceId ? "PUT" : "POST";
       const path = method === "PUT"
-        ? `/api/client-lead-sources/${encodeURIComponent(existingSource?.id ?? payload.id)}`
+        ? `/api/client-lead-sources/${encodeURIComponent(saveSourceId)}`
         : "/api/client-lead-sources";
       const saved = await apiFetch<ClientLeadSource>(path, {
         method,
-        body: JSON.stringify(payload),
+        body: JSON.stringify(editSourceId ? { ...payload, id: saveSourceId } : payload),
       });
       setDeliveryEditorMode("edit");
-      setSelectedDeliverySourceId(saved.id || payload.id);
-      deliveryDraftSourceId.current = saved.id || payload.id;
+      const savedSourceId = saved.id || editSourceId || payload.id;
+      selectedDeliverySourceIdRef.current = savedSourceId;
+      setSelectedDeliverySourceId(savedSourceId);
+      deliveryDraftSourceId.current = savedSourceId;
       setDeliverySourceDraft(clientLeadSourceToDraft(saved));
       const updatedSources = await loadDeliverySources();
-      const sourceIds = deliveryContactSourceIdsFor(updatedSources, saved.id || payload.id);
+      const sourceIds = deliveryContactSourceIdsFor(updatedSources, savedSourceId);
       await loadDeliveryLeadsForSources(sourceIds);
-      await loadDeliveryRecipientChat(saved.id || payload.id);
+      await loadDeliveryRecipientChat(savedSourceId);
     } catch (reason) {
       setDeliverySourceEditorError(reason instanceof Error ? reason.message : "Could not save Delivery source.");
     } finally {
@@ -1131,6 +1349,7 @@ export function App() {
         setActionBusy("delivery-delete");
         try {
           await apiFetch(`/api/client-lead-sources/${encodeURIComponent(sourceId)}`, { method: "DELETE" });
+          selectedDeliverySourceIdRef.current = null;
           setSelectedDeliverySourceId(null);
           deliveryDraftSourceId.current = null;
           setDeliveryLeads([]);
@@ -1202,7 +1421,8 @@ export function App() {
         method: "POST",
       });
       setWorkstationDetail(payload);
-      setWorkstationNotesDraft(payload.notes ?? "");
+      selectedWorkstationClientIdRef.current = payload.client.id;
+      syncWorkstationNotesFromServer(payload.client.id, payload.notes ?? "", true);
       setSelectedWorkstationClientId(payload.client.id);
       setActiveSection("workstation");
       await loadDashboard();
@@ -1232,7 +1452,8 @@ export function App() {
         { method: "POST" },
       );
       setWorkstationDetail(payload);
-      setWorkstationNotesDraft(payload.notes ?? "");
+      selectedWorkstationClientIdRef.current = payload.client.id;
+      syncWorkstationNotesFromServer(payload.client.id, payload.notes ?? "", true);
       setSelectedWorkstationClientId(payload.client.id);
       setActiveSection("workstation");
       await loadDashboard();
@@ -1246,9 +1467,10 @@ export function App() {
   }
 
   async function openWorkstationClient(clientId: string) {
+    selectedWorkstationClientIdRef.current = clientId;
     setSelectedWorkstationClientId(clientId);
     setWorkstationDetail((current) => current?.client.id === clientId ? current : null);
-    setWorkstationNotesDraft("");
+    setWorkstationNotesDraft(cachedWorkstationNotesDraft(clientId));
     setActiveSection("workstation");
     setProfessionalPhotoMediaIds([]);
     setProfessionalPhotoContext("");
@@ -1294,7 +1516,7 @@ export function App() {
         body: JSON.stringify({ notes: workstationNotesDraft }),
       });
       setWorkstationDetail(payload);
-      setWorkstationNotesDraft(payload.notes ?? "");
+      syncWorkstationNotesFromServer(clientId, payload.notes ?? "", true);
       await loadWorkstation();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not save notes.");
@@ -1465,24 +1687,36 @@ export function App() {
     }
   }
 
-  async function stopSoloPageCodexWork() {
+  function stopSoloPageCodexWork() {
     const clientId = workstationDetail?.client.id ?? selectedWorkstationClientId;
+    const clientName = workstationDetail?.client.display_name || "this client";
     if (!clientId) {
       return;
     }
-    setActionBusy("solo-page-stop");
-    try {
-      const payload = await apiFetch<WorkstationClientDetailResponse>(
-        `/api/workstation/clients/${clientId}/solo-page/stop`,
-        { method: "POST" },
-      );
-      setWorkstationDetail(payload);
-      await loadWorkstation();
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not stop Codex for this page.");
-    } finally {
-      setActionBusy(null);
-    }
+    setConfirmDialog({
+      id: `solo-page-stop-${clientId}`,
+      tone: "warn",
+      title: "Stop live Codex run?",
+      message: `${clientName}: stop the active live Codex run for this Workstation client.`,
+      confirmLabel: "Stop Codex",
+      busyLabel: "Stopping...",
+      busyKey: "solo-page-stop",
+      onConfirm: async () => {
+        setActionBusy("solo-page-stop");
+        try {
+          const payload = await apiFetch<WorkstationClientDetailResponse>(
+            `/api/workstation/clients/${clientId}/solo-page/stop`,
+            { method: "POST" },
+          );
+          setWorkstationDetail(payload);
+          await loadWorkstation();
+        } catch (reason) {
+          setError(reason instanceof Error ? reason.message : "Could not stop Codex for this page.");
+        } finally {
+          setActionBusy(null);
+        }
+      },
+    });
   }
 
   async function steerSoloPageCodexWork(message: string) {
@@ -1534,7 +1768,7 @@ export function App() {
             { method: "POST" },
           );
           setWorkstationDetail(payload);
-          setWorkstationNotesDraft(payload.notes ?? "");
+          syncWorkstationNotesFromServer(clientId, payload.notes ?? "", true);
           await Promise.all([loadWorkstation(), loadDashboard()]);
         } catch (reason) {
           setError(reason instanceof Error ? reason.message : "Could not close Workstation lead.");
@@ -1610,9 +1844,56 @@ export function App() {
     }
   }
 
+  function requestQuickAction(action: QuickActionName) {
+    const leadName = selectedLead?.full_name || selectedLead?.phone || "this chat";
+    const confirmations: Partial<Record<QuickActionName, { title: string; message: string; label: string; tone?: ConfirmDialogTone }>> = {
+      "mark-converted": {
+        title: "Mark lead converted?",
+        message: `${leadName} will move into a converted state and CRM follow-up will stop.`,
+        label: "Mark converted",
+      },
+      "pause-automation": {
+        title: "Pause automation?",
+        message: `${leadName} will stop receiving automatic CRM follow-up until an operator resumes or routes it.`,
+        label: "Pause automation",
+      },
+      "manual-handoff": {
+        title: "Send to operator review?",
+        message: `${leadName} will be held for manual review instead of continuing the automatic sequence.`,
+        label: "Send to review",
+      },
+      close: {
+        title: "Close lead?",
+        message: `${leadName} will leave the active CRM queue and automation will stop for this lead.`,
+        label: "Close lead",
+        tone: "danger",
+      },
+      reopen: {
+        title: "Reopen lead?",
+        message: `${leadName} will return to the active CRM queue. Review automation before sending anything new.`,
+        label: "Reopen lead",
+      },
+    };
+    const confirmation = confirmations[action];
+    if (!confirmation) {
+      void runAction(action);
+      return;
+    }
+    setConfirmDialog({
+      id: `quick-action-${action}-${selectedLead?.id ?? selectedLeadId ?? Date.now()}`,
+      tone: confirmation.tone ?? "warn",
+      title: confirmation.title,
+      message: confirmation.message,
+      confirmLabel: confirmation.label,
+      busyLabel: "Saving...",
+      busyKey: action,
+      onConfirm: () => runAction(action),
+    });
+  }
+
   async function submitSendModal(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const leadId = selectedLead?.id ?? selectedLeadId;
+    const leadId = sendModalLeadId ?? selectedLead?.id ?? selectedLeadId;
     if (!leadId) {
       setError("Select a chat before sending a message.");
       return;
@@ -1620,18 +1901,18 @@ export function App() {
 
     setActionBusy("send-modal");
     try {
-      if (isLeadClosed(selectedLead)) {
+      if (isLeadClosed(sendModalLead)) {
         setError("This lead is closed. Reopen it before sending WhatsApp messages.");
         return;
       }
       if (sendKind === "custom") {
-        const text = manualText.trim();
+        const text = sendModalText.trim();
         if (!text) {
           setError("Write a message before sending.");
           return;
         }
-        if (selectedLeadCustomBlockReason) {
-          setError(selectedLeadCustomBlockReason);
+        if (sendModalCustomBlockReason) {
+          setError(sendModalCustomBlockReason);
           return;
         }
         await queueCustomManualMessage(leadId, text);
@@ -1641,6 +1922,10 @@ export function App() {
         });
       }
       setShowSendModal(false);
+      setSendModalLeadId(null);
+      if (sendKind === "custom") {
+        setSendModalText("");
+      }
       await loadDashboard();
       await loadDetail(leadId);
     } catch (reason) {
@@ -1688,7 +1973,7 @@ export function App() {
           lead_ids: leadIds,
           action: bulkSendKind,
           manual_ping_confirmed: bulkSendKind === "send-manual-ping" ? bulkManualPingConfirmed : false,
-          text: bulkSendKind === "custom" ? manualText.trim() : null,
+          text: bulkSendKind === "custom" ? bulkManualText.trim() : null,
           tags: bulkSendKind === "set-tags"
             ? bulkTagsDraft.split(",").map((tag) => tag.trim()).filter(Boolean)
             : [],
@@ -1700,7 +1985,7 @@ export function App() {
       setShowBulkSendModal(false);
       setSelectedLeadIds([]);
       if (bulkSendKind === "custom") {
-        setManualText("");
+        setBulkManualText("");
       }
       if (bulkSendKind === "set-tags") {
         setBulkTagsDraft("");
@@ -1719,8 +2004,9 @@ export function App() {
   async function submitManualDock(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const leadId = selectedLead?.id ?? selectedLeadId;
-    const text = manualText.trim();
-    if (!leadId || (!text && !manualFiles.length)) {
+    const draft = leadId ? manualDraftsByLeadId[leadId] ?? emptyManualDraft : emptyManualDraft;
+    const text = draft.text.trim();
+    if (!leadId || (!text && !draft.files.length)) {
       return;
     }
     if (selectedLeadCustomBlockReason) {
@@ -1730,7 +2016,8 @@ export function App() {
 
     setActionBusy("manual-dock");
     try {
-      await queueCustomManualMessage(leadId, text, manualFiles);
+      await queueCustomManualMessage(leadId, text, draft.files);
+      clearManualDraft(leadId);
       await loadDashboard();
       await loadDetail(leadId);
     } catch (reason) {
@@ -1755,8 +2042,6 @@ export function App() {
         body: JSON.stringify({ text }),
       });
     }
-    setManualText("");
-    setManualFiles([]);
   }
 
   async function acknowledgeDeliveryError(message: MessageItem) {
@@ -1979,9 +2264,13 @@ export function App() {
         ? "Deliver"
         : activeSection === "campaigns"
           ? "Ads"
-        : "CRM";
+        : activeSection === "ops"
+          ? "Ops"
+          : "CRM";
   const syncStatus = activeSection === "workstation"
     ? `${workstationClients.length} converted ${workstationClients.length === 1 ? "client" : "clients"}`
+    : activeSection === "ops"
+    ? `${compactNumber(opsBlockerCount)} active ${opsBlockerCount === 1 ? "blocker" : "blockers"}`
     : activeSection === "campaigns"
     ? "Owned forms"
     : activeSection === "delivery"
@@ -1993,6 +2282,8 @@ export function App() {
       : "Sync idle";
   const syncBadgeIsOk = activeSection === "delivery"
     ? deliverySourceIssueCount === 0
+    : activeSection === "ops"
+      ? opsBlockerCount === 0
     : activeSection === "campaigns"
         ? true
         : config?.last_sheet_sync_status === "ok";
@@ -2015,6 +2306,8 @@ export function App() {
             const isActive = activeSection === operation.section;
             const badge = operation.section === "crm" && showGlobalCrmAttentionBadge
               ? totalManualAttentionCount
+              : operation.section === "ops" && opsBlockerCount
+                ? opsBlockerCount
               : 0;
 
             return (
@@ -2112,7 +2405,7 @@ export function App() {
             title={activeSection === "campaigns" ? "Refresh Ads" : "Refresh"}
             aria-label={activeSection === "campaigns" ? "Refresh Ads" : "Refresh"}
             onClick={activeSection === "campaigns" ? refreshCampaigns : refreshAll}
-            disabled={loading || deliveryLoading}
+            disabled={loading || deliveryLoading || opsLoading}
           >
             <ArrowsClockwise size={15} weight="bold" />
             <span className="ct-toolbar-label">Refresh</span>
@@ -2134,7 +2427,27 @@ export function App() {
           </div>
         ) : null}
 
-        {activeSection === "campaigns" ? (
+        {activeSection === "ops" ? (
+          <OpsView
+            overview={opsOverview}
+            loading={opsLoading}
+            onRefresh={() => {
+              loadOpsOverview().catch((reason) => {
+                setError(reason instanceof Error ? reason.message : "Could not load Ops overview.");
+              });
+            }}
+            onOpenCrmLead={(leadId) => {
+              setSelectedLeadId(leadId);
+              setActiveSection("crm");
+            }}
+            onOpenCampaigns={() => setActiveSection("campaigns")}
+            onOpenWorkstation={(clientId) => {
+              selectedWorkstationClientIdRef.current = clientId;
+              setSelectedWorkstationClientId(clientId);
+              setActiveSection("workstation");
+            }}
+          />
+        ) : activeSection === "campaigns" ? (
         <CampaignsPanel refreshSignal={campaignRefreshSignal} onError={(message) => setError(message)} />
         ) : activeSection === "workstation" ? (
         <WorkstationView
@@ -2146,6 +2459,7 @@ export function App() {
           loading={workstationLoading}
           actionBusy={actionBusy}
           notesDraft={workstationNotesDraft}
+          notesDirty={workstationNotesDirty}
           fileTitle={workstationFileTitle}
           file={workstationFile}
           selectedProfessionalPhotoMediaIds={professionalPhotoMediaIds}
@@ -2154,16 +2468,17 @@ export function App() {
           professionalPhotoJob={professionalPhotoJob}
           onSelectClient={(clientId) => {
             const switchingClient = selectedWorkstationClientId !== clientId;
+            selectedWorkstationClientIdRef.current = clientId;
             setSelectedWorkstationClientId(clientId);
             if (switchingClient) {
               setWorkstationDetail(null);
-              setWorkstationNotesDraft("");
+              setWorkstationNotesDraft(cachedWorkstationNotesDraft(clientId));
             }
             setProfessionalPhotoMediaIds([]);
             setProfessionalPhotoContext("");
             setProfessionalPhotoEditPrompts({});
           }}
-          onNotesChange={setWorkstationNotesDraft}
+          onNotesChange={updateSelectedWorkstationNotesDraft}
           onSaveNotes={saveWorkstationNotes}
           onCopyNotes={() => copyWorkstationNotes().catch((reason) => setError(reason instanceof Error ? reason.message : "Could not copy notes."))}
           onCopyAll={() => copyWorkstationAll().catch((reason) => setError(reason instanceof Error ? reason.message : "Could not copy client context."))}
@@ -2206,12 +2521,11 @@ export function App() {
             recipientChatLoading={deliveryRecipientChatLoading}
             actionBusy={actionBusy}
             copyStatus={deliveryCopyStatus}
+            syncStatus={deliverySyncStatus}
             sourceEditorError={deliverySourceEditorError}
-            onSelectSource={(sourceId) => {
-              setDeliverySourceEditorError("");
-              setDeliveryEditorMode("edit");
-              setSelectedDeliverySourceId(sourceId);
-            }}
+            sourceDraftDirty={deliverySourceDraftDirty}
+            onDiscardSourceDraft={guardDeliverySourceDraft}
+            onSelectSource={selectDeliverySource}
             onNewSource={startNewDeliverySource}
             onDraftChange={(nextDraft) => {
               setDeliverySourceEditorError("");
@@ -2219,6 +2533,7 @@ export function App() {
             }}
             onSaveSource={saveDeliverySource}
             onDeleteSource={deleteDeliverySource}
+            onSyncSources={syncSelectedDeliverySources}
             onCopyLead={copyClientLeadInfo}
             onCopyLeadAll={copyClientLeadAll}
             onRetryLead={retryClientLeadNotification}
@@ -2231,161 +2546,49 @@ export function App() {
           onEdit={openEditFunnel}
         />
         ) : (
-        <div className="ct-surface" data-crm-mode="crm">
-        {selectedFunnel && selectedFunnel.kind === "campaign" && selectedFunnelSetupIssues.length ? (
-          <FunnelSetupBanner
-            setupIssues={selectedFunnelSetupIssues}
-            onEdit={openEditFunnel}
-          />
-        ) : null}
-        {!isInboxFunnel ? (
-          <section className="ct-simple-head ct-crm-hero" data-mode="crm">
-            <div className="ct-simple-title">
-              <span>CRM</span>
-              <strong>{crmHeroTitle}</strong>
-              <small>{crmHeroDetail}</small>
-            </div>
-            <div className="ct-simple-metrics" aria-label={`${crmModeLabel} metrics`}>
-              {crmHeroMetrics.map((item) => (
-                <span key={item.label}>
-                  <strong>{compactNumber(item.value)}</strong>
-                  {item.label}
-                </span>
-              ))}
-            </div>
-          </section>
-        ) : null}
-        {!isInboxFunnel ? (
-          <div className="ct-queue-bar">
-            <section className="ct-lead-filter-bar" aria-labelledby="ctLeadStateLabel">
-              <div className="ct-lead-filter-head">
-                <div>
-                  <span id="ctLeadStateLabel">State</span>
-                  <strong>{activeLeadView.label}</strong>
-                </div>
-                {activeCrmFilterCount ? (
-                  <button
-                    type="button"
-                    className="ct-filter-clear"
-                    onClick={clearCrmFilters}
-                  >
-                    Clear filters
-                  </button>
-                ) : null}
-              </div>
-              <div className="ct-lead-state-strip" role="group" aria-label="Lead state filters">
-                {leadViewFilters.map((filter) => {
-                  const count = Number(metrics?.[filter.metric ?? "total"] ?? 0);
-                  const isActiveFilter = leadViewFilter === filter.value;
-
-                  return (
-                    <button
-                      key={filter.value}
-                      type="button"
-                      className={`ct-lead-view ${isActiveFilter ? "active" : ""}`}
-                      data-tone={filter.tone}
-                      aria-pressed={isActiveFilter}
-                      onClick={() => setLeadViewFilter(filter.value)}
-                    >
-                      <span className="ct-lead-view-count">{compactNumber(count)}</span>
-                      <span className="ct-lead-view-label">{filter.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </section>
-            {(strategyStats.length || tagOptions.length) ? (
-              <section className="ct-filter-board" aria-label="Lead filters">
-                {strategyStats.length ? (
-                  <div className="ct-filter-row">
-                    <span className="ct-filter-row-label">Strategies</span>
-                    <div className="ct-filter-strip" role="group" aria-label="Strategy filters">
-                      <button
-                        type="button"
-                        className={`ct-strategy-filter-btn ${!strategyFilter.step && !strategyFilter.strategyId ? "active" : ""}`}
-                        onClick={() => setStrategyFilter({ step: "", strategyId: "" })}
-                      >
-                        All strategies
-                      </button>
-                      {strategyStats.map((item) => {
-                        const active = item.step === strategyFilter.step && item.strategy_id === strategyFilter.strategyId;
-                        return (
-                          <button
-                            type="button"
-                            className={`ct-strategy-filter-btn ${active ? "active" : ""}`}
-                            key={`${item.step}:${item.strategy_id}`}
-                            onClick={() => setStrategyFilter({ step: item.step, strategyId: item.strategy_id })}
-                          >
-                            {formatStrategyLabel(item.step)}: {item.strategy_label || formatStrategyLabel(item.strategy_id)}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ) : null}
-
-                {tagOptions.length ? (
-                  <div className="ct-filter-row">
-                    <span className="ct-filter-row-label">Tags</span>
-                    <div className="ct-filter-strip" role="group" aria-label="Tag filters">
-                      <button
-                        type="button"
-                        className={`ct-strategy-filter-btn ${!tagFilter ? "active" : ""}`}
-                        onClick={() => setTagFilter("")}
-                      >
-                        All tags
-                      </button>
-                      {tagOptions.map((tag) => (
-                        <button
-                          type="button"
-                          className={`ct-strategy-filter-btn ${tagFilter === tag ? "active" : ""}`}
-                          key={tag}
-                          onClick={() => setTagFilter(tag)}
-                        >
-                          #{tag}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-              </section>
-            ) : null}
-          </div>
-        ) : null}
-
-        <div
-          className="ct-workspace ct-workspace-resizable"
-          ref={crmWorkspaceRef}
-          style={{ "--crm-leads-width": `${crmLeadsWidth}px` } as CSSProperties}
-        >
-          <aside className="ct-leads">
-            <div className="ct-leads-head">
-              <h3>{crmLeadListTitle}</h3>
-              <p className="ct-leads-summary">{visibleCount ? `${visibleCount}` : crmLeadListSummary}</p>
-            </div>
-            <div className="ct-bulk-toolbar">
-              <label className="ct-bulk-check">
-                <input
-                  type="checkbox"
-                  checked={allVisibleSelected}
-                  disabled={!visibleLeadIds.length}
-                  onChange={toggleAllVisibleLeads}
-                />
-                <span>{allVisibleSelected ? "All visible selected" : "Select visible"}</span>
-              </label>
-              <button
-                type="button"
-                className="ct-btn ct-btn-ghost"
-                disabled={!selectedVisibleCount || Boolean(actionBusy)}
-                onClick={() => {
-                  setBulkSendKind("custom");
-                  setBulkManualPingConfirmed(false);
-                  setShowBulkSendModal(true);
-                }}
-              >
-                Bulk action
-              </button>
-            </div>
+        <CrmWorkspace
+          setupBanner={selectedFunnel && selectedFunnel.kind === "campaign" && selectedFunnelSetupIssues.length ? (
+            <FunnelSetupBanner
+              setupIssues={selectedFunnelSetupIssues}
+              onEdit={openEditFunnel}
+            />
+          ) : null}
+          isInboxFunnel={isInboxFunnel}
+          crmHeroTitle={crmHeroTitle}
+          crmHeroDetail={crmHeroDetail}
+          crmModeLabel={crmModeLabel}
+          crmHeroMetrics={crmHeroMetrics}
+          activeLeadViewLabel={activeLeadView.label}
+          activeCrmFilterCount={activeCrmFilterCount}
+          onClearCrmFilters={clearCrmFilters}
+          leadViewFilters={leadViewFilters}
+          leadViewFilter={leadViewFilter}
+          onLeadViewFilterChange={setLeadViewFilter}
+          metrics={metrics ?? null}
+          strategyStats={strategyStats}
+          strategyFilter={strategyFilter}
+          onStrategyFilterChange={setStrategyFilter}
+          tagOptions={tagOptions}
+          tagFilter={tagFilter}
+          onTagFilterChange={setTagFilter}
+          formatStrategyLabel={formatStrategyLabel}
+          workspaceRef={crmWorkspaceRef}
+          crmLeadsWidth={crmLeadsWidth}
+          crmLeadListTitle={crmLeadListTitle}
+          visibleCount={visibleCount}
+          crmLeadListSummary={crmLeadListSummary}
+          allVisibleSelected={allVisibleSelected}
+          hasVisibleLeads={Boolean(visibleLeadIds.length)}
+          onToggleAllVisibleLeads={toggleAllVisibleLeads}
+          selectedVisibleCount={selectedVisibleCount}
+          actionBusy={actionBusy}
+          onOpenBulkAction={() => {
+            setBulkSendKind("custom");
+            setBulkManualText("");
+            setBulkManualPingConfirmed(false);
+            setShowBulkSendModal(true);
+          }}
+          leadList={(
             <LeadList
               leads={leadList?.leads ?? []}
               selectedLeadId={selectedLeadId}
@@ -2397,28 +2600,23 @@ export function App() {
               onSelect={setSelectedLeadId}
               onToggleSelected={toggleLeadSelection}
             />
-          </aside>
-
-          <button
-            type="button"
-            className="ct-workspace-resizer"
-            aria-label="Resize lead list"
-            onPointerDown={startCrmLeadsResize}
-          />
-
-          <section className="ct-detail">
+          )}
+          onStartResize={startCrmLeadsResize}
+          detailHeader={(
             <LeadDetailHeader
               lead={selectedLead}
               actionBusy={actionBusy}
               onOpenSend={() => {
                 setSendKind("custom");
+                setSendModalLeadId(selectedLead?.id ?? selectedLeadId);
+                setSendModalText(selectedManualDraft.text);
                 setShowSendModal(true);
               }}
-              onMarkConverted={() => runAction("mark-converted")}
-              onPauseAutomation={() => runAction("pause-automation")}
-              onManualHandoff={() => runAction("manual-handoff")}
+              onMarkConverted={() => requestQuickAction("mark-converted")}
+              onPauseAutomation={() => requestQuickAction("pause-automation")}
+              onManualHandoff={() => requestQuickAction("manual-handoff")}
               onMarkAnswered={() => runAction("mark-answered")}
-              onToggleClosed={() => runAction(isLeadClosed(selectedLead) ? "reopen" : "close")}
+              onToggleClosed={() => requestQuickAction(isLeadClosed(selectedLead) ? "reopen" : "close")}
               onDelete={deleteLead}
               onConvert={convertLeadToWorkstation}
               onStartSoloPage={startSoloPageWorkstation}
@@ -2427,44 +2625,38 @@ export function App() {
               copyStatus={leadContextCopyStatus}
               inboxMode={isInboxFunnel}
             />
-
-            {!isInboxFunnel ? (
-              <PausedBanner lead={selectedLead} />
-            ) : null}
-            {isInboxFunnel ? (
-              <CampaignRoutingPanel
-                lead={selectedLead}
-                funnels={funnels}
-                busy={actionBusy === "route-lead"}
-                onRoute={routeLeadToCampaign}
-              />
-            ) : null}
-
-            <section className="ct-message-pane">
-              <MessageTimeline
-                messages={selectedLeadDetail?.messages ?? []}
-                loading={detailLoading}
-                hasLead={Boolean(selectedLead)}
-                acknowledgingIds={acknowledgingDeliveryErrorIds}
-                onAcknowledgeDeliveryError={acknowledgeDeliveryError}
-              />
-            </section>
-
-            <details className="ct-manual-disclosure" open={Boolean(manualText.trim() || manualFiles.length)}>
-              <summary>Operator message</summary>
-              <ManualDock
-                disabled={!selectedLead || Boolean(actionBusy)}
-                blockReason={selectedLeadCustomBlockReason}
-                value={manualText}
-                files={manualFiles}
-                onChange={setManualText}
-                onFilesChange={setManualFiles}
-                onSubmit={submitManualDock}
-              />
-            </details>
-          </section>
-        </div>
-      </div>
+          )}
+          pausedBanner={!isInboxFunnel ? <PausedBanner lead={selectedLead} /> : null}
+          campaignRoutingPanel={isInboxFunnel ? (
+            <CampaignRoutingPanel
+              lead={selectedLead}
+              funnels={funnels}
+              busy={actionBusy === "route-lead"}
+              onRoute={routeLeadToCampaign}
+            />
+          ) : null}
+          messageTimeline={(
+            <MessageTimeline
+              messages={selectedLeadDetail?.messages ?? []}
+              loading={detailLoading}
+              hasLead={Boolean(selectedLead)}
+              acknowledgingIds={acknowledgingDeliveryErrorIds}
+              onAcknowledgeDeliveryError={acknowledgeDeliveryError}
+            />
+          )}
+          manualDockOpen={Boolean(selectedManualDraft.text.trim() || selectedManualDraft.files.length)}
+          manualDock={(
+            <ManualDock
+              disabled={!selectedLead || Boolean(actionBusy)}
+              blockReason={selectedLeadCustomBlockReason}
+              value={selectedManualDraft.text}
+              files={selectedManualDraft.files}
+              onChange={setSelectedManualText}
+              onFilesChange={setSelectedManualFiles}
+              onSubmit={submitManualDock}
+            />
+          )}
+        />
         )}
       </main>
 
@@ -2492,13 +2684,16 @@ export function App() {
       {showSendModal ? (
         <SendModal
           kind={sendKind}
-          text={manualText}
+          text={sendModalText}
           funnel={selectedFunnel}
-          customBlockReason={selectedLeadCustomBlockReason}
+          customBlockReason={sendModalCustomBlockReason}
           busy={actionBusy === "send-modal"}
           onKindChange={setSendKind}
-          onTextChange={setManualText}
-          onClose={() => setShowSendModal(false)}
+          onTextChange={setSendModalText}
+          onClose={() => {
+            setShowSendModal(false);
+            setSendModalLeadId(null);
+          }}
           onSubmit={submitSendModal}
         />
       ) : null}
@@ -2506,7 +2701,7 @@ export function App() {
       {showBulkSendModal ? (
         <BulkSendModal
           kind={bulkSendKind}
-          text={manualText}
+          text={bulkManualText}
           tagsText={bulkTagsDraft}
           funnel={selectedFunnel}
           selectedCount={selectedVisibleCount}
@@ -2522,7 +2717,7 @@ export function App() {
             setBulkManualPingConfirmed(false);
           }}
           onManualPingConfirmedChange={setBulkManualPingConfirmed}
-          onTextChange={setManualText}
+          onTextChange={setBulkManualText}
           onTagsTextChange={setBulkTagsDraft}
           onClose={() => setShowBulkSendModal(false)}
           onSubmit={submitBulkSendModal}
@@ -2541,4443 +2736,7 @@ export function App() {
   );
 }
 
-type CampaignClientItem = {
-  id: string;
-  display_name: string;
-  lead?: {
-    full_name?: string | null;
-    phone?: string | null;
-    email?: string | null;
-  } | null;
-};
-
-type LeadCaptureCampaignItem = {
-  id: string;
-  name: string;
-  status: string;
-  public_url: string;
-  public_slug: string;
-  client_id: string;
-  client?: CampaignClientItem | null;
-  submission_count: number;
-  daily_budget_usd: number | null;
-  location: string;
-  campaign_info: Record<string, unknown>;
-  meta_plan_graph?: MetaPlanGraph;
-  creative_brief: string;
-  form_schema: { fields?: CampaignFormField[] };
-  delivery_config?: CampaignDeliveryConfig;
-  delivery_source?: ClientLeadSource | null;
-  delivery_sources?: ClientLeadSource[];
-  meta_pixel_id: string;
-  meta_event_name: string;
-  meta_events_enabled: boolean;
-  meta_optimization?: CampaignMetaOptimization;
-  created_at: string | null;
-  updated_at: string | null;
-};
-
-type LeadCaptureSubmissionItem = {
-  id: string;
-  full_name: string | null;
-  phone: string;
-  phone_missing?: boolean;
-  email: string | null;
-  answers: Record<string, unknown>;
-  delivery_status: string;
-  delivery_statuses?: Array<{
-    delivery_id: string;
-    source_id: string;
-    recipient_name: string;
-    recipient_phone: string;
-    delivery_status: string;
-    last_delivery_error?: string | null;
-  }>;
-  meta_event_status: string;
-  created_at: string | null;
-};
-
-type CampaignFormField = {
-  id: string;
-  label: string;
-  type: string;
-  required?: boolean;
-  placeholder?: string;
-  options?: string[];
-};
-
-type CampaignFieldDraft = CampaignFormField & {
-  optionsText: string;
-};
-
-type CampaignClientMode = "existing" | "new";
-
-type CampaignCreativeDraft = {
-  primaryText: string;
-  headline: string;
-  description: string;
-  assetBrief: string;
-  destinationUrl: string;
-  mediaCount: number;
-  mediaUrl: string;
-  callToAction: string;
-};
-
-type CampaignCreativeAssetItem = {
-  id: string;
-  campaign_id: string;
-  client_id: string;
-  status: string;
-  asset_type: string;
-  prompt: string;
-  file_path: string;
-  dimensions: string;
-  source_refs: Array<Record<string, unknown>>;
-  media_url: string;
-  created_at: string | null;
-  updated_at: string | null;
-};
-
-type CampaignStoredCreativeMedia = {
-  key: string;
-  name: string;
-  media_url: string;
-  asset_type: string;
-  source: string;
-};
-
-type MetaPlanStrategy = "1x1x3" | "1x3x3" | "3x3x3" | "custom";
-
-type MetaPlanNodeSelection = {
-  type: "campaign" | "ad_set" | "ad";
-  id: string;
-};
-
-type MetaPlanCreativeMedia = {
-  creative_asset_id?: string;
-  asset_file_path?: string;
-  asset_type?: string;
-  media_url?: string;
-  source?: string;
-  meta_creative_id?: string;
-  image_hash?: string;
-  video_id?: string;
-};
-
-type MetaPlanAd = {
-  id: string;
-  name: string;
-  status: string;
-  primary_text: string;
-  headline: string;
-  description: string;
-  call_to_action: string;
-  destination_url: string;
-  media: MetaPlanCreativeMedia[];
-};
-
-type MetaPlanAdSet = {
-  id: string;
-  name: string;
-  status: string;
-  destination_type: "form" | "website" | "whatsapp";
-  page_id?: string;
-  instagram_actor_id?: string;
-  whatsapp_phone_number_id?: string;
-  whatsapp_referral_source_id?: string;
-  lead_form_id?: string;
-  client_lead_source_id?: string;
-  landing_page_url?: string;
-  performance_goal: string;
-  optimization_goal: string;
-  billing_event: string;
-  bid_strategy: string;
-  budget_daily_usd?: number | null;
-  budget_total_usd?: number | null;
-  audience: { locations: CampaignGeoLocation[] };
-  targeting: Record<string, unknown>;
-  ads: MetaPlanAd[];
-};
-
-type MetaPlanCampaign = {
-  id: string;
-  name: string;
-  status: string;
-  objective: string;
-  buying_type: string;
-  special_ad_categories: string[];
-  budget_daily_usd?: number | null;
-  budget_total_usd?: number | null;
-  ad_sets: MetaPlanAdSet[];
-};
-
-type MetaPlanGraph = {
-  schema_version: string;
-  strategy: MetaPlanStrategy | string;
-  campaigns: MetaPlanCampaign[];
-};
-
-type CampaignGeoTargetingDraft = {
-  locations: CampaignGeoLocation[];
-};
-
-type CampaignGeoArea = {
-  name: string;
-  key?: string;
-  country_code?: string;
-  type?: "region" | "city";
-  source?: "meta" | "local";
-};
-
-type CampaignGeoLocation = {
-  country_code: string;
-  regions: CampaignGeoArea[];
-  cities: CampaignGeoArea[];
-};
-
-type CampaignGeoSearchResponse = {
-  country_code: string;
-  kind: "region";
-  query: string;
-  source: "meta" | "local";
-  meta_error?: string | null;
-  suggestions: CampaignGeoArea[];
-};
-
-type CampaignMetaDefaults = {
-  meta_events_available: boolean;
-  meta_event_name: string;
-  pixel_source: string;
-  pixel_label: string;
-};
-
-type CampaignMetaOptimization = {
-  enabled: boolean;
-  pixel_id?: string;
-  event_name?: string;
-  custom_event_type?: string;
-  optimization_goal?: string;
-  billing_event?: string;
-  promoted_object?: Record<string, string>;
-};
-
-type CampaignDeliveryContact = {
-  id: string;
-  label: string;
-  phone: string;
-  kind?: string;
-  normalized_phone?: string;
-};
-
-type CampaignDeliveryConfig = {
-  enabled: boolean;
-  contacts: CampaignDeliveryContact[];
-};
-
-const emptyCampaignMetaDefaults: CampaignMetaDefaults = {
-  meta_events_available: false,
-  meta_event_name: "Lead",
-  pixel_source: "",
-  pixel_label: "",
-};
-
-const campaignFieldTypes = [
-  { value: "text", label: "Text" },
-  { value: "textarea", label: "Long text" },
-  { value: "email", label: "Email" },
-  { value: "phone", label: "Phone" },
-  { value: "yes_no", label: "Yes / No" },
-  { value: "select", label: "Choice" },
-  { value: "multi_select", label: "Multiple" },
-];
-
-const campaignDeliveryPresets: CampaignDeliveryContact[] = [
-  { id: "client", label: "Cliente", phone: "", kind: "client" },
-  { id: "mathi", label: "Mathi", phone: "5491138033159", kind: "preset" },
-  { id: "facu", label: "Facu", phone: "5491153484587", kind: "preset" },
-  { id: "alan", label: "Alan", phone: "393716506381", kind: "preset" },
-];
-
-const campaignCountryOptions = [
-  { value: "AR", label: "Argentina" },
-  { value: "DE", label: "Alemania" },
-  { value: "BO", label: "Bolivia" },
-  { value: "CL", label: "Chile" },
-  { value: "CO", label: "Colombia" },
-  { value: "EC", label: "Ecuador" },
-  { value: "ES", label: "Espana" },
-  { value: "US", label: "Estados Unidos" },
-  { value: "MX", label: "Mexico" },
-  { value: "PY", label: "Paraguay" },
-  { value: "PE", label: "Peru" },
-  { value: "UY", label: "Uruguay" },
-];
-const campaignCountryLabels = Object.fromEntries(campaignCountryOptions.map((country) => [country.value, country.label]));
-const campaignGeoNamePattern = /^[A-Za-zÀ-ÖØ-öø-ÿ0-9][A-Za-zÀ-ÖØ-öø-ÿ0-9 .,'()/-]{0,95}$/;
-type CampaignTargetStep = "country" | "province";
-
-function defaultCampaignFields(): CampaignFieldDraft[] {
-  return [
-    { id: "full_name", label: "Cual es tu nombre?", type: "text", required: true, placeholder: "Nombre completo", optionsText: "" },
-    { id: "phone", label: "Cual es tu numero de WhatsApp?", type: "phone", required: true, placeholder: "+54 9 ...", optionsText: "" },
-    { id: "email", label: "Cual es tu email?", type: "email", required: false, placeholder: "nombre@email.com", optionsText: "" },
-    { id: "necesidad", label: "Que servicio necesitas?", type: "textarea", required: true, placeholder: "Contanos brevemente", optionsText: "" },
-  ];
-}
-
-function campaignDeliveryConfigOrDefault(campaign: LeadCaptureCampaignItem | null): CampaignDeliveryConfig {
-  const config = campaign?.delivery_config;
-  if (config && Array.isArray(config.contacts)) {
-    return {
-      enabled: config.enabled !== false,
-      contacts: config.contacts,
-    };
-  }
-  return { enabled: true, contacts: [campaignDeliveryPresets[0]] };
-}
-
-function campaignDeliveryContactSelected(config: CampaignDeliveryConfig, contactId: string): boolean {
-  return config.contacts.some((contact) => contact.id === contactId);
-}
-
-function campaignClientDeliveryContact(client: CampaignClientItem | null | undefined): CampaignDeliveryContact {
-  return {
-    id: "client",
-    label: client?.display_name || client?.lead?.full_name || "Cliente",
-    phone: client?.lead?.phone || "",
-    kind: "client",
-  };
-}
-
-function campaignDeliveryDisplayContact(contact: CampaignDeliveryContact, client: CampaignClientItem | null | undefined): CampaignDeliveryContact {
-  return contact.id === "client" || contact.kind === "client"
-    ? campaignClientDeliveryContact(client)
-    : contact;
-}
-
-function campaignDeliverySuggestionContacts(client: CampaignClientItem | null | undefined, config: CampaignDeliveryConfig): CampaignDeliveryContact[] {
-  const suggestions = [campaignClientDeliveryContact(client), ...campaignDeliveryPresets.filter((contact) => contact.id !== "client")];
-  return suggestions.filter((contact) => !campaignDeliveryContactSelected(config, contact.id));
-}
-
-function campaignDeliveryContactPhoneLabel(contact: CampaignDeliveryContact): string {
-  if (contact.phone) {
-    return contact.phone;
-  }
-  return contact.id === "client" || contact.kind === "client" ? "Cliente asociado" : "Sin WhatsApp";
-}
-
-function campaignDeliveryConfigPayload(config: CampaignDeliveryConfig): CampaignDeliveryConfig {
-  return {
-    enabled: config.enabled,
-    contacts: config.contacts.map((contact) => ({
-      id: contact.id,
-      label: contact.label,
-      phone: contact.phone,
-      kind: contact.kind || "custom",
-    })),
-  };
-}
-
-function campaignFieldId(value: string, index: number): string {
-  const normalized = value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-zA-Z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .toLowerCase();
-  return normalized || `field_${index + 1}`;
-}
-
-function campaignFormSchema(fields: CampaignFieldDraft[]): { fields: CampaignFormField[]; layout: string } {
-  return {
-    layout: "multi_step",
-    fields: fields.map((field, index) => {
-      const options = field.optionsText
-        .split(/[\n,]/)
-        .map((option) => option.trim())
-        .filter(Boolean);
-      return {
-        id: campaignFieldId(field.id || field.label, index),
-        label: field.label.trim() || `Field ${index + 1}`,
-        type: field.type,
-        required: Boolean(field.required),
-        placeholder: field.placeholder?.trim() || "",
-        options,
-      };
-    }),
-  };
-}
-
-function campaignSubmissionPhoneLabel(submission: LeadCaptureSubmissionItem): string {
-  if (submission.phone_missing || submission.phone.startsWith("0000")) {
-    return "Sin WhatsApp";
-  }
-  return submission.phone || "-";
-}
-
-function validateCampaignGeoAreas(areas: CampaignGeoArea[], label: string): string | null {
-  if (areas.length > 20) {
-    return `${label} supports up to 20 values.`;
-  }
-  const seen = new Set<string>();
-  for (const area of areas) {
-    const name = area.name.trim();
-    if (!campaignGeoNamePattern.test(name)) {
-      return `${label} has invalid characters: ${name}`;
-    }
-    const key = name.toLowerCase();
-    if (seen.has(key)) {
-      return `${label} has a duplicate value: ${name}`;
-    }
-    seen.add(key);
-  }
-  return null;
-}
-
-function campaignGeoLocationLabel(location: CampaignGeoLocation): string {
-  const parts = [campaignCountryLabels[location.country_code] || location.country_code];
-  if (location.regions.length) {
-    parts.push(location.regions.map((area) => area.name).join(", "));
-  }
-  if (location.cities.length) {
-    parts.push(location.cities.map((area) => area.name).join(", "));
-  }
-  return parts.join(" · ");
-}
-
-function validateCampaignGeoLocations(locations: CampaignGeoLocation[]): string | null {
-  if (locations.length > 20) {
-    return "Locations supports up to 20 values.";
-  }
-  const seen = new Set<string>();
-  for (const location of locations) {
-    const regionError = validateCampaignGeoAreas(location.regions, "Regions / provinces");
-    if (regionError) {
-      return regionError;
-    }
-    const duplicateKey = JSON.stringify({
-      country_code: location.country_code,
-      regions: location.regions.map((area) => area.key || area.name.toLowerCase()).sort(),
-    });
-    if (seen.has(duplicateKey)) {
-      return `Duplicate location: ${campaignGeoLocationLabel(location)}`;
-    }
-    seen.add(duplicateKey);
-  }
-  return null;
-}
-
-function campaignGeoTargeting(locations: CampaignGeoLocation[]): CampaignGeoTargetingDraft {
-  const cleanAreas = (areas: CampaignGeoArea[], country: string) => areas.map((area) => ({
-    name: area.name.trim(),
-    ...(area.key ? { key: area.key } : {}),
-    country_code: area.country_code || country,
-  }));
-  return {
-    locations: locations.map((location) => {
-      const country = location.country_code.trim().toUpperCase() || "AR";
-      return {
-        country_code: country,
-        regions: cleanAreas(location.regions, country),
-        cities: cleanAreas(location.cities, country),
-      };
-    }),
-  };
-}
-
-function campaignClientLabel(client: CampaignClientItem): string {
-  const lead = client.lead;
-  return [
-    client.display_name || lead?.full_name || client.id,
-    lead?.phone,
-    lead?.email,
-  ].filter(Boolean).join(" · ");
-}
-
-function campaignLocationKindLabel(location: CampaignGeoLocation): string {
-  if (location.regions.length) {
-    return "Provincia";
-  }
-  return "Pais";
-}
-
-function campaignLocationDetailLabel(location: CampaignGeoLocation): string {
-  return location.regions.length ? location.regions.map((area) => area.name).join(", ") : "Pais entero";
-}
-
-function campaignLocationButtonLabel(location: CampaignGeoLocation): string {
-  const country = campaignCountryLabels[location.country_code] || location.country_code;
-  if (!location.regions.length) {
-    return country;
-  }
-  return `${country} · ${location.regions[0].name}`;
-}
-
-function filteredCampaignCountries(query: string) {
-  const cleanQuery = query.trim().toLowerCase();
-  if (!cleanQuery) {
-    return campaignCountryOptions;
-  }
-  return campaignCountryOptions.filter((country) => {
-    const haystack = `${country.label} ${country.value}`.toLowerCase();
-    return haystack.includes(cleanQuery);
-  });
-}
-
-function campaignCreativeBriefSummary(creative: CampaignCreativeDraft): string {
-  const creativeLines = [
-    creative.primaryText.trim() ? `Primary text: ${creative.primaryText.trim()}` : "",
-    creative.headline.trim() ? `Headline: ${creative.headline.trim()}` : "",
-    creative.description.trim() ? `Description: ${creative.description.trim()}` : "",
-    creative.assetBrief.trim() ? `Creative asset: ${creative.assetBrief.trim()}` : "",
-    creative.mediaCount ? `Media files: ${creative.mediaCount}` : "",
-    creative.mediaUrl.trim() ? `Media URL: ${creative.mediaUrl.trim()}` : "",
-    creative.destinationUrl.trim() ? `Destination URL: ${creative.destinationUrl.trim()}` : "",
-  ].filter(Boolean);
-  if (!creativeLines.length) {
-    return "";
-  }
-  if (creative.callToAction.trim()) {
-    creativeLines.push(`Call to action: ${creative.callToAction.trim()}`);
-  }
-  return creativeLines.join("\n");
-}
-
-function campaignCreativeAssetName(asset: CampaignCreativeAssetItem): string {
-  const uploadRef = asset.source_refs.find((item) => typeof item.original_filename === "string");
-  const originalFilename = uploadRef?.original_filename;
-  if (typeof originalFilename === "string" && originalFilename.trim()) {
-    return originalFilename.trim();
-  }
-  return asset.file_path.split("/").pop() || asset.id;
-}
-
-function campaignCreativeAssetPayload(asset: CampaignCreativeAssetItem): Record<string, string> {
-  return {
-    creative_asset_id: asset.id,
-    asset_file_path: asset.file_path,
-    asset_type: asset.asset_type,
-    media_url: asset.media_url,
-  };
-}
-
-const metaPlanStrategies: Array<{ value: MetaPlanStrategy; label: string; campaignCount: number; adSetCount: number; adCount: number }> = [
-  { value: "1x1x3", label: "1 > 1 > 3", campaignCount: 1, adSetCount: 1, adCount: 3 },
-  { value: "1x3x3", label: "1 > 3 > 3", campaignCount: 1, adSetCount: 3, adCount: 3 },
-  { value: "3x3x3", label: "3 > 3 > 3", campaignCount: 3, adSetCount: 3, adCount: 3 },
-  { value: "custom", label: "Custom", campaignCount: 1, adSetCount: 1, adCount: 1 },
-];
-
-function metaPlanNodeId(prefix: string, index: number): string {
-  return `${prefix}_${index + 1}`;
-}
-
-function campaignMetaPlanMedia(assets: CampaignCreativeAssetItem[], mediaUrl: string): MetaPlanCreativeMedia[] {
-  const uploaded = assets.map((asset) => campaignCreativeAssetPayload(asset));
-  const external = mediaUrl.trim() ? [{ source: "external_url", media_url: mediaUrl.trim(), asset_type: campaignMediaType(mediaUrl) }] : [];
-  return [...uploaded, ...external];
-}
-
-function campaignMetaTargeting(locations: CampaignGeoLocation[]): Record<string, unknown> {
-  const countries: string[] = [];
-  const regions: Array<Record<string, string>> = [];
-  locations.forEach((location) => {
-    const country = location.country_code.trim().toUpperCase() || "AR";
-    if (!location.regions.length) {
-      countries.push(country);
-      return;
-    }
-    location.regions.forEach((region) => {
-      regions.push({
-        name: region.name,
-        country,
-        ...(region.key ? { key: region.key } : {}),
-      });
-    });
-  });
-  const geoLocations: Record<string, unknown> = {};
-  if (countries.length) {
-    geoLocations.countries = Array.from(new Set(countries));
-  }
-  if (regions.length) {
-    geoLocations.regions = regions;
-  }
-  return Object.keys(geoLocations).length ? { geo_locations: geoLocations } : {};
-}
-
-function campaignMetaPlanAd(
-  id: string,
-  name: string,
-  creative: CampaignCreativeDraft,
-  media: MetaPlanCreativeMedia[],
-): MetaPlanAd {
-  return {
-    id,
-    name,
-    status: "PAUSED",
-    primary_text: creative.primaryText.trim(),
-    headline: creative.headline.trim(),
-    description: creative.description.trim(),
-    call_to_action: creative.callToAction.trim() || "LEARN_MORE",
-    destination_url: creative.destinationUrl.trim(),
-    media,
-  };
-}
-
-function campaignMetaPlanGraphFromStrategy({
-  strategy,
-  campaignName,
-  dailyBudget,
-  locations,
-  creative,
-  media,
-}: {
-  strategy: MetaPlanStrategy;
-  campaignName: string;
-  dailyBudget: string;
-  locations: CampaignGeoLocation[];
-  creative: CampaignCreativeDraft;
-  media: MetaPlanCreativeMedia[];
-}): MetaPlanGraph {
-  const shape = metaPlanStrategies.find((item) => item.value === strategy) ?? metaPlanStrategies[0];
-  const budget = dailyBudget ? Number(dailyBudget) : null;
-  const name = campaignName.trim() || "Nueva campaña";
-  const safeLocations = locations.length ? locations : [{ country_code: "AR", regions: [], cities: [] }];
-  return {
-    schema_version: "konecta.meta_plan_graph.v1",
-    strategy,
-    campaigns: Array.from({ length: shape.campaignCount }, (_, campaignIndex) => {
-      const campaignId = metaPlanNodeId("campaign", campaignIndex);
-      return {
-        id: campaignId,
-        name: shape.campaignCount === 1 ? name : `${name} ${campaignIndex + 1}`,
-        status: "PAUSED",
-        objective: "OUTCOME_LEADS",
-        buying_type: "AUCTION",
-        special_ad_categories: [],
-        budget_daily_usd: budget,
-        budget_total_usd: null,
-        ad_sets: Array.from({ length: shape.adSetCount }, (_, adSetIndex) => {
-          const adSetId = `${campaignId}_adset_${adSetIndex + 1}`;
-          return {
-            id: adSetId,
-            name: `Ad set ${adSetIndex + 1}`,
-            status: "PAUSED",
-            destination_type: "form",
-            performance_goal: "LEAD_GENERATION",
-            optimization_goal: "LEAD_GENERATION",
-            billing_event: "IMPRESSIONS",
-            bid_strategy: "LOWEST_COST_WITHOUT_CAP",
-            budget_daily_usd: null,
-            budget_total_usd: null,
-            audience: { locations: safeLocations },
-            targeting: campaignMetaTargeting(safeLocations),
-            ads: Array.from({ length: shape.adCount }, (_, adIndex) => campaignMetaPlanAd(
-              `${adSetId}_ad_${adIndex + 1}`,
-              `Ad ${adIndex + 1}`,
-              creative,
-              media,
-            )),
-          };
-        }),
-      };
-    }),
-  };
-}
-
-function campaignMetaPlanSelection(graph: MetaPlanGraph): MetaPlanNodeSelection {
-  const campaign = graph.campaigns[0];
-  const adSet = campaign?.ad_sets[0];
-  const ad = adSet?.ads[0];
-  if (ad) {
-    return { type: "ad", id: ad.id };
-  }
-  if (adSet) {
-    return { type: "ad_set", id: adSet.id };
-  }
-  return { type: "campaign", id: campaign?.id || "campaign_1" };
-}
-
-function campaignMetaPlanCounts(graph: MetaPlanGraph): { campaigns: number; adSets: number; ads: number } {
-  const adSets = graph.campaigns.reduce((total, campaign) => total + campaign.ad_sets.length, 0);
-  const ads = graph.campaigns.reduce(
-    (total, campaign) => total + campaign.ad_sets.reduce((adTotal, adSet) => adTotal + adSet.ads.length, 0),
-    0,
-  );
-  return { campaigns: graph.campaigns.length, adSets, ads };
-}
-
-function campaignMetaPlanHydrated(
-  graph: MetaPlanGraph,
-  {
-    campaignName,
-    dailyBudget,
-    locations,
-    creative,
-    media,
-  }: {
-    campaignName: string;
-    dailyBudget: string;
-    locations: CampaignGeoLocation[];
-    creative: CampaignCreativeDraft;
-    media: MetaPlanCreativeMedia[];
-  },
-): MetaPlanGraph {
-  const safeLocations = locations.length ? locations : [{ country_code: "AR", regions: [], cities: [] }];
-  const budget = dailyBudget ? Number(dailyBudget) : null;
-  return {
-    ...graph,
-    campaigns: graph.campaigns.map((campaign, campaignIndex) => ({
-      ...campaign,
-      name: campaign.name.trim() || (campaignIndex === 0 ? campaignName.trim() || "Nueva campaña" : `Campaña ${campaignIndex + 1}`),
-      budget_daily_usd: campaign.budget_daily_usd || budget,
-      ad_sets: campaign.ad_sets.map((adSet) => ({
-        ...adSet,
-        audience: { locations: safeLocations },
-        targeting: campaignMetaTargeting(safeLocations),
-        ads: adSet.ads.map((ad) => ({
-          ...ad,
-          primary_text: ad.primary_text.trim() || creative.primaryText.trim(),
-          headline: ad.headline.trim() || creative.headline.trim(),
-          description: ad.description.trim() || creative.description.trim(),
-          call_to_action: ad.call_to_action.trim() || creative.callToAction.trim() || "LEARN_MORE",
-          destination_url: ad.destination_url.trim() || creative.destinationUrl.trim(),
-          media: ad.media.length ? ad.media : media,
-        })),
-      })),
-    })),
-  };
-}
-
-function selectedMetaCampaign(graph: MetaPlanGraph, selection: MetaPlanNodeSelection): MetaPlanCampaign | null {
-  return graph.campaigns.find((campaign) => campaign.id === selection.id) ?? null;
-}
-
-function selectedMetaAdSet(graph: MetaPlanGraph, selection: MetaPlanNodeSelection): MetaPlanAdSet | null {
-  for (const campaign of graph.campaigns) {
-    const adSet = campaign.ad_sets.find((item) => item.id === selection.id);
-    if (adSet) {
-      return adSet;
-    }
-  }
-  return null;
-}
-
-function selectedMetaAd(graph: MetaPlanGraph, selection: MetaPlanNodeSelection): MetaPlanAd | null {
-  for (const campaign of graph.campaigns) {
-    for (const adSet of campaign.ad_sets) {
-      const ad = adSet.ads.find((item) => item.id === selection.id);
-      if (ad) {
-        return ad;
-      }
-    }
-  }
-  return null;
-}
-
-function campaignRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
-}
-
-function campaignString(value: unknown): string {
-  return typeof value === "string" ? value.trim() : "";
-}
-
-function campaignMediaType(value: string, fallback: string = "image"): string {
-  const cleanValue = value.toLowerCase();
-  if (fallback.toLowerCase().includes("video") || /\.(mov|mp4|webm)(\?|#|$)/i.test(cleanValue)) {
-    return "video";
-  }
-  if (fallback.toLowerCase().includes("image") || /\.(avif|gif|heic|jpeg|jpg|png|webp)(\?|#|$)/i.test(cleanValue)) {
-    return "image";
-  }
-  return fallback || "image";
-}
-
-function campaignMediaName(media: Record<string, unknown>, fallbackIndex: number): string {
-  const refs = Array.isArray(media.source_refs) ? media.source_refs : [];
-  const uploadRef = refs.find((item) => campaignRecord(item)?.original_filename);
-  const originalFilename = campaignString(campaignRecord(uploadRef)?.original_filename);
-  if (originalFilename) {
-    return originalFilename;
-  }
-  const filePath = campaignString(media.asset_file_path) || campaignString(media.file_path);
-  if (filePath) {
-    return filePath.split("/").filter(Boolean).pop() || filePath;
-  }
-  const mediaUrl = campaignString(media.media_url);
-  if (mediaUrl) {
-    return mediaUrl.split(/[/?#]/).filter(Boolean).pop() || `Ad media ${fallbackIndex + 1}`;
-  }
-  return `Ad media ${fallbackIndex + 1}`;
-}
-
-function campaignStoredCreativeMedia(campaign: LeadCaptureCampaignItem | null): CampaignStoredCreativeMedia[] {
-  const campaignInfo = campaignRecord(campaign?.campaign_info);
-  const creative = campaignRecord(campaignInfo?.creative);
-  const rawMedia = Array.isArray(creative?.media) ? creative.media : [];
-  const mediaRows = rawMedia
-    .map((item, index) => {
-      const media = campaignRecord(item);
-      if (!media) {
-        return null;
-      }
-      const mediaUrl = campaignString(media.media_url);
-      const assetId = campaignString(media.creative_asset_id);
-      const assetPath = campaignString(media.asset_file_path);
-      const source = campaignString(media.source) || (assetId ? "upload" : "url");
-      const assetType = campaignMediaType(mediaUrl || assetPath, campaignString(media.asset_type));
-      return {
-        key: assetId || assetPath || mediaUrl || `media-${index}`,
-        name: campaignMediaName(media, index),
-        media_url: mediaUrl,
-        asset_type: assetType,
-        source,
-      };
-    })
-    .filter((item): item is CampaignStoredCreativeMedia => Boolean(item));
-
-  const primaryMediaUrl = campaignString(creative?.primary_media_url);
-  if (primaryMediaUrl && !mediaRows.some((item) => item.media_url === primaryMediaUrl)) {
-    mediaRows.unshift({
-      key: primaryMediaUrl,
-      name: primaryMediaUrl.split(/[/?#]/).filter(Boolean).pop() || "Primary media",
-      media_url: primaryMediaUrl,
-      asset_type: campaignMediaType(primaryMediaUrl),
-      source: "primary",
-    });
-  }
-  return mediaRows;
-}
-
-function campaignCreativeFileAllowed(file: File): boolean {
-  const type = file.type.toLowerCase();
-  if (type.startsWith("image/") || type.startsWith("video/")) {
-    return true;
-  }
-  return /\.(avif|gif|heic|jpeg|jpg|mov|mp4|png|webm|webp)$/i.test(file.name);
-}
-
-function CampaignProvinceSearch({
-  countryCode,
-  query,
-  onQueryChange,
-  onPick,
-  onError,
-}: {
-  countryCode: string;
-  query: string;
-  onQueryChange: (next: string) => void;
-  onPick: (area: CampaignGeoArea) => void;
-  onError: (message: string) => void;
-}) {
-  const [suggestions, setSuggestions] = useState<CampaignGeoArea[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    const cleanQuery = query.trim();
-    if (!cleanQuery) {
-      setSuggestions([]);
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    const timeout = window.setTimeout(async () => {
-      try {
-        const payload = await apiFetch<CampaignGeoSearchResponse>(
-          `/api/campaigns/geo/search?country_code=${encodeURIComponent(countryCode)}&kind=region&q=${encodeURIComponent(cleanQuery)}&limit=12`,
-        );
-        setSuggestions(payload.suggestions ?? []);
-      } catch (reason) {
-        setSuggestions([]);
-        onError(reason instanceof Error ? reason.message : "No se pudo buscar provincia.");
-      } finally {
-        setLoading(false);
-      }
-    }, 220);
-    return () => window.clearTimeout(timeout);
-  }, [countryCode, onError, query]);
-
-  function addFirstSuggestion(event: KeyboardEvent<HTMLInputElement>) {
-    if (event.key !== "Enter") {
-      return;
-    }
-    event.preventDefault();
-    if (suggestions[0]) {
-      onPick(suggestions[0]);
-    }
-  }
-
-  return (
-    <div className="campaign-target-search">
-      <div className="campaign-command-input">
-        <input
-          value={query}
-          onChange={(event) => onQueryChange(event.target.value)}
-          onKeyDown={addFirstSuggestion}
-          placeholder="Buscar provincia"
-        />
-        {loading ? <SpinnerGap size={14} weight="bold" className="workstation-spinner" /> : null}
-      </div>
-      {!loading && suggestions.length ? (
-        <div className="campaign-target-results">
-          {suggestions.map((area) => (
-            <button type="button" key={`${area.source || "local"}-${area.key || area.name}`} onClick={() => onPick(area)}>
-              <span>{area.name}</span>
-            </button>
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function CampaignsPanel({ refreshSignal, onError }: { refreshSignal: number; onError: (message: string) => void }) {
-  const [campaigns, setCampaigns] = useState<LeadCaptureCampaignItem[]>([]);
-  const [clients, setClients] = useState<CampaignClientItem[]>([]);
-  const [selectedCampaignId, setSelectedCampaignId] = useState<string | null>(null);
-  const [submissions, setSubmissions] = useState<LeadCaptureSubmissionItem[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [submissionsLoading, setSubmissionsLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [campaignView, setCampaignView] = useState<CampaignsPanelView>("campaigns");
-  const [campaignName, setCampaignName] = useState("");
-  const [campaignStatus, setCampaignStatus] = useState("draft");
-  const [clientMode, setClientMode] = useState<CampaignClientMode>("new");
-  const [existingClientId, setExistingClientId] = useState("");
-  const [newClientName, setNewClientName] = useState("");
-  const [newClientWhatsapp, setNewClientWhatsapp] = useState("");
-  const [newClientEmail, setNewClientEmail] = useState("");
-  const [newClientExtraInfo, setNewClientExtraInfo] = useState("");
-  const [dailyBudget, setDailyBudget] = useState("");
-  const [campaignLocations, setCampaignLocations] = useState<CampaignGeoLocation[]>([]);
-  const [targetStep, setTargetStep] = useState<CampaignTargetStep>("country");
-  const [countryQuery, setCountryQuery] = useState("");
-  const [draftCountryCode, setDraftCountryCode] = useState("");
-  const [provinceQuery, setProvinceQuery] = useState("");
-  const [creativeBrief, setCreativeBrief] = useState("");
-  const [creativeHeadline, setCreativeHeadline] = useState("");
-  const [creativeDescription, setCreativeDescription] = useState("");
-  const [creativeAssetBrief, setCreativeAssetBrief] = useState("");
-  const [creativeAssets, setCreativeAssets] = useState<CampaignCreativeAssetItem[]>([]);
-  const [creativeMediaUrl, setCreativeMediaUrl] = useState("");
-  const [creativeMediaUploading, setCreativeMediaUploading] = useState(false);
-  const [creativeMediaDropActive, setCreativeMediaDropActive] = useState(false);
-  const [destinationUrl, setDestinationUrl] = useState("");
-  const [metaEventsEnabled, setMetaEventsEnabled] = useState(false);
-  const [metaOptimizeForPixel, setMetaOptimizeForPixel] = useState(false);
-  const [metaDefaults, setMetaDefaults] = useState<CampaignMetaDefaults>(emptyCampaignMetaDefaults);
-  const [deliveryEnabled, setDeliveryEnabled] = useState(true);
-  const [deliveryContactIds, setDeliveryContactIds] = useState<string[]>(["client"]);
-  const [deliveryCustomContacts, setDeliveryCustomContacts] = useState<CampaignDeliveryContact[]>([]);
-  const [deliveryCustomName, setDeliveryCustomName] = useState("");
-  const [deliveryCustomPhone, setDeliveryCustomPhone] = useState("");
-  const [showCreateDeliveryAdd, setShowCreateDeliveryAdd] = useState(false);
-  const [detailDeliveryName, setDetailDeliveryName] = useState("");
-  const [detailDeliveryPhone, setDetailDeliveryPhone] = useState("");
-  const [showDetailDeliveryAdd, setShowDetailDeliveryAdd] = useState(false);
-  const [fields, setFields] = useState<CampaignFieldDraft[]>(defaultCampaignFields);
-  const [metaPlanStrategy, setMetaPlanStrategy] = useState<MetaPlanStrategy>("1x1x3");
-  const [metaPlanGraph, setMetaPlanGraph] = useState<MetaPlanGraph>(() => campaignMetaPlanGraphFromStrategy({
-    strategy: "1x1x3",
-    campaignName: "",
-    dailyBudget: "",
-    locations: [],
-    creative: {
-      primaryText: "",
-      headline: "",
-      description: "",
-      assetBrief: "",
-      destinationUrl: "",
-      mediaCount: 0,
-      mediaUrl: "",
-      callToAction: "LEARN_MORE",
-    },
-    media: [],
-  }));
-  const [selectedMetaNode, setSelectedMetaNode] = useState<MetaPlanNodeSelection>(() => campaignMetaPlanSelection(metaPlanGraph));
-
-  const activeCampaignCount = campaigns.filter((campaign) => campaign.status === "active").length;
-  const hasCampaigns = campaigns.length > 0;
-  const isCreateView = campaignView === "create";
-  const showCampaignEmpty = !loading && !hasCampaigns;
-  const selectedCampaign = campaigns.find((campaign) => campaign.id === selectedCampaignId) ?? campaigns[0] ?? null;
-  const selectedClient = clients.find((client) => client.id === existingClientId) ?? null;
-  const selectedCampaignDelivery = campaignDeliveryConfigOrDefault(selectedCampaign);
-  const createDeliveryClient = clientMode === "existing"
-    ? selectedClient
-    : {
-      id: "new-client",
-      display_name: newClientName.trim() || "Cliente",
-      lead: {
-        full_name: newClientName.trim() || null,
-        phone: newClientWhatsapp.trim() || null,
-        email: newClientEmail.trim() || null,
-      },
-    };
-  const createDeliveryConfig = buildCreateDeliveryConfig();
-  const createDeliverySuggestions = campaignDeliverySuggestionContacts(createDeliveryClient, createDeliveryConfig);
-  const selectedCampaignDeliverySuggestions = campaignDeliverySuggestionContacts(selectedCampaign?.client, selectedCampaignDelivery);
-  const selectedCampaignMedia = campaignStoredCreativeMedia(selectedCampaign);
-  const countryMatches = filteredCampaignCountries(countryQuery);
-  const draftCountryLabel = draftCountryCode ? campaignCountryLabels[draftCountryCode] || draftCountryCode : "";
-  const creativeDraft: CampaignCreativeDraft = {
-    primaryText: creativeBrief,
-    headline: creativeHeadline,
-    description: creativeDescription,
-    assetBrief: creativeAssetBrief,
-    destinationUrl,
-    mediaCount: creativeAssets.length,
-    mediaUrl: creativeMediaUrl,
-    callToAction: "LEARN_MORE",
-  };
-  const creativeMedia = campaignMetaPlanMedia(creativeAssets, creativeMediaUrl);
-  const creativeSummary = campaignCreativeBriefSummary(creativeDraft);
-  const metaPlanCounts = campaignMetaPlanCounts(metaPlanGraph);
-  const selectedGraphCampaign = selectedMetaCampaign(metaPlanGraph, selectedMetaNode);
-  const selectedGraphAdSet = selectedMetaAdSet(metaPlanGraph, selectedMetaNode);
-  const selectedGraphAd = selectedMetaAd(metaPlanGraph, selectedMetaNode);
-
-  async function loadCampaignSubmissions(campaignId: string) {
-    setSubmissionsLoading(true);
-    try {
-      const payload = await apiFetch<{ submissions: LeadCaptureSubmissionItem[] }>(
-        `/api/campaigns/${encodeURIComponent(campaignId)}/submissions?limit=20`,
-      );
-      setSubmissions(payload.submissions ?? []);
-    } finally {
-      setSubmissionsLoading(false);
-    }
-  }
-
-  async function uploadCampaignCreativeFile(file: File) {
-    if (!campaignCreativeFileAllowed(file)) {
-      onError("Upload an image or video file for the ad creative.");
-      return;
-    }
-    const form = new FormData();
-    form.append("file", file);
-    form.append("client_id", clientMode === "existing" ? existingClientId : "");
-    form.append("prompt", creativeAssetBrief.trim() || creativeBrief.trim());
-    setCreativeMediaUploading(true);
-    try {
-      const asset = await apiFetch<CampaignCreativeAssetItem>("/api/platform/creative-assets/upload", {
-        method: "POST",
-        body: form,
-      });
-      setCreativeAssets((current) => {
-        if (current.some((item) => item.id === asset.id)) {
-          return current;
-        }
-        return [...current, asset];
-      });
-      if (selectedMetaNode.type === "ad") {
-        const media = campaignCreativeAssetPayload(asset);
-        updateMetaPlanAd(selectedMetaNode.id, {
-          media: [...(selectedGraphAd?.media ?? []), media],
-        });
-      }
-      if (!creativeAssetBrief.trim()) {
-        setCreativeAssetBrief(campaignCreativeAssetName(asset));
-      }
-    } catch (reason) {
-      onError(reason instanceof Error ? reason.message : "Could not upload creative media.");
-    } finally {
-      setCreativeMediaUploading(false);
-    }
-  }
-
-  async function uploadCampaignCreativeFiles(files: File[]) {
-    const usableFiles = files.filter((file) => file.size > 0);
-    if (!usableFiles.length) {
-      return;
-    }
-    for (const file of usableFiles) {
-      await uploadCampaignCreativeFile(file);
-    }
-  }
-
-  function campaignCreativeFilesFromClipboard(event: ClipboardEvent<HTMLElement>): File[] {
-    const directFiles = Array.from(event.clipboardData.files).filter((file) => file.size > 0);
-    if (directFiles.length) {
-      return directFiles;
-    }
-    const files: File[] = [];
-    for (const item of Array.from(event.clipboardData.items)) {
-      const pastedFile = item.kind === "file" ? item.getAsFile() : null;
-      if (pastedFile && pastedFile.size > 0) {
-        files.push(pastedFile);
-      }
-    }
-    return files;
-  }
-
-  function handleCampaignCreativeDragOver(event: DragEvent<HTMLElement>) {
-    if (!Array.from(event.dataTransfer.types).includes("Files")) {
-      return;
-    }
-    event.preventDefault();
-    event.dataTransfer.dropEffect = creativeMediaUploading ? "none" : "copy";
-    setCreativeMediaDropActive(true);
-  }
-
-  function handleCampaignCreativeDragLeave(event: DragEvent<HTMLElement>) {
-    const nextTarget = event.relatedTarget;
-    if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) {
-      return;
-    }
-    setCreativeMediaDropActive(false);
-  }
-
-  function handleCampaignCreativeDrop(event: DragEvent<HTMLElement>) {
-    if (!Array.from(event.dataTransfer.types).includes("Files")) {
-      return;
-    }
-    event.preventDefault();
-    setCreativeMediaDropActive(false);
-    if (creativeMediaUploading) {
-      return;
-    }
-    void uploadCampaignCreativeFiles(Array.from(event.dataTransfer.files));
-  }
-
-  function handleCampaignCreativePaste(event: ClipboardEvent<HTMLElement>) {
-    const files = campaignCreativeFilesFromClipboard(event);
-    if (!files.length || creativeMediaUploading) {
-      return;
-    }
-    event.preventDefault();
-    void uploadCampaignCreativeFiles(files);
-  }
-
-  function removeCampaignCreativeAsset(assetId: string) {
-    setCreativeAssets((current) => current.filter((asset) => asset.id !== assetId));
-    setMetaPlanGraph((current) => ({
-      ...current,
-      campaigns: current.campaigns.map((campaign) => ({
-        ...campaign,
-        ad_sets: campaign.ad_sets.map((adSet) => ({
-          ...adSet,
-          ads: adSet.ads.map((ad) => ({
-            ...ad,
-            media: ad.media.filter((media) => media.creative_asset_id !== assetId),
-          })),
-        })),
-      })),
-    }));
-  }
-
-  async function loadCampaigns() {
-    setLoading(true);
-    try {
-      const [campaignPayload, clientPayload, metaDefaultsPayload] = await Promise.all([
-        apiFetch<{ campaigns: LeadCaptureCampaignItem[] }>("/api/campaigns?limit=120"),
-        apiFetch<{ clients: CampaignClientItem[] }>("/api/campaigns/clients?limit=300"),
-        apiFetch<CampaignMetaDefaults>("/api/campaigns/meta/defaults").catch(() => emptyCampaignMetaDefaults),
-      ]);
-      const nextCampaigns = campaignPayload.campaigns ?? [];
-      setCampaigns(nextCampaigns);
-      setClients(clientPayload.clients ?? []);
-      setMetaDefaults(metaDefaultsPayload);
-      const nextSelected = selectedCampaignId && nextCampaigns.some((campaign) => campaign.id === selectedCampaignId)
-        ? selectedCampaignId
-        : nextCampaigns.find((campaign) => campaign.status !== "archived")?.id ?? nextCampaigns[0]?.id ?? null;
-      setSelectedCampaignId(nextSelected);
-      if (nextSelected) {
-        await loadCampaignSubmissions(nextSelected);
-      } else {
-        setSubmissions([]);
-      }
-    } catch (reason) {
-      onError(reason instanceof Error ? reason.message : "Could not load campaigns.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    void loadCampaigns();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refreshSignal]);
-
-  async function selectCampaign(campaignId: string) {
-    setSelectedCampaignId(campaignId);
-    setShowDetailDeliveryAdd(false);
-    setDetailDeliveryName("");
-    setDetailDeliveryPhone("");
-    try {
-      await loadCampaignSubmissions(campaignId);
-    } catch (reason) {
-      onError(reason instanceof Error ? reason.message : "Could not load campaign submissions.");
-    }
-  }
-
-  function openCreateView() {
-    const metaReady = Boolean(metaDefaults.meta_events_available);
-    setMetaEventsEnabled(metaReady);
-    setMetaOptimizeForPixel(metaReady);
-    setShowCreateDeliveryAdd(false);
-    setCampaignView("create");
-  }
-
-  function closeCreateView() {
-    setShowCreateDeliveryAdd(false);
-    setCampaignView("campaigns");
-  }
-
-  function rebuildMetaPlanGraph(strategy: MetaPlanStrategy = metaPlanStrategy) {
-    const nextGraph = campaignMetaPlanGraphFromStrategy({
-      strategy,
-      campaignName,
-      dailyBudget,
-      locations: campaignLocations,
-      creative: creativeDraft,
-      media: creativeMedia,
-    });
-    setMetaPlanStrategy(strategy);
-    setMetaPlanGraph(nextGraph);
-    setSelectedMetaNode(campaignMetaPlanSelection(nextGraph));
-  }
-
-  function updateMetaPlanCampaign(campaignId: string, patch: Partial<MetaPlanCampaign>) {
-    setMetaPlanGraph((current) => ({
-      ...current,
-      campaigns: current.campaigns.map((campaign) => campaign.id === campaignId ? { ...campaign, ...patch } : campaign),
-    }));
-  }
-
-  function updateMetaPlanAdSet(adSetId: string, patch: Partial<MetaPlanAdSet>) {
-    setMetaPlanGraph((current) => ({
-      ...current,
-      campaigns: current.campaigns.map((campaign) => ({
-        ...campaign,
-        ad_sets: campaign.ad_sets.map((adSet) => adSet.id === adSetId ? { ...adSet, ...patch } : adSet),
-      })),
-    }));
-  }
-
-  function updateMetaPlanAd(adId: string, patch: Partial<MetaPlanAd>) {
-    setMetaPlanGraph((current) => ({
-      ...current,
-      campaigns: current.campaigns.map((campaign) => ({
-        ...campaign,
-        ad_sets: campaign.ad_sets.map((adSet) => ({
-          ...adSet,
-          ads: adSet.ads.map((ad) => ad.id === adId ? { ...ad, ...patch } : ad),
-        })),
-      })),
-    }));
-  }
-
-  function setSelectedAdMedia(media: MetaPlanCreativeMedia[]) {
-    if (selectedMetaNode.type === "ad") {
-      updateMetaPlanAd(selectedMetaNode.id, { media });
-    }
-  }
-
-  function updateMetaEventsEnabled(enabled: boolean) {
-    setMetaEventsEnabled(enabled);
-    if (!enabled) {
-      setMetaOptimizeForPixel(false);
-    }
-  }
-
-  function updateMetaOptimizeForPixel(enabled: boolean) {
-    setMetaOptimizeForPixel(enabled);
-    if (enabled) {
-      setMetaEventsEnabled(true);
-    }
-  }
-
-  function buildCreateDeliveryConfig(): CampaignDeliveryConfig {
-    const selectedPresets = campaignDeliveryPresets.filter((contact) => deliveryContactIds.includes(contact.id));
-    return campaignDeliveryConfigPayload({
-      enabled: deliveryEnabled,
-      contacts: [...selectedPresets, ...deliveryCustomContacts],
-    });
-  }
-
-  function addCreateDeliveryPresetContact(contact: CampaignDeliveryContact) {
-    setDeliveryContactIds((current) => current.includes(contact.id) ? current : [...current, contact.id]);
-    setShowCreateDeliveryAdd(false);
-  }
-
-  function removeCreateDeliveryContact(contact: CampaignDeliveryContact) {
-    const current = buildCreateDeliveryConfig();
-    if (current.contacts.length <= 1) {
-      onError("Delivery needs at least one contact, or turn it off.");
-      return;
-    }
-    if (contact.kind === "custom") {
-      setDeliveryCustomContacts((items) => items.filter((item) => item.id !== contact.id));
-    } else {
-      setDeliveryContactIds((ids) => ids.filter((id) => id !== contact.id));
-    }
-  }
-
-  function addCreateDeliveryCustomContact() {
-    const label = deliveryCustomName.trim();
-    const phone = deliveryCustomPhone.trim();
-    if (!label || !phone) {
-      onError("Delivery contact needs name and phone.");
-      return;
-    }
-    if (buildCreateDeliveryConfig().contacts.some((contact) => contact.phone && contact.phone === phone)) {
-      onError("That Delivery contact is already selected.");
-      return;
-    }
-    setDeliveryCustomContacts((current) => [
-      ...current,
-      { id: `custom-${Date.now()}`, label, phone, kind: "custom" },
-    ]);
-    setDeliveryCustomName("");
-    setDeliveryCustomPhone("");
-    setShowCreateDeliveryAdd(false);
-  }
-
-  async function updateCampaignDeliveryConfig(campaign: LeadCaptureCampaignItem, nextConfig: CampaignDeliveryConfig) {
-    setSaving(true);
-    try {
-      const payload = await apiFetch<{ campaign: LeadCaptureCampaignItem }>(
-        `/api/campaigns/${encodeURIComponent(campaign.id)}`,
-        {
-          method: "PATCH",
-          body: JSON.stringify({ delivery_config: campaignDeliveryConfigPayload(nextConfig) }),
-        },
-      );
-      setCampaigns((current) => current.map((item) => item.id === campaign.id ? payload.campaign : item));
-      await loadCampaignSubmissions(campaign.id);
-    } catch (reason) {
-      onError(reason instanceof Error ? reason.message : "Could not update campaign delivery.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  function addCampaignDeliveryPresetContact(campaign: LeadCaptureCampaignItem, preset: CampaignDeliveryContact) {
-    const current = campaignDeliveryConfigOrDefault(campaign);
-    if (campaignDeliveryContactSelected(current, preset.id)) {
-      return;
-    }
-    setShowDetailDeliveryAdd(false);
-    void updateCampaignDeliveryConfig(campaign, { ...current, contacts: [...current.contacts, preset] });
-  }
-
-  function removeCampaignDeliveryContact(campaign: LeadCaptureCampaignItem, contactId: string) {
-    const current = campaignDeliveryConfigOrDefault(campaign);
-    if (current.contacts.length <= 1) {
-      onError("Delivery needs at least one contact, or turn it off.");
-      return;
-    }
-    void updateCampaignDeliveryConfig(campaign, {
-      ...current,
-      contacts: current.contacts.filter((contact) => contact.id !== contactId),
-    });
-  }
-
-  function addDetailDeliveryCustomContact(campaign: LeadCaptureCampaignItem) {
-    const label = detailDeliveryName.trim();
-    const phone = detailDeliveryPhone.trim();
-    if (!label || !phone) {
-      onError("Delivery contact needs name and phone.");
-      return;
-    }
-    const current = campaignDeliveryConfigOrDefault(campaign);
-    if (current.contacts.some((contact) => contact.phone && contact.phone === phone)) {
-      onError("That Delivery contact is already selected.");
-      return;
-    }
-    void updateCampaignDeliveryConfig(campaign, {
-      ...current,
-      contacts: [...current.contacts, { id: `custom-${Date.now()}`, label, phone, kind: "custom" }],
-    });
-    setDetailDeliveryName("");
-    setDetailDeliveryPhone("");
-    setShowDetailDeliveryAdd(false);
-  }
-
-  function updateField(index: number, patch: Partial<CampaignFieldDraft>) {
-    setFields((current) => current.map((field, fieldIndex) => fieldIndex === index ? { ...field, ...patch } : field));
-  }
-
-  function addField() {
-    setFields((current) => [
-      ...current,
-      { id: `field_${current.length + 1}`, label: "Pregunta", type: "text", required: false, placeholder: "", optionsText: "" },
-    ]);
-  }
-
-  function removeField(index: number) {
-    if (fields.length <= 1) {
-      onError("Campaign forms need at least one question.");
-      return;
-    }
-    setFields((current) => current.filter((_, fieldIndex) => fieldIndex !== index));
-  }
-
-  function resetTargetFlow() {
-    setTargetStep("country");
-    setCountryQuery("");
-    setDraftCountryCode("");
-    setProvinceQuery("");
-  }
-
-  function selectTargetCountry(countryCode: string) {
-    setDraftCountryCode(countryCode);
-    setCountryQuery(campaignCountryLabels[countryCode] || countryCode);
-    setProvinceQuery("");
-    setTargetStep("province");
-  }
-
-  function saveTargetLocation(location: CampaignGeoLocation) {
-    const validationError = validateCampaignGeoLocations([...campaignLocations, location]);
-    if (validationError) {
-      onError(validationError);
-      return;
-    }
-    setCampaignLocations((current) => [...current, location]);
-    resetTargetFlow();
-  }
-
-  function saveWholeCountryTarget() {
-    if (!draftCountryCode) {
-      return;
-    }
-    saveTargetLocation({
-      country_code: draftCountryCode,
-      regions: [],
-      cities: [],
-    });
-  }
-
-  function saveProvinceTarget(area: CampaignGeoArea) {
-    if (!draftCountryCode) {
-      return;
-    }
-    const name = area.name.trim();
-    if (!name) {
-      return;
-    }
-    saveTargetLocation({
-      country_code: draftCountryCode,
-      regions: [{ ...area, name, country_code: area.country_code || draftCountryCode }],
-      cities: [],
-    });
-  }
-
-  function removeCampaignLocation(index: number) {
-    setCampaignLocations((current) => current.filter((_, itemIndex) => itemIndex !== index));
-  }
-
-  function handleCountrySearchKeyDown(event: KeyboardEvent<HTMLInputElement>) {
-    if (event.key !== "Enter" || !countryQuery.trim() || !countryMatches[0]) {
-      return;
-    }
-    event.preventDefault();
-    selectTargetCountry(countryMatches[0].value);
-  }
-
-  async function createCampaign(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const cleanName = campaignName.trim();
-    if (!cleanName) {
-      onError("Campaign name is required.");
-      return;
-    }
-    const usingExistingClient = clientMode === "existing";
-    if (usingExistingClient && !existingClientId) {
-      onError("Choose an existing client or switch to new client.");
-      return;
-    }
-    const client = usingExistingClient ? null : {
-      name: newClientName.trim(),
-      whatsapp: newClientWhatsapp.trim(),
-      email: newClientEmail.trim() || null,
-      extra_info: newClientExtraInfo.trim() || null,
-    };
-    if (!usingExistingClient && (!client?.name || !client.whatsapp)) {
-      onError("Client name and WhatsApp are required.");
-      return;
-    }
-    if (!campaignLocations.length) {
-      onError("Elegi al menos un pais.");
-      return;
-    }
-    const nextFormSchema = campaignFormSchema(fields);
-    if (campaignStatus === "active" && !nextFormSchema.fields.length) {
-      onError("Active forms need at least one question.");
-      return;
-    }
-    const locations = campaignLocations;
-    const geoError = validateCampaignGeoLocations(locations);
-    if (geoError) {
-      onError(geoError);
-      return;
-    }
-    const nextMetaPlanGraph = campaignMetaPlanHydrated(metaPlanGraph, {
-      campaignName: cleanName,
-      dailyBudget,
-      locations,
-      creative: creativeDraft,
-      media: creativeMedia,
-    });
-    setSaving(true);
-    try {
-      const body = {
-        name: cleanName,
-        client_id: usingExistingClient ? existingClientId : null,
-        client,
-        status: campaignStatus,
-        daily_budget_usd: dailyBudget ? Number(dailyBudget) : null,
-        geo_targeting: campaignGeoTargeting(locations),
-        meta_plan_graph: nextMetaPlanGraph,
-        campaign_info: {
-          creative: {
-            primary_text: creativeBrief.trim(),
-            headline: creativeHeadline.trim(),
-            description: creativeDescription.trim(),
-            asset_brief: creativeAssetBrief.trim(),
-            media: creativeMedia,
-            primary_media_url: creativeAssets[0]?.media_url || creativeMediaUrl.trim(),
-            call_to_action: creativeDraft.callToAction,
-          },
-        },
-        creative_brief: creativeSummary || null,
-        form_schema: nextFormSchema,
-        destination_url: destinationUrl.trim() || null,
-        meta_event_name: "Lead",
-        meta_events_enabled: metaEventsEnabled || metaOptimizeForPixel,
-        meta_optimize_for_pixel: metaOptimizeForPixel,
-        meta_optimization: {
-          enabled: metaOptimizeForPixel,
-          event_name: "Lead",
-        },
-        delivery_config: buildCreateDeliveryConfig(),
-      };
-      const payload = await apiFetch<{ campaign: LeadCaptureCampaignItem }>("/api/campaigns", {
-        method: "POST",
-        body: JSON.stringify(body),
-      });
-      setCampaignName("");
-      setDailyBudget("");
-      setCampaignLocations([]);
-      resetTargetFlow();
-      setCreativeBrief("");
-      setCreativeHeadline("");
-      setCreativeDescription("");
-      setCreativeAssetBrief("");
-      setCreativeAssets([]);
-      setCreativeMediaUrl("");
-      setDestinationUrl("");
-      setMetaEventsEnabled(Boolean(metaDefaults.meta_events_available));
-      setMetaOptimizeForPixel(Boolean(metaDefaults.meta_events_available));
-      setDeliveryEnabled(true);
-      setDeliveryContactIds(["client"]);
-      setDeliveryCustomContacts([]);
-      setDeliveryCustomName("");
-      setDeliveryCustomPhone("");
-      setShowCreateDeliveryAdd(false);
-      setClientMode("new");
-      setExistingClientId("");
-      setNewClientName("");
-      setNewClientWhatsapp("");
-      setNewClientEmail("");
-      setNewClientExtraInfo("");
-      setFields(defaultCampaignFields());
-      const resetGraph = campaignMetaPlanGraphFromStrategy({
-        strategy: "1x1x3",
-        campaignName: "",
-        dailyBudget: "",
-        locations: [],
-        creative: {
-          primaryText: "",
-          headline: "",
-          description: "",
-          assetBrief: "",
-          destinationUrl: "",
-          mediaCount: 0,
-          mediaUrl: "",
-          callToAction: "LEARN_MORE",
-        },
-        media: [],
-      });
-      setMetaPlanStrategy("1x1x3");
-      setMetaPlanGraph(resetGraph);
-      setSelectedMetaNode(campaignMetaPlanSelection(resetGraph));
-      setCampaignView("campaigns");
-      await loadCampaigns();
-      await selectCampaign(payload.campaign.id);
-    } catch (reason) {
-      onError(reason instanceof Error ? reason.message : "Could not create campaign.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function patchCampaignStatus(campaign: LeadCaptureCampaignItem, status: string) {
-    setSaving(true);
-    try {
-      const payload = await apiFetch<{ campaign: LeadCaptureCampaignItem }>(
-        `/api/campaigns/${encodeURIComponent(campaign.id)}`,
-        { method: "PATCH", body: JSON.stringify({ status }) },
-      );
-      setCampaigns((current) => current.map((item) => item.id === campaign.id ? payload.campaign : item));
-    } catch (reason) {
-      onError(reason instanceof Error ? reason.message : "Could not update campaign.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function deleteCampaign(campaign: LeadCaptureCampaignItem) {
-    if (!window.confirm(`Delete ${campaign.name} permanently? If it has live Meta ads, the CRM will pause them first.`)) {
-      return;
-    }
-    setSaving(true);
-    try {
-      await apiFetch(`/api/campaigns/${encodeURIComponent(campaign.id)}`, { method: "DELETE" });
-      setCampaigns((current) => current.filter((item) => item.id !== campaign.id));
-      if (selectedCampaignId === campaign.id) {
-        setSelectedCampaignId(null);
-      }
-      await loadCampaigns();
-    } catch (reason) {
-      onError(reason instanceof Error ? reason.message : "Could not delete campaign.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function restoreCampaign(campaign: LeadCaptureCampaignItem) {
-    await patchCampaignStatus(campaign, "paused");
-  }
-
-  async function refreshDeliverySource(campaign: LeadCaptureCampaignItem) {
-    setSaving(true);
-    try {
-      await apiFetch(`/api/campaigns/${encodeURIComponent(campaign.id)}/delivery-source`, { method: "POST" });
-      await loadCampaigns();
-    } catch (reason) {
-      onError(reason instanceof Error ? reason.message : "Could not refresh campaign delivery.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function copyCampaignUrl(campaign: LeadCaptureCampaignItem) {
-    await navigator.clipboard.writeText(campaign.public_url);
-  }
-
-  function renderMetaPlanEditor() {
-    if (selectedMetaNode.type === "campaign" && selectedGraphCampaign) {
-      return (
-        <div className="campaign-meta-plan-editor">
-          <div className="campaign-meta-plan-editor-head">
-            <span>Campaign</span>
-            <strong>{selectedGraphCampaign.name}</strong>
-          </div>
-          <div className="campaign-meta-plan-fields">
-            <label className="ct-field">
-              <span>Name</span>
-              <input value={selectedGraphCampaign.name} onChange={(event) => updateMetaPlanCampaign(selectedGraphCampaign.id, { name: event.target.value })} />
-            </label>
-            <label className="ct-field">
-              <span>Budget diario USD</span>
-              <input
-                value={selectedGraphCampaign.budget_daily_usd ?? ""}
-                onChange={(event) => updateMetaPlanCampaign(selectedGraphCampaign.id, { budget_daily_usd: event.target.value ? Number(event.target.value) : null })}
-                inputMode="numeric"
-                placeholder={dailyBudget || "25"}
-              />
-            </label>
-            <label className="ct-field">
-              <span>Objective</span>
-              <select value={selectedGraphCampaign.objective} onChange={(event) => updateMetaPlanCampaign(selectedGraphCampaign.id, { objective: event.target.value })}>
-                <option value="OUTCOME_LEADS">Leads</option>
-                <option value="OUTCOME_TRAFFIC">Traffic</option>
-                <option value="OUTCOME_SALES">Sales</option>
-              </select>
-            </label>
-          </div>
-        </div>
-      );
-    }
-
-    if (selectedMetaNode.type === "ad_set" && selectedGraphAdSet) {
-      return (
-        <div className="campaign-meta-plan-editor">
-          <div className="campaign-meta-plan-editor-head">
-            <span>Ad set</span>
-            <strong>{selectedGraphAdSet.name}</strong>
-          </div>
-          <div className="campaign-meta-plan-fields">
-            <label className="ct-field">
-              <span>Name</span>
-              <input value={selectedGraphAdSet.name} onChange={(event) => updateMetaPlanAdSet(selectedGraphAdSet.id, { name: event.target.value })} />
-            </label>
-            <div className="campaign-control-block campaign-meta-plan-wide">
-              <span>Destination</span>
-              <div className="campaign-segmented" role="group" aria-label="Ad set destination">
-                {[
-                  { value: "form", label: "Form" },
-                  { value: "website", label: "Website" },
-                  { value: "whatsapp", label: "WhatsApp" },
-                ].map((item) => (
-                  <button
-                    type="button"
-                    key={item.value}
-                    className={selectedGraphAdSet.destination_type === item.value ? "is-active" : ""}
-                    aria-pressed={selectedGraphAdSet.destination_type === item.value}
-                    onClick={() => updateMetaPlanAdSet(selectedGraphAdSet.id, { destination_type: item.value as MetaPlanAdSet["destination_type"] })}
-                  >
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <label className="ct-field">
-              <span>Performance goal</span>
-              <select value={selectedGraphAdSet.optimization_goal} onChange={(event) => updateMetaPlanAdSet(selectedGraphAdSet.id, { optimization_goal: event.target.value, performance_goal: event.target.value })}>
-                <option value="LEAD_GENERATION">Lead generation</option>
-                <option value="OFFSITE_CONVERSIONS">Pixel Lead</option>
-                <option value="LINK_CLICKS">Link clicks</option>
-              </select>
-            </label>
-            <label className="ct-field">
-              <span>Facebook Page ID</span>
-              <input value={selectedGraphAdSet.page_id || ""} onChange={(event) => updateMetaPlanAdSet(selectedGraphAdSet.id, { page_id: event.target.value })} placeholder="Optional until publish" />
-            </label>
-            <label className="ct-field">
-              <span>Instagram Actor ID</span>
-              <input value={selectedGraphAdSet.instagram_actor_id || ""} onChange={(event) => updateMetaPlanAdSet(selectedGraphAdSet.id, { instagram_actor_id: event.target.value })} placeholder="Optional" />
-            </label>
-            {selectedGraphAdSet.destination_type === "website" ? (
-              <label className="ct-field campaign-meta-plan-wide">
-                <span>Website URL</span>
-                <input value={selectedGraphAdSet.landing_page_url || ""} onChange={(event) => updateMetaPlanAdSet(selectedGraphAdSet.id, { landing_page_url: event.target.value })} placeholder="https://..." />
-              </label>
-            ) : null}
-            {selectedGraphAdSet.destination_type === "whatsapp" ? (
-              <label className="ct-field campaign-meta-plan-wide">
-                <span>WhatsApp Phone Number ID</span>
-                <input value={selectedGraphAdSet.whatsapp_phone_number_id || ""} onChange={(event) => updateMetaPlanAdSet(selectedGraphAdSet.id, { whatsapp_phone_number_id: event.target.value })} placeholder="Meta phone number id" />
-              </label>
-            ) : null}
-          </div>
-        </div>
-      );
-    }
-
-    if (selectedMetaNode.type === "ad" && selectedGraphAd) {
-      return (
-        <div className="campaign-meta-plan-editor">
-          <div className="campaign-meta-plan-editor-head">
-            <span>Ad</span>
-            <strong>{selectedGraphAd.name}</strong>
-          </div>
-          <div className="campaign-meta-plan-fields">
-            <label className="ct-field">
-              <span>Name</span>
-              <input value={selectedGraphAd.name} onChange={(event) => updateMetaPlanAd(selectedGraphAd.id, { name: event.target.value })} />
-            </label>
-            <label className="ct-field">
-              <span>CTA</span>
-              <select value={selectedGraphAd.call_to_action} onChange={(event) => updateMetaPlanAd(selectedGraphAd.id, { call_to_action: event.target.value })}>
-                <option value="LEARN_MORE">Learn more</option>
-                <option value="SIGN_UP">Sign up</option>
-                <option value="CONTACT_US">Contact us</option>
-                <option value="WHATSAPP_MESSAGE">WhatsApp</option>
-              </select>
-            </label>
-            <label className="ct-field campaign-meta-plan-wide">
-              <span>Primary text</span>
-              <textarea value={selectedGraphAd.primary_text} onChange={(event) => updateMetaPlanAd(selectedGraphAd.id, { primary_text: event.target.value })} rows={3} placeholder="Main ad text" />
-            </label>
-            <label className="ct-field">
-              <span>Headline</span>
-              <input value={selectedGraphAd.headline} onChange={(event) => updateMetaPlanAd(selectedGraphAd.id, { headline: event.target.value })} placeholder="Short title" />
-            </label>
-            <label className="ct-field">
-              <span>Description</span>
-              <input value={selectedGraphAd.description} onChange={(event) => updateMetaPlanAd(selectedGraphAd.id, { description: event.target.value })} placeholder="Optional line" />
-            </label>
-            <label className="ct-field campaign-meta-plan-wide">
-              <span>Redirect URL</span>
-              <input value={selectedGraphAd.destination_url} onChange={(event) => updateMetaPlanAd(selectedGraphAd.id, { destination_url: event.target.value })} placeholder="https://..." />
-            </label>
-            <div className="campaign-meta-plan-media campaign-meta-plan-wide">
-              <div>
-                <span>Media</span>
-                <strong>{compactNumber(selectedGraphAd.media.length)} attached</strong>
-              </div>
-              <button type="button" className="ct-btn ct-btn-ghost" onClick={() => setSelectedAdMedia(creativeMedia)} disabled={!creativeMedia.length}>
-                <UploadSimple size={13} weight="bold" />
-                Use uploaded media
-              </button>
-            </div>
-          </div>
-        </div>
-      );
-    }
-
-    return <CtEmptyState compact title="Select a node" message="Choose a campaign, ad set, or ad." />;
-  }
-
-  function renderCampaignCard(campaign: LeadCaptureCampaignItem) {
-    const archived = campaign.status === "archived";
-    return (
-      <button
-        type="button"
-        className={`campaign-card ${archived ? "is-archived" : ""} ${selectedCampaign?.id === campaign.id ? "active" : ""}`}
-        key={campaign.id}
-        onClick={() => void selectCampaign(campaign.id)}
-      >
-        <div>
-          <strong>{campaign.name}</strong>
-          <span>{campaign.client?.display_name || "No client"} · {campaign.location || "No location"}</span>
-        </div>
-        <span className="delivery-status-pill" data-tone={campaign.status === "active" ? "success" : campaign.status === "paused" ? "warn" : "muted"}>
-          {humanize(campaign.status)}
-        </span>
-        <small>{compactNumber(campaign.submission_count)} leads</small>
-      </button>
-    );
-  }
-
-  return (
-    <section className={`ct-surface campaign-manager-surface ${showCampaignEmpty && !isCreateView ? "is-empty" : ""}`}>
-      <div className="ct-simple-head campaign-manager-head">
-        <div className="ct-simple-title">
-          <span>Ads</span>
-          <strong>{isCreateView ? "Create campaign" : campaigns.length ? `${compactNumber(campaigns.length)} forms` : "No forms yet"}</strong>
-          <small>{isCreateView ? "New owned lead form" : selectedCampaign ? selectedCampaign.name : "Owned lead capture"}</small>
-        </div>
-        <div className="campaign-view-switch" role="tablist" aria-label="Ads views">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={!isCreateView}
-            className={!isCreateView ? "active" : ""}
-            onClick={closeCreateView}
-          >
-            <ListChecks size={14} weight="bold" />
-            Mis campañas
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={isCreateView}
-            className={isCreateView ? "active" : ""}
-            onClick={openCreateView}
-          >
-            <Plus size={14} weight="bold" />
-            Crear campaña
-          </button>
-        </div>
-        <div className="ct-simple-metrics campaign-manager-metrics">
-          <span><strong>{compactNumber(campaigns.reduce((total, campaign) => total + (campaign.submission_count || 0), 0))}</strong>Leads</span>
-          <span><strong>{compactNumber(activeCampaignCount)}</strong>Active</span>
-          <span><strong>{compactNumber(clients.length)}</strong>Clients</span>
-        </div>
-        <div className="campaign-manager-actions">
-          {isCreateView ? (
-            <button type="button" className="ct-btn ct-btn-ghost" onClick={closeCreateView}>
-              Mis campañas
-            </button>
-          ) : (
-            <>
-              <button type="button" className="ct-btn ct-btn-ghost" onClick={() => void loadCampaigns()} disabled={loading}>
-                <ArrowsClockwise size={14} weight="bold" />
-                Refresh
-              </button>
-              <button type="button" className="ct-btn ct-btn-primary" onClick={openCreateView}>
-                <Plus size={14} weight="bold" />
-                New campaign
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-
-      {isCreateView ? (
-        <form id="campaign-create-form" className="campaign-create-panel campaign-create-studio" onSubmit={createCampaign}>
-          <div className="campaign-create-sticky-actions">
-            <button type="button" className="ct-btn ct-btn-ghost" onClick={closeCreateView}>Cancel</button>
-            <button type="submit" className="ct-btn campaign-create-primary" disabled={saving}>
-              <Check size={14} weight="bold" />
-              {saving ? "Saving..." : "Create campaign"}
-            </button>
-          </div>
-          <div className="campaign-create-main">
-            <section className="campaign-create-section campaign-section-plan">
-              <div className="campaign-section-side">
-                <span className="campaign-section-icon"><Megaphone size={16} weight="bold" /></span>
-                <div>
-                  <strong>1. Meta plan</strong>
-                  <small>{metaPlanCounts.campaigns} campaigns · {metaPlanCounts.adSets} ad sets · {metaPlanCounts.ads} ads</small>
-                </div>
-              </div>
-              <div className="campaign-section-body campaign-meta-plan">
-                <div className="campaign-meta-plan-toolbar">
-                  <div className="campaign-segmented" role="group" aria-label="Meta plan strategy">
-                    {metaPlanStrategies.map((strategy) => (
-                      <button
-                        type="button"
-                        key={strategy.value}
-                        className={metaPlanStrategy === strategy.value ? "is-active" : ""}
-                        aria-pressed={metaPlanStrategy === strategy.value}
-                        onClick={() => rebuildMetaPlanGraph(strategy.value)}
-                      >
-                        {strategy.label}
-                      </button>
-                    ))}
-                  </div>
-                  <button type="button" className="ct-btn ct-btn-ghost" onClick={() => rebuildMetaPlanGraph(metaPlanStrategy)}>
-                    Rebuild
-                  </button>
-                </div>
-                <div className="campaign-meta-plan-grid">
-                  <div className="campaign-meta-plan-tree" aria-label="Meta plan tree">
-                    {metaPlanGraph.campaigns.map((campaign) => (
-                      <div className="campaign-meta-plan-campaign" key={campaign.id}>
-                        <button
-                          type="button"
-                          className={selectedMetaNode.type === "campaign" && selectedMetaNode.id === campaign.id ? "active" : ""}
-                          onClick={() => setSelectedMetaNode({ type: "campaign", id: campaign.id })}
-                        >
-                          <span>Campaign</span>
-                          <strong>{campaign.name}</strong>
-                        </button>
-                        {campaign.ad_sets.map((adSet) => (
-                          <div className="campaign-meta-plan-adset" key={adSet.id}>
-                            <button
-                              type="button"
-                              className={selectedMetaNode.type === "ad_set" && selectedMetaNode.id === adSet.id ? "active" : ""}
-                              onClick={() => setSelectedMetaNode({ type: "ad_set", id: adSet.id })}
-                            >
-                              <span>Ad set · {humanize(adSet.destination_type)}</span>
-                              <strong>{adSet.name}</strong>
-                            </button>
-                            {adSet.ads.map((ad) => (
-                              <button
-                                type="button"
-                                className={`campaign-meta-plan-ad ${selectedMetaNode.type === "ad" && selectedMetaNode.id === ad.id ? "active" : ""}`}
-                                key={ad.id}
-                                onClick={() => setSelectedMetaNode({ type: "ad", id: ad.id })}
-                              >
-                                <span>Ad</span>
-                                <strong>{ad.name}</strong>
-                              </button>
-                            ))}
-                          </div>
-                        ))}
-                      </div>
-                    ))}
-                  </div>
-                  {renderMetaPlanEditor()}
-                </div>
-              </div>
-            </section>
-
-            <section className="campaign-create-section campaign-section-basics">
-              <div className="campaign-section-side">
-                <span className="campaign-section-icon"><NotePencil size={16} weight="bold" /></span>
-                <div>
-                  <strong>2. Basics</strong>
-                  <small>Name, status and budget</small>
-                </div>
-              </div>
-              <div className="campaign-section-body campaign-basics-grid">
-                <label className="ct-field">
-                  <span>Campaign name</span>
-                  <input value={campaignName} onChange={(event) => setCampaignName(event.target.value)} required placeholder="Campaña Facu Contadores" />
-                </label>
-                <div className="campaign-control-block">
-                  <span>Status</span>
-                  <div className="campaign-segmented" role="group" aria-label="Campaign status">
-                    {["draft", "active", "paused"].map((status) => (
-                      <button
-                        type="button"
-                        className={campaignStatus === status ? "is-active" : ""}
-                        key={status}
-                        aria-pressed={campaignStatus === status}
-                        onClick={() => setCampaignStatus(status)}
-                      >
-                        {humanize(status)}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <label className="ct-field">
-                  <span>Daily budget (USD)</span>
-                  <input value={dailyBudget} onChange={(event) => setDailyBudget(event.target.value)} inputMode="numeric" placeholder="25" />
-                </label>
-              </div>
-            </section>
-
-            <section className="campaign-create-section campaign-section-targeting">
-              <div className="campaign-section-side">
-                <span className="campaign-section-icon"><Megaphone size={16} weight="bold" /></span>
-                <div>
-                  <strong>3. Ubicacion</strong>
-                  <small>Pais o provincia</small>
-                </div>
-              </div>
-              <div className="campaign-section-body campaign-targeting-panel">
-                <div className="campaign-targeting-saved" aria-label="Ubicaciones elegidas">
-                  {campaignLocations.map((location, index) => (
-                    <button
-                      type="button"
-                      className="campaign-target-pill"
-                      key={`${location.country_code}-${campaignLocationDetailLabel(location)}-${index}`}
-                      onClick={() => removeCampaignLocation(index)}
-                      aria-label={`Quitar ${campaignGeoLocationLabel(location)}`}
-                    >
-                      <span>{campaignLocationKindLabel(location)}</span>
-                      <strong>{campaignLocationButtonLabel(location)}</strong>
-                      <X size={13} weight="bold" />
-                    </button>
-                  ))}
-                </div>
-
-                <div className="campaign-target-flow">
-                  {targetStep === "country" ? (
-                    <>
-                      <label className="campaign-target-question" htmlFor="campaign-country-search">
-                        Pais
-                      </label>
-                      <div className="campaign-command-input">
-                        <input
-                          id="campaign-country-search"
-                          value={countryQuery}
-                          onChange={(event) => setCountryQuery(event.target.value)}
-                          onKeyDown={handleCountrySearchKeyDown}
-                          placeholder="Buscar pais"
-                        />
-                      </div>
-                      {countryQuery.trim() && countryMatches.length ? (
-                        <div className="campaign-country-results">
-                          {countryMatches.map((country) => (
-                            <button type="button" key={country.value} onClick={() => selectTargetCountry(country.value)}>
-                              <span>{country.label}</span>
-                            </button>
-                          ))}
-                        </div>
-                      ) : null}
-                    </>
-                  ) : (
-                    <>
-                      <div className="campaign-target-question is-row">
-                        <strong>{draftCountryLabel}</strong>
-                        <button type="button" className="ct-icon-btn" onClick={resetTargetFlow} aria-label="Cambiar pais">
-                          <X size={13} weight="bold" />
-                        </button>
-                      </div>
-                      <button type="button" className="campaign-target-choice" onClick={saveWholeCountryTarget}>
-                        <span>Pais entero</span>
-                        <Check size={14} weight="bold" />
-                      </button>
-                      <label className="campaign-target-question" htmlFor="campaign-province-search">
-                        Provincia
-                      </label>
-                      <CampaignProvinceSearch
-                        countryCode={draftCountryCode}
-                        query={provinceQuery}
-                        onQueryChange={setProvinceQuery}
-                        onPick={saveProvinceTarget}
-                        onError={onError}
-                      />
-                    </>
-                  )}
-                </div>
-              </div>
-            </section>
-
-            <section className="campaign-create-section campaign-section-client">
-              <div className="campaign-section-side">
-                <span className="campaign-section-icon"><ChatCircleText size={16} weight="bold" /></span>
-                <div>
-                  <strong>4. Client</strong>
-                  <small>Existing or new</small>
-                </div>
-              </div>
-              <div className="campaign-section-body">
-                <div className="campaign-client-mode">
-                  <div className="campaign-segmented" role="group" aria-label="Client source">
-                    <button
-                      type="button"
-                      className={clientMode === "existing" ? "is-active" : ""}
-                      disabled={!clients.length}
-                      aria-pressed={clientMode === "existing"}
-                      onClick={() => {
-                        setClientMode("existing");
-                        setExistingClientId((current) => current || clients[0]?.id || "");
-                      }}
-                    >
-                      Existing client
-                    </button>
-                    <button
-                      type="button"
-                      className={clientMode === "new" ? "is-active" : ""}
-                      aria-pressed={clientMode === "new"}
-                      onClick={() => {
-                        setClientMode("new");
-                        setExistingClientId("");
-                      }}
-                    >
-                      New client
-                    </button>
-                  </div>
-                  {clientMode === "existing" ? (
-                    <label className="ct-field">
-                      <span>Choose client</span>
-                      <select value={existingClientId} onChange={(event) => setExistingClientId(event.target.value)}>
-                        <option value="" disabled>Select one client</option>
-                        {clients.map((client) => (
-                          <option key={client.id} value={client.id}>{campaignClientLabel(client)}</option>
-                        ))}
-                      </select>
-                    </label>
-                  ) : null}
-                </div>
-                {clientMode === "new" ? (
-                  <>
-                    <div className="campaign-client-fields">
-                      <label className="ct-field">
-                        <span>Client name</span>
-                        <input value={newClientName} onChange={(event) => setNewClientName(event.target.value)} placeholder="New converted client" />
-                      </label>
-                      <label className="ct-field">
-                        <span>WhatsApp</span>
-                        <input value={newClientWhatsapp} onChange={(event) => setNewClientWhatsapp(event.target.value)} inputMode="tel" placeholder="549..." />
-                      </label>
-                      <label className="ct-field">
-                        <span>Email</span>
-                        <input value={newClientEmail} onChange={(event) => setNewClientEmail(event.target.value)} type="text" inputMode="email" autoComplete="email" placeholder="cliente@email.com" />
-                      </label>
-                    </div>
-                    <label className="ct-field">
-                      <span>Extra info</span>
-                      <textarea value={newClientExtraInfo} onChange={(event) => setNewClientExtraInfo(event.target.value)} rows={2} placeholder="Notes for this client" />
-                    </label>
-                  </>
-                ) : (
-                  <div className="campaign-existing-client-summary">
-                    <strong>{selectedClient?.display_name || "No client selected"}</strong>
-                    <span>{selectedClient?.lead?.phone || "Choose a saved converted client"}{selectedClient?.lead?.email ? ` · ${selectedClient.lead.email}` : ""}</span>
-                  </div>
-                )}
-              </div>
-            </section>
-
-            <section className="campaign-create-section campaign-section-delivery">
-              <div className="campaign-section-side">
-                <span className="campaign-section-icon"><PaperPlaneTilt size={16} weight="bold" /></span>
-                <div>
-                  <strong>5. Delivery</strong>
-                  <small>WhatsApp templates</small>
-                </div>
-              </div>
-              <div className="campaign-section-body campaign-delivery-config">
-                <label className="campaign-delivery-toggle">
-                  <span>
-                    <strong>Auto delivery</strong>
-                    <small>{deliveryEnabled ? "On" : "Off"}</small>
-                  </span>
-                  <input type="checkbox" checked={deliveryEnabled} onChange={(event) => setDeliveryEnabled(event.target.checked)} />
-                </label>
-                <div className="campaign-delivery-current">
-                  <div className="campaign-delivery-current-head">
-                    <strong>Delivery contacts</strong>
-                    <button type="button" className="ct-btn ct-btn-ghost" onClick={() => setShowCreateDeliveryAdd((open) => !open)}>
-                      <Plus size={13} weight="bold" />
-                      Contact
-                    </button>
-                  </div>
-                  <div className="campaign-delivery-contact-list">
-                    {createDeliveryConfig.contacts.map((contact) => {
-                      const displayContact = campaignDeliveryDisplayContact(contact, createDeliveryClient);
-                      return (
-                        <article className="campaign-delivery-contact-card" key={contact.id}>
-                          <div>
-                            <strong>{displayContact.label}</strong>
-                            <span>{campaignDeliveryContactPhoneLabel(displayContact)}</span>
-                          </div>
-                          <button type="button" className="ct-icon-btn" onClick={() => removeCreateDeliveryContact(contact)} aria-label={`Remove ${displayContact.label}`}>
-                            <X size={12} weight="bold" />
-                          </button>
-                        </article>
-                      );
-                    })}
-                  </div>
-                </div>
-                {showCreateDeliveryAdd ? (
-                  <div className="campaign-delivery-add-panel">
-                    {createDeliverySuggestions.length ? (
-                      <div className="campaign-delivery-suggestion-grid">
-                        {createDeliverySuggestions.map((contact) => (
-                          <button type="button" key={contact.id} onClick={() => addCreateDeliveryPresetContact(contact)}>
-                            <span>{contact.label}</span>
-                            <small>{campaignDeliveryContactPhoneLabel(contact)}</small>
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
-                    <div className="campaign-delivery-custom">
-                      <label className="ct-field">
-                        <span>Name</span>
-                        <input value={deliveryCustomName} onChange={(event) => setDeliveryCustomName(event.target.value)} placeholder="Delivery contact" />
-                      </label>
-                      <label className="ct-field">
-                        <span>Phone</span>
-                        <input value={deliveryCustomPhone} onChange={(event) => setDeliveryCustomPhone(event.target.value)} inputMode="tel" placeholder="549..." />
-                      </label>
-                      <button type="button" className="ct-btn ct-btn-ghost" onClick={addCreateDeliveryCustomContact}>
-                        <Plus size={13} weight="bold" />
-                        Add
-                      </button>
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-            </section>
-
-            <section className="campaign-create-section campaign-section-creative">
-              <div className="campaign-section-side">
-                <span className="campaign-section-icon"><Camera size={16} weight="bold" /></span>
-                <div>
-                  <strong>6. Creative</strong>
-                  <small>Media and copy</small>
-                </div>
-              </div>
-              <div className="campaign-section-body campaign-creative-grid">
-                <div
-                  className={`campaign-creative-upload ${creativeMediaDropActive ? "drag-active" : ""}`}
-                  onDragOver={handleCampaignCreativeDragOver}
-                  onDragLeave={handleCampaignCreativeDragLeave}
-                  onDrop={handleCampaignCreativeDrop}
-                  onPaste={handleCampaignCreativePaste}
-                  tabIndex={0}
-                >
-                  <div>
-                    <strong>Upload image or video</strong>
-                    <span>Choose a file, drag it here, or paste media from the clipboard.</span>
-                  </div>
-                  <label className="ct-btn ct-btn-primary campaign-creative-upload-button">
-                    <UploadSimple size={15} weight="bold" />
-                    {creativeMediaUploading ? "Uploading..." : "Upload media"}
-                    <input
-                      type="file"
-                      accept="image/*,video/*"
-                      multiple
-                      disabled={creativeMediaUploading}
-                      onChange={(event) => {
-                        const files = Array.from(event.target.files ?? []);
-                        event.currentTarget.value = "";
-                        void uploadCampaignCreativeFiles(files);
-                      }}
-                    />
-                  </label>
-                </div>
-                {creativeAssets.length ? (
-                  <div className="campaign-creative-assets">
-                    {creativeAssets.map((asset) => (
-                      <article className="campaign-creative-asset" key={asset.id}>
-                        <div className="campaign-creative-asset-preview">
-                          {asset.asset_type === "image" && asset.media_url ? (
-                            <img src={asset.media_url} alt={campaignCreativeAssetName(asset)} loading="lazy" />
-                          ) : asset.asset_type === "video" && asset.media_url ? (
-                            <video src={asset.media_url} controls preload="metadata" />
-                          ) : (
-                            <FolderOpen size={22} weight="bold" />
-                          )}
-                        </div>
-                        <div>
-                          <strong>{campaignCreativeAssetName(asset)}</strong>
-                          <span>{humanize(asset.asset_type)} uploaded</span>
-                        </div>
-                        <button type="button" className="ct-icon-btn" onClick={() => removeCampaignCreativeAsset(asset.id)} aria-label="Remove creative media">
-                          <X size={13} weight="bold" />
-                        </button>
-                      </article>
-                    ))}
-                  </div>
-                ) : null}
-                <label className="ct-field campaign-creative-primary">
-                  <span>Media URL (optional)</span>
-                  <input
-                    value={creativeMediaUrl}
-                    onChange={(event) => {
-                      const nextUrl = event.target.value;
-                      setCreativeMediaUrl(nextUrl);
-                      if (selectedMetaNode.type === "ad") {
-                        setSelectedAdMedia(campaignMetaPlanMedia(creativeAssets, nextUrl));
-                      }
-                    }}
-                    placeholder="https://.../ad-image.png"
-                  />
-                </label>
-                <label className="ct-field campaign-creative-primary">
-                  <span>Primary text</span>
-                  <textarea value={creativeBrief} onChange={(event) => setCreativeBrief(event.target.value)} rows={3} placeholder="Main ad text shown above the image/video" />
-                </label>
-                <label className="ct-field">
-                  <span>Headline</span>
-                  <input value={creativeHeadline} onChange={(event) => setCreativeHeadline(event.target.value)} placeholder="Short offer headline" />
-                </label>
-                <label className="ct-field">
-                  <span>Description</span>
-                  <input value={creativeDescription} onChange={(event) => setCreativeDescription(event.target.value)} placeholder="Optional supporting line" />
-                </label>
-                <label className="ct-field campaign-creative-primary">
-                  <span>Asset notes</span>
-                  <textarea value={creativeAssetBrief} onChange={(event) => setCreativeAssetBrief(event.target.value)} rows={2} placeholder="Contador en oficina, testimonial corto, placa de beneficios..." />
-                </label>
-                <label className="ct-field campaign-creative-primary">
-                  <span>Destination URL</span>
-                  <input value={destinationUrl} onChange={(event) => setDestinationUrl(event.target.value)} placeholder="https://..." />
-                </label>
-              </div>
-            </section>
-
-            <section className="campaign-create-section campaign-section-form">
-              <div className="campaign-section-side">
-                <span className="campaign-section-icon"><ListChecks size={16} weight="bold" /></span>
-                <div>
-                  <strong>7. Form fields</strong>
-                  <small>{fields.length} fields</small>
-                </div>
-              </div>
-              <div className="campaign-section-body campaign-form-builder">
-                <div className="campaign-form-builder-head">
-                  <div>
-                    <span>Lead form</span>
-                    <strong>Questions people complete</strong>
-                  </div>
-                  <button type="button" className="ct-btn ct-btn-ghost" onClick={addField}>
-                    <Plus size={13} weight="bold" />
-                    Field
-                  </button>
-                </div>
-                <div className="campaign-field-list">
-                  {fields.map((field, index) => {
-                    const typeLabel = campaignFieldTypes.find((type) => type.value === field.type)?.label || field.type;
-                    return (
-                      <article className="campaign-field-card" key={`${field.id}-${index}`}>
-                        <div className="campaign-field-card-head">
-                          <div>
-                            <span>Field {index + 1}</span>
-                            <strong>{field.label.trim() || "Untitled field"}</strong>
-                          </div>
-                          <div className="campaign-field-badges">
-                            <span>{typeLabel}</span>
-                            <span className={field.required ? "is-required" : "is-optional"}>{field.required ? "Required" : "Optional"}</span>
-                          </div>
-                          <button type="button" className="ct-icon-btn" onClick={() => removeField(index)} aria-label="Remove field">
-                            <Trash size={14} weight="bold" />
-                          </button>
-                        </div>
-                        <div className="campaign-field-editor">
-                          <label className="ct-field campaign-field-label">
-                            <span>Label</span>
-                            <input value={field.label} onChange={(event) => updateField(index, { label: event.target.value, id: campaignFieldId(event.target.value, index) })} />
-                          </label>
-                          <label className="ct-field">
-                            <span>Type</span>
-                            <select value={field.type} onChange={(event) => updateField(index, { type: event.target.value })}>
-                              {campaignFieldTypes.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
-                            </select>
-                          </label>
-                          <label className="ct-field">
-                            <span>Placeholder</span>
-                            <input value={field.placeholder || ""} onChange={(event) => updateField(index, { placeholder: event.target.value })} placeholder="Shown inside the form field" />
-                          </label>
-                          <label className="campaign-required-toggle">
-                            <input type="checkbox" checked={Boolean(field.required)} onChange={(event) => updateField(index, { required: event.target.checked })} />
-                            <span>{field.required ? "Required" : "Optional"}</span>
-                          </label>
-                        </div>
-                        {(field.type === "select" || field.type === "multi_select") ? (
-                          <label className="ct-field campaign-field-options">
-                            <span>Options</span>
-                            <input value={field.optionsText} onChange={(event) => updateField(index, { optionsText: event.target.value })} placeholder="Opcion 1, Opcion 2" />
-                          </label>
-                        ) : null}
-                      </article>
-                    );
-                  })}
-                </div>
-              </div>
-            </section>
-
-            <section className="campaign-create-section campaign-section-meta">
-              <div className="campaign-section-side">
-                <span className="campaign-section-icon"><Pulse size={16} weight="bold" /></span>
-                <div>
-                  <strong>8. Meta</strong>
-                  <small>Submit tracking</small>
-                </div>
-              </div>
-              <div className="campaign-section-body campaign-meta-grid">
-                <label className="campaign-meta-card">
-                  <span className="campaign-meta-card-main">
-                    <span>
-                      <strong>Meta Pixel</strong>
-                      <small>{metaEventsEnabled ? "Lead event on submit" : "Disabled for this campaign"}</small>
-                    </span>
-                    <span className="ct-field-toggle campaign-meta-switch">
-                      <input
-                        type="checkbox"
-                        checked={metaEventsEnabled}
-                        onChange={(event) => updateMetaEventsEnabled(event.target.checked)}
-                      />
-                    </span>
-                  </span>
-                  <em>{metaDefaults.meta_events_available ? metaDefaults.pixel_label || "Automatic pixel ready" : "No synced pixel yet"}</em>
-                </label>
-                <label className="campaign-meta-card">
-                  <span className="campaign-meta-card-main">
-                    <span>
-                      <strong>Optimize Ad Set</strong>
-                      <small>{metaOptimizeForPixel ? "Meta optimizes for Lead" : "Manual optimization later"}</small>
-                    </span>
-                    <span className="ct-field-toggle campaign-meta-switch">
-                      <input
-                        type="checkbox"
-                        checked={metaOptimizeForPixel}
-                        disabled={!metaDefaults.meta_events_available}
-                        onChange={(event) => updateMetaOptimizeForPixel(event.target.checked)}
-                      />
-                    </span>
-                  </span>
-                  <em>{metaOptimizeForPixel ? "OFFSITE_CONVERSIONS · Lead" : "No pixel optimization"}</em>
-                </label>
-                <div className="campaign-meta-event-card">
-                  <span>Event</span>
-                  <strong>Lead</strong>
-                  <small>Pixel browser + server CAPI</small>
-                </div>
-              </div>
-            </section>
-          </div>
-
-          <aside className="campaign-create-preview">
-            <section className="campaign-form-preview" aria-label="Campaign form preview">
-              <div className="campaign-preview-head">
-                <span>Lead form preview</span>
-                  <strong>Consulta</strong>
-              </div>
-              <div className="campaign-preview-pages">
-                {fields.slice(0, 4).map((field, index) => {
-                  const options = field.optionsText
-                    .split(/[\n,]/)
-                    .map((option) => option.trim())
-                    .filter(Boolean);
-                  const previewOptions = options.length ? options.slice(0, 4) : ["Si", "No"];
-                  return (
-                    <section className="campaign-preview-question" key={`${field.id}-preview-${index}`}>
-                      <div className="campaign-preview-question-head">
-                        <span>{index + 1}/{fields.length}</span>
-                        {field.required ? <small>Required</small> : null}
-                      </div>
-                      <strong>{field.label.trim() || `Field ${index + 1}`}</strong>
-                      {field.placeholder ? <em>{field.placeholder}</em> : null}
-                      {(field.type === "select" || field.type === "multi_select" || field.type === "yes_no") ? (
-                        <div className="campaign-preview-options">
-                          {previewOptions.map((option) => <span key={`${field.id}-${option}`}>{option}</span>)}
-                        </div>
-                      ) : (
-                        <div className={`campaign-preview-input ${field.type === "textarea" ? "is-long" : ""}`} />
-                      )}
-                    </section>
-                  );
-                })}
-                {fields.length > 4 ? (
-                  <div className="campaign-preview-more">
-                    {fields.length - 4} more questions in this form
-                  </div>
-                ) : null}
-              </div>
-              <div className="campaign-preview-foot">
-                <button type="button" className="ct-btn" disabled>
-                  <Check size={13} weight="bold" />
-                  Next
-                </button>
-                <span>Draft preview</span>
-              </div>
-            </section>
-
-            <section className="campaign-summary-card">
-              <strong>Campaign summary</strong>
-              <dl>
-                <div><dt>Status</dt><dd>{humanize(campaignStatus)}</dd></div>
-                <div><dt>Budget</dt><dd>{dailyBudget ? `USD ${dailyBudget}` : "-"}</dd></div>
-                <div><dt>Locations</dt><dd>{campaignLocations.length ? `${campaignLocations.length} saved` : "-"}</dd></div>
-                <div><dt>Client</dt><dd>{clientMode === "existing" ? (selectedClient?.display_name || "Existing") : (newClientName.trim() || "New client")}</dd></div>
-                <div><dt>Form fields</dt><dd>{fields.length} fields</dd></div>
-                <div><dt>Creative</dt><dd>{creativeSummary ? "Copy ready" : "Empty"}</dd></div>
-                <div><dt>Meta event</dt><dd>{metaEventsEnabled ? "Lead" : "Off"}</dd></div>
-                <div><dt>Optimize</dt><dd>{metaOptimizeForPixel ? "Pixel Lead" : "Off"}</dd></div>
-              </dl>
-            </section>
-
-          </aside>
-        </form>
-      ) : null}
-
-      {!isCreateView && showCampaignEmpty ? (
-        <section className="campaign-empty-launchpad" aria-label="Create first campaign">
-          <div className="campaign-empty-mark" aria-hidden="true">
-            <Megaphone size={34} weight="duotone" />
-          </div>
-          <div className="campaign-empty-copy">
-            <span>Owned forms</span>
-            <strong>Create the first campaign</strong>
-            <p>Targeting, client, creative media and the lead form live in one clean flow.</p>
-          </div>
-          <button type="button" className="ct-btn campaign-empty-primary" onClick={openCreateView}>
-            <Plus size={16} weight="bold" />
-            Create campaign
-          </button>
-          <div className="campaign-empty-chips" aria-hidden="true">
-            <span>Targeting</span>
-            <span>Media</span>
-            <span>Lead form</span>
-            <span>Meta Lead</span>
-          </div>
-        </section>
-      ) : !isCreateView ? (
-        <div className="campaign-manager-grid">
-          <div className="campaign-list">
-            {loading && !campaigns.length ? (
-              <CtEmptyState compact loading title="Loading campaigns" message="Checking owned forms." />
-            ) : campaigns.length ? (
-              campaigns.map(renderCampaignCard)
-            ) : <CtEmptyState compact title="No campaign forms yet" message="Create the first owned form." />}
-          </div>
-
-          <div className="campaign-detail-panel">
-            {selectedCampaign ? (
-              <>
-              <div className="campaign-detail-head">
-                <div>
-                  <span>Public form</span>
-                  <strong>{selectedCampaign.name}</strong>
-                  <a href={selectedCampaign.public_url} target="_blank" rel="noreferrer">{selectedCampaign.public_url}</a>
-                </div>
-                <div className="campaign-detail-actions">
-                  <button type="button" className="ct-icon-btn" onClick={() => void copyCampaignUrl(selectedCampaign)} title="Copy public URL" aria-label="Copy public URL">
-                    <Copy size={14} weight="bold" />
-                  </button>
-                  <button type="button" className="ct-icon-btn" onClick={() => window.open(selectedCampaign.public_url, "_blank", "noopener,noreferrer")} title="Open public form" aria-label="Open public form">
-                    <ArrowSquareOut size={14} weight="bold" />
-                  </button>
-                </div>
-              </div>
-
-              <div className="campaign-detail-metrics">
-                <span><strong>{compactNumber(selectedCampaign.submission_count)}</strong>Submissions</span>
-                <span><strong>{selectedCampaign.daily_budget_usd ? `$${selectedCampaign.daily_budget_usd}` : "-"}</strong>Daily</span>
-                <span><strong>{selectedCampaignDelivery.enabled ? "On" : "Off"}</strong>Delivery</span>
-                <span><strong>{selectedCampaign.meta_events_enabled ? "On" : "Off"}</strong>Meta</span>
-              </div>
-
-              <div className="campaign-detail-controls">
-                {selectedCampaign.status === "archived" ? (
-                  <button type="button" className="ct-btn ct-btn-ghost" disabled={saving} onClick={() => void restoreCampaign(selectedCampaign)}>Restore</button>
-                ) : (
-                  <>
-                    <button type="button" className="ct-btn ct-btn-ghost" disabled={saving || selectedCampaign.status === "active"} onClick={() => void patchCampaignStatus(selectedCampaign, "active")}>Activate</button>
-                    <button type="button" className="ct-btn ct-btn-ghost" disabled={saving || selectedCampaign.status === "paused"} onClick={() => void patchCampaignStatus(selectedCampaign, "paused")}>Pause</button>
-                  </>
-                )}
-                <button type="button" className="ct-btn ct-btn-ghost" disabled={saving} onClick={() => void deleteCampaign(selectedCampaign)}>
-                  <Trash size={13} weight="bold" />
-                  Delete
-                </button>
-                <button type="button" className="ct-btn ct-btn-ghost" disabled={saving || selectedCampaign.status === "archived"} onClick={() => void refreshDeliverySource(selectedCampaign)}>Delivery source</button>
-              </div>
-
-              {selectedCampaign.meta_plan_graph ? (
-                <section className="campaign-plan-readonly">
-                  <div className="campaign-submissions-head">
-                    <strong>Meta plan</strong>
-                    <span>
-                      {campaignMetaPlanCounts(selectedCampaign.meta_plan_graph).campaigns} campaigns · {campaignMetaPlanCounts(selectedCampaign.meta_plan_graph).adSets} ad sets · {campaignMetaPlanCounts(selectedCampaign.meta_plan_graph).ads} ads
-                    </span>
-                  </div>
-                  <div className="campaign-plan-readonly-tree">
-                    {selectedCampaign.meta_plan_graph.campaigns.map((campaign) => (
-                      <article key={campaign.id}>
-                        <div>
-                          <span>Campaign</span>
-                          <strong>{campaign.name}</strong>
-                          <small>{campaign.budget_daily_usd ? `USD ${campaign.budget_daily_usd}` : "No budget"} · {humanize(campaign.status)}</small>
-                        </div>
-                        {campaign.ad_sets.map((adSet) => (
-                          <div className="campaign-plan-readonly-adset" key={adSet.id}>
-                            <span>Ad set · {humanize(adSet.destination_type)}</span>
-                            <strong>{adSet.name}</strong>
-                            <small>{adSet.ads.length} ads · {humanize(adSet.optimization_goal)}</small>
-                          </div>
-                        ))}
-                      </article>
-                    ))}
-                  </div>
-                </section>
-              ) : null}
-
-              <section className="campaign-media-panel">
-                <div className="campaign-submissions-head">
-                  <strong>Ad media</strong>
-                  <span>{compactNumber(selectedCampaignMedia.length)} files</span>
-                </div>
-                {selectedCampaignMedia.length ? (
-                  <div className="campaign-media-grid">
-                    {selectedCampaignMedia.map((media) => (
-                      <article className="campaign-media-card" key={media.key}>
-                        <div className="campaign-media-preview">
-                          {media.media_url && media.asset_type === "image" ? (
-                            <img src={media.media_url} alt={media.name} loading="lazy" />
-                          ) : media.media_url && media.asset_type === "video" ? (
-                            <video src={media.media_url} controls playsInline preload="metadata" />
-                          ) : (
-                            <Camera size={22} weight="bold" />
-                          )}
-                          {media.media_url ? (
-                            <button type="button" className="ct-icon-btn campaign-media-open" onClick={() => window.open(media.media_url, "_blank", "noopener,noreferrer")} aria-label="Open ad media">
-                              <ArrowSquareOut size={13} weight="bold" />
-                            </button>
-                          ) : null}
-                        </div>
-                        <div className="campaign-media-meta">
-                          <strong>{media.name}</strong>
-                          <span>{humanize(media.asset_type)} · {humanize(media.source)}</span>
-                        </div>
-                      </article>
-                    ))}
-                  </div>
-                ) : (
-                  <CtEmptyState compact title="No ad media" message="Uploaded images and videos will appear here." />
-                )}
-              </section>
-
-              <section className="campaign-delivery-panel">
-                <div className="campaign-submissions-head">
-                  <strong>Delivery</strong>
-                  <label className="campaign-delivery-mini-toggle">
-                    <span>{selectedCampaignDelivery.enabled ? "On" : "Off"}</span>
-                    <input
-                      type="checkbox"
-                      checked={selectedCampaignDelivery.enabled}
-                      disabled={saving}
-                      onChange={(event) => void updateCampaignDeliveryConfig(selectedCampaign, { ...selectedCampaignDelivery, enabled: event.target.checked })}
-                    />
-                  </label>
-                </div>
-                <div className="campaign-delivery-current">
-                  <div className="campaign-delivery-current-head">
-                    <strong>Current contacts</strong>
-                    <button type="button" className="ct-btn ct-btn-ghost" disabled={saving || selectedCampaign.status === "archived"} onClick={() => setShowDetailDeliveryAdd((open) => !open)}>
-                      <Plus size={13} weight="bold" />
-                      Contact
-                    </button>
-                  </div>
-                  <div className="campaign-delivery-contact-list">
-                    {selectedCampaignDelivery.contacts.map((contact) => {
-                      const displayContact = campaignDeliveryDisplayContact(contact, selectedCampaign.client);
-                      return (
-                        <article className="campaign-delivery-contact-card" key={contact.id}>
-                          <div>
-                            <strong>{displayContact.label}</strong>
-                            <span>{campaignDeliveryContactPhoneLabel(displayContact)}</span>
-                          </div>
-                          <button
-                            type="button"
-                            className="ct-icon-btn"
-                            disabled={saving || selectedCampaign.status === "archived"}
-                            onClick={() => removeCampaignDeliveryContact(selectedCampaign, contact.id)}
-                            aria-label={`Remove ${displayContact.label}`}
-                          >
-                            <X size={12} weight="bold" />
-                          </button>
-                        </article>
-                      );
-                    })}
-                  </div>
-                </div>
-                {showDetailDeliveryAdd ? (
-                  <div className="campaign-delivery-add-panel">
-                    {selectedCampaignDeliverySuggestions.length ? (
-                      <div className="campaign-delivery-suggestion-grid">
-                        {selectedCampaignDeliverySuggestions.map((contact) => (
-                          <button type="button" key={contact.id} disabled={saving} onClick={() => addCampaignDeliveryPresetContact(selectedCampaign, contact)}>
-                            <span>{contact.label}</span>
-                            <small>{campaignDeliveryContactPhoneLabel(contact)}</small>
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
-                    <div className="campaign-delivery-custom">
-                      <label className="ct-field">
-                        <span>Name</span>
-                        <input value={detailDeliveryName} onChange={(event) => setDetailDeliveryName(event.target.value)} placeholder="Delivery contact" />
-                      </label>
-                      <label className="ct-field">
-                        <span>Phone</span>
-                        <input value={detailDeliveryPhone} onChange={(event) => setDetailDeliveryPhone(event.target.value)} inputMode="tel" placeholder="549..." />
-                      </label>
-                      <button type="button" className="ct-btn ct-btn-ghost" disabled={saving} onClick={() => addDetailDeliveryCustomContact(selectedCampaign)}>
-                        <Plus size={13} weight="bold" />
-                        Add
-                      </button>
-                    </div>
-                  </div>
-                ) : null}
-              </section>
-
-              <div className="campaign-submissions">
-                <div className="campaign-submissions-head">
-                  <strong>Submissions</strong>
-                  <button type="button" className="ct-btn ct-btn-ghost" disabled={submissionsLoading} onClick={() => void loadCampaignSubmissions(selectedCampaign.id)}>
-                    <ArrowsClockwise size={13} weight="bold" />
-                    Refresh
-                  </button>
-                </div>
-                {submissionsLoading && !submissions.length ? (
-                  <CtEmptyState compact loading title="Loading submissions" message="Checking captured leads." />
-                ) : submissions.length ? (
-                  <div className="campaign-submission-sheet">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Fecha</th>
-                          <th>Nombre</th>
-                          <th>WhatsApp</th>
-                          <th>Email</th>
-                          <th>Delivery</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {submissions.map((submission) => (
-                          <tr key={submission.id}>
-                            <td>{submission.created_at ? shortDate(submission.created_at) : "-"}</td>
-                            <td>{submission.full_name || "-"}</td>
-                            <td>{campaignSubmissionPhoneLabel(submission)}</td>
-                            <td>{submission.email || "-"}</td>
-                            <td>
-                              <div className="campaign-submission-delivery">
-                                {(submission.delivery_statuses?.length ? submission.delivery_statuses : [{ delivery_id: "", source_id: "", recipient_name: "", recipient_phone: "", delivery_status: submission.delivery_status }]).map((status, index) => (
-                                  <span
-                                    className="delivery-status-pill"
-                                    data-tone={status.delivery_status === "pending" ? "warn" : status.delivery_status === "delivered" || status.delivery_status === "sent" ? "success" : status.delivery_status === "failed" || status.delivery_status === "blocked" ? "danger" : "muted"}
-                                    key={`${submission.id}-${status.delivery_id || index}`}
-                                  >
-                                    {status.recipient_name ? `${status.recipient_name}: ` : ""}{humanize(status.delivery_status || "queued")}
-                                  </span>
-                                ))}
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <CtEmptyState compact title="No submissions yet" message="Captured leads will appear here." />
-                )}
-              </div>
-              </>
-            ) : (
-              <CtEmptyState compact title="No selected campaign" message="Create or select a campaign form." />
-            )}
-          </div>
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
-function ClientLeadDeliveryView({
-  sources,
-  contactGroups,
-  leads,
-  selectedSource,
-  selectedSourceId,
-  editorMode,
-  draft,
-  loading,
-  leadsLoading,
-  recipientChat,
-  recipientChatLoading,
-  actionBusy,
-  copyStatus,
-  sourceEditorError,
-  onSelectSource,
-  onNewSource,
-  onDraftChange,
-  onSaveSource,
-  onDeleteSource,
-  onCopyLead,
-  onCopyLeadAll,
-  onRetryLead,
-  onOpenCrmLead,
-}: {
-  sources: ClientLeadSource[];
-  contactGroups: DeliveryContactGroup[];
-  leads: ClientLead[];
-  selectedSource: ClientLeadSource | null;
-  selectedSourceId: string | null;
-  editorMode: DeliveryEditorMode;
-  draft: ClientLeadSourceDraft;
-  loading: boolean;
-  leadsLoading: boolean;
-  recipientChat: ClientLeadRecipientChatResponse | null;
-  recipientChatLoading: boolean;
-  actionBusy: string | null;
-  copyStatus: string;
-  sourceEditorError: string;
-  onSelectSource: (sourceId: string) => void;
-  onNewSource: () => void;
-  onDraftChange: (draft: ClientLeadSourceDraft) => void;
-  onSaveSource: (event: FormEvent<HTMLFormElement>) => void | Promise<void>;
-  onDeleteSource: () => void;
-  onCopyLead: (lead: ClientLead) => void | Promise<void>;
-  onCopyLeadAll: (lead: ClientLead) => void | Promise<void>;
-  onRetryLead: (lead: ClientLead) => void | Promise<void>;
-  onOpenCrmLead: (lead: ClientLeadRecipientCrmLead) => void;
-}) {
-  const [configOpen, setConfigOpen] = useState(editorMode === "create");
-  const [sentChatOpen, setSentChatOpen] = useState(false);
-  const [deliveryStage, setDeliveryStage] = useState<"contacts" | "client" | "sheet">("contacts");
-  const [activeSheetId, setActiveSheetId] = useState<string | null>(null);
-  const isExisting = editorMode === "edit" && Boolean(selectedSource);
-  const selectedGroup = isExisting
-    ? contactGroups.find((group) => group.sources.some((source) => source.id === selectedSourceId)) ?? null
-    : null;
-  const selectedSources = selectedGroup?.sources ?? (selectedSource ? [selectedSource] : []);
-  const selectedGroupKey = selectedGroup?.key ?? selectedSourceId ?? "";
-  const selectedGroupLabel = selectedGroup?.label || selectedSource?.label || "Select a contact";
-  const selectedGroupTone = selectedGroup ? deliveryContactTone(selectedGroup) : selectedSource ? deliverySourceTone(selectedSource) : "muted";
-  const selectedGroupStatus = selectedGroup ? deliveryContactStatusLabel(selectedGroup) : selectedSource?.enabled ? humanize(selectedSource.last_sync_status || "active") : "Paused";
-  const activeSheet = selectedSources.find((source) => source.id === activeSheetId) ?? null;
-  const activeSheetLeads = activeSheet ? leads.filter((lead) => lead.source_id === activeSheet.id) : [];
-  const activeSheetSections = activeSheet ? buildDeliverySheetLeadSections([activeSheet], activeSheetLeads, activeSheet.id) : [];
-  const totalLeads = sources.reduce((total, source) => total + deliverySourceCount(source, "total"), 0);
-  const failedLeads = contactGroups.reduce((total, group) => total + group.issues, 0);
-  const deliveredLeads = sources.reduce((total, source) => total + deliverySourceCount(source, "sent") + deliverySourceCount(source, "delivered"), 0);
-  const selectedTotalLeads = selectedSources.reduce((total, source) => total + deliverySourceCount(source, "total"), 0);
-  const selectedDeliveredLeads = selectedSources.reduce((total, source) => total + deliverySourceCount(source, "sent") + deliverySourceCount(source, "delivered"), 0);
-  const selectedBlockedLeads = selectedSources.reduce((total, source) => total + deliverySourceCount(source, "blocked"), 0);
-  const selectedFailedLeads = selectedSources.reduce((total, source) => total + deliverySourceCount(source, "failed"), 0);
-  const activeSheetTotalLeads = activeSheet ? deliverySourceCount(activeSheet, "total") : 0;
-  const activeSheetDeliveredLeads = activeSheet ? deliverySourceCount(activeSheet, "sent") + deliverySourceCount(activeSheet, "delivered") : 0;
-  const activeSheetBlockedLeads = activeSheet ? deliverySourceCount(activeSheet, "blocked") : 0;
-  const activeSheetFailedLeads = activeSheet ? deliverySourceCount(activeSheet, "failed") : 0;
-  const selectedLabel = editorMode === "create" ? "New contact" : selectedGroupLabel;
-  const selectedIssueSources = selectedSources.filter(deliverySourceHasIssue);
-  const activeSheetIssueSources = activeSheet && deliverySourceHasIssue(activeSheet) ? [activeSheet] : [];
-  const recipientMessages = recipientChat?.messages ?? [];
-  const recipientDeliveredCount = recipientMessages.filter((message) => message.delivery_status === "delivered").length;
-  const recipientCrmLead = recipientChat?.crm_leads?.[0] ?? null;
-
-  useEffect(() => {
-    if (editorMode === "create") {
-      setConfigOpen(true);
-      setDeliveryStage("client");
-      setActiveSheetId(null);
-    }
-  }, [editorMode]);
-
-  useEffect(() => {
-    if (editorMode === "edit" && selectedGroupKey) {
-      setConfigOpen(false);
-      setSentChatOpen(false);
-      setActiveSheetId(null);
-    }
-  }, [editorMode, selectedGroupKey]);
-
-  function startNewDeliveryContact() {
-    setDeliveryStage("client");
-    setActiveSheetId(null);
-    onNewSource();
-  }
-
-  function openDeliveryContact(group: DeliveryContactGroup) {
-    setDeliveryStage("client");
-    setActiveSheetId(null);
-    onSelectSource(group.primarySource.id);
-  }
-
-  function openDeliverySheet(source: ClientLeadSource) {
-    setDeliveryStage("sheet");
-    setActiveSheetId(source.id);
-    onSelectSource(source.id);
-  }
-
-  function backToDeliveryContacts() {
-    setDeliveryStage("contacts");
-    setActiveSheetId(null);
-    setSentChatOpen(false);
-  }
-
-  function backToDeliveryClient() {
-    setDeliveryStage("client");
-    setActiveSheetId(null);
-  }
-
-  const canInspectClient = isExisting && selectedSources.length > 0;
-  const showingSheet = deliveryStage === "sheet" && Boolean(activeSheet);
-
-  return (
-    <div className="ct-surface delivery-surface">
-      <div className="ct-simple-head delivery-home-head">
-        <div className="ct-simple-title delivery-home-title">
-          <span>Delivery</span>
-          <strong>{contactGroups.length ? `${compactNumber(contactGroups.length)} clients` : "No clients yet"}</strong>
-          <small>{showingSheet && activeSheet ? deliverySheetLabel(activeSheet) : "Lead delivery"}</small>
-        </div>
-        <div className="ct-simple-metrics delivery-summary-metrics" aria-label="Delivery summary">
-          <span>
-            <strong>{compactNumber(totalLeads)}</strong>
-            Leads
-          </span>
-          <span>
-            <strong>{compactNumber(deliveredLeads)}</strong>
-            Delivered
-          </span>
-          <span>
-            <strong>{compactNumber(failedLeads)}</strong>
-            Issues
-          </span>
-        </div>
-        <button type="button" className="ct-btn ct-btn-ghost delivery-small-btn" onClick={startNewDeliveryContact}>
-          <Plus size={13} weight="bold" />
-          Contact
-        </button>
-      </div>
-      {copyStatus ? <p className="delivery-copy-status" aria-live="polite">{copyStatus}</p> : null}
-
-      {deliveryStage === "contacts" ? (
-        <section className="delivery-home">
-          {loading && !contactGroups.length ? (
-            <CtEmptyState compact loading title="Loading clients" message="Checking Delivery sources." />
-          ) : contactGroups.length ? (
-            <div className="delivery-contact-grid">
-              {contactGroups.map((group) => {
-                const active = editorMode === "edit" && group.sources.some((source) => source.id === selectedSourceId);
-                return (
-                  <button
-                    type="button"
-                    className={`delivery-contact-card ${active ? "active" : ""} ${group.sources.some((source) => source.enabled) ? "" : "disabled"}`}
-                    data-tone={deliveryContactTone(group)}
-                    key={group.key}
-                    onClick={() => openDeliveryContact(group)}
-                  >
-                    <div className="delivery-card-title">
-                      <strong>{group.label || group.key}</strong>
-                      <span className="delivery-status-pill" data-tone={deliveryContactTone(group)}>
-                        {deliveryContactStatusLabel(group)}
-                      </span>
-                    </div>
-                    <p>{group.recipientName || "No recipient"}{group.recipientPhone ? ` · ${group.recipientPhone}` : ""}</p>
-                    <div className="delivery-card-counts">
-                      <span><strong>{compactNumber(group.total)}</strong>Total</span>
-                      <span><strong>{compactNumber(group.delivered)}</strong>Delivered</span>
-                      <span><strong>{compactNumber(group.sources.length)}</strong>Sheets</span>
-                      <span><strong>{compactNumber(group.issues)}</strong>Issues</span>
-                    </div>
-                    <div className="delivery-source-sheet-tags">
-                      {group.sources.slice(0, 4).map((source) => (
-                        <span key={source.id} data-tone={deliverySourceTone(source)}>
-                          {deliverySheetLabel(source)}
-                        </span>
-                      ))}
-                      {group.sources.length > 4 ? <span>+{group.sources.length - 4}</span> : null}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          ) : (
-            <CtEmptyState compact title="No clients yet" message="Add a Delivery contact to pull sheet leads." />
-          )}
-        </section>
-      ) : (
-        <section className="delivery-client-page">
-          <header className="delivery-client-head">
-            <button type="button" className="ct-btn ct-btn-ghost delivery-back-btn" onClick={backToDeliveryContacts}>
-              All clients
-            </button>
-            <div className="delivery-client-main">
-              <div className="ct-detail-avatar">{monogram(selectedLabel)}</div>
-              <div className="ct-detail-head-copy">
-                <p className="ct-detail-kicker">{showingSheet ? "Delivery sheet" : "Delivery client"}</p>
-                <h3>{showingSheet && activeSheet ? deliverySheetLabel(activeSheet) : selectedLabel}</h3>
-                <p className="ct-detail-meta">
-                  {isExisting
-                    ? [selectedGroup?.recipientName || selectedSource?.recipient_name || "-", selectedGroup?.recipientPhone || selectedSource?.recipient_phone || "-", `${selectedSources.length} ${selectedSources.length === 1 ? "sheet" : "sheets"}`].join(" · ")
-                    : "Create a sheet contact, recipient, and WhatsApp template mapping."}
-                </p>
-              </div>
-            </div>
-            <div className="delivery-client-actions">
-              <span className="delivery-live-pill" data-tone={selectedGroupTone}>
-                {isExisting ? selectedGroupStatus : "Draft"}
-              </span>
-              <button
-                type="button"
-                className="ct-btn ct-btn-ghost"
-                disabled={!isExisting}
-                onClick={() => setSentChatOpen((current) => !current)}
-              >
-                <ChatCircleText size={15} weight="bold" />
-                Sent chat
-              </button>
-              <button
-                type="button"
-                className="ct-btn ct-btn-ghost"
-                disabled={!isExisting && editorMode !== "create"}
-                onClick={() => setConfigOpen(true)}
-              >
-                <GearSix size={15} weight="bold" />
-                {editorMode === "create" ? "Source setup" : "Edit source"}
-              </button>
-            </div>
-          </header>
-
-          {!canInspectClient ? (
-            <CtEmptyState compact title="New Delivery contact" message="Complete the source setup to start syncing leads." />
-          ) : showingSheet && activeSheet ? (
-            <div className="delivery-sheet-page">
-              <div className="delivery-sheet-page-head">
-                <button type="button" className="ct-btn ct-btn-ghost delivery-back-btn" onClick={backToDeliveryClient}>
-                  Sheets
-                </button>
-                <div className="delivery-sheet-heading">
-                  <span>{activeSheet.sheet_tab_name || activeSheet.sheet_gid || "Sheet"}</span>
-                  <strong>{deliverySheetLabel(activeSheet)}</strong>
-                </div>
-                <div className="delivery-sheet-metrics">
-                  <span>{compactNumber(activeSheetTotalLeads)} total</span>
-                  <span>{compactNumber(activeSheetDeliveredLeads)} delivered</span>
-                  <span>{compactNumber(activeSheetBlockedLeads)} blocked</span>
-                  <span>{compactNumber(activeSheetFailedLeads)} failed</span>
-                </div>
-              </div>
-
-              {activeSheetIssueSources.length ? (
-                <div className="delivery-source-alert" data-tone="danger">
-                  <WarningCircle size={18} weight="fill" />
-                  <div>
-                    <strong>Sheet needs access</strong>
-                    <span>{deliverySourceIssueText(activeSheet)}</span>
-                  </div>
-                </div>
-              ) : null}
-
-              <DeliverySheetRows
-                actionBusy={actionBusy}
-                leadsLoading={leadsLoading}
-                rowCount={activeSheetLeads.length}
-                sections={activeSheetSections}
-                onCopyLead={onCopyLead}
-                onCopyLeadAll={onCopyLeadAll}
-                onRetryLead={onRetryLead}
-              />
-            </div>
-          ) : (
-            <div className="delivery-client-overview">
-              <div className="delivery-client-summary">
-                <span><strong>{compactNumber(selectedTotalLeads)}</strong>Total</span>
-                <span><strong>{compactNumber(selectedDeliveredLeads)}</strong>Delivered</span>
-                <span><strong>{compactNumber(selectedBlockedLeads)}</strong>Blocked</span>
-                <span><strong>{compactNumber(selectedFailedLeads)}</strong>Failed</span>
-              </div>
-
-              {selectedIssueSources.length ? (
-                <div className="delivery-source-alert" data-tone="danger">
-                  <WarningCircle size={18} weight="fill" />
-                  <div>
-                    <strong>{selectedIssueSources.length === 1 ? "Sheet needs access" : "Sheets need access"}</strong>
-                    <span>{selectedIssueSources.map((source) => `${deliverySheetLabel(source)}: ${deliverySourceIssueText(source)}`).join(" · ")}</span>
-                  </div>
-                </div>
-              ) : null}
-
-              <section className="delivery-sheet-grid" aria-label="Delivery sheets">
-                {selectedSources.map((source) => {
-                  const sourceDelivered = deliverySourceCount(source, "sent") + deliverySourceCount(source, "delivered");
-                  const sourceIssues = deliverySourceCount(source, "blocked") + deliverySourceCount(source, "failed");
-                  return (
-                    <button
-                      type="button"
-                      className="delivery-sheet-card"
-                      data-tone={deliverySourceTone(source)}
-                      key={source.id}
-                      onClick={() => openDeliverySheet(source)}
-                    >
-                      <div className="delivery-card-title">
-                        <strong>{deliverySheetLabel(source)}</strong>
-                        <span className="delivery-status-pill" data-tone={deliverySourceTone(source)}>
-                          {deliverySourceStatusIcon(source)}
-                          {humanize(source.last_sync_status || "active")}
-                        </span>
-                      </div>
-                      <p>{source.sheet_tab_name || source.sheet_gid || "Sheet"}</p>
-                      <div className="delivery-card-counts">
-                        <span><strong>{compactNumber(deliverySourceCount(source, "total"))}</strong>Rows</span>
-                        <span><strong>{compactNumber(sourceDelivered)}</strong>Delivered</span>
-                        <span><strong>{compactNumber(sourceIssues)}</strong>Issues</span>
-                      </div>
-                    </button>
-                  );
-                })}
-              </section>
-
-              {sentChatOpen ? (
-                <section className="delivery-recipient-chat-panel">
-                  <div className="workstation-panel-head">
-                    <div>
-                      <span>Sent chat</span>
-                      <strong>
-                        {(recipientChat?.recipient_name || selectedSource?.recipient_name || "Recipient")}
-                        {" · "}
-                        {recipientChat?.recipient_phone || selectedSource?.recipient_phone || "-"}
-                      </strong>
-                    </div>
-                    <div className="delivery-recipient-actions">
-                      <span>{recipientMessages.length} messages</span>
-                      <span>{recipientDeliveredCount} delivered</span>
-                      <button
-                        type="button"
-                        className="ct-btn ct-btn-ghost"
-                        disabled={!recipientCrmLead}
-                        onClick={() => {
-                          if (recipientCrmLead) {
-                            onOpenCrmLead(recipientCrmLead);
-                          }
-                        }}
-                        title={recipientCrmLead ? "Open matching CRM chat" : "No CRM chat found for this recipient phone"}
-                      >
-                        <ChatCircleText size={14} weight="bold" />
-                        CRM chat
-                      </button>
-                    </div>
-                  </div>
-
-                  {recipientChatLoading && !recipientMessages.length ? (
-                    <CtEmptyState compact loading title="Loading sent chat" message="Fetching recipient messages." />
-                  ) : recipientMessages.length ? (
-                    <div className="delivery-recipient-messages">
-                      {recipientMessages.map((message) => (
-                        <article className="delivery-recipient-message" data-tone={recipientChatMessageTone(message)} key={message.delivery_id}>
-                          <div className="delivery-recipient-message-head">
-                            <div>
-                              <strong>{message.lead_name || message.lead_phone || `Row ${message.row_number}`}</strong>
-                              <span>Row {message.row_number}{message.lead_email ? ` · ${message.lead_email}` : ""}</span>
-                            </div>
-                            <span className="delivery-status-pill" data-tone={recipientChatMessageTone(message)}>
-                              {humanize(message.delivery_status)}
-                            </span>
-                          </div>
-                          <p>{message.text || "-"}</p>
-                          <small>
-                            {recipientChatMessageDetail(message)}
-                            {message.external_id ? ` · Meta ${truncate(message.external_id, 24)}` : ""}
-                          </small>
-                          {message.last_delivery_error ? <em>{message.last_delivery_error}</em> : null}
-                        </article>
-                      ))}
-                    </div>
-                  ) : (
-                    <CtEmptyState compact title="No sent chat yet" message="Delivery messages will appear here." />
-                  )}
-                </section>
-              ) : null}
-            </div>
-          )}
-        </section>
-      )}
-
-      {configOpen ? (
-        <DeliverySourceEditorDrawer
-          actionBusy={actionBusy}
-          draft={draft}
-          editorMode={editorMode}
-          isExisting={isExisting}
-          sourceEditorError={sourceEditorError}
-          onClose={() => setConfigOpen(false)}
-          onDeleteSource={onDeleteSource}
-          onDraftChange={onDraftChange}
-          onSaveSource={onSaveSource}
-        />
-      ) : null}
-    </div>
-  );
-}
-
-function DeliverySourceEditorDrawer({
-  actionBusy,
-  draft,
-  editorMode,
-  isExisting,
-  sourceEditorError,
-  onClose,
-  onDeleteSource,
-  onDraftChange,
-  onSaveSource,
-}: {
-  actionBusy: string | null;
-  draft: ClientLeadSourceDraft;
-  editorMode: DeliveryEditorMode;
-  isExisting: boolean;
-  sourceEditorError: string;
-  onClose: () => void;
-  onDeleteSource: () => void;
-  onDraftChange: (draft: ClientLeadSourceDraft) => void;
-  onSaveSource: (event: FormEvent<HTMLFormElement>) => void | Promise<void>;
-}) {
-  const validation = validateClientLeadSourceDraft(draft);
-  const drawerMessages = sourceEditorError
-    ? [sourceEditorError]
-    : validation.messages;
-
-  function submitSource(event: FormEvent<HTMLFormElement>) {
-    if (!validation.canSave) {
-      event.preventDefault();
-      return;
-    }
-    void onSaveSource(event);
-  }
-
-  function updateDraft<K extends keyof ClientLeadSourceDraft>(key: K, value: ClientLeadSourceDraft[K]) {
-    onDraftChange({ ...draft, [key]: value });
-  }
-
-  return (
-    <aside className="ct-drawer open delivery-source-drawer" aria-hidden="false" aria-label="Delivery source editor">
-      <button className="ct-drawer-overlay" type="button" onClick={onClose} aria-label="Close Delivery source editor" />
-      <form className="ct-drawer-panel wide delivery-source-drawer-panel" role="dialog" aria-modal="false" aria-labelledby="deliverySourceDrawerTitle" onSubmit={submitSource}>
-        <header className="ct-drawer-head">
-          <div>
-            <p className="ct-drawer-kicker">Delivery source</p>
-            <h3 id="deliverySourceDrawerTitle">{editorMode === "create" ? "New contact" : "Sheet and template"}</h3>
-            <p className="ct-drawer-note">Keep polling, recipient, and mapping details out of the daily Delivery view.</p>
-          </div>
-          <button type="button" className="ct-icon-btn" onClick={onClose} aria-label="Close Delivery source editor">
-            <X size={16} weight="bold" />
-          </button>
-        </header>
-
-        <div className="ct-drawer-body delivery-source-form">
-          {drawerMessages.length ? (
-            <div className="delivery-drawer-feedback" role="alert">
-              <strong>{sourceEditorError ? "Save blocked" : "Complete before saving"}</strong>
-              <ul>
-                {drawerMessages.map((message) => (
-                  <li key={message}>{message}</li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-
-          <section className="delivery-drawer-section">
-            <div className="workstation-panel-head">
-              <div>
-                <span>Contact</span>
-                <strong>Recipient and label</strong>
-              </div>
-            </div>
-            <div className="ct-field-grid">
-              <label className="ct-field" data-invalid={validation.fields.id ? "true" : undefined}>
-                <span>Source ID</span>
-                <input
-                  value={draft.id}
-                  disabled={isExisting}
-                  onChange={(event) => updateDraft("id", slugifyClient(event.target.value))}
-                  placeholder="client-name"
-                />
-                {validation.fields.id ? <p className="ct-field-error">{validation.fields.id}</p> : null}
-              </label>
-              <label className="ct-field" data-invalid={validation.fields.label ? "true" : undefined}>
-                <span>Label</span>
-                <input value={draft.label} onChange={(event) => updateDraft("label", event.target.value)} placeholder="Cliente · Sheet delivery" />
-                {validation.fields.label ? <p className="ct-field-error">{validation.fields.label}</p> : null}
-              </label>
-              <label className="ct-field" data-invalid={validation.fields.recipient_name ? "true" : undefined}>
-                <span>Recipient name</span>
-                <input value={draft.recipient_name} onChange={(event) => updateDraft("recipient_name", event.target.value)} placeholder="Client operator" />
-                {validation.fields.recipient_name ? <p className="ct-field-error">{validation.fields.recipient_name}</p> : null}
-              </label>
-              <label className="ct-field" data-invalid={validation.fields.recipient_phone ? "true" : undefined}>
-                <span>Recipient phone</span>
-                <input value={draft.recipient_phone} onChange={(event) => updateDraft("recipient_phone", event.target.value)} placeholder="+54..." />
-                {validation.fields.recipient_phone ? <p className="ct-field-error">{validation.fields.recipient_phone}</p> : null}
-              </label>
-            </div>
-            <label className="ct-field ct-field-toggle">
-              <span>Enabled</span>
-              <div className="ct-toggle-row">
-                <input type="checkbox" checked={draft.enabled} onChange={(event) => updateDraft("enabled", event.target.checked)} />
-                <p className="ct-field-hint">Disabled contacts stay visible but do not poll or notify recipients.</p>
-              </div>
-            </label>
-          </section>
-
-          <section className="delivery-drawer-section">
-            <div className="workstation-panel-head">
-              <div>
-                <span>Sheet</span>
-                <strong>Source and polling</strong>
-              </div>
-            </div>
-            <label className="ct-field" data-invalid={validation.fields.sheet_url ? "true" : undefined}>
-              <span>Sheet URL</span>
-              <input value={draft.sheet_url} onChange={(event) => updateDraft("sheet_url", event.target.value)} placeholder="https://docs.google.com/spreadsheets/..." />
-              {validation.fields.sheet_url ? <p className="ct-field-error">{validation.fields.sheet_url}</p> : null}
-            </label>
-            <div className="ct-field-grid">
-              <label className="ct-field">
-                <span>Sheet GID</span>
-                <input value={draft.sheet_gid} onChange={(event) => updateDraft("sheet_gid", event.target.value)} placeholder="0" />
-              </label>
-              <label className="ct-field">
-                <span>Tab name</span>
-                <input value={draft.sheet_tab_name} onChange={(event) => updateDraft("sheet_tab_name", event.target.value)} placeholder="deuda" />
-              </label>
-              <label className="ct-field" data-invalid={validation.fields.sheet_poll_seconds ? "true" : undefined}>
-                <span>Poll seconds</span>
-                <input
-                  type="number"
-                  min="5"
-                  value={draft.sheet_poll_seconds}
-                  onChange={(event) => updateDraft("sheet_poll_seconds", Number(event.target.value) || 10)}
-                />
-                {validation.fields.sheet_poll_seconds ? <p className="ct-field-error">{validation.fields.sheet_poll_seconds}</p> : null}
-              </label>
-            </div>
-          </section>
-
-          <section className="delivery-drawer-section">
-            <div className="workstation-panel-head">
-              <div>
-                <span>Template</span>
-                <strong>Message mapping</strong>
-              </div>
-            </div>
-            <div className="ct-field-grid">
-              <label className="ct-field">
-                <span>Template name</span>
-                <input value={draft.template_name} onChange={(event) => updateDraft("template_name", event.target.value)} placeholder="client_lead_delivery_es" />
-              </label>
-              <label className="ct-field">
-                <span>Template language</span>
-                <input value={draft.template_language} onChange={(event) => updateDraft("template_language", event.target.value)} placeholder="es" />
-              </label>
-            </div>
-            <label className="ct-field" data-invalid={validation.fields.context_field_mapping_text ? "true" : undefined}>
-              <span>Context fields</span>
-              <textarea
-                value={draft.context_field_mapping_text}
-                onChange={(event) => updateDraft("context_field_mapping_text", event.target.value)}
-                rows={4}
-                spellCheck={false}
-                placeholder={'{\n  "Tipo de deuda": "¿qué_tipo_de_deuda_tiene_pendiente?",\n  "Caso": "breve_descripción_de_su_caso"\n}'}
-              />
-              {validation.fields.context_field_mapping_text ? <p className="ct-field-error">{validation.fields.context_field_mapping_text}</p> : null}
-            </label>
-            <label className="ct-field" data-invalid={validation.fields.column_mapping_text ? "true" : undefined}>
-              <span>Column mapping</span>
-              <textarea
-                value={draft.column_mapping_text}
-                onChange={(event) => updateDraft("column_mapping_text", event.target.value)}
-                rows={5}
-                spellCheck={false}
-              />
-              {validation.fields.column_mapping_text ? <p className="ct-field-error">{validation.fields.column_mapping_text}</p> : null}
-            </label>
-          </section>
-        </div>
-
-        <footer className="ct-drawer-foot">
-          {isExisting ? (
-            <button
-              type="button"
-              className="ct-btn ct-btn-ghost btn-destructive"
-              disabled={actionBusy === "delivery-delete"}
-              onClick={onDeleteSource}
-            >
-              <Trash size={15} weight="bold" />
-              {actionBusy === "delivery-delete" ? "Deleting..." : "Delete"}
-            </button>
-          ) : null}
-          <button type="submit" className="ct-btn ct-btn-primary" disabled={actionBusy === "delivery-save" || !validation.canSave}>
-            <Check size={15} weight="bold" />
-            {actionBusy === "delivery-save" ? "Saving..." : editorMode === "create" ? "Create contact" : "Save source"}
-          </button>
-        </footer>
-      </form>
-    </aside>
-  );
-}
-
-function DeliverySheetRows({
-  sections,
-  leadsLoading,
-  rowCount,
-  actionBusy,
-  onCopyLead,
-  onCopyLeadAll,
-  onRetryLead,
-}: {
-  sections: DeliverySheetLeadSection[];
-  leadsLoading: boolean;
-  rowCount: number;
-  actionBusy: string | null;
-  onCopyLead: (lead: ClientLead) => void | Promise<void>;
-  onCopyLeadAll: (lead: ClientLead) => void | Promise<void>;
-  onRetryLead: (lead: ClientLead) => void | Promise<void>;
-}) {
-  if (leadsLoading && !rowCount) {
-    return <CtEmptyState compact loading title="Loading rows" message="Fetching sheet leads." />;
-  }
-
-  if (!sections.length) {
-    return <CtEmptyState compact title="No rows loaded" message="Rows will appear after the next sync." />;
-  }
-
-  return (
-    <section className="delivery-lead-panel delivery-sheet-rows-panel">
-      <div className="delivery-sheet-sections">
-        {sections.map((section) => (
-          <section className="delivery-sheet-section" key={section.source.id}>
-            <header className="delivery-sheet-section-head">
-              <div>
-                <span>{section.source.sheet_tab_name || section.source.sheet_gid || "Sheet"}</span>
-                <strong>{deliverySheetLabel(section.source)}</strong>
-              </div>
-              <div className="delivery-sheet-section-meta">
-                <span>{compactNumber(section.leads.length)} rows</span>
-                <span className="delivery-status-pill" data-tone={deliverySourceTone(section.source)}>
-                  {deliverySourceStatusIcon(section.source)}
-                  {humanize(section.source.last_sync_status || "active")}
-                </span>
-              </div>
-            </header>
-            <div className="delivery-sheet-lead-list">
-              {section.leads.map((lead) => {
-                const waLink = lead.wa_link || buildWaLink(lead.phone_number);
-                const retryable = isRetryableClientLead(lead);
-                const copyBusy = actionBusy === `delivery-copy-${lead.id}`;
-                const retryBusy = actionBusy === `delivery-retry-${lead.id}`;
-                const rawFields = deliveryRawFields(lead);
-                return (
-                  <article className="delivery-sheet-lead-card" data-tone={clientLeadDeliveryTone(lead)} key={lead.id}>
-                    <header className="delivery-sheet-lead-card-head">
-                      <div className="delivery-lead-identity">
-                        <span>Row {lead.row_number} · {clientLeadAgeText(lead)}</span>
-                        <strong>{deliveryLeadTitle(lead)}</strong>
-                        <small>{deliveryLeadSubtitle(lead)}</small>
-                      </div>
-                      <div className="delivery-status-cell">
-                        <span className="delivery-status-pill" data-tone={clientLeadDeliveryTone(lead)}>
-                          {humanize(lead.delivery_status || (lead.block_reason ? "blocked" : "pending"))}
-                        </span>
-                        <small>{deliveryStatusDetail(lead)}</small>
-                      </div>
-                    </header>
-
-                    {lead.notification_text ? (
-                      <p className="delivery-notification-preview">{truncate(lead.notification_text, 220)}</p>
-                    ) : null}
-
-                    {lead.last_delivery_error || lead.block_reason ? (
-                      <p className="delivery-lead-issue">{lead.last_delivery_error || lead.block_reason}</p>
-                    ) : null}
-
-                    <div className="delivery-sheet-lead-card-foot">
-                      <details className="delivery-raw-details">
-                        <summary>
-                          Source details
-                          <span>{rawFields.length} fields</span>
-                        </summary>
-                        <dl>
-                          {rawFields.map((field) => (
-                            <div key={field.label}>
-                              <dt>{field.label}</dt>
-                              <dd>{field.value || "-"}</dd>
-                            </div>
-                          ))}
-                        </dl>
-                      </details>
-
-                      <div className="delivery-row-actions">
-                        {waLink ? (
-                          <a className="ct-btn ct-btn-ghost delivery-action-link" href={waLink} target="_blank" rel="noreferrer">
-                            <ArrowSquareOut size={14} weight="bold" />
-                            Chat
-                          </a>
-                        ) : (
-                          <button type="button" className="ct-btn ct-btn-ghost" onClick={() => onCopyLead(lead)}>
-                            <Copy size={14} weight="bold" />
-                            Copy
-                          </button>
-                        )}
-                        <details className="ct-action-menu delivery-row-menu">
-                          <summary className="ct-btn ct-btn-ghost">More</summary>
-                          <div className="ct-action-menu-panel">
-                            {waLink ? (
-                              <button type="button" className="ct-btn ct-btn-ghost" onClick={() => onCopyLead(lead)}>
-                                <Copy size={14} weight="bold" />
-                                Copy
-                              </button>
-                            ) : null}
-                            <button
-                              type="button"
-                              className="ct-btn ct-btn-ghost"
-                              disabled={copyBusy}
-                              onClick={() => onCopyLeadAll(lead)}
-                            >
-                              {copyBusy ? "Copying..." : "Copy all"}
-                            </button>
-                            {retryable ? (
-                              <button
-                                type="button"
-                                className="ct-btn ct-btn-ghost"
-                                disabled={retryBusy}
-                                onClick={() => onRetryLead(lead)}
-                              >
-                                <ArrowsClockwise size={14} weight="bold" />
-                                {retryBusy ? "Retrying..." : "Retry"}
-                              </button>
-                            ) : null}
-                          </div>
-                        </details>
-                      </div>
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
-          </section>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-async function copyTextToClipboard(value: string): Promise<void> {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(value);
-    return;
-  }
-  const textarea = document.createElement("textarea");
-  textarea.value = value;
-  textarea.setAttribute("readonly", "true");
-  textarea.style.position = "fixed";
-  textarea.style.left = "-9999px";
-  document.body.appendChild(textarea);
-  textarea.select();
-  const copied = document.execCommand("copy");
-  document.body.removeChild(textarea);
-  if (!copied) {
-    throw new Error("clipboard unavailable");
-  }
-}
-
-function WorkstationView({
-  clients,
-  detail,
-  funnel,
-  selectedClientId,
-  listLoading,
-  loading,
-  actionBusy,
-  notesDraft,
-  fileTitle,
-  file,
-  onSelectClient,
-  onNotesChange,
-  onSaveNotes,
-  onCopyNotes,
-  onCopyAll,
-  onOpenCrmLead,
-  acknowledgingDeliveryErrorIds,
-  onAcknowledgeDeliveryError,
-  onFileTitleChange,
-  onFileChange,
-  onUploadMedia,
-  onUploadMediaFile,
-  onDeleteMedia,
-  onUpdateMedia,
-  selectedProfessionalPhotoMediaIds,
-  professionalPhotoContext,
-  professionalPhotoEditPrompts,
-  professionalPhotoJob,
-  onToggleProfessionalPhotoMedia,
-  onProfessionalPhotoMediaIdsChange,
-  onProfessionalPhotoContextChange,
-  onCreateProfessionalPhoto,
-  onStartSoloPageCodexWork,
-  onStopSoloPageCodexWork,
-  onSteerSoloPageCodexWork,
-  onCloseWorkstationClient,
-  onProfessionalPhotoEditPromptChange,
-  onEditProfessionalPhoto,
-}: {
-  clients: WorkstationClientSummary[];
-  detail: WorkstationClientDetailResponse | null;
-  funnel: FunnelDefinition | null;
-  selectedClientId: string | null;
-  listLoading: boolean;
-  loading: boolean;
-  actionBusy: string | null;
-  notesDraft: string;
-  fileTitle: string;
-  file: File | null;
-  selectedProfessionalPhotoMediaIds: string[];
-  professionalPhotoContext: string;
-  professionalPhotoEditPrompts: Record<string, string>;
-  professionalPhotoJob: WorkstationProfessionalPhotoJobResponse | null;
-  onSelectClient: (clientId: string) => void;
-  onNotesChange: (notes: string) => void;
-  onSaveNotes: () => void;
-  onCopyNotes: () => void;
-  onCopyAll: () => void;
-  onOpenCrmLead: (lead: LeadSummary | null | undefined) => void;
-  acknowledgingDeliveryErrorIds: number[];
-  onAcknowledgeDeliveryError: (message: MessageItem) => void | Promise<void>;
-  onFileTitleChange: (value: string) => void;
-  onFileChange: (file: File | null) => void;
-  onUploadMedia: (event: FormEvent<HTMLFormElement>) => void;
-  onUploadMediaFile: (file: File) => void;
-  onDeleteMedia: (asset: WorkstationMediaAsset) => void;
-  onUpdateMedia: (asset: WorkstationMediaAsset, title: string, originalFilename: string) => void | Promise<void>;
-  onToggleProfessionalPhotoMedia: (assetId: string) => void;
-  onProfessionalPhotoMediaIdsChange: (assetIds: string[]) => void;
-  onProfessionalPhotoContextChange: (value: string) => void;
-  onCreateProfessionalPhoto: (mediaAssetIds?: string[], context?: string) => boolean | Promise<boolean>;
-  onStartSoloPageCodexWork: (operatorPrompt: string) => boolean | Promise<boolean>;
-  onStopSoloPageCodexWork: () => void | Promise<void>;
-  onSteerSoloPageCodexWork: (message: string) => boolean | Promise<boolean>;
-  onCloseWorkstationClient: () => void | Promise<void>;
-  onProfessionalPhotoEditPromptChange: (version: string, prompt: string) => void;
-  onEditProfessionalPhoto: (version: string) => void;
-}) {
-  const detailClient = detail?.client.id === selectedClientId ? detail.client : null;
-  const selectedLead = detailClient?.lead ?? null;
-  const activeClient = detailClient ?? clients.find((client) => client.id === selectedClientId) ?? null;
-  const funnelLabel = funnel?.label ?? activeClient?.funnel_id ?? "selected funnel";
-  const workstationMessages = detailClient ? detail?.messages ?? [] : [];
-  const runtimeAlerts = detailClient ? detail?.runtime_alerts ?? [] : [];
-  const automationState = detailClient ? detail?.automation_state ?? null : null;
-  const publicPage = detailClient ? detail?.public_page ?? null : null;
-  const openRuntimeAlerts = runtimeAlerts.filter((alert) => !alert.resolved_at);
-  const latestRuntimeAlert = openRuntimeAlerts[0] ?? null;
-  const workstationFailed = activeClient?.automation_status === "failed";
-  const workstationClosed = activeClient?.status === "closed";
-  const detailMedia = detailClient ? detail?.media ?? [] : [];
-  const imageAssets = detailMedia.filter((asset) => asset.content_type?.startsWith("image/"));
-  const professionalPhotos = detailClient ? detail?.professional_photos ?? [] : [];
-  const [mediaDropActive, setMediaDropActive] = useState(false);
-  const [notesOpen, setNotesOpen] = useState(false);
-  const [editingMediaId, setEditingMediaId] = useState<string | null>(null);
-  const [mediaEditTitle, setMediaEditTitle] = useState("");
-  const [mediaEditFilename, setMediaEditFilename] = useState("");
-  const [actionsOpen, setActionsOpen] = useState(false);
-  const [professionalPhotoModalOpen, setProfessionalPhotoModalOpen] = useState(false);
-  const [soloPagePromptModalOpen, setSoloPagePromptModalOpen] = useState(false);
-  const [soloPageOperatorPrompt, setSoloPageOperatorPrompt] = useState("");
-  const [soloPageSteerModalOpen, setSoloPageSteerModalOpen] = useState(false);
-  const [soloPageSteerMessage, setSoloPageSteerMessage] = useState("");
-  const canUploadMedia = Boolean(activeClient) && actionBusy !== "workstation-upload";
-  const currentProfessionalPhotoJob = professionalPhotoJob?.client_id === activeClient?.id ? professionalPhotoJob : null;
-  const professionalPhotoJobBusy = currentProfessionalPhotoJob?.status === "queued" || currentProfessionalPhotoJob?.status === "running";
-  const soloPageBusy = actionBusy === "solo-page-work" || Boolean(automationState?.is_live_working);
-  const canStopSoloPageWork = activeClient?.work_type === "solo_pagina" && Boolean(automationState?.is_live_working);
-  const canStartSoloPageWork = activeClient?.work_type === "solo_pagina" && !soloPageBusy && !workstationClosed;
-  const showStartCodexPrimary = canStartSoloPageWork;
-  const showSteerCodexPrimary = !showStartCodexPrimary && canStopSoloPageWork;
-  const showNotesPrimary = !showStartCodexPrimary && !showSteerCodexPrimary && !publicPage;
-  const clientListLoading = listLoading && clients.length === 0;
-  const clientDetailLoading = Boolean(selectedClientId && loading && detail?.client.id !== selectedClientId);
-  const failedClientCount = clients.filter((client) => client.automation_status === "failed").length;
-  const totalClientMedia = clients.reduce((total, client) => total + (client.media_count ?? 0), 0);
-  const workstationStateIsReady = (automationState?.label ?? "").toLowerCase().includes("ready");
-  const workstationHasMissingLiveProcess = automationState && (activeClient?.automation_status === "drafting" || activeClient?.automation_status === "revision_requested")
-    ? !automationState?.is_live_working && !automationState?.is_stale
-    : false;
-  const workstationStatePillLabel = automationState?.is_live_working
-    ? "Live"
-    : automationState?.is_stale
-      ? "Stale"
-      : workstationHasMissingLiveProcess
-        ? "No process"
-      : automationState?.is_waiting_backoff
-        ? "Backoff"
-        : workstationFailed
-          ? "Failed"
-          : workstationStateIsReady
-            ? "Ready"
-            : "Idle";
-  const activeOffer = formatWorkstationOffer(activeClient);
-  const workstationClientStateLabel = formatWorkstationClientState(activeClient, automationState);
-  const workstationContactLine = selectedLead
-    ? [selectedLead.phone, selectedLead.email].filter(Boolean).join(" · ") || selectedLead.external_lead_id || "No contact info"
-    : activeClient?.folder_name || "No contact info";
-  const workstationMediaCount = detailClient ? detailMedia.length : activeClient?.media_count ?? 0;
-  const workstationRunDetailsId = activeClient ? `workstation-run-details-${activeClient.id}` : "workstation-run-details";
-  const automationTone = workstationFailed
-    ? "failed"
-    : automationState?.is_stale
-      ? "stale"
-    : automationState?.is_live_working
-      ? "working"
-      : workstationHasMissingLiveProcess
-        ? "missing-live"
-      : automationState?.is_waiting_backoff
-        ? "waiting"
-        : "idle";
-  const workstationAttention = workstationFailed
-    ? {
-        title: "Automation failed",
-        detail: latestRuntimeAlert?.error || "No runtime alert details were attached. Review this client manually.",
-        note: latestRuntimeAlert?.notified_at ? `Email alert sent ${shortDate(latestRuntimeAlert.notified_at)}` : "Email alert pending",
-      }
-    : automationState?.is_stale
-      ? {
-          title: "Run is stale",
-          detail: automationState.live_detail || automationState.detail || "The visible run has not reported recent progress.",
-          note: automationState.progress_updated_at ? `Last update ${shortDate(automationState.progress_updated_at)}` : "No recent progress update",
-        }
-      : workstationHasMissingLiveProcess
-        ? {
-            title: "No live process",
-            detail: automationState?.detail || "This client is marked as active, but no live Codex process is attached.",
-            note: "Needs operator review",
-          }
-        : latestRuntimeAlert
-          ? {
-              title: humanize(latestRuntimeAlert.alert_type || "runtime alert"),
-              detail: latestRuntimeAlert.error || "No runtime alert details were attached. Review this client manually.",
-              note: latestRuntimeAlert.resolved_at
-                ? `Resolved ${shortDate(latestRuntimeAlert.resolved_at)}`
-                : latestRuntimeAlert.notified_at
-                  ? `Email alert sent ${shortDate(latestRuntimeAlert.notified_at)}`
-                  : "Email alert pending",
-            }
-          : null;
-
-  useEffect(() => {
-    setNotesOpen(false);
-    setEditingMediaId(null);
-    setActionsOpen(false);
-    setProfessionalPhotoModalOpen(false);
-    setSoloPagePromptModalOpen(false);
-    setSoloPageOperatorPrompt("");
-    setSoloPageSteerModalOpen(false);
-    setSoloPageSteerMessage("");
-  }, [selectedClientId]);
-
-  function openProfessionalPhotoModal() {
-    onProfessionalPhotoMediaIdsChange([]);
-    onProfessionalPhotoContextChange("");
-    setActionsOpen(false);
-    setProfessionalPhotoModalOpen(true);
-  }
-
-  function closeProfessionalPhotoModal() {
-    setProfessionalPhotoModalOpen(false);
-    onProfessionalPhotoMediaIdsChange([]);
-    onProfessionalPhotoContextChange("");
-  }
-
-  function openSoloPagePromptModal() {
-    setActionsOpen(false);
-    setSoloPagePromptModalOpen(true);
-  }
-
-  function closeSoloPagePromptModal() {
-    setSoloPagePromptModalOpen(false);
-    setSoloPageOperatorPrompt("");
-  }
-
-  function openSoloPageSteerModal() {
-    setActionsOpen(false);
-    setSoloPageSteerModalOpen(true);
-  }
-
-  function closeSoloPageSteerModal() {
-    setSoloPageSteerModalOpen(false);
-    setSoloPageSteerMessage("");
-  }
-
-  function startMediaEdit(asset: WorkstationMediaAsset) {
-    setEditingMediaId(asset.id);
-    setMediaEditTitle(asset.title || asset.original_filename);
-    setMediaEditFilename(asset.original_filename || asset.stored_filename);
-  }
-
-  async function saveMediaEdit(asset: WorkstationMediaAsset) {
-    await onUpdateMedia(asset, mediaEditTitle, mediaEditFilename);
-    setEditingMediaId(null);
-  }
-
-  function clipboardFile(event: ClipboardEvent<HTMLElement>): File | null {
-    for (const fileItem of Array.from(event.clipboardData.files)) {
-      if (fileItem.size > 0) {
-        return fileItem;
-      }
-    }
-    for (const item of Array.from(event.clipboardData.items)) {
-      const fileItem = item.kind === "file" ? item.getAsFile() : null;
-      if (fileItem && fileItem.size > 0) {
-        return fileItem;
-      }
-    }
-    return null;
-  }
-
-  function droppedFile(event: DragEvent<HTMLElement>): File | null {
-    for (const fileItem of Array.from(event.dataTransfer.files)) {
-      if (fileItem.size > 0) {
-        return fileItem;
-      }
-    }
-    return null;
-  }
-
-  function handleMediaDragOver(event: DragEvent<HTMLElement>) {
-    if (!Array.from(event.dataTransfer.types).includes("Files")) {
-      return;
-    }
-    event.preventDefault();
-    event.dataTransfer.dropEffect = canUploadMedia ? "copy" : "none";
-    setMediaDropActive(true);
-  }
-
-  function handleMediaDragLeave(event: DragEvent<HTMLElement>) {
-    const nextTarget = event.relatedTarget;
-    if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) {
-      return;
-    }
-    setMediaDropActive(false);
-  }
-
-  function handleMediaDrop(event: DragEvent<HTMLElement>) {
-    if (!Array.from(event.dataTransfer.types).includes("Files")) {
-      return;
-    }
-    event.preventDefault();
-    setMediaDropActive(false);
-    const fileToUpload = droppedFile(event);
-    if (fileToUpload && canUploadMedia) {
-      onUploadMediaFile(fileToUpload);
-    }
-  }
-
-  function handleMediaPaste(event: ClipboardEvent<HTMLElement>) {
-    const fileToUpload = clipboardFile(event);
-    if (!fileToUpload || !canUploadMedia) {
-      return;
-    }
-    event.preventDefault();
-    onUploadMediaFile(fileToUpload);
-  }
-
-  async function submitProfessionalPhotoModal(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const started = await onCreateProfessionalPhoto(selectedProfessionalPhotoMediaIds, professionalPhotoContext);
-    if (started) {
-      closeProfessionalPhotoModal();
-    }
-  }
-
-  async function submitSoloPagePromptModal(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const started = await onStartSoloPageCodexWork(soloPageOperatorPrompt);
-    if (started) {
-      closeSoloPagePromptModal();
-    }
-  }
-
-  async function submitSoloPageSteerModal(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const sent = await onSteerSoloPageCodexWork(soloPageSteerMessage);
-    if (sent) {
-      closeSoloPageSteerModal();
-    }
-  }
-
-  return (
-    <div className="ct-surface workstation-surface">
-      <div className="ct-simple-head workstation-simple-head">
-        <div className="ct-simple-title">
-          <span>Build</span>
-          <strong>{clients.length ? `${compactNumber(clients.length)} clients` : "No clients yet"}</strong>
-          <small>{clientListLoading ? "Loading converted workspaces" : funnelLabel}</small>
-        </div>
-        <div className="ct-simple-metrics" aria-label="Build summary">
-          <span>
-            <strong>{compactNumber(clients.length)}</strong>
-            Clients
-          </span>
-          <span>
-            <strong>{compactNumber(failedClientCount)}</strong>
-            Alerts
-          </span>
-          <span>
-            <strong>{compactNumber(totalClientMedia)}</strong>
-            Media
-          </span>
-        </div>
-      </div>
-
-      <div className="ct-workspace workstation-layout">
-        <aside className="ct-leads">
-          <div className="ct-leads-head">
-            <h3>Clients</h3>
-            <p className="ct-leads-summary">{clientListLoading ? "Loading" : clients.length ? `${clients.length} active` : "Empty"}</p>
-          </div>
-          <div className="ct-leads-list">
-            {clients.length ? clients.map((client) => (
-              <button
-                type="button"
-                className={`workstation-client-row ${client.id === selectedClientId ? "active" : ""} ${client.automation_status === "failed" ? "failed" : ""}`}
-                key={client.id}
-                onClick={() => onSelectClient(client.id)}
-              >
-                <div className="ct-lead-avatar" data-tone="success">
-                  {monogram(client.display_name || client.lead?.full_name || "CL")}
-                </div>
-                <div>
-                  <div className="workstation-client-row-top">
-                    <strong>{client.display_name || client.lead?.full_name || "Client"}</strong>
-                    {client.automation_status === "failed" ? <span className="danger">Failed</span> : formatWorkstationOffer(client) ? <span>{formatWorkstationOffer(client)}</span> : null}
-                  </div>
-                  <p>{client.lead?.phone || client.folder_name}</p>
-                  <small>{formatWorkstationClientState(client)} · {client.media_count} media</small>
-                </div>
-              </button>
-            )) : clientListLoading ? (
-              <CtEmptyState compact loading title="Loading clients" message="Fetching converted workspaces." />
-            ) : (
-              <CtEmptyState compact title="No clients yet" message="Convert a paid lead to open Build." />
-            )}
-          </div>
-        </aside>
-
-        <section className="ct-detail workstation-detail">
-          {clientDetailLoading ? (
-            <CtEmptyState loading title="Loading workspace" message="Fetching client details." />
-          ) : !activeClient && clientListLoading ? (
-            <CtEmptyState loading title="Loading clients" message="Fetching converted workspaces." />
-          ) : !activeClient ? (
-            <CtEmptyState title="Select a client" message="Choose a converted client to build." />
-          ) : (
-            <>
-              <header className="ct-detail-head workstation-head">
-                <div className="ct-detail-head-main workstation-client-summary">
-                  <div className="ct-detail-avatar">{monogram(activeClient.display_name || "CL")}</div>
-                  <div className="ct-detail-head-copy">
-                    <p className="ct-detail-kicker">Build client</p>
-                    <h3>{activeClient.display_name}</h3>
-                    <p className="ct-detail-meta">{workstationContactLine}</p>
-                    <div className="workstation-client-facts" aria-label="Client status">
-                      <span>
-                        <CheckCircle size={14} weight="bold" />
-                        {workstationClientStateLabel}
-                      </span>
-                      {activeOffer ? <span>{activeOffer}</span> : null}
-                      <span>{workstationMediaCount} media</span>
-                    </div>
-                  </div>
-                </div>
-                <div className="ct-detail-head-actions workstation-primary-actions">
-                  {showStartCodexPrimary ? (
-                    <button type="button" className="ct-btn ct-btn-primary" onClick={openSoloPagePromptModal}>
-                      <Robot size={15} weight="bold" />
-                      Start Codex
-                    </button>
-                  ) : showSteerCodexPrimary ? (
-                    <button
-                      type="button"
-                      className="ct-btn ct-btn-primary"
-                      onClick={openSoloPageSteerModal}
-                      disabled={actionBusy === "solo-page-steer"}
-                    >
-                      <PaperPlaneTilt size={15} weight="bold" />
-                      Steer Codex
-                    </button>
-                  ) : publicPage ? (
-                    <a className="ct-btn ct-btn-primary" href={publicPage.public_url} target="_blank" rel="noreferrer">
-                      <ArrowSquareOut size={15} weight="bold" />
-                      Open page
-                    </a>
-                  ) : (
-                    <button
-                      type="button"
-                      className="ct-btn ct-btn-primary"
-                      onClick={() => setNotesOpen(true)}
-                      aria-controls="workstation-notes-panel"
-                    >
-                      <NotePencil size={15} weight="bold" />
-                      Add notes
-                    </button>
-                  )}
-                  <details
-                    className="ct-action-menu workstation-action-menu"
-                    open={actionsOpen}
-                    onToggle={(event) => setActionsOpen(event.currentTarget.open)}
-                  >
-                    <summary className="ct-btn ct-btn-ghost">
-                      More
-                      <CaretDown size={14} weight="bold" />
-                    </summary>
-                    <div className="ct-action-menu-panel workstation-action-popover">
-                      <div className="workstation-menu-group">
-                        <span className="workstation-menu-label">Build controls</span>
-                        {!showStartCodexPrimary ? (
-                          <button
-                            type="button"
-                            onClick={openSoloPagePromptModal}
-                            disabled={!canStartSoloPageWork}
-                          >
-                            <Robot size={16} weight="bold" />
-                            <span>Start Codex</span>
-                          </button>
-                        ) : null}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setActionsOpen(false);
-                            onStopSoloPageCodexWork();
-                          }}
-                          disabled={!canStopSoloPageWork || actionBusy === "solo-page-stop"}
-                        >
-                          <X size={16} weight="bold" />
-                          <span>Stop Codex</span>
-                        </button>
-                        {!showSteerCodexPrimary ? (
-                          <button
-                            type="button"
-                            onClick={openSoloPageSteerModal}
-                            disabled={!canStopSoloPageWork || actionBusy === "solo-page-steer"}
-                          >
-                            <PaperPlaneTilt size={16} weight="bold" />
-                            <span>Steer Codex</span>
-                          </button>
-                        ) : null}
-                      </div>
-
-                      <div className="workstation-menu-group">
-                        <span className="workstation-menu-label">Workstation actions</span>
-                        <button
-                          type="button"
-                          onClick={openProfessionalPhotoModal}
-                          disabled={workstationClosed || !imageAssets.length || professionalPhotoJobBusy || actionBusy === "professional-photo-start"}
-                        >
-                          <Camera size={16} weight="bold" />
-                          <span>Professional photo</span>
-                        </button>
-                        {!showNotesPrimary ? (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setNotesOpen((current) => !current);
-                              setActionsOpen(false);
-                            }}
-                            aria-expanded={notesOpen}
-                            aria-controls="workstation-notes-panel"
-                          >
-                            <NotePencil size={16} weight="bold" />
-                            <span>Notes</span>
-                          </button>
-                        ) : null}
-                      </div>
-
-                      <div className="workstation-menu-group">
-                        <span className="workstation-menu-label">Client utilities</span>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setActionsOpen(false);
-                            onOpenCrmLead(selectedLead);
-                          }}
-                        >
-                          <ArrowSquareOut size={16} weight="bold" />
-                          <span>Open CRM chat</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setActionsOpen(false);
-                            onCopyAll();
-                          }}
-                        >
-                          <Copy size={16} weight="bold" />
-                          <span>Copy all</span>
-                        </button>
-                        {publicPage ? (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setActionsOpen(false);
-                              copyTextToClipboard(publicPage.public_url).catch(() => undefined);
-                            }}
-                          >
-                            <Copy size={16} weight="bold" />
-                            <span>Copy public URL</span>
-                          </button>
-                        ) : null}
-                        <a
-                          className="workstation-menu-link"
-                          href={`/api/workstation/clients/${activeClient.id}/zip`}
-                          onClick={() => setActionsOpen(false)}
-                        >
-                          <DownloadSimple size={16} weight="bold" />
-                          <span>Download ZIP</span>
-                        </a>
-                        <button
-                          type="button"
-                          className="danger"
-                          onClick={() => {
-                            setActionsOpen(false);
-                            onCloseWorkstationClient();
-                          }}
-                          disabled={workstationClosed || actionBusy === "workstation-close"}
-                        >
-                          <Trash size={16} weight="bold" />
-                          <span>{actionBusy === "workstation-close" ? "Closing..." : "Close lead"}</span>
-                        </button>
-                      </div>
-                      </div>
-                  </details>
-                </div>
-              </header>
-
-              {notesOpen ? (
-                <section className="workstation-panel notes-panel" id="workstation-notes-panel">
-                  <div className="workstation-panel-head">
-                    <div>
-                      <span>Meeting notes</span>
-                      <strong>Client profile notes</strong>
-                    </div>
-                    <div className="workstation-panel-actions">
-                      <button type="button" className="ct-btn ct-btn-ghost" onClick={onCopyNotes} disabled={!notesDraft.trim()}>
-                        <Copy size={14} weight="bold" />
-                        Copy notes
-                      </button>
-                      <button
-                        type="button"
-                        className="ct-btn ct-btn-primary"
-                        disabled={actionBusy === "workstation-notes" || loading}
-                        onClick={onSaveNotes}
-                      >
-                        {actionBusy === "workstation-notes" ? "Saving..." : "Save notes"}
-                      </button>
-                    </div>
-                  </div>
-                  <textarea
-                    className="workstation-notes"
-                    value={notesDraft}
-                    onChange={(event) => onNotesChange(event.target.value)}
-                    placeholder="Paste call notes, client answers, preferences, questions, offer context..."
-                  />
-                </section>
-              ) : null}
-
-              {workstationAttention ? (
-                <section className="workstation-failure-alert" role="alert">
-                  <WarningCircle size={22} weight="bold" />
-                  <div>
-                    <span>Workstation alert</span>
-                    <strong>{workstationAttention.title}</strong>
-                    <p>{workstationAttention.detail}</p>
-                    <small>{workstationAttention.note}</small>
-                  </div>
-                </section>
-              ) : null}
-
-              <details
-                className={`workstation-panel workstation-automation-panel ${automationTone}`}
-                id={workstationRunDetailsId}
-              >
-                <summary className="workstation-panel-head">
-                  <div>
-                    <span>Run details</span>
-                    <strong>{automationState?.label ?? humanize(activeClient.automation_status)}</strong>
-                  </div>
-                  <span className="workstation-state-pill">
-                    {automationState?.is_live_working ? (
-                      <SpinnerGap className="workstation-spinner" size={14} weight="bold" />
-                    ) : automationState?.is_stale ? (
-                      <WarningCircle size={14} weight="bold" />
-                    ) : workstationHasMissingLiveProcess ? (
-                      <WarningCircle size={14} weight="bold" />
-                    ) : automationState?.is_waiting_backoff ? (
-                      <ClockCountdown size={14} weight="bold" />
-                    ) : workstationFailed ? (
-                      <WarningCircle size={14} weight="bold" />
-                    ) : (
-                      <CheckCircle size={14} weight="bold" />
-                    )}
-                    {workstationStatePillLabel}
-                  </span>
-                </summary>
-                <p className="workstation-automation-detail">
-                  {automationState?.detail ?? "No automation state loaded yet."}
-                </p>
-                <div className="workstation-automation-meta">
-                  {automationState?.latest_inbound_at ? <span>Latest inbound: {shortDate(automationState.latest_inbound_at)}</span> : null}
-                  {automationState?.backoff_until ? <span>Backoff until: {shortDate(automationState.backoff_until)}</span> : null}
-                  <span>Live process: {automationState?.live_status ? humanize(automationState.live_status) : "Not running"}</span>
-                  {automationState?.live_started_at ? <span>Live since: {shortDate(automationState.live_started_at)}</span> : null}
-                  {automationState?.progress_updated_at ? <span>Progress updated: {shortDate(automationState.progress_updated_at)}</span> : null}
-                  {automationState?.progress_path ? <code>{automationState.progress_path}</code> : null}
-                </div>
-                {automationState?.live_detail ? (
-                  <p className="workstation-live-detail">{automationState.live_detail}</p>
-                ) : null}
-                <div className="workstation-progress">
-                  <div className="workstation-progress-head">
-                    <Robot size={15} weight="bold" />
-                    <span>Codex progress</span>
-                  </div>
-                  {automationState?.progress_markdown?.trim() ? (
-                    <pre>{automationState.progress_markdown}</pre>
-                  ) : (
-                    <p>No progress has been written for this client yet.</p>
-                  )}
-                </div>
-              </details>
-
-              <details
-                className={`workstation-panel workstation-media-panel ${mediaDropActive ? "drag-active" : ""}`}
-                onDragOver={handleMediaDragOver}
-                onDragLeave={handleMediaDragLeave}
-                onDrop={handleMediaDrop}
-                onPaste={handleMediaPaste}
-                tabIndex={0}
-                aria-label="Workstation media"
-              >
-                <summary className="workstation-panel-head">
-                  <div>
-                    <span>Media</span>
-                    <strong>{detailMedia.length ? `${detailMedia.length} files` : "Files"}</strong>
-                  </div>
-                </summary>
-                <form className="workstation-upload" onSubmit={onUploadMedia}>
-                  <label className="ct-field">
-                    <span>Title</span>
-                    <input value={fileTitle} onChange={(event) => onFileTitleChange(event.target.value)} placeholder="Logo, fachada, referencia visual..." />
-                  </label>
-                  <label className="ct-field">
-                    <span>File</span>
-                    <input type="file" onChange={(event) => onFileChange(event.target.files?.[0] ?? null)} />
-                  </label>
-                  <button type="submit" className="ct-btn ct-btn-primary" disabled={!file || actionBusy === "workstation-upload"}>
-                    <UploadSimple size={15} weight="bold" />
-                    {actionBusy === "workstation-upload" ? "Uploading..." : "Upload"}
-                  </button>
-                </form>
-                <div className="workstation-media-grid">
-                  {detailMedia.length ? detailMedia.map((asset) => (
-                    <article className="workstation-media-card" key={asset.id}>
-                      <div className="workstation-media-preview">
-                        {asset.content_type?.startsWith("image/") ? (
-                          <img src={asset.media_url} alt={asset.title || asset.original_filename} loading="lazy" />
-                        ) : (
-                          <div className="workstation-file-icon"><FolderOpen size={28} weight="bold" /></div>
-                        )}
-                      </div>
-                      {editingMediaId === asset.id ? (
-                        <form
-                          className="workstation-media-edit"
-                          onSubmit={(event) => {
-                            event.preventDefault();
-                            saveMediaEdit(asset).catch((reason) => {
-                              console.error(reason);
-                            });
-                          }}
-                        >
-                          <label className="ct-field">
-                            <span>Name</span>
-                            <input value={mediaEditTitle} onChange={(event) => setMediaEditTitle(event.target.value)} />
-                          </label>
-                          <label className="ct-field">
-                            <span>Filename</span>
-                            <input value={mediaEditFilename} onChange={(event) => setMediaEditFilename(event.target.value)} />
-                          </label>
-                          <div className="workstation-media-edit-actions">
-                            <button type="submit" className="ct-btn ct-btn-primary" disabled={actionBusy === `edit-media-${asset.id}`}>
-                              {actionBusy === `edit-media-${asset.id}` ? "Saving..." : "Save"}
-                            </button>
-                            <button type="button" className="ct-btn ct-btn-ghost" onClick={() => setEditingMediaId(null)}>Cancel</button>
-                          </div>
-                        </form>
-                      ) : (
-                        <div className="workstation-media-meta">
-                          <strong>{asset.title || asset.original_filename}</strong>
-                          <span>{asset.original_filename} · {formatBytes(asset.size_bytes)}</span>
-                        </div>
-                      )}
-                      <div className="workstation-media-actions">
-                        <button type="button" className="ct-btn ct-btn-ghost" onClick={() => startMediaEdit(asset)}>
-                          <NotePencil size={15} weight="bold" />
-                          Edit
-                        </button>
-                        <a className="ct-btn ct-btn-ghost" href={asset.media_url} target="_blank" rel="noreferrer">Open</a>
-                        <button
-                          type="button"
-                          className="ct-btn ct-btn-ghost btn-destructive"
-                          onClick={() => onDeleteMedia(asset)}
-                          disabled={actionBusy === `delete-media-${asset.id}`}
-                          aria-label={`Delete ${asset.title || asset.original_filename}`}
-                        >
-                          <Trash size={15} weight="bold" />
-                        </button>
-                      </div>
-                    </article>
-                  )) : (
-                    <CtEmptyState compact title="No media yet" message="Upload logos, photos, or references." />
-                  )}
-                </div>
-              </details>
-
-              <details className="workstation-panel">
-                <summary className="workstation-panel-head">
-                  <div>
-                    <span>Photo</span>
-                    <strong>{professionalPhotos.length ? `${professionalPhotos.length} versions` : "Portrait"}</strong>
-                  </div>
-                </summary>
-                {currentProfessionalPhotoJob ? (
-                  <div className={`workstation-photo-job ${currentProfessionalPhotoJob.status}`}>
-                    {professionalPhotoJobBusy ? <SpinnerGap className="workstation-spinner" size={18} weight="bold" /> : null}
-                    {currentProfessionalPhotoJob.status === "completed" ? <Check size={18} weight="bold" /> : null}
-                    {currentProfessionalPhotoJob.status === "failed" ? <X size={18} weight="bold" /> : null}
-                    <div>
-                      <strong>
-                        {professionalPhotoJobBusy
-                          ? "Procesando foto profesional"
-                          : currentProfessionalPhotoJob.status === "completed"
-                            ? "Foto profesional lista"
-                            : "No se pudo crear la foto"}
-                      </strong>
-                      <span>
-                        {currentProfessionalPhotoJob.status === "completed" && currentProfessionalPhotoJob.result
-                          ? `${currentProfessionalPhotoJob.result.version} · ${currentProfessionalPhotoJob.result.image_path}`
-                          : currentProfessionalPhotoJob.error || "El resultado va a aparecer aca cuando termine."}
-                      </span>
-                    </div>
-                  </div>
-                ) : null}
-                <div className="workstation-photo-grid">
-                  {professionalPhotos.length ? professionalPhotos.map((photo) => (
-                    <article className="workstation-photo-card" key={photo.version}>
-                      <a href={photo.image_url} target="_blank" rel="noreferrer">
-                        <img src={photo.image_url} alt={`Professional photo ${photo.version}`} loading="lazy" />
-                      </a>
-                      <div className="workstation-photo-meta">
-                        <strong>{photo.version}</strong>
-                        <span>{photo.operation || "generated"} · {photo.created_at || photo.image_path}</span>
-                        <code>{photo.image_path}</code>
-                      </div>
-                      <div className="workstation-photo-edit">
-                        <input
-                          value={professionalPhotoEditPrompts[photo.version] ?? ""}
-                          onChange={(event) => onProfessionalPhotoEditPromptChange(photo.version, event.target.value)}
-                          placeholder="Modify this version..."
-                        />
-                        <button
-                          type="button"
-                          className="ct-btn ct-btn-ghost"
-                          onClick={() => onEditProfessionalPhoto(photo.version)}
-                          disabled={
-                            !(professionalPhotoEditPrompts[photo.version] ?? "").trim()
-                            || actionBusy === `professional-photo-edit-${photo.version}`
-                          }
-                        >
-                          {actionBusy === `professional-photo-edit-${photo.version}` ? "Editing..." : "Modify"}
-                        </button>
-                      </div>
-                    </article>
-                  )) : (
-                    <CtEmptyState
-                      compact
-                      loading={professionalPhotoJobBusy}
-                      title={professionalPhotoJobBusy ? "Waiting first result" : "No portrait yet"}
-                      message={professionalPhotoJobBusy ? "The generated photo will appear here." : "Create a professional photo from client media."}
-                    />
-                  )}
-                </div>
-              </details>
-
-              <details className="workstation-panel workstation-chat-panel">
-                <summary className="workstation-panel-head">
-                  <div>
-                    <span>Conversation</span>
-                    <strong>{workstationMessages.length ? `${workstationMessages.length} messages` : "WhatsApp"}</strong>
-                  </div>
-                </summary>
-                <div className="workstation-chat-actions">
-                  <button type="button" className="ct-btn ct-btn-ghost workstation-crm-link" onClick={() => onOpenCrmLead(selectedLead)}>
-                    <ArrowSquareOut size={15} weight="bold" />
-                    Open
-                  </button>
-                </div>
-                <div className="workstation-chat-thread">
-                  <MessageTimeline
-                    messages={workstationMessages}
-                    loading={loading}
-                    hasLead={Boolean(selectedLead)}
-                    acknowledgingIds={acknowledgingDeliveryErrorIds}
-                    onAcknowledgeDeliveryError={onAcknowledgeDeliveryError}
-                  />
-                </div>
-              </details>
-            </>
-          )}
-        </section>
-      </div>
-      {professionalPhotoModalOpen ? (
-        <ProfessionalPhotoModal
-          imageAssets={imageAssets}
-          selectedMediaIds={selectedProfessionalPhotoMediaIds}
-          context={professionalPhotoContext}
-          busy={actionBusy === "professional-photo-start"}
-          onToggleMedia={onToggleProfessionalPhotoMedia}
-          onContextChange={onProfessionalPhotoContextChange}
-          onClose={closeProfessionalPhotoModal}
-          onSubmit={submitProfessionalPhotoModal}
-        />
-      ) : null}
-      {soloPagePromptModalOpen ? (
-        <SoloPagePromptModal
-          prompt={soloPageOperatorPrompt}
-          busy={actionBusy === "solo-page-work"}
-          onPromptChange={setSoloPageOperatorPrompt}
-          onClose={closeSoloPagePromptModal}
-          onSubmit={submitSoloPagePromptModal}
-        />
-      ) : null}
-      {soloPageSteerModalOpen ? (
-        <SoloPageSteerModal
-          message={soloPageSteerMessage}
-          busy={actionBusy === "solo-page-steer"}
-          onMessageChange={setSoloPageSteerMessage}
-          onClose={closeSoloPageSteerModal}
-          onSubmit={submitSoloPageSteerModal}
-        />
-      ) : null}
-    </div>
-  );
-}
-
-function ConfirmDialog({
+export function ConfirmDialog({
   dialog,
   busy,
   onClose,
@@ -7078,23 +2837,37 @@ function ConfirmDialog({
   );
 }
 
-function SoloPageSteerModal({
+export function SoloPageSteerModal({
+  clientName,
   message,
   busy,
   onMessageChange,
   onClose,
   onSubmit,
 }: {
+  clientName: string;
   message: string;
   busy: boolean;
   onMessageChange: (value: string) => void;
   onClose: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
+  const [reviewing, setReviewing] = useState(false);
+  const cleanMessage = message.trim();
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    if (!reviewing) {
+      event.preventDefault();
+      setReviewing(true);
+      return;
+    }
+    onSubmit(event);
+  }
+
   return (
     <div className="ct-modal open" aria-hidden="false">
       <button className="ct-modal-overlay" type="button" onClick={onClose} aria-label="Cerrar steer de Codex" />
-      <form className="ct-modal-panel workstation-solo-page-modal" role="dialog" aria-modal="true" aria-labelledby="workstationSoloPageSteerModalTitle" onSubmit={onSubmit}>
+      <form className="ct-modal-panel workstation-solo-page-modal" role="dialog" aria-modal="true" aria-labelledby="workstationSoloPageSteerModalTitle" onSubmit={handleSubmit}>
         <header className="ct-modal-head">
           <div>
             <p className="ct-drawer-kicker">Workstation</p>
@@ -7110,18 +2883,28 @@ function SoloPageSteerModal({
             <span>Mensaje para Codex</span>
             <textarea
               value={message}
-              onChange={(event) => onMessageChange(event.target.value)}
+              onChange={(event) => {
+                setReviewing(false);
+                onMessageChange(event.target.value);
+              }}
               placeholder="Segui, pero usá un tono más sobrio y no uses la foto del logo..."
               rows={6}
               autoFocus
             />
           </label>
+          {reviewing ? (
+            <section className="workstation-codex-review">
+              <span>Review</span>
+              <strong>{clientName}</strong>
+              <pre>{cleanMessage}</pre>
+            </section>
+          ) : null}
         </div>
         <footer className="ct-modal-foot">
           <button type="button" className="ct-btn ct-btn-ghost" onClick={onClose}>Cancel</button>
-          <button type="submit" className="ct-btn ct-btn-primary" disabled={!message.trim() || busy}>
+          <button type="submit" className="ct-btn ct-btn-primary" disabled={!cleanMessage || busy}>
             {busy ? <SpinnerGap className="workstation-spinner" size={15} weight="bold" /> : <PaperPlaneTilt size={15} weight="bold" />}
-            {busy ? "Enviando..." : "Enviar"}
+            {busy ? "Enviando..." : reviewing ? "Confirmar envio" : "Review"}
           </button>
         </footer>
       </form>
@@ -7129,23 +2912,37 @@ function SoloPageSteerModal({
   );
 }
 
-function SoloPagePromptModal({
+export function SoloPagePromptModal({
+  clientName,
   prompt,
   busy,
   onPromptChange,
   onClose,
   onSubmit,
 }: {
+  clientName: string;
   prompt: string;
   busy: boolean;
   onPromptChange: (value: string) => void;
   onClose: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
+  const [reviewing, setReviewing] = useState(false);
+  const cleanPrompt = prompt.trim();
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    if (!reviewing) {
+      event.preventDefault();
+      setReviewing(true);
+      return;
+    }
+    onSubmit(event);
+  }
+
   return (
     <div className="ct-modal open" aria-hidden="false">
       <button className="ct-modal-overlay" type="button" onClick={onClose} aria-label="Cerrar prompt de Codex" />
-      <form className="ct-modal-panel workstation-solo-page-modal" role="dialog" aria-modal="true" aria-labelledby="workstationSoloPageModalTitle" onSubmit={onSubmit}>
+      <form className="ct-modal-panel workstation-solo-page-modal" role="dialog" aria-modal="true" aria-labelledby="workstationSoloPageModalTitle" onSubmit={handleSubmit}>
         <header className="ct-modal-head">
           <div>
             <p className="ct-drawer-kicker">Workstation</p>
@@ -7161,18 +2958,28 @@ function SoloPagePromptModal({
             <span>Prompt para Codex</span>
             <textarea
               value={prompt}
-              onChange={(event) => onPromptChange(event.target.value)}
+              onChange={(event) => {
+                setReviewing(false);
+                onPromptChange(event.target.value);
+              }}
               placeholder="Hey, ponete a trabajar y hacele la pagina. Usá lo que ya mandó, priorizá..."
               rows={7}
               autoFocus
             />
           </label>
+          {reviewing ? (
+            <section className="workstation-codex-review">
+              <span>Review</span>
+              <strong>{clientName}</strong>
+              <pre>{cleanPrompt}</pre>
+            </section>
+          ) : null}
         </div>
         <footer className="ct-modal-foot">
           <button type="button" className="ct-btn ct-btn-ghost" onClick={onClose}>Cancel</button>
-          <button type="submit" className="ct-btn ct-btn-primary" disabled={!prompt.trim() || busy}>
+          <button type="submit" className="ct-btn ct-btn-primary" disabled={!cleanPrompt || busy}>
             {busy ? <SpinnerGap className="workstation-spinner" size={15} weight="bold" /> : <Robot size={15} weight="bold" />}
-            {busy ? "Arrancando..." : "Arrancar"}
+            {busy ? "Arrancando..." : reviewing ? "Confirmar arranque" : "Review"}
           </button>
         </footer>
       </form>
@@ -7180,7 +2987,7 @@ function SoloPagePromptModal({
   );
 }
 
-function ProfessionalPhotoModal({
+export function ProfessionalPhotoModal({
   imageAssets,
   selectedMediaIds,
   context,
@@ -7245,7 +3052,9 @@ function ProfessionalPhotoModal({
                       <span>{asset.original_filename}</span>
                     </div>
                     <span className="workstation-select-pill">
-                      {selected ? <Check size={14} weight="bold" /> : null}
+                      <span className="workstation-select-icon" aria-hidden="true">
+                        <Check size={14} weight="bold" />
+                      </span>
                       {selected ? "Selected" : "Select"}
                     </span>
                   </button>
@@ -7441,6 +3250,7 @@ function FunnelEditorDrawer({
   const primaryStrategy = textStrategy ?? videoStrategy ?? draft.strategies[0];
   const templateChoices = buildTemplateChoices(draft);
   const [showFunnelDetails, setShowFunnelDetails] = useState(false);
+  const [reviewMode, setReviewMode] = useState<"save" | "discard" | null>(null);
 
   function update<K extends keyof FunnelDefinition>(key: K, value: FunnelDefinition[K]) {
     setDraft((current) => ({ ...current, [key]: value }));
@@ -7498,9 +3308,8 @@ function FunnelEditorDrawer({
     }));
   }
 
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    await onSave({
+  function normalizedFunnelDraft(): FunnelDefinition {
+    return {
       ...draft,
       id: slugifyClient(draft.id || draft.label),
       alert_emails: draft.alert_emails.map((item) => item.trim()).filter(Boolean),
@@ -7522,12 +3331,62 @@ function FunnelEditorDrawer({
         media_path: strategy.media_path?.trim() || null,
         media_caption: strategy.media_caption?.trim() || null,
       })),
-    });
+    };
+  }
+
+  function funnelChangeSummary() {
+    const nextFunnel = normalizedFunnelDraft();
+    if (mode === "create" || !funnel) {
+      return [`Create funnel: ${nextFunnel.label || nextFunnel.id}`];
+    }
+    return [
+      funnel.enabled !== nextFunnel.enabled ? `Enabled: ${funnel.enabled ? "on" : "off"} -> ${nextFunnel.enabled ? "on" : "off"}` : "",
+      funnel.sheet_url !== nextFunnel.sheet_url || funnel.sheet_gid !== nextFunnel.sheet_gid ? "Sheet source changed" : "",
+      funnel.sheet_poll_seconds !== nextFunnel.sheet_poll_seconds ? "Sheet polling changed" : "",
+      funnel.opener_template_name !== nextFunnel.opener_template_name
+        || funnel.opener_followup_template_name !== nextFunnel.opener_followup_template_name
+        || funnel.manual_ping_template_name !== nextFunnel.manual_ping_template_name
+        || funnel.opener_text !== nextFunnel.opener_text
+        || funnel.opener_followup_text !== nextFunnel.opener_followup_text
+        || funnel.manual_ping_text !== nextFunnel.manual_ping_text
+        || funnel.calendly_intro_text !== nextFunnel.calendly_intro_text
+        ? "Templates or funnel copy changed"
+        : "",
+      JSON.stringify(funnel.alert_emails) !== JSON.stringify(nextFunnel.alert_emails) ? "Alert emails changed" : "",
+      JSON.stringify(funnel.strategies.map((item) => ({ id: item.id, weight: item.weight, delivery: item.delivery, media_path: item.media_path })))
+        !== JSON.stringify(nextFunnel.strategies.map((item) => ({ id: item.id, weight: item.weight, delivery: item.delivery, media_path: item.media_path })))
+        ? "Strategies changed"
+        : "",
+    ].filter(Boolean);
+  }
+
+  const changes = funnelChangeSummary();
+  const dirty = changes.length > 0;
+
+  function requestClose() {
+    if (dirty) {
+      setReviewMode("discard");
+      return;
+    }
+    onClose();
+  }
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!dirty) {
+      onClose();
+      return;
+    }
+    if (reviewMode !== "save") {
+      setReviewMode("save");
+      return;
+    }
+    await onSave(normalizedFunnelDraft());
   }
 
   return (
     <aside className="ct-drawer open" aria-hidden="false" aria-label="Funnel editor">
-      <button className="ct-drawer-overlay" type="button" onClick={onClose} aria-label="Close funnel editor" />
+      <button className="ct-drawer-overlay" type="button" onClick={requestClose} aria-label="Close funnel editor" />
       <form className="ct-drawer-panel wide" role="dialog" aria-modal="false" aria-labelledby="ctFunnelDrawerTitle" onSubmit={submit}>
         <header className="ct-drawer-head">
           <div>
@@ -7535,7 +3394,7 @@ function FunnelEditorDrawer({
             <h3 id="ctFunnelDrawerTitle">{mode === "create" ? "Add Niche Funnel" : draft.label}</h3>
             <p className="ct-drawer-note">Saved to the shared funnel config file used by the UI and Codex.</p>
           </div>
-          <button type="button" className="ct-icon-btn" onClick={onClose}>Close</button>
+          <button type="button" className="ct-icon-btn" onClick={requestClose}>Close</button>
         </header>
 
         <div className="ct-drawer-body">
@@ -7748,11 +3607,27 @@ function FunnelEditorDrawer({
             <span>Meeting Text</span>
             <textarea value={draft.calendly_intro_text} onChange={(event) => update("calendly_intro_text", event.target.value)} rows={4} />
           </label>
+          {reviewMode ? (
+            <section className="ct-drawer-review" data-mode={reviewMode}>
+              <strong>{reviewMode === "save" ? "Review funnel changes" : "Discard funnel edits?"}</strong>
+              <ul>
+                {(changes.length ? changes : ["No saved values changed."]).map((change) => (
+                  <li key={change}>{change}</li>
+                ))}
+              </ul>
+              {reviewMode === "discard" ? (
+                <div className="ct-drawer-review-actions">
+                  <button type="button" className="ct-btn ct-btn-ghost" onClick={() => setReviewMode(null)}>Keep editing</button>
+                  <button type="button" className="ct-btn ct-btn-warn" onClick={onClose}>Discard edits</button>
+                </div>
+              ) : null}
+            </section>
+          ) : null}
         </div>
 
         <footer className="ct-drawer-foot">
-          <button type="button" className="ct-btn ct-btn-ghost" onClick={onClose}>Cancel</button>
-          <button type="submit" className="ct-btn ct-btn-primary" disabled={saving}>{saving ? "Saving..." : "Save funnel"}</button>
+          <button type="button" className="ct-btn ct-btn-ghost" onClick={requestClose}>Cancel</button>
+          <button type="submit" className="ct-btn ct-btn-primary" disabled={saving}>{saving ? "Saving..." : reviewMode === "save" ? "Confirm save" : "Review changes"}</button>
         </footer>
       </form>
     </aside>
@@ -8166,7 +4041,7 @@ function CampaignRoutingPanel({
   );
 }
 
-function MessageTimeline({
+export function MessageTimeline({
   messages,
   loading,
   hasLead,
@@ -8380,8 +4255,13 @@ function ManualDock({
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   const [dragActive, setDragActive] = useState(false);
+  const [fileError, setFileError] = useState("");
   const hasContent = Boolean(value.trim() || files.length);
   const blocked = Boolean(blockReason);
+
+  useEffect(() => {
+    setFileError("");
+  }, [files]);
 
   function usableFiles(fileList: FileList | File[]): File[] {
     return Array.from(fileList).filter((item) => item.size > 0);
@@ -8392,15 +4272,34 @@ function ManualDock({
       return;
     }
     const seen = new Set(files.map((item) => `${item.name}:${item.size}:${item.lastModified}`));
-    const merged = [...files];
-    nextFiles.forEach((item) => {
+    const uniqueFiles = nextFiles.filter((item) => {
       const key = `${item.name}:${item.size}:${item.lastModified}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        merged.push(item);
+      if (seen.has(key)) {
+        return false;
       }
+      seen.add(key);
+      return true;
     });
-    onFilesChange(merged);
+    if (!uniqueFiles.length) {
+      return;
+    }
+    const oversizedFile = uniqueFiles.find((item) => item.size > CRM_MANUAL_MEDIA_MAX_FILE_BYTES);
+    if (oversizedFile) {
+      setFileError(`${oversizedFile.name} is over ${formatBytes(CRM_MANUAL_MEDIA_MAX_FILE_BYTES)}.`);
+      return;
+    }
+    if (files.length + uniqueFiles.length > CRM_MANUAL_MEDIA_MAX_FILES) {
+      setFileError(`Attach up to ${CRM_MANUAL_MEDIA_MAX_FILES} files.`);
+      return;
+    }
+    const currentBytes = files.reduce((total, item) => total + item.size, 0);
+    const nextBytes = uniqueFiles.reduce((total, item) => total + item.size, 0);
+    if (currentBytes + nextBytes > CRM_MANUAL_MEDIA_MAX_TOTAL_BYTES) {
+      setFileError(`Attachments can total up to ${formatBytes(CRM_MANUAL_MEDIA_MAX_TOTAL_BYTES)}.`);
+      return;
+    }
+    setFileError("");
+    onFilesChange([...files, ...uniqueFiles]);
   }
 
   function filesFromClipboard(event: ClipboardEvent<HTMLElement>): File[] {
@@ -8456,6 +4355,7 @@ function ManualDock({
   }
 
   function removeFile(indexToRemove: number) {
+    setFileError("");
     onFilesChange(files.filter((_, index) => index !== indexToRemove));
   }
 
@@ -8507,9 +4407,10 @@ function ManualDock({
               </div>
             ))}
           </div>
-        ) : (
-          <p className="ct-manual-hint">Drop files here or paste images/files from clipboard.</p>
-        )}
+        ) : null}
+        <p className={`ct-manual-hint ${fileError ? "blocked" : ""}`}>
+          {fileError || `Up to ${CRM_MANUAL_MEDIA_MAX_FILES} files, ${formatBytes(CRM_MANUAL_MEDIA_MAX_FILE_BYTES)} each, ${formatBytes(CRM_MANUAL_MEDIA_MAX_TOTAL_BYTES)} total. Drop or paste files here.`}
+        </p>
       </div>
       <div className="ct-manual-actions">
         <button type="submit" className="ct-btn ct-btn-primary" disabled={disabled || blocked || !hasContent}>Send and pause automation</button>
@@ -8542,6 +4443,7 @@ function ConfigDrawer({
   });
   const [draftReady, setDraftReady] = useState(false);
   const [showAdvancedControls, setShowAdvancedControls] = useState(false);
+  const [reviewMode, setReviewMode] = useState<"save" | "discard" | null>(null);
 
   useEffect(() => {
     if (!config || draftReady) {
@@ -8563,14 +4465,52 @@ function ConfigDrawer({
     setDraftReady(true);
   }, [config, draftReady, strategyStats]);
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    await onSave({
+  function nextConfigPayload(): Partial<ContadoresConfig> {
+    return {
       enabled: draft.enabled,
       calendly_base_url: draft.calendly_base_url,
       alert_emails: draft.alert_emails.split(",").map((item) => item.trim()).filter(Boolean),
       strategy_weights: draft.strategy_weights,
-    });
+    };
+  }
+
+  function configChangeSummary() {
+    if (!config) {
+      return [];
+    }
+    const nextConfig = nextConfigPayload();
+    const currentEmails = config.alert_emails.join(", ");
+    const nextEmails = nextConfig.alert_emails?.join(", ") ?? "";
+    return [
+      config.enabled !== nextConfig.enabled ? `Enabled: ${config.enabled ? "on" : "off"} -> ${nextConfig.enabled ? "on" : "off"}` : "",
+      config.calendly_base_url !== nextConfig.calendly_base_url ? "Meeting URL changed" : "",
+      currentEmails !== nextEmails ? "Alert emails changed" : "",
+      JSON.stringify(config.strategy_weights ?? {}) !== JSON.stringify(nextConfig.strategy_weights ?? {}) ? "Strategy weights changed" : "",
+    ].filter(Boolean);
+  }
+
+  const changes = configChangeSummary();
+  const dirty = changes.length > 0;
+
+  function requestClose() {
+    if (dirty) {
+      setReviewMode("discard");
+      return;
+    }
+    onClose();
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!dirty) {
+      onClose();
+      return;
+    }
+    if (reviewMode !== "save") {
+      setReviewMode("save");
+      return;
+    }
+    await onSave(nextConfigPayload());
   }
 
   function updateStrategyWeight(item: StrategyStatsItem, value: string) {
@@ -8589,7 +4529,7 @@ function ConfigDrawer({
 
   return (
     <aside className="ct-drawer open" aria-hidden="false" aria-label="Rollout controls">
-      <button className="ct-drawer-overlay" type="button" onClick={onClose} aria-label="Close rollout controls" />
+      <button className="ct-drawer-overlay" type="button" onClick={requestClose} aria-label="Close rollout controls" />
       <form className="ct-drawer-panel" role="dialog" aria-modal="false" aria-labelledby="ctDrawerTitle" onSubmit={handleSubmit}>
         <header className="ct-drawer-head">
           <div>
@@ -8599,7 +4539,7 @@ function ConfigDrawer({
               Sheet: {config?.last_sheet_sync_status || "idle"} · Ready: {runtime?.ready ? "yes" : "review"}
             </p>
           </div>
-          <button type="button" className="ct-icon-btn" onClick={onClose}>Close</button>
+          <button type="button" className="ct-icon-btn" onClick={requestClose}>Close</button>
         </header>
         <div className="ct-drawer-body">
           <label className="ct-field ct-field-toggle">
@@ -8643,9 +4583,26 @@ function ConfigDrawer({
               />
             </div>
           </section>
+          {reviewMode ? (
+            <section className="ct-drawer-review" data-mode={reviewMode}>
+              <strong>{reviewMode === "save" ? "Review runtime changes" : "Discard runtime edits?"}</strong>
+              <ul>
+                {(changes.length ? changes : ["No saved values changed."]).map((change) => (
+                  <li key={change}>{change}</li>
+                ))}
+              </ul>
+              {reviewMode === "discard" ? (
+                <div className="ct-drawer-review-actions">
+                  <button type="button" className="ct-btn ct-btn-ghost" onClick={() => setReviewMode(null)}>Keep editing</button>
+                  <button type="button" className="ct-btn ct-btn-warn" onClick={onClose}>Discard edits</button>
+                </div>
+              ) : null}
+            </section>
+          ) : null}
         </div>
         <footer className="ct-drawer-foot">
-          <button type="submit" className="ct-btn ct-btn-primary" disabled={saving || !config}>{saving ? "Saving..." : "Save controls"}</button>
+          <button type="button" className="ct-btn ct-btn-ghost" onClick={requestClose}>Cancel</button>
+          <button type="submit" className="ct-btn ct-btn-primary" disabled={saving || !config}>{saving ? "Saving..." : reviewMode === "save" ? "Confirm save" : "Review changes"}</button>
         </footer>
       </form>
     </aside>
@@ -8970,6 +4927,8 @@ function buildBlankClientLeadSourceDraft(): ClientLeadSourceDraft {
     sheet_gid: "",
     sheet_tab_name: "",
     sheet_poll_seconds: 10,
+    meta_page_id: "",
+    meta_lead_form_id: "",
     recipient_name: "",
     recipient_phone: "",
     template_name: "konecta_delivery_lead_alert_es",
@@ -8994,6 +4953,8 @@ function clientLeadSourceToDraft(source: ClientLeadSource): ClientLeadSourceDraf
     sheet_gid: source.sheet_gid ?? "",
     sheet_tab_name: source.sheet_tab_name ?? "",
     sheet_poll_seconds: source.sheet_poll_seconds || 10,
+    meta_page_id: source.meta_page_id ?? "",
+    meta_lead_form_id: source.meta_lead_form_id ?? "",
     recipient_name: source.recipient_name ?? "",
     recipient_phone: source.recipient_phone ?? "",
     template_name: source.template_name ?? "",
@@ -9014,6 +4975,8 @@ function clientLeadSourcePayloadFromDraft(draft: ClientLeadSourceDraft): ClientL
     sheet_gid: draft.sheet_gid.trim() || null,
     sheet_tab_name: draft.sheet_tab_name.trim() || null,
     sheet_poll_seconds: Math.max(5, Number(draft.sheet_poll_seconds) || 10),
+    meta_page_id: draft.meta_page_id.trim() || null,
+    meta_lead_form_id: draft.meta_lead_form_id.trim() || null,
     recipient_name: draft.recipient_name.trim() || null,
     recipient_phone: draft.recipient_phone.trim() || null,
     template_name: draft.template_name.trim() || null,
@@ -9023,7 +4986,42 @@ function clientLeadSourcePayloadFromDraft(draft: ClientLeadSourceDraft): ClientL
   };
 }
 
-function validateClientLeadSourceDraft(draft: ClientLeadSourceDraft): ClientLeadSourceDraftValidation {
+function clientLeadSourceDraftFingerprint(draft: ClientLeadSourceDraft): string {
+  try {
+    return JSON.stringify(clientLeadSourcePayloadFromDraft(draft));
+  } catch {
+    return JSON.stringify({
+      ...draft,
+      id: slugifyClient(draft.id || draft.label),
+      label: draft.label.trim(),
+      sheet_url: draft.sheet_url.trim(),
+      sheet_gid: draft.sheet_gid.trim(),
+      sheet_tab_name: draft.sheet_tab_name.trim(),
+      sheet_poll_seconds: Math.max(5, Number(draft.sheet_poll_seconds) || 10),
+      meta_page_id: draft.meta_page_id.trim(),
+      meta_lead_form_id: draft.meta_lead_form_id.trim(),
+      recipient_name: draft.recipient_name.trim(),
+      recipient_phone: draft.recipient_phone.trim(),
+      template_name: draft.template_name.trim(),
+      template_language: draft.template_language.trim(),
+      column_mapping_text: draft.column_mapping_text.trim(),
+      context_field_mapping_text: draft.context_field_mapping_text.trim(),
+    });
+  }
+}
+
+function isDeliverySourceDraftDirty(
+  draft: ClientLeadSourceDraft,
+  source: ClientLeadSource | null,
+  editorMode: DeliveryEditorMode,
+): boolean {
+  const baselineDraft = editorMode === "edit" && source
+    ? clientLeadSourceToDraft(source)
+    : buildBlankClientLeadSourceDraft();
+  return clientLeadSourceDraftFingerprint(draft) !== clientLeadSourceDraftFingerprint(baselineDraft);
+}
+
+export function validateClientLeadSourceDraft(draft: ClientLeadSourceDraft): ClientLeadSourceDraftValidation {
   const fields: Partial<Record<ClientLeadSourceDraftField, string>> = {};
   const messages: string[] = [];
 
@@ -9115,7 +5113,7 @@ function unpackClientLeads(payload: ClientLeadListResponse | ClientLead[]): Clie
 
 type DeliveryTone = "success" | "warn" | "danger" | "muted" | "accent";
 
-type DeliveryContactGroup = {
+export type DeliveryContactGroup = {
   key: string;
   label: string;
   recipientName: string;
@@ -9129,7 +5127,7 @@ type DeliveryContactGroup = {
   issues: number;
 };
 
-type DeliverySheetLeadSection = {
+export type DeliverySheetLeadSection = {
   source: ClientLeadSource;
   leads: ClientLead[];
 };
@@ -9167,7 +5165,7 @@ function buildDeliveryContactGroups(sources: ClientLeadSource[]): DeliveryContac
     .sort((left, right) => left.label.localeCompare(right.label) || left.key.localeCompare(right.key));
 }
 
-function buildDeliverySheetLeadSections(
+export function buildDeliverySheetLeadSections(
   sources: ClientLeadSource[],
   visibleLeads: ClientLead[],
   selectedSheetId: string,
@@ -9194,7 +5192,7 @@ type DeliveryRawField = {
   value: string;
 };
 
-function deliveryRawFields(lead: ClientLead): DeliveryRawField[] {
+export function deliveryRawFields(lead: ClientLead): DeliveryRawField[] {
   const fields: DeliveryRawField[] = [];
   const seen = new Set<string>();
   for (const [rawKey, rawValue] of Object.entries(lead.raw_row ?? {})) {
@@ -9236,7 +5234,7 @@ function deliverySourceBaseLabel(source: ClientLeadSource): string {
   return (source.label || source.recipient_name || source.id).split(" · ")[0]?.trim() || source.label || source.id;
 }
 
-function deliverySheetLabel(source: ClientLeadSource): string {
+export function deliverySheetLabel(source: ClientLeadSource): string {
   const parts = (source.label || "").split(" · ").map((part) => part.trim()).filter(Boolean);
   return parts.length > 1 ? parts.slice(1).join(" · ") : source.sheet_tab_name || source.sheet_gid || "Main sheet";
 }
@@ -9255,7 +5253,7 @@ function pickPrimaryDeliverySource(sources: ClientLeadSource[]): ClientLeadSourc
     ?? sources[0];
 }
 
-function deliveryContactTone(group: DeliveryContactGroup): DeliveryTone {
+export function deliveryContactTone(group: DeliveryContactGroup): DeliveryTone {
   if (!group.sources.some((source) => source.enabled)) {
     return "muted";
   }
@@ -9271,7 +5269,7 @@ function deliveryContactTone(group: DeliveryContactGroup): DeliveryTone {
   return "accent";
 }
 
-function deliveryContactStatusLabel(group: DeliveryContactGroup): string {
+export function deliveryContactStatusLabel(group: DeliveryContactGroup): string {
   const tone = deliveryContactTone(group);
   if (tone === "danger") {
     return "Needs access";
@@ -9288,12 +5286,12 @@ function deliveryContactStatusLabel(group: DeliveryContactGroup): string {
   return "Active";
 }
 
-function deliverySourceHasIssue(source: ClientLeadSource): boolean {
+export function deliverySourceHasIssue(source: ClientLeadSource): boolean {
   const status = String(source.last_sync_status || "").toLowerCase();
   return status === "failed" || status === "error" || deliverySourceCount(source, "failed") > 0;
 }
 
-function deliverySourceIssueText(source: ClientLeadSource): string {
+export function deliverySourceIssueText(source: ClientLeadSource): string {
   const status = String(source.last_sync_status || "").toLowerCase();
   if (status === "failed" || status === "error") {
     return source.last_sync_note || "Sync failed";
@@ -9307,7 +5305,7 @@ function deliverySourceIssueText(source: ClientLeadSource): string {
   return "Needs review";
 }
 
-function deliverySourceStatusIcon(source: ClientLeadSource): ReactNode {
+export function deliverySourceStatusIcon(source: ClientLeadSource): ReactNode {
   const tone = deliverySourceTone(source);
   if (tone === "success") {
     return <CheckCircle size={14} weight="fill" />;
@@ -9333,12 +5331,12 @@ function compareClientLeads(left: ClientLead, right: ClientLead): number {
   return (right.row_number ?? 0) - (left.row_number ?? 0);
 }
 
-function deliverySourceCount(source: ClientLeadSource, key: keyof ClientLeadSource["counts"]): number {
+export function deliverySourceCount(source: ClientLeadSource, key: keyof ClientLeadSource["counts"]): number {
   const value = source.counts?.[key] ?? 0;
   return Number.isFinite(value) ? Number(value) : 0;
 }
 
-function deliverySourceTone(source: ClientLeadSource): DeliveryTone {
+export function deliverySourceTone(source: ClientLeadSource): DeliveryTone {
   if (!source.enabled) {
     return "muted";
   }
@@ -9376,17 +5374,17 @@ function buildClientLeadText(lead: ClientLead): string {
   return lines.join("\n");
 }
 
-function buildWaLink(phone: string | null | undefined): string {
+export function buildWaLink(phone: string | null | undefined): string {
   const digits = (phone || "").replace(/\D/g, "");
   return digits ? `https://wa.me/${digits}` : "";
 }
 
-function displayLeadPhone(phone: string | null | undefined): string {
+export function displayLeadPhone(phone: string | null | undefined): string {
   const value = (phone || "").trim().replace(/^p:/i, "");
   return value || "-";
 }
 
-function clientLeadAgeText(lead: ClientLead): string {
+export function clientLeadAgeText(lead: ClientLead): string {
   return lead.created_time ? relativeTime(lead.created_time) : `Row ${lead.row_number}`;
 }
 
@@ -9401,14 +5399,14 @@ function firstRawValue(lead: ClientLead, keys: string[]): string {
   return "";
 }
 
-function deliveryLeadTitle(lead: ClientLead): string {
+export function deliveryLeadTitle(lead: ClientLead): string {
   return lead.full_name
     || firstRawValue(lead, ["Nombre", "Name", "nombre", "full_name", "Full name"])
     || displayLeadPhone(lead.phone_number)
     || `Row ${lead.row_number}`;
 }
 
-function deliveryLeadSubtitle(lead: ClientLead): string {
+export function deliveryLeadSubtitle(lead: ClientLead): string {
   const parts = [
     displayLeadPhone(lead.phone_number),
     lead.email || "",
@@ -9416,7 +5414,7 @@ function deliveryLeadSubtitle(lead: ClientLead): string {
   return parts.length ? parts.join(" · ") : "No mapped contact fields";
 }
 
-function deliveryStatusDetail(lead: ClientLead): string {
+export function deliveryStatusDetail(lead: ClientLead): string {
   if (lead.delivered_at) {
     return `Delivered ${relativeTime(lead.delivered_at)}`;
   }
@@ -9432,7 +5430,7 @@ function deliveryStatusDetail(lead: ClientLead): string {
   return "Queued";
 }
 
-function recipientChatMessageDetail(message: ClientLeadRecipientChatMessage): string {
+export function recipientChatMessageDetail(message: ClientLeadRecipientChatMessage): string {
   if (message.delivered_at) {
     return `Delivered ${relativeTime(message.delivered_at)}`;
   }
@@ -9445,7 +5443,7 @@ function recipientChatMessageDetail(message: ClientLeadRecipientChatMessage): st
   return message.updated_at ? `Updated ${relativeTime(message.updated_at)}` : "Queued";
 }
 
-function recipientChatMessageTone(message: ClientLeadRecipientChatMessage): "success" | "warn" | "danger" | "muted" | "accent" {
+export function recipientChatMessageTone(message: ClientLeadRecipientChatMessage): "success" | "warn" | "danger" | "muted" | "accent" {
   const status = String(message.delivery_status || "").toLowerCase();
   if (status === "delivered" || status === "sent") {
     return "success";
@@ -9479,7 +5477,7 @@ function formatRawValue(value: unknown): string {
   }
 }
 
-function clientLeadDeliveryTone(lead: ClientLead): "success" | "warn" | "danger" | "muted" | "accent" {
+export function clientLeadDeliveryTone(lead: ClientLead): "success" | "warn" | "danger" | "muted" | "accent" {
   if (lead.block_reason) {
     return "warn";
   }
@@ -9499,7 +5497,7 @@ function clientLeadDeliveryTone(lead: ClientLead): "success" | "warn" | "danger"
   return "accent";
 }
 
-function isRetryableClientLead(lead: ClientLead): boolean {
+export function isRetryableClientLead(lead: ClientLead): boolean {
   const status = String(lead.delivery_status || "").toLowerCase();
   return status === "failed" || status === "blocked" || Boolean(lead.last_delivery_error);
 }
@@ -9655,7 +5653,7 @@ function sendOptionPreview(kind: SendKind, funnel: FunnelDefinition | null): str
   return preview ? truncateForOption(preview) : "";
 }
 
-function slugifyClient(value: string): string {
+export function slugifyClient(value: string): string {
   const normalized = value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
   return normalized || "nuevo-funnel";
 }
@@ -9687,7 +5685,7 @@ function formatStrategyLabel(value: string | null | undefined): string {
   return humanize(value || "Strategy");
 }
 
-function formatBytes(value: number): string {
+export function formatBytes(value: number): string {
   if (!Number.isFinite(value) || value <= 0) {
     return "0 B";
   }
@@ -9700,14 +5698,14 @@ function formatBytes(value: number): string {
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function formatWorkstationOffer(client: WorkstationClientSummary | null | undefined): string {
+export function formatWorkstationOffer(client: WorkstationClientSummary | null | undefined): string {
   if (!client?.offer_price_usd || client.offer_price_usd <= 0) {
     return "";
   }
   return `${client.offer_price_usd} ${client.offer_currency || "USD"}`;
 }
 
-function formatWorkstationClientState(
+export function formatWorkstationClientState(
   client: WorkstationClientSummary | null | undefined,
   automationState?: WorkstationClientDetailResponse["automation_state"] | null,
 ): string {
@@ -9945,7 +5943,7 @@ function isLeadConverted(lead: LeadSummary | null | undefined): boolean {
   return false;
 }
 
-function monogram(value: string): string {
+export function monogram(value: string): string {
   return value
     .split(/\s+/)
     .filter(Boolean)
@@ -9954,7 +5952,7 @@ function monogram(value: string): string {
     .join("") || "CT";
 }
 
-function truncate(value: string, maxLength: number): string {
+export function truncate(value: string, maxLength: number): string {
   if (value.length <= maxLength) {
     return value;
   }

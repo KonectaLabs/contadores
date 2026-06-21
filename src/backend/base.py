@@ -6,6 +6,9 @@ import dspy
 
 class Program(dspy.Module):
     def __init__(self, lm: dspy.LM | None = None):
+        from backend.config import configure_dspy_if_needed
+
+        configure_dspy_if_needed(lm=lm)
         super().__init__()
         self.lm = lm
 

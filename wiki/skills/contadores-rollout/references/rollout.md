@@ -59,13 +59,15 @@ or pushed code. It is finished only after the real server is updated and
 verified.
 
 1. Use `localhost` only to develop and validate the change.
-2. Merge or commit the code into `main`.
-3. Push `main`.
-4. Deploy the server from `main`.
-5. Verify `/api/runtime` readiness.
-6. Verify `/api/funnels`.
-7. Verify sheet ingestion and WhatsApp flow on the server.
-8. If the post-offer sequence changed, verify the conversational bot path that
+2. For schema/data migrations, run `scripts/backup_contadores_data.sh
+   --output-dir /path/outside/repo` after checking `--dry-run`.
+3. Merge or commit the code into `main`.
+4. Push `main`.
+5. Deploy the server from `main`.
+6. Verify `/api/runtime` readiness.
+7. Verify `/api/funnels`.
+8. Verify sheet ingestion and WhatsApp flow on the server.
+9. If the post-offer sequence changed, verify the conversational bot path that
    queues `ai_reply`, plus the scheduling handoff path that queues
    `scheduling_handoff_confirmation`.
 

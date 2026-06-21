@@ -9,7 +9,7 @@ import dspy
 from pydantic import BaseModel, Field
 
 from backend.base import Program
-from backend.config import SMART_MODEL
+from backend.config import get_smart_model
 
 
 class ClientProfileSourceSnippet(BaseModel):
@@ -114,7 +114,7 @@ class ClientProfileExtractorProgram(Program):
     """DSPy program that turns conversion transcripts into client profiles."""
 
     def __init__(self, lm: dspy.LM | None = None):
-        super().__init__(lm=lm or SMART_MODEL)
+        super().__init__(lm=lm or get_smart_model())
         self.predict = dspy.Predict(ClientProfileExtractorSignature)
 
     def forward(
@@ -131,7 +131,15 @@ class ClientProfileExtractorProgram(Program):
         return ClientProfileExtractionResult.model_validate(prediction.result)
 
 
-client_profile_extractor_program = ClientProfileExtractorProgram()
+_client_profile_extractor_program: ClientProfileExtractorProgram | None = None
+
+
+def get_client_profile_extractor_program() -> ClientProfileExtractorProgram:
+    """Return the default extractor, constructing its model only when needed."""
+    global _client_profile_extractor_program
+    if _client_profile_extractor_program is None:
+        _client_profile_extractor_program = ClientProfileExtractorProgram()
+    return _client_profile_extractor_program
 
 
 def run_client_profile_extraction(
@@ -141,5 +149,5 @@ def run_client_profile_extraction(
     program: ClientProfileExtractorProgram | None = None,
 ) -> ClientProfileExtractionResult:
     """Extract a client profile from one transcript."""
-    runner = program or client_profile_extractor_program
+    runner = program or get_client_profile_extractor_program()
     return runner(transcript_text=transcript_text, existing_context=existing_context)

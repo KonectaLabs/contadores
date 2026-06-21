@@ -21,7 +21,14 @@ BOOKING_RE = re.compile(
     re.IGNORECASE,
 )
 
-ACTION_BUCKETS = {"needs_answer_now", "close_call", "retomar_video", "repair_delivery", "provider_failure_review"}
+ACTION_BUCKETS = {
+    "needs_answer_now",
+    "close_call",
+    "retomar_video",
+    "repair_delivery",
+    "provider_failure_review",
+    "opener_followup",
+}
 
 
 def read_json(path: Path | None) -> dict[str, Any] | None:

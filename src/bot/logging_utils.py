@@ -2,13 +2,52 @@
 
 from __future__ import annotations
 
+import contextvars
 from collections import Counter
 from dataclasses import dataclass
 import logging
+import re
 from time import monotonic
 from typing import Any
 
 WAITING_LOG_INTERVAL_SECONDS = 60.0
+_CURRENT_REQUEST_ID: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "contadores_bot_request_id",
+    default=None,
+)
+
+
+def get_current_request_id() -> str | None:
+    """Return the request id bound to this bot context."""
+    return _CURRENT_REQUEST_ID.get()
+
+
+def set_current_request_id(value: str | None) -> contextvars.Token[str | None]:
+    """Bind one request id to this bot context."""
+    return _CURRENT_REQUEST_ID.set((value or "").strip() or None)
+
+
+def reset_current_request_id(token: contextvars.Token[str | None]) -> None:
+    """Restore the previous bot request id."""
+    _CURRENT_REQUEST_ID.reset(token)
+
+
+def _mask_phone(value: Any) -> str:
+    """Return a phone label with only a correlation suffix."""
+    digits = re.sub(r"\D", "", str(value or ""))
+    if not digits:
+        return "-"
+    return f"*{digits[-4:]}"
+
+
+def _short_label(value: Any, *, prefix: int = 6, suffix: int = 4) -> str:
+    """Return a bounded identifier label."""
+    text = str(value or "").strip()
+    if not text:
+        return "-"
+    if len(text) <= prefix + suffix + 3:
+        return text
+    return f"{text[:prefix]}...{text[-suffix:]}"
 
 
 class ErrorOnlyAccessFilter(logging.Filter):
@@ -26,6 +65,14 @@ class ErrorOnlyAccessFilter(logging.Filter):
             return True
 
 
+class RequestIdLogFilter(logging.Filter):
+    """Attach the current request id to bot log records."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.request_id = get_current_request_id() or "-"
+        return True
+
+
 @dataclass
 class BotLogState:
     """Track repetitive bot log state so the console stays quiet."""
@@ -40,10 +87,13 @@ def configure_runtime_logging() -> logging.Logger:
     """Configure concise runtime logging for operators."""
     logging.basicConfig(
         level=logging.INFO,
-        format="%(asctime)s | %(levelname)s | %(message)s",
+        format="%(asctime)s | %(levelname)s | request_id=%(request_id)s | %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
         force=True,
     )
+    for handler in logging.getLogger().handlers:
+        if not any(isinstance(current, RequestIdLogFilter) for current in handler.filters):
+            handler.addFilter(RequestIdLogFilter())
 
     for logger_name in [
         "httpx",
@@ -131,16 +181,16 @@ def log_whatsapp_inbound_activity(logger: logging.Logger, result: dict[str, Any]
             logger.info(
                 "📥 Saved a WhatsApp reply to the conversation (route=%s phone=%s profile_name=%s referral_source_id=%s ctwa_clid=%s).",
                 result.get("route") or "-",
-                result.get("phone") or "-",
-                result.get("profile_name") or "-",
-                referral.get("source_id") or "-",
-                referral.get("ctwa_clid") or "-",
+                _mask_phone(result.get("phone")),
+                _short_label(result.get("profile_name")),
+                _short_label(referral.get("source_id")),
+                _short_label(referral.get("ctwa_clid")),
             )
             return
         logger.info(
             "📥 Saved a WhatsApp reply to the conversation (phone=%s profile_name=%s).",
-            result.get("phone") or "-",
-            result.get("profile_name") or "-",
+            _mask_phone(result.get("phone")),
+            _short_label(result.get("profile_name")),
         )
         return
     if status == "ignored":
@@ -149,13 +199,13 @@ def log_whatsapp_inbound_activity(logger: logging.Logger, result: dict[str, Any]
             "referral_source_type=%s referral_source_id=%s ctwa_clid=%s headline=%r).",
             result.get("reason") or "unknown",
             result.get("route") or "-",
-            result.get("phone") or "-",
-            result.get("external_id") or "-",
-            result.get("in_reply_to") or "-",
+            _mask_phone(result.get("phone")),
+            _short_label(result.get("external_id")),
+            _short_label(result.get("in_reply_to")),
             referral.get("source_type") or "-",
-            referral.get("source_id") or "-",
-            referral.get("ctwa_clid") or "-",
-            referral.get("headline") or "",
+            _short_label(referral.get("source_id")),
+            _short_label(referral.get("ctwa_clid")),
+            _short_label(referral.get("headline"), prefix=20, suffix=8),
         )
         return
     logger.info("📥 Processed a WhatsApp webhook update.")
@@ -172,7 +222,7 @@ def log_whatsapp_status_activity(logger: logging.Logger, result: dict[str, Any])
     if delivery_status == "ignored":
         logger.debug(
             "Ignored WhatsApp delivery update for external_id=%s reason=%s",
-            result.get("external_id"),
+            _short_label(result.get("external_id")),
             result.get("reason"),
         )
         return

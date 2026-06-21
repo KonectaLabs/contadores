@@ -14,7 +14,7 @@ dependencies = [
     "mcp>=1.26.0",
     "openai>=2.16.0",
     "openpyxl>=3.1.5",
-    "openai-codex-app-server-sdk @ git+https://github.com/openai/codex.git#subdirectory=sdk/python",
+    "openai-codex-app-server-sdk @ git+https://github.com/openai/codex.git@5e6cbbadf79671b7ff8e592ca4aad05f8d22a499#subdirectory=sdk/python",
     "perplexityai>=0.27.0",
     "phonenumbers>=9.0.19",
     "playwright>=1.56.0",
@@ -52,7 +52,14 @@ packages = ["src/backend"]
 known_first_party = ["backend"]
 package_module_name_map = { "dspy-ai" = "dspy" }
 
+[tool.pytest.ini_options]
+markers = [
+    "external: test intentionally touches an external service",
+    "network: test intentionally opens real network sockets",
+]
+
 [dependency-groups]
 dev = [
     "deptry>=0.24.0",
+    "pytest>=9.0.2",
 ]

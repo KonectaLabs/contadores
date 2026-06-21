@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+from dataclasses import dataclass
 import hashlib
 import hmac
 import json
@@ -16,8 +17,27 @@ from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_AUTH_FILE = PROJECT_ROOT / "auth.toml"
+DEFAULT_AUTH_REVOCATIONS_FILE = PROJECT_ROOT / "data" / "auth-session-revocations.json"
 SESSION_COOKIE_NAME = "contadores_session"
+CSRF_COOKIE_NAME = "contadores_csrf"
+CSRF_HEADER_NAME = "X-CSRF-Token"
 INTERNAL_API_TOKEN_HEADER = "X-Internal-Token"
+PRODUCTION_APP_ENVS = {"prod", "production"}
+AUTH_CAPABILITIES = frozenset(
+    {
+        "campaigns:write",
+        "config:write",
+        "delivery:write",
+        "leads:write",
+        "meta:publish",
+        "workstation:write",
+    }
+)
+ROLE_CAPABILITIES = {
+    "admin": AUTH_CAPABILITIES,
+    "operator": AUTH_CAPABILITIES,
+    "viewer": frozenset(),
+}
 
 LOGIN_PAGE_HTML = """<!doctype html>
 <html lang="en">
@@ -195,6 +215,19 @@ def _parse_session_hours(value: str) -> int:
     return parsed
 
 
+@dataclass(frozen=True)
+class AuthAccount:
+    """One configured auth account with server-owned capabilities."""
+
+    user: str
+    password: str
+    capabilities: frozenset[str]
+
+
+def _is_production_env() -> bool:
+    return (os.getenv("APP_ENV") or os.getenv("ENVIRONMENT") or "").strip().lower() in PRODUCTION_APP_ENVS
+
+
 def get_internal_api_token() -> str:
     """Return shared internal token used by bot/backend machine clients."""
     return (os.getenv("INTERNAL_API_TOKEN") or "").strip()
@@ -209,14 +242,70 @@ def has_valid_internal_api_token(value: str | None) -> bool:
     return secrets.compare_digest(expected, provided)
 
 
-def _extract_toml_users(raw: dict[str, Any]) -> list[tuple[str, str]]:
+def _string_list(value: object, *, field: str, user: str) -> list[str]:
+    """Read a TOML string-or-list field."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        items = [str(item).strip() for item in value]
+        if all(items):
+            return items
+    raise RuntimeError(f"`{field}` for auth user `{user}` must be a string or list of strings.")
+
+
+def _account_capabilities(user: str, item: dict[str, Any]) -> frozenset[str]:
+    """Resolve roles/capabilities from one TOML account item."""
+    roles = _string_list(item.get("roles", item.get("role")), field="role", user=user)
+    requested = _string_list(
+        item.get("capabilities", item.get("capability")),
+        field="capabilities",
+        user=user,
+    )
+    if not roles and not requested:
+        roles = ["admin"]
+
+    capabilities: set[str] = set()
+    for role in roles:
+        clean_role = role.strip().lower()
+        if clean_role not in ROLE_CAPABILITIES:
+            raise RuntimeError(f"Unknown auth role `{clean_role}` for user `{user}`.")
+        capabilities.update(ROLE_CAPABILITIES[clean_role])
+
+    for capability in requested:
+        clean_capability = capability.strip().lower()
+        if clean_capability == "*":
+            capabilities.update(AUTH_CAPABILITIES)
+            continue
+        if clean_capability not in AUTH_CAPABILITIES:
+            raise RuntimeError(f"Unknown auth capability `{clean_capability}` for user `{user}`.")
+        capabilities.add(clean_capability)
+    return frozenset(capabilities)
+
+
+def _build_auth_account(user: str, password: str, item: dict[str, Any] | None = None) -> AuthAccount:
+    """Build one normalized account entry."""
+    return AuthAccount(
+        user=user,
+        password=password,
+        capabilities=_account_capabilities(user, item or {}),
+    )
+
+
+def _extract_toml_users(raw: dict[str, Any]) -> list[AuthAccount]:
     """Read account entries from `[users]` or `[[users]]` sections."""
-    entries: list[tuple[str, str]] = []
+    entries: list[AuthAccount] = []
     for section_name in ("users", "accounts"):
         section = raw.get(section_name)
         if isinstance(section, dict):
-            for user, password in section.items():
-                entries.append((str(user), str(password)))
+            for user, value in section.items():
+                if isinstance(value, dict):
+                    account_user = str(value.get("user", value.get("username", user))).strip()
+                    password = str(value.get("password", ""))
+                    entries.append(_build_auth_account(account_user, password, value))
+                    continue
+                entries.append(_build_auth_account(str(user), str(value)))
             continue
         if isinstance(section, list):
             for index, item in enumerate(section):
@@ -226,7 +315,7 @@ def _extract_toml_users(raw: dict[str, Any]) -> list[tuple[str, str]]:
                     )
                 user = str(item.get("user", "") or item.get("username", "")).strip()
                 password = str(item.get("password", ""))
-                entries.append((user, password))
+                entries.append(_build_auth_account(user, password, item))
     return entries
 
 
@@ -236,10 +325,12 @@ class PrimitiveAuthManager:
     def __init__(self) -> None:
         self._enabled = False
         self._accounts: dict[str, str] = {}
+        self._account_capabilities: dict[str, frozenset[str]] = {}
         self._signing_key = b""
         self._session_duration = timedelta(hours=24)
         self._cookie_secure = False
         self._revoked_sessions: dict[str, datetime] = {}
+        self._revocations_path = DEFAULT_AUTH_REVOCATIONS_FILE
         self._lock = Lock()
 
     @property
@@ -260,30 +351,41 @@ class PrimitiveAuthManager:
     def reload_from_env(self) -> None:
         """Load accounts/config from env + TOML."""
         if _parse_bool_env("AUTH_DISABLE", default=False):
+            if _is_production_env() and not _parse_bool_env("AUTH_DISABLE_LOCAL_ONLY", default=False):
+                raise RuntimeError(
+                    "AUTH_DISABLE=true is not allowed when APP_ENV/ENVIRONMENT is production. "
+                    "Set AUTH_DISABLE_LOCAL_ONLY=true only for local tests or isolated development."
+                )
             with self._lock:
                 self._enabled = False
                 self._accounts = {}
+                self._account_capabilities = {}
                 self._signing_key = b""
                 self._cookie_secure = False
                 self._session_duration = timedelta(hours=24)
                 self._revoked_sessions = {}
+                self._revocations_path = self._resolve_revocations_path()
             return
 
         auth_path = Path(
             os.getenv("AUTH_TOML", os.getenv("AUTH_USERS_TOML", str(DEFAULT_AUTH_FILE)))
         ).expanduser()
-        accounts = self._load_accounts(auth_path)
+        accounts, account_capabilities = self._load_accounts(auth_path)
         signing_key = self._load_signing_key(auth_path)
         session_hours = _parse_session_hours(os.getenv("AUTH_SESSION_HOURS", "24"))
-        cookie_secure = _parse_bool_env("AUTH_COOKIE_SECURE", default=False)
+        cookie_secure = _parse_bool_env("AUTH_COOKIE_SECURE", default=True)
+        revocations_path = self._resolve_revocations_path()
+        revoked_sessions = self._load_revoked_sessions(revocations_path, self._utc_now())
 
         with self._lock:
             self._enabled = True
             self._accounts = accounts
+            self._account_capabilities = account_capabilities
             self._signing_key = signing_key
             self._session_duration = timedelta(hours=session_hours)
             self._cookie_secure = cookie_secure
-            self._revoked_sessions = {}
+            self._revoked_sessions = revoked_sessions
+            self._revocations_path = revocations_path
 
     def authenticate(self, user: str, password: str) -> str | None:
         """Validate credentials and return normalized user on success."""
@@ -295,6 +397,16 @@ class PrimitiveAuthManager:
         if not secrets.compare_digest(expected_password, password):
             return None
         return normalized_user
+
+    def capabilities_for_user(self, user: str) -> frozenset[str]:
+        """Return server-resolved capabilities for a configured user."""
+        normalized_user = _normalize_user(user)
+        with self._lock:
+            return self._account_capabilities.get(normalized_user, frozenset())
+
+    def user_has_capability(self, user: str, capability: str) -> bool:
+        """Return True when the user has one server-owned capability."""
+        return capability in self.capabilities_for_user(user)
 
     def create_session(self, user: str) -> str:
         """Create a signed session token for the authenticated user."""
@@ -309,6 +421,31 @@ class PrimitiveAuthManager:
         }
         return self._encode_signed_token(payload, signing_key)
 
+    def create_csrf_token(self, session_token: str | None) -> str | None:
+        """Create a non-secret token bound to one valid session cookie."""
+        if not session_token or not self.resolve_session(session_token):
+            return None
+        with self._lock:
+            signing_key = self._signing_key
+        payload = {
+            "p": "csrf",
+            "s": self._csrf_session_digest(session_token, signing_key),
+        }
+        return self._encode_signed_token(payload, signing_key)
+
+    def validate_csrf_token(self, session_token: str | None, csrf_token: str | None) -> bool:
+        """Validate a CSRF token against the current session cookie."""
+        if not session_token or not csrf_token or not self.resolve_session(session_token):
+            return False
+        with self._lock:
+            signing_key = self._signing_key
+        payload = self._decode_signed_token(csrf_token.strip(), signing_key)
+        if not payload or payload.get("p") != "csrf":
+            return False
+        expected = self._csrf_session_digest(session_token, signing_key)
+        provided = str(payload.get("s", ""))
+        return bool(provided) and secrets.compare_digest(expected, provided)
+
     def resolve_session(self, session_token: str | None) -> str | None:
         """Resolve signed session token to user, returning None for invalid/expired sessions."""
         if not session_token:
@@ -317,7 +454,7 @@ class PrimitiveAuthManager:
         with self._lock:
             accounts = dict(self._accounts)
             signing_key = self._signing_key
-        if self._is_session_revoked(session_token, now):
+        if self._is_session_revoked(session_token, signing_key, now):
             return None
         payload = self._decode_signed_token(session_token, signing_key)
         if not payload:
@@ -350,7 +487,8 @@ class PrimitiveAuthManager:
 
         with self._lock:
             self._prune_revoked_sessions(now)
-            self._revoked_sessions[session_token] = expires_at
+            self._revoked_sessions[self._revocation_key(session_token, signing_key)] = expires_at
+            self._write_revoked_sessions()
 
     def session_expires_at(self, session_token: str | None) -> datetime | None:
         """Return a valid session token expiry without extending it."""
@@ -363,13 +501,16 @@ class PrimitiveAuthManager:
             return None
         return self._coerce_expiry(payload.get("e"))
 
-    def _is_session_revoked(self, session_token: str, now: datetime) -> bool:
+    def _is_session_revoked(self, session_token: str, signing_key: bytes, now: datetime) -> bool:
         """Return True when logout already revoked this exact token."""
+        revocation_key = self._revocation_key(session_token, signing_key)
         with self._lock:
-            self._prune_revoked_sessions(now)
-            return session_token in self._revoked_sessions
+            changed = self._prune_revoked_sessions(now)
+            if changed:
+                self._write_revoked_sessions()
+            return revocation_key in self._revoked_sessions
 
-    def _prune_revoked_sessions(self, now: datetime) -> None:
+    def _prune_revoked_sessions(self, now: datetime) -> bool:
         """Drop expired revocation entries. Caller must hold the lock."""
         expired_tokens = [
             token
@@ -378,6 +519,52 @@ class PrimitiveAuthManager:
         ]
         for token in expired_tokens:
             self._revoked_sessions.pop(token, None)
+        return bool(expired_tokens)
+
+    def _write_revoked_sessions(self) -> None:
+        """Persist hashed session revocations. Caller must hold the lock."""
+        payload = {
+            token_hash: int(expires_at.timestamp())
+            for token_hash, expires_at in self._revoked_sessions.items()
+        }
+        self._revocations_path.parent.mkdir(parents=True, exist_ok=True)
+        self._revocations_path.write_text(
+            json.dumps(payload, separators=(",", ":"), sort_keys=True),
+            encoding="utf-8",
+        )
+
+    @classmethod
+    def _load_revoked_sessions(cls, path: Path, now: datetime) -> dict[str, datetime]:
+        """Load persisted hashed session revocations."""
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return {}
+        except (OSError, json.JSONDecodeError):
+            return {}
+        if not isinstance(raw, dict):
+            return {}
+        revoked_sessions: dict[str, datetime] = {}
+        for token_hash, expires_value in raw.items():
+            if not isinstance(token_hash, str) or not token_hash:
+                continue
+            expires_at = cls._coerce_expiry(expires_value)
+            if expires_at and expires_at > now:
+                revoked_sessions[token_hash] = expires_at
+        return revoked_sessions
+
+    @staticmethod
+    def _resolve_revocations_path() -> Path:
+        raw = os.getenv("AUTH_REVOCATIONS_PATH", "").strip()
+        return Path(raw).expanduser() if raw else DEFAULT_AUTH_REVOCATIONS_FILE
+
+    @staticmethod
+    def _revocation_key(session_token: str, signing_key: bytes) -> str:
+        return hmac.new(
+            signing_key,
+            f"revoked:{session_token}".encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
 
     @staticmethod
     def _utc_now() -> datetime:
@@ -393,6 +580,14 @@ class PrimitiveAuthManager:
             return datetime.fromtimestamp(timestamp, UTC)
         except (OverflowError, OSError, ValueError):
             return None
+
+    @staticmethod
+    def _csrf_session_digest(session_token: str, signing_key: bytes) -> str:
+        return hmac.new(
+            signing_key,
+            f"csrf:{session_token}".encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
 
     @staticmethod
     def _urlsafe_b64encode(raw: bytes) -> str:
@@ -459,7 +654,7 @@ class PrimitiveAuthManager:
         ).digest()
 
     @staticmethod
-    def _load_accounts(users_path: Path) -> dict[str, str]:
+    def _load_accounts(users_path: Path) -> tuple[dict[str, str], dict[str, frozenset[str]]]:
         resolved_path = users_path.resolve()
         if not resolved_path.exists():
             raise RuntimeError(
@@ -476,21 +671,23 @@ class PrimitiveAuthManager:
 
         account_pairs = _extract_toml_users(raw)
         normalized_accounts: dict[str, str] = {}
-        for user, password in account_pairs:
-            normalized_user = _normalize_user(user)
+        account_capabilities: dict[str, frozenset[str]] = {}
+        for account in account_pairs:
+            normalized_user = _normalize_user(account.user)
             if not normalized_user:
-                raise RuntimeError(f"Invalid auth user entry: `{user}`.")
+                raise RuntimeError(f"Invalid auth user entry: `{account.user}`.")
             if any(char.isspace() for char in normalized_user):
                 raise RuntimeError(f"Auth user cannot contain spaces: `{normalized_user}`.")
-            if not password:
+            if not account.password:
                 raise RuntimeError(f"Password cannot be empty for `{normalized_user}`.")
-            normalized_accounts[normalized_user] = password
+            normalized_accounts[normalized_user] = account.password
+            account_capabilities[normalized_user] = account.capabilities
 
         if not normalized_accounts:
             raise RuntimeError(
                 f"No users found in `{resolved_path}`. Use `[users]` or `[[users]]` entries."
             )
-        return normalized_accounts
+        return normalized_accounts, account_capabilities
 
 
 auth_manager = PrimitiveAuthManager()

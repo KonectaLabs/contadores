@@ -5,6 +5,10 @@ description: AgentMail integration guide for Konecta Auditor email operations. U
 
 # Konecta Auditor AgentMail Email
 
+> Historical import: this wiki-only file references old Konecta Auditor files
+> and provider wiring. Use active Contadores AgentMail code/docs before applying
+> any pattern from this archive.
+
 ## Use this skill when
 - replacing `bot/providers.py::GmailProvider`
 - creating AgentMail pods, domains, inboxes, webhooks, lists, or scoped API keys

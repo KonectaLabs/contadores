@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
 import os
 from typing import Any
 
@@ -57,6 +60,19 @@ def _clean(value: Any) -> str:
 
 def _webhook_verify_token() -> str:
     return _clean(os.getenv("META_LEAD_WEBHOOK_VERIFY_TOKEN") or os.getenv("META_WEBHOOK_VERIFY_TOKEN"))
+
+
+def _webhook_app_secret() -> str:
+    return _clean(os.getenv("META_APP_SECRET") or os.getenv("META_LEAD_WEBHOOK_APP_SECRET"))
+
+
+def _verify_webhook_signature(payload: bytes, signature_header: str | None) -> None:
+    secret = _webhook_app_secret()
+    if not secret:
+        raise HTTPException(status_code=503, detail="META_APP_SECRET is not configured.")
+    expected = "sha256=" + hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+    if not signature_header or not hmac.compare_digest(signature_header.strip(), expected):
+        raise HTTPException(status_code=403, detail="Invalid Meta webhook signature.")
 
 
 def _iter_leadgen_changes(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -132,8 +148,10 @@ async def receive_meta_lead_webhook(
     source_id: str | None = Query(default=None),
 ) -> MetaLeadWebhookResponse:
     """Receive Meta leadgen webhooks and import fetched leads into Delivery."""
+    raw_payload = await request.body()
+    _verify_webhook_signature(raw_payload, request.headers.get("X-Hub-Signature-256"))
     try:
-        payload = await request.json()
+        payload = json.loads(raw_payload.decode("utf-8") or "{}")
     except Exception as exc:
         raise HTTPException(status_code=400, detail="Invalid JSON webhook payload.") from exc
     if not isinstance(payload, dict):
@@ -155,7 +173,31 @@ async def receive_meta_lead_webhook(
             )
             continue
 
-        source = _source_from_webhook_change(value, source_id)
+        try:
+            source = _source_from_webhook_change(value, source_id)
+        except ValueError as exc:
+            response.failed += 1
+            PlatformEvent.add(
+                event_type="client_lead.meta_webhook_ambiguous",
+                lifecycle_stage="delivery",
+                target_type="meta_lead",
+                target_id=leadgen_id,
+                source="meta_lead_webhook",
+                actor="meta",
+                severity="error",
+                summary=f"Ambiguous Delivery source for Meta lead {leadgen_id}.",
+                payload={"leadgen_id": leadgen_id, "form_id": form_id, "requested_source_id": source_id},
+                idempotency_key=f"meta_lead_webhook_ambiguous:{leadgen_id}",
+            )
+            response.items.append(
+                MetaLeadWebhookItemResponse(
+                    leadgen_id=leadgen_id,
+                    form_id=form_id,
+                    status="failed",
+                    detail=str(exc),
+                )
+            )
+            continue
         if source is None:
             response.unresolved += 1
             PlatformEvent.add(

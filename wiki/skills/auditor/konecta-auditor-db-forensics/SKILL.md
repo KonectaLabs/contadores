@@ -5,6 +5,9 @@ description: Database forensics and persistence verification for the agnostic Ko
 
 # Konecta Auditor DB Forensics
 
+> Historical import: this wiki-only file references the old Konecta Auditor
+> SQLite path and table model. Do not use it for Contadores DB checks.
+
 ## Verify Persistence After E2E
 Inspect sqlite state after substantial endpoint validation.
 

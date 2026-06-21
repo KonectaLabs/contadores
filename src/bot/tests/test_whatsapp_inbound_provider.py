@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 
 from fastapi import FastAPI
@@ -268,6 +269,94 @@ def test_configured_depends_on_initialized_pywa_client() -> None:
     assert provider.configured is True
 
 
+def test_resolve_local_media_path_accepts_data_root(monkeypatch, tmp_path) -> None:
+    provider = build_provider()
+    data_dir = tmp_path / "data"
+    media_file = data_dir / "contadores" / "outbound_media" / "lead-1" / "presupuesto.pdf"
+    media_file.parent.mkdir(parents=True)
+    media_file.write_bytes(b"pdf")
+    monkeypatch.setenv("DATA_DIR", str(data_dir))
+
+    assert provider._resolve_local_media_path("data/contadores/outbound_media/lead-1/presupuesto.pdf") == media_file
+
+
+def test_resolve_local_media_path_rejects_files_outside_allowed_roots(monkeypatch, tmp_path) -> None:
+    provider = build_provider()
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    outside = tmp_path / "outside.pdf"
+    outside.write_bytes(b"private")
+    monkeypatch.setenv("DATA_DIR", str(data_dir))
+
+    for raw_path in [str(outside), "outside.pdf", "../outside.pdf"]:
+        try:
+            provider._resolve_local_media_path(raw_path)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError(f"Expected blocked media path for {raw_path}")
+
+
+def test_download_inbound_media_skips_provider_reported_oversize(tmp_path, monkeypatch) -> None:
+    provider = build_provider()
+    provider.max_inbound_media_bytes = 3
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
+
+    class OversizedMedia:
+        id = "media-too-big"
+        file_size = 4
+        mime_type = "image/jpeg"
+        filename = "lead-photo.jpg"
+
+        async def download(self, *, path: Path, filename: str) -> Path:
+            raise AssertionError("oversized media should not be downloaded")
+
+    assert asyncio.run(provider._download_inbound_media(media_type="image", media=OversizedMedia())) is None
+
+
+def test_download_inbound_media_deletes_oversize_download(tmp_path, monkeypatch) -> None:
+    provider = build_provider()
+    provider.max_inbound_media_bytes = 3
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
+    downloaded_paths: list[Path] = []
+
+    class DownloadedOversizedMedia:
+        id = "media-too-big"
+        mime_type = "image/jpeg"
+        filename = "lead-photo.jpg"
+
+        async def download(self, *, path: Path, filename: str) -> Path:
+            target = path / filename
+            target.write_bytes(b"toolarge")
+            downloaded_paths.append(target)
+            return target
+
+    assert asyncio.run(provider._download_inbound_media(media_type="image", media=DownloadedOversizedMedia())) is None
+    assert downloaded_paths and not downloaded_paths[0].exists()
+
+
+def test_download_inbound_media_returns_relative_data_path(tmp_path, monkeypatch) -> None:
+    provider = build_provider()
+    provider.max_inbound_media_bytes = 10
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
+
+    class SmallMedia:
+        id = "media-small"
+        size = 3
+        mime_type = "image/jpeg"
+        filename = "lead-photo.jpg"
+
+        async def download(self, *, path: Path, filename: str) -> Path:
+            target = path / filename
+            target.write_bytes(b"ok")
+            return target
+
+    assert (
+        asyncio.run(provider._download_inbound_media(media_type="image", media=SmallMedia()))
+        == "data/contadores/inbound_media/lead-photo.jpg"
+    )
+
+
 def test_detects_meta_oauth_101_validation_error() -> None:
     exc = RuntimeError(
         "WhatsAppError(code=101, message='Error validating application. Cannot get application info due to a system error.', type='OAuthException')"
@@ -286,6 +375,7 @@ def test_init_disables_provider_when_pywa_client_init_fails(monkeypatch) -> None
     monkeypatch.setenv("WA_PHONE_ID", "881994095003323")
     monkeypatch.setenv("WA_ACCESS_TOKEN", "fake-token")
     monkeypatch.setenv("WA_VERIFY_TOKEN", "verify-token")
+    monkeypatch.setenv("WA_APP_SECRET", "fake-secret")
     monkeypatch.setenv("WA_CALLBACK_URL", "https://example.com/webhook/wa")
     monkeypatch.setattr(providers, "WhatsApp", BrokenWhatsApp)
 
@@ -297,32 +387,17 @@ def test_init_disables_provider_when_pywa_client_init_fails(monkeypatch) -> None
     asyncio.run(provider.close())
 
 
-def test_init_blocks_provider_when_webhook_bootstrap_fails(monkeypatch) -> None:
-    init_calls: list[dict[str, object]] = []
-
-    class FlakyWhatsApp:
+def test_init_requires_app_secret_for_webhook_validation(monkeypatch) -> None:
+    class UnexpectedWhatsApp:
         def __init__(self, *args, **kwargs):
-            init_calls.append(dict(kwargs))
-            if kwargs.get("callback_url") is not None:
-                raise RuntimeError(
-                    "WhatsAppError(code=101, message='Error validating application. Cannot get application info due to a system error.', type='OAuthException')"
-                )
-
-        def on_message(self):
-            raise AssertionError("webhook handlers should not register when webhook client init fails")
-
-        def on_callback_button(self):
-            raise AssertionError("webhook handlers should not register when webhook client init fails")
-
-        def on_callback_selection(self):
-            raise AssertionError("webhook handlers should not register when webhook client init fails")
+            raise AssertionError("webhook client should not initialize without WA_APP_SECRET")
 
     monkeypatch.setenv("WA_PHONE_ID", "881994095003323")
     monkeypatch.setenv("WA_ACCESS_TOKEN", "fake-token")
-    monkeypatch.setenv("WA_APP_SECRET", "fake-secret")
     monkeypatch.setenv("WA_VERIFY_TOKEN", "verify-token")
+    monkeypatch.delenv("WA_APP_SECRET", raising=False)
     monkeypatch.setenv("WA_CALLBACK_URL", "https://example.com/webhook/wa")
-    monkeypatch.setattr(providers, "WhatsApp", FlakyWhatsApp)
+    monkeypatch.setattr(providers, "WhatsApp", UnexpectedWhatsApp)
 
     async def _on_inbound(_event):
         return None
@@ -330,11 +405,88 @@ def test_init_blocks_provider_when_webhook_bootstrap_fails(monkeypatch) -> None:
     provider = WhatsAppProvider(FastAPI(), _on_inbound)
 
     assert provider.configured is False
+    asyncio.run(provider.close())
+
+
+def test_init_does_not_auto_register_webhook_by_default(monkeypatch) -> None:
+    init_calls: list[dict[str, object]] = []
+
+    class WorkingWhatsApp:
+        def __init__(self, *args, **kwargs):
+            init_calls.append(dict(kwargs))
+
+        def on_message(self):
+            return lambda fn: fn
+
+        def on_callback_button(self):
+            return lambda fn: fn
+
+        def on_callback_selection(self):
+            return lambda fn: fn
+
+        def on_message_status(self):
+            return lambda fn: fn
+
+    monkeypatch.setenv("WA_PHONE_ID", "881994095003323")
+    monkeypatch.setenv("WA_ACCESS_TOKEN", "fake-token")
+    monkeypatch.setenv("WA_APP_SECRET", "fake-secret")
+    monkeypatch.setenv("WA_VERIFY_TOKEN", "verify-token")
+    monkeypatch.setenv("WA_CALLBACK_URL", "https://example.com/webhook/wa")
+    monkeypatch.delenv("WA_WEBHOOK_AUTO_REGISTER_ENABLED", raising=False)
+    monkeypatch.setattr(providers, "WhatsApp", WorkingWhatsApp)
+
+    async def _on_inbound(_event):
+        return None
+
+    provider = WhatsAppProvider(FastAPI(), _on_inbound)
+
+    assert provider.configured is True
     assert len(init_calls) == 1
     assert init_calls[0]["server"] is not None
     assert init_calls[0]["verify_token"] == "verify-token"
     assert init_calls[0]["webhook_endpoint"] == "/webhook/wa"
     assert init_calls[0]["app_secret"] == "fake-secret"
+    assert init_calls[0]["validate_updates"] is True
+    assert "callback_url" not in init_calls[0]
+    assert "callback_url_scope" not in init_calls[0]
+
+    asyncio.run(provider.close())
+
+
+def test_init_passes_callback_kwargs_when_auto_register_enabled(monkeypatch) -> None:
+    init_calls: list[dict[str, object]] = []
+
+    class WorkingWhatsApp:
+        def __init__(self, *args, **kwargs):
+            init_calls.append(dict(kwargs))
+
+        def on_message(self):
+            return lambda fn: fn
+
+        def on_callback_button(self):
+            return lambda fn: fn
+
+        def on_callback_selection(self):
+            return lambda fn: fn
+
+        def on_message_status(self):
+            return lambda fn: fn
+
+    monkeypatch.setenv("WA_PHONE_ID", "881994095003323")
+    monkeypatch.setenv("WA_ACCESS_TOKEN", "fake-token")
+    monkeypatch.setenv("WA_APP_SECRET", "fake-secret")
+    monkeypatch.setenv("WA_VERIFY_TOKEN", "verify-token")
+    monkeypatch.setenv("WA_CALLBACK_URL", "https://example.com/webhook/wa")
+    monkeypatch.setenv("WA_WEBHOOK_AUTO_REGISTER_ENABLED", "true")
+    monkeypatch.setattr(providers, "WhatsApp", WorkingWhatsApp)
+
+    async def _on_inbound(_event):
+        return None
+
+    provider = WhatsAppProvider(FastAPI(), _on_inbound)
+
+    assert provider.configured is True
+    assert init_calls[0]["webhook_endpoint"] == "/webhook/wa"
     assert init_calls[0]["callback_url_scope"].name == "PHONE"
     assert init_calls[0]["callback_url"] == "https://example.com"
 
@@ -363,6 +515,7 @@ def test_init_allows_missing_callback_url(monkeypatch) -> None:
     monkeypatch.setenv("WA_PHONE_ID", "881994095003323")
     monkeypatch.setenv("WA_ACCESS_TOKEN", "fake-token")
     monkeypatch.setenv("WA_VERIFY_TOKEN", "verify-token")
+    monkeypatch.setenv("WA_APP_SECRET", "fake-secret")
     monkeypatch.delenv("WA_CALLBACK_URL", raising=False)
     monkeypatch.setattr(providers, "WhatsApp", WorkingWhatsApp)
 
@@ -376,6 +529,8 @@ def test_init_allows_missing_callback_url(monkeypatch) -> None:
     assert init_calls[0]["server"] is not None
     assert init_calls[0]["verify_token"] == "verify-token"
     assert init_calls[0]["webhook_endpoint"] == "/"
+    assert init_calls[0]["app_secret"] == "fake-secret"
+    assert init_calls[0]["validate_updates"] is True
     assert "callback_url" not in init_calls[0]
     assert "callback_url_scope" not in init_calls[0]
 

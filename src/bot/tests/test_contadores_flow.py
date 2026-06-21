@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import json
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from types import SimpleNamespace
 
@@ -13,23 +16,153 @@ import openpyxl
 import utils
 from providers import DeliveryReceipt, EmailInboundEvent, WhatsAppInboundEvent, WhatsAppMessageStatusEvent
 from utils import (
+    ContadoresConfigPayload,
     PendingContadoresAlertItem,
     PendingContadoresDeliveryMessage,
+    build_contadores_sheet_csv_url,
+    build_contadores_sheet_xlsx_url,
     dispatch_one_contadores_message,
     dispatch_pending_contadores_messages,
+    ensure_contadores_sheet_response_size,
+    fetch_pending_contadores_outbound,
     process_whatsapp_message_status_event,
     read_xlsx_sheet_rows,
     send_contadores_pending_alerts,
 )
-from webhook_inbox import WhatsAppInboundInbox
+from webhook_inbox import WhatsAppInboundInbox, WhatsAppStatusInbox
+
+
+def signed_calendly_body(payload: dict[str, object], secret: str = "calendly-secret") -> tuple[bytes, dict[str, str]]:
+    body = json.dumps(payload).encode("utf-8")
+    timestamp = "1710000000"
+    signature = hmac.new(
+        secret.encode("utf-8"),
+        timestamp.encode("utf-8") + b"." + body,
+        hashlib.sha256,
+    ).hexdigest()
+    return body, {"Calendly-Webhook-Signature": f"t={timestamp},v1={signature}"}
+
+
+def test_calendly_webhook_accepts_valid_signature(monkeypatch) -> None:
+    seen_payloads: list[dict[str, object]] = []
+
+    async def fake_handle_calendly_webhook(*, backend_client, payload):
+        del backend_client
+        seen_payloads.append(payload)
+        return {"status": "processed"}
+
+    async def run() -> httpx.Response:
+        body, headers = signed_calendly_body({
+            "event": "invitee.created",
+            "payload": {"tracking": {"utm_content": "lead-1"}},
+        })
+        monkeypatch.setattr(bot_main, "CALENDLY_WEBHOOK_SIGNING_KEY", "calendly-secret")
+        monkeypatch.setattr(bot_main, "handle_calendly_webhook", fake_handle_calendly_webhook)
+        monkeypatch.setattr(bot_main.app.state, "backend_client", SimpleNamespace(), raising=False)
+        transport = httpx.ASGITransport(app=bot_main.app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://bot") as client:
+            return await client.post("/webhook/calendly", content=body, headers=headers)
+
+    response = asyncio.run(run())
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "processed"}
+    assert seen_payloads == [{
+        "event": "invitee.created",
+        "payload": {"tracking": {"utm_content": "lead-1"}},
+    }]
+
+
+def test_calendly_webhook_rejects_missing_signing_key(monkeypatch) -> None:
+    async def run() -> httpx.Response:
+        monkeypatch.setattr(bot_main, "CALENDLY_WEBHOOK_SIGNING_KEY", "")
+        monkeypatch.setattr(bot_main.app.state, "backend_client", SimpleNamespace(), raising=False)
+        transport = httpx.ASGITransport(app=bot_main.app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://bot") as client:
+            return await client.post("/webhook/calendly", content=b"{}")
+
+    response = asyncio.run(run())
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Calendly webhook signing key is not configured"
+
+
+def test_calendly_webhook_rejects_missing_signature(monkeypatch) -> None:
+    async def run() -> httpx.Response:
+        monkeypatch.setattr(bot_main, "CALENDLY_WEBHOOK_SIGNING_KEY", "calendly-secret")
+        monkeypatch.setattr(bot_main.app.state, "backend_client", SimpleNamespace(), raising=False)
+        transport = httpx.ASGITransport(app=bot_main.app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://bot") as client:
+            return await client.post("/webhook/calendly", content=b"not-json")
+
+    response = asyncio.run(run())
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid Calendly webhook signature"
+
+
+def test_calendly_webhook_rejects_invalid_signature(monkeypatch) -> None:
+    async def run() -> httpx.Response:
+        body, headers = signed_calendly_body({"event": "invitee.created"}, secret="wrong-secret")
+        monkeypatch.setattr(bot_main, "CALENDLY_WEBHOOK_SIGNING_KEY", "calendly-secret")
+        monkeypatch.setattr(bot_main.app.state, "backend_client", SimpleNamespace(), raising=False)
+        transport = httpx.ASGITransport(app=bot_main.app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://bot") as client:
+            return await client.post("/webhook/calendly", content=body, headers=headers)
+
+    response = asyncio.run(run())
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid Calendly webhook signature"
+
+
+def test_calendly_signature_accepts_signature_part_and_raw_fallback(monkeypatch) -> None:
+    payload = b'{"event":"invitee.created"}'
+    signature = hmac.new(b"calendly-secret", payload, hashlib.sha256).hexdigest()
+    monkeypatch.setattr(bot_main, "CALENDLY_WEBHOOK_SIGNING_KEY", "calendly-secret")
+
+    assert bot_main.verify_calendly_signature(payload=payload, signature_header=f"signature={signature}")
+    assert bot_main.verify_calendly_signature(payload=payload, signature_header=signature)
+
+
+def test_handle_calendly_webhook_forwards_scheduled_start() -> None:
+    posts: list[dict[str, object]] = []
+
+    class FakeBackendClient:
+        async def post(self, url: str, *, json: dict[str, object]) -> httpx.Response:
+            posts.append({"url": url, "json": json})
+            return httpx.Response(200, json={"status": "processed"}, request=httpx.Request("POST", url))
+
+    payload = {
+        "event": "invitee.created",
+        "payload": {
+            "tracking": {"utm_content": "lead-1"},
+            "scheduled_event": {"start_time": "2026-06-22T15:30:00Z"},
+            "created_at": "2026-06-21T10:00:00Z",
+        },
+    }
+
+    result = asyncio.run(bot_main.handle_calendly_webhook(backend_client=FakeBackendClient(), payload=payload))
+
+    assert result == {"status": "processed", "event_type": "invitee.created"}
+    assert posts == [{
+        "url": "http://backend:8000/api/contadores/calendly/webhook",
+        "json": {
+            "token": "lead-1",
+            "event_type": "invitee.created",
+            "occurred_at": None,
+            "scheduled_start_at": "2026-06-22T15:30:00+00:00",
+        },
+    }]
 
 
 def test_run_contadores_sheet_sync_iteration_imports_only_uncontacted_rows(monkeypatch) -> None:
     """The sheet poller should ignore contacted rows before hitting the backend."""
     imported_batches: list[list[dict[str, str | None]]] = []
 
-    async def fake_fetch_contadores_config(client):
+    async def fake_fetch_contadores_config(client, *, funnel_id="contadores"):
         del client
+        del funnel_id
         return SimpleNamespace(enabled=True, sheet_url="https://sheet", sheet_gid="0")
 
     async def fake_fetch_contadores_sheet_rows(*, config):
@@ -112,12 +245,66 @@ def test_read_xlsx_sheet_rows_uses_first_importable_worksheet() -> None:
     assert rows[1]["phone_number"] == "p:+5491222222222"
 
 
+def sheet_config(sheet_url: str, sheet_gid: str | None = None) -> ContadoresConfigPayload:
+    return ContadoresConfigPayload(
+        enabled=True,
+        sheet_url=sheet_url,
+        sheet_gid=sheet_gid,
+        sheet_poll_seconds=60,
+        loom_url="https://loom.example/video",
+        calendly_base_url="https://calendly.example",
+        initial_reply_quiet_seconds=0,
+        post_loom_min_seconds=0,
+        post_loom_quiet_seconds=0,
+    )
+
+
+def test_contadores_sheet_csv_url_rejects_csv_looking_non_google_urls() -> None:
+    assert build_contadores_sheet_csv_url(sheet_config("https://evil.example/export?format=csv")) is None
+    assert build_contadores_sheet_csv_url(sheet_config("http://169.254.169.254/latest/meta-data?format=csv")) is None
+    assert build_contadores_sheet_csv_url(
+        sheet_config("https://docs.google.com.evil/spreadsheets/d/abc/export?format=csv")
+    ) is None
+
+
+def test_contadores_sheet_csv_url_rebuilds_google_edit_url() -> None:
+    assert build_contadores_sheet_csv_url(
+        sheet_config("https://docs.google.com/spreadsheets/d/abc123/edit#gid=456")
+    ) == "https://docs.google.com/spreadsheets/d/abc123/export?format=csv&gid=456"
+
+
+def test_contadores_sheet_csv_url_rebuilds_google_export_url_with_config_gid() -> None:
+    assert build_contadores_sheet_csv_url(
+        sheet_config("https://spreadsheets.google.com/spreadsheets/d/abc123/gviz/tq?tqx=out:csv&gid=456", "789")
+    ) == "https://docs.google.com/spreadsheets/d/abc123/export?format=csv&gid=789"
+
+
+def test_contadores_sheet_urls_accept_raw_id_and_harden_xlsx_fallback() -> None:
+    config = sheet_config("abc123", "456")
+
+    assert build_contadores_sheet_csv_url(config) == "https://docs.google.com/spreadsheets/d/abc123/export?format=csv&gid=456"
+    assert build_contadores_sheet_xlsx_url(config) == "https://docs.google.com/spreadsheets/d/abc123/export?format=xlsx"
+    assert build_contadores_sheet_xlsx_url(sheet_config("https://evil.example/spreadsheets/d/abc123")) is None
+
+
+def test_contadores_sheet_response_size_guard() -> None:
+    ensure_contadores_sheet_response_size(b"small")
+
+    try:
+        ensure_contadores_sheet_response_size(b"x" * (utils.MAX_CONTADORES_SHEET_RESPONSE_BYTES + 1))
+    except RuntimeError as exc:
+        assert "too large" in str(exc)
+    else:
+        raise AssertionError("oversized sheet export was accepted")
+
+
 def test_run_contadores_sheet_sync_iteration_uses_configured_sheet(monkeypatch) -> None:
     """The poller should always import from the configured sheet."""
     imported_batches: list[list[dict[str, str | None]]] = []
 
-    async def fake_fetch_contadores_config(client):
+    async def fake_fetch_contadores_config(client, *, funnel_id="contadores"):
         del client
+        del funnel_id
         return SimpleNamespace(enabled=True, sheet_url="https://sheet", sheet_gid="0")
 
     async def fake_fetch_contadores_sheet_rows(*, config):
@@ -228,6 +415,9 @@ def test_whatsapp_inbound_is_queued_when_backend_delivery_fails(monkeypatch, tmp
                 event=event,
                 inbox=inbox,
             )
+            old = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+            with inbox._connect() as connection:
+                connection.execute("UPDATE whatsapp_inbound_events SET next_attempt_at = ?", (old,))
             replayed = await bot_main.replay_pending_whatsapp_inbound_events(
                 backend_client=client,
                 inbox=inbox,
@@ -283,6 +473,220 @@ def test_whatsapp_inbound_duplicate_after_delivery_is_not_reposted(monkeypatch, 
     assert second_result["status"] == "duplicate"
     assert inbox.pending_count() == 0
     assert calls == 1
+
+
+def test_whatsapp_inbound_backoff_dead_letter_and_prune(tmp_path) -> None:
+    """Failed inbound rows should back off, dead-letter, and prune only terminal rows."""
+    inbox = WhatsAppInboundInbox(
+        tmp_path / "inbox.sqlite",
+        max_attempts=2,
+        retry_base_seconds=60,
+        retry_max_seconds=60,
+        delivered_retention_days=1,
+        terminal_retention_days=1,
+    )
+    event = WhatsAppInboundEvent(
+        phone="5491111111111",
+        text="Hola",
+        external_id="wamid.dead.1",
+    )
+    event_key = inbox.save_event(event)
+
+    assert inbox.reserve_event(event_key) is True
+    inbox.mark_failed(event_key, "backend down")
+    assert inbox.list_retryable() == []
+
+    old = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
+    with inbox._connect() as connection:
+        connection.execute(
+            """
+            UPDATE whatsapp_inbound_events
+            SET next_attempt_at = ?
+            WHERE event_key = ?
+            """,
+            (old, event_key),
+        )
+
+    assert [item.event_key for item in inbox.list_retryable()] == [event_key]
+    assert inbox.reserve_event(event_key) is True
+    inbox.mark_failed(event_key, "still down")
+    assert inbox.dead_letter_count() == 1
+    assert inbox.list_retryable() == []
+    with inbox._connect() as connection:
+        connection.execute(
+            "UPDATE whatsapp_inbound_events SET dead_lettered_at = ? WHERE event_key = ?",
+            (old, event_key),
+        )
+
+    delivered_key = inbox.save_event(
+        WhatsAppInboundEvent(
+            phone="5491111111112",
+            text="Entregado",
+            external_id="wamid.delivered.old",
+        )
+    )
+    assert inbox.reserve_event(delivered_key) is True
+    inbox.mark_delivered(delivered_key)
+    with inbox._connect() as connection:
+        connection.execute(
+            """
+            UPDATE whatsapp_inbound_events
+            SET delivered_at = ?
+            WHERE event_key = ?
+            """,
+            (old, delivered_key),
+        )
+
+    assert inbox.prune_expired(dry_run=True) == 2
+    assert inbox.prune_expired() == 2
+    assert inbox.pending_count() == 0
+    assert inbox.dead_letter_count() == 0
+
+
+def test_whatsapp_status_callbacks_are_buffered_and_replayed(monkeypatch, tmp_path) -> None:
+    """Delivery-status callbacks should survive backend downtime."""
+    monkeypatch.setattr(utils, "BACKEND_BASE_URL", "http://backend")
+    inbox = WhatsAppStatusInbox(
+        tmp_path / "status.sqlite",
+        max_attempts=3,
+        retry_base_seconds=60,
+        retry_max_seconds=60,
+    )
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(500, json={"detail": "backend down"})
+        return httpx.Response(
+            200,
+            json={"id": 42, "delivery_status": "delivered", "external_id": "wamid.status.1"},
+        )
+
+    event = WhatsAppMessageStatusEvent(external_id="wamid.status.1", status="delivered")
+
+    async def run() -> tuple[dict[str, object], dict[str, int]]:
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as client:
+            queued = await bot_main.handle_whatsapp_status(
+                backend_client=client,
+                event=event,
+                inbox=inbox,
+            )
+            old = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+            with inbox._connect() as connection:
+                connection.execute("UPDATE whatsapp_status_events SET next_attempt_at = ?", (old,))
+            replayed = await bot_main.replay_pending_whatsapp_status_events(
+                backend_client=client,
+                inbox=inbox,
+            )
+        return queued, replayed
+
+    queued_result, replay_result = asyncio.run(run())
+
+    assert queued_result["status"] == "queued"
+    assert replay_result["delivered"] == 1
+    assert inbox.pending_count() == 0
+    assert calls == 2
+
+
+def test_whatsapp_status_unknown_external_id_retries_then_matches(monkeypatch, tmp_path) -> None:
+    """Early provider callbacks should retry while outbound persistence catches up."""
+    monkeypatch.setattr(utils, "BACKEND_BASE_URL", "http://backend")
+    inbox = WhatsAppStatusInbox(
+        tmp_path / "status.sqlite",
+        max_attempts=3,
+        retry_base_seconds=60,
+        retry_max_seconds=60,
+    )
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls <= 2:
+            return httpx.Response(404, json={"detail": "not found"})
+        return httpx.Response(
+            200,
+            json={"id": 43, "delivery_status": "sent", "external_id": "wamid.status.race"},
+        )
+
+    event = WhatsAppMessageStatusEvent(external_id="wamid.status.race", status="sent")
+
+    async def run() -> tuple[dict[str, object], dict[str, int]]:
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as client:
+            queued = await bot_main.handle_whatsapp_status(
+                backend_client=client,
+                event=event,
+                inbox=inbox,
+            )
+            old = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+            with inbox._connect() as connection:
+                connection.execute("UPDATE whatsapp_status_events SET next_attempt_at = ?", (old,))
+            replayed = await bot_main.replay_pending_whatsapp_status_events(
+                backend_client=client,
+                inbox=inbox,
+            )
+        return queued, replayed
+
+    queued_result, replay_result = asyncio.run(run())
+
+    assert queued_result["status"] == "queued"
+    assert queued_result["reason"] == "external_id_not_found"
+    assert replay_result["delivered"] == 1
+    assert inbox.pending_count() == 0
+    assert calls == 3
+
+
+def test_whatsapp_status_unknown_external_id_dead_letters_after_grace(tmp_path) -> None:
+    """Permanent unknown delivery callbacks should become visible terminal diagnostics."""
+    inbox = WhatsAppStatusInbox(
+        tmp_path / "status.sqlite",
+        max_attempts=10,
+        unknown_max_age_seconds=1,
+    )
+    event_key = inbox.save_event(
+        WhatsAppMessageStatusEvent(external_id="wamid.unknown", status="sent")
+    )
+    old = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()
+    with inbox._connect() as connection:
+        connection.execute(
+            "UPDATE whatsapp_status_events SET created_at = ? WHERE event_key = ?",
+            (old, event_key),
+        )
+
+    assert inbox.reserve_event(event_key) is True
+    inbox.mark_failed(event_key, "external_id_not_found", unknown_external_id=True)
+    assert inbox.dead_letter_count() == 1
+    assert inbox.pending_count() == 0
+
+
+def test_bot_request_id_and_diagnostics_endpoint(monkeypatch, tmp_path) -> None:
+    """Bot responses should carry request ids and diagnostics should avoid secrets."""
+    inbound_inbox = WhatsAppInboundInbox(tmp_path / "diag.sqlite")
+    status_inbox = WhatsAppStatusInbox(tmp_path / "diag.sqlite")
+    monkeypatch.setattr(bot_main.app.state, "diagnostics", bot_main.BotRuntimeDiagnostics(), raising=False)
+    monkeypatch.setattr(bot_main.app.state, "backend_client", SimpleNamespace(), raising=False)
+    monkeypatch.setattr(bot_main.app.state, "email_provider", SimpleNamespace(configured=False), raising=False)
+    monkeypatch.setattr(bot_main.app.state, "whatsapp_provider", SimpleNamespace(configured=False), raising=False)
+    monkeypatch.setattr(bot_main.app.state, "whatsapp_inbound_inbox", inbound_inbox, raising=False)
+    monkeypatch.setattr(bot_main.app.state, "whatsapp_status_inbox", status_inbox, raising=False)
+    monkeypatch.setattr(bot_main.app.state, "worker_task", None, raising=False)
+
+    async def run() -> httpx.Response:
+        transport = httpx.ASGITransport(app=bot_main.app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://bot") as client:
+            return await client.get("/diagnostics", headers={"X-Request-ID": "req-test-1"})
+
+    response = asyncio.run(run())
+    payload = response.json()
+
+    assert response.headers["X-Request-ID"] == "req-test-1"
+    assert payload["status"] == "degraded"
+    assert payload["providers"]["inbound_inbox_enabled"] is True
+    assert payload["providers"]["status_inbox_enabled"] is True
 
 
 def test_dispatch_pending_contadores_messages_sends_immediately_without_random_delay(monkeypatch) -> None:
@@ -354,6 +758,47 @@ def test_dispatch_pending_contadores_messages_sends_immediately_without_random_d
         "12:https://www.loom.com/share/example (rendered)",
     ]
     assert sent_calls == [(11, "wa-11"), (12, "wa-12")]
+
+
+def test_fetch_pending_contadores_outbound_claims_rows() -> None:
+    """Bot workers should claim Contadores rows instead of reading a shared pending list."""
+    requests: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append({"method": request.method, "path": request.url.path, "json": json.loads(request.content)})
+        return httpx.Response(
+            200,
+            json={
+                "messages": [
+                    {
+                        "message_id": 11,
+                        "lead_id": "lead-1",
+                        "external_lead_id": "sheet-1",
+                        "phone": "+5491111111111",
+                        "normalized_phone": "5491111111111",
+                        "full_name": "Lead One",
+                        "text": "Hola",
+                        "dispatch_after": "2026-04-21T10:00:00Z",
+                        "created_at": "2026-04-21T10:00:00Z",
+                    }
+                ]
+            },
+        )
+
+    async def run() -> list[PendingContadoresDeliveryMessage]:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://backend") as client:
+            return await fetch_pending_contadores_outbound(client, limit=25)
+
+    messages = asyncio.run(run())
+
+    assert [item.message_id for item in messages] == [11]
+    assert requests == [
+        {
+            "method": "POST",
+            "path": "/api/contadores/messages/pending-delivery/claim",
+            "json": {"limit": 25},
+        }
+    ]
 
 
 def test_dispatch_pending_contadores_messages_persists_send_failure(monkeypatch) -> None:
@@ -468,6 +913,7 @@ def test_dispatch_one_contadores_message_uses_template_body_params() -> None:
     item.sequence_step = "opener_followup_24h"
     item.text = "Queria compartirte informacion sobre como podes obtener clientes para tu estudio contable"
     item.whatsapp_template_name = "contadores_opener_followup_24h_es_v1"
+    item.whatsapp_template_body_params = []
 
     receipt = asyncio.run(
         dispatch_one_contadores_message(
@@ -489,7 +935,7 @@ def test_dispatch_one_contadores_message_uses_template_body_params() -> None:
     )
 
 
-def test_dispatch_one_contadores_message_uses_template_body_params() -> None:
+def test_dispatch_one_contadores_message_uses_campaign_template_body_params() -> None:
     """Campaign templates should pass positional params through to WhatsApp."""
     template_calls: list[tuple[str, str, str, list[str], str | None]] = []
 
@@ -680,12 +1126,18 @@ def test_send_contadores_pending_alerts_includes_direct_lead_link(monkeypatch) -
         sent_calls.append(kwargs)
         return DeliveryReceipt(external_id="agentmail-alert-1")
 
-    async def fake_mark_backend_contadores_alert_sent(client, *, lead_id: str):
+    async def fake_mark_backend_contadores_alert_sent(client, *, lead_id: str, recipients=None):
         del client
+        del recipients
         marked_leads.append(lead_id)
+
+    async def fake_mark_backend_contadores_alert_delivery(client, **kwargs):
+        del client
+        del kwargs
 
     monkeypatch.setattr(utils, "fetch_pending_contadores_alerts", fake_fetch_pending_contadores_alerts)
     monkeypatch.setattr(utils, "mark_backend_contadores_alert_sent", fake_mark_backend_contadores_alert_sent)
+    monkeypatch.setattr(utils, "mark_backend_contadores_alert_delivery", fake_mark_backend_contadores_alert_delivery)
 
     outcomes = asyncio.run(
         send_contadores_pending_alerts(
@@ -741,12 +1193,20 @@ def test_send_contadores_pending_alerts_handles_provider_rejections(monkeypatch)
             raise RuntimeError("Message rejected: recipient blocked")
         return DeliveryReceipt(external_id="agentmail-alert-1")
 
-    async def fake_mark_backend_contadores_alert_sent(client, *, lead_id: str):
+    async def fake_mark_backend_contadores_alert_sent(client, *, lead_id: str, recipients=None):
         del client
+        del recipients
         marked_leads.append(lead_id)
+
+    delivery_marks: list[dict] = []
+
+    async def fake_mark_backend_contadores_alert_delivery(client, **kwargs):
+        del client
+        delivery_marks.append(kwargs)
 
     monkeypatch.setattr(utils, "fetch_pending_contadores_alerts", fake_fetch_pending_contadores_alerts)
     monkeypatch.setattr(utils, "mark_backend_contadores_alert_sent", fake_mark_backend_contadores_alert_sent)
+    monkeypatch.setattr(utils, "mark_backend_contadores_alert_delivery", fake_mark_backend_contadores_alert_delivery)
 
     outcomes = asyncio.run(
         send_contadores_pending_alerts(
@@ -762,13 +1222,86 @@ def test_send_contadores_pending_alerts_handles_provider_rejections(monkeypatch)
     assert outcomes == [
         {
             "lead_id": "7bc8899e-f7ed-4c0b-90f4-ce9739b9b4fe",
-            "status": "sent",
+            "status": "partial_failed",
+            "reason": "alert_email_partial_send_failed",
             "recipients": ["blocked@example.com", "ops@example.com"],
+            "blocked_recipients": [],
             "failed_recipients": ["blocked@example.com"],
         }
     ]
-    assert marked_leads == ["7bc8899e-f7ed-4c0b-90f4-ce9739b9b4fe"]
+    assert marked_leads == []
     assert [call["recipient"] for call in sent_calls] == ["blocked@example.com", "ops@example.com"]
+    assert [(mark["recipient"], mark["success"]) for mark in delivery_marks] == [
+        ("blocked@example.com", False),
+        ("ops@example.com", True),
+    ]
+
+
+def test_send_contadores_pending_alerts_blocks_disallowed_recipients(monkeypatch) -> None:
+    """Bot send path should block stale alert recipients outside the allowlist."""
+    sent_calls: list[dict[str, str | None]] = []
+    marked_leads: list[str] = []
+    monkeypatch.setenv("CONTADORES_ALERT_ALLOWED_EMAILS", "ops@example.com")
+
+    async def fake_fetch_pending_contadores_alerts(client, *, funnel_id="contadores"):
+        del client
+        del funnel_id
+        return [
+            PendingContadoresAlertItem(
+                lead_id="lead-policy-1",
+                full_name="Facu",
+                phone="+5491153484587",
+                email=None,
+                stage="needs_human",
+                latest_inbound_text="Tengo dudas",
+                conversation_transcript="Lead: Tengo dudas",
+                reason="Pidio revision humana.",
+                alert_emails=["blocked@example.com", "ops@example.com"],
+            )
+        ]
+
+    async def fake_ensure_alert_inbox():
+        return SimpleNamespace(inbox_id="alerts-inbox-1", inbox_address="alerts@example.com")
+
+    async def fake_send_message(**kwargs) -> DeliveryReceipt:
+        sent_calls.append(kwargs)
+        return DeliveryReceipt(external_id="agentmail-alert-1")
+
+    async def fake_mark_backend_contadores_alert_sent(client, *, lead_id: str, recipients=None):
+        del client
+        del recipients
+        marked_leads.append(lead_id)
+
+    async def fake_mark_backend_contadores_alert_delivery(client, **kwargs):
+        del client
+        del kwargs
+
+    monkeypatch.setattr(utils, "fetch_pending_contadores_alerts", fake_fetch_pending_contadores_alerts)
+    monkeypatch.setattr(utils, "mark_backend_contadores_alert_sent", fake_mark_backend_contadores_alert_sent)
+    monkeypatch.setattr(utils, "mark_backend_contadores_alert_delivery", fake_mark_backend_contadores_alert_delivery)
+
+    outcomes = asyncio.run(
+        send_contadores_pending_alerts(
+            SimpleNamespace(),
+            email_provider=SimpleNamespace(
+                configured=True,
+                ensure_alert_inbox=fake_ensure_alert_inbox,
+                send_message=fake_send_message,
+            ),
+        )
+    )
+
+    assert outcomes == [
+        {
+            "lead_id": "lead-policy-1",
+            "status": "sent",
+            "recipients": ["ops@example.com"],
+            "blocked_recipients": ["blocked@example.com"],
+            "failed_recipients": [],
+        }
+    ]
+    assert marked_leads == ["lead-policy-1"]
+    assert [call["recipient"] for call in sent_calls] == ["ops@example.com"]
 
 
 def test_send_contadores_pending_alerts_handles_runtime_fallback_alert(monkeypatch) -> None:
@@ -806,14 +1339,22 @@ def test_send_contadores_pending_alerts_handles_runtime_fallback_alert(monkeypat
         sent_calls.append(kwargs)
         return DeliveryReceipt(external_id="agentmail-runtime-alert-1")
 
-    async def fake_mark_backend_contadores_runtime_alert_sent(client, *, runtime_alert_id: int, receipt=None):
+    async def fake_mark_backend_contadores_runtime_alert_sent(
+        client, *, runtime_alert_id: int, receipt=None, recipients=None
+    ):
         del client
         del receipt
+        del recipients
         marked_runtime_alerts.append(runtime_alert_id)
 
-    async def fake_mark_backend_contadores_alert_sent(client, *, lead_id: str):
+    async def fake_mark_backend_contadores_alert_sent(client, *, lead_id: str, recipients=None):
         del client
+        del recipients
         marked_leads.append(lead_id)
+
+    async def fake_mark_backend_contadores_alert_delivery(client, **kwargs):
+        del client
+        del kwargs
 
     monkeypatch.setattr(utils, "fetch_pending_contadores_alerts", fake_fetch_pending_contadores_alerts)
     monkeypatch.setattr(
@@ -822,6 +1363,7 @@ def test_send_contadores_pending_alerts_handles_runtime_fallback_alert(monkeypat
         fake_mark_backend_contadores_runtime_alert_sent,
     )
     monkeypatch.setattr(utils, "mark_backend_contadores_alert_sent", fake_mark_backend_contadores_alert_sent)
+    monkeypatch.setattr(utils, "mark_backend_contadores_alert_delivery", fake_mark_backend_contadores_alert_delivery)
 
     outcomes = asyncio.run(
         send_contadores_pending_alerts(

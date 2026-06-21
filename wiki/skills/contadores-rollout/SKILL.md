@@ -110,8 +110,8 @@ explanations.
 Historical failed rows can be requeued with:
 
 ```bash
-uv run python src/scripts/requeue_failed_contadores_messages.py --dry-run
 uv run python src/scripts/requeue_failed_contadores_messages.py
+uv run python src/scripts/requeue_failed_contadores_messages.py --execute
 ```
 
 ## Branch And Deploy Rule
@@ -137,19 +137,50 @@ uv run python src/scripts/requeue_failed_contadores_messages.py
 
 `ALWAYS_DEPLOY` sequence:
 
-1. Commit the product change on `main`.
-2. Push `main`.
-3. Deploy the code to the real server.
-4. Verify `/api/runtime` readiness on the server.
-5. Verify `/api/funnels` on the server.
+1. Run `./scripts/verify_local.sh`.
+2. Commit the product change on `main`.
+3. Push `main`.
+4. Deploy the code to the real server.
+5. Run `./verify_server.sh`.
 6. Verify sheet ingestion and WhatsApp flow on the real server when the change touches those surfaces.
    When the change touches the post-offer sequence, include the conversational
    bot path that queues `ai_reply` and moves post-offer conversations to Manual,
    the audio transcription path, runtime fallback alerts, plus the scheduling
    handoff path that queues `scheduling_handoff_confirmation`.
 
-Use `./deploy_to_server.sh` and `./server_logs.sh`; both scripts connect to
-`149.50.136.121` on SSH port `5389`.
+Use `./deploy_to_server.sh`, `./verify_server.sh`, and `./server_logs.sh`;
+server scripts connect to `149.50.136.121` on SSH port `5389`.
+
+`./scripts/verify_local.sh` is pre-deploy only. It runs the duplicate pytest
+name guard, backend import smoke, backend tests, bot tests, and frontend build.
+It does not prove the real server is updated.
+
+`./deploy_to_server.sh` fails before checkout, pull, or Docker build when the
+server worktree has dirty tracked files. Inspect the remote diff, then either
+commit the intended infra change to `main` or move server-only config to `.env`,
+`auth.toml`, `data/`, or documented untracked files. Never deploy with dirty
+tracked infra files.
+
+The deploy script also fails closed when `/root/projects/contadores/.env` or
+`auth.toml` is missing, when those server config files mention forbidden
+cross-project credential origins, when `backend`, `bot`, or `traefik` are not
+running/healthy, or when backend health fails from Docker/public routing. First
+provisioning must create Contadores/Konecta-owned `.env` and `auth.toml`; never
+copy them from CleverApply, Konecta Auditor, or another client. Failure output
+may show `docker compose ps` and recent backend/bot logs, but not secret files
+or full environment dumps.
+
+Docker Compose keeps `traefik`, `backend`, and `bot` on
+`restart: unless-stopped`. Backend and bot healthchecks are liveness checks
+against `/health`; business readiness still comes from `/api/runtime` and
+server smoke checks. Docker build context excludes `data/`, `.env`,
+`auth.toml`, credential JSON files, pickles, and local test/browser output;
+runtime state enters through `.env` and documented volume mounts only.
+
+`./verify_server.sh` is read-only post-deploy smoke. It checks remote git state,
+`docker compose ps`, backend/bot `/health`, public `/health`, internal-token
+`/api/runtime`, internal-token `/api/funnels`, and recent backend/bot errors.
+It does not prove sheet ingestion, WhatsApp sends, or Meta live writes.
 
 For a new niche funnel, create/edit the funnel definition first, deploy code,
 then verify that funnel against its configured sheet and WhatsApp routing.
@@ -205,7 +236,8 @@ Before enabling a live Delivery source:
    `subscribe_meta_lead_webhook` or
    `POST /api/meta-leads/webhook-subscriptions`. Both require explicit Meta
    live-write flags. The public webhook is `GET/POST /api/meta-leads/webhook`
-   and verifies challenges with `META_LEAD_WEBHOOK_VERIFY_TOKEN`.
+   and verifies challenges with `META_LEAD_WEBHOOK_VERIFY_TOKEN`; `POST`
+   requires `X-Hub-Signature-256` signed with `META_LEAD_WEBHOOK_APP_SECRET`.
 4. If a Meta Lead Ads webhook only has `leadgen_id`, fetch and import it through
    `fetch_meta_lead_form_to_delivery`,
    `POST /api/client-lead-sources/{source_id}/meta-lead/fetch`, or the public
@@ -227,8 +259,11 @@ Before enabling a live Delivery source:
 
 ```bash
 uv run python src/scripts/whatsapp_templates.py create \
+  --spec-file src/scripts/whatsapp_template_specs/konecta_delivery_lead_alert_es.json
+
+uv run python src/scripts/whatsapp_templates.py create \
   --spec-file src/scripts/whatsapp_template_specs/konecta_delivery_lead_alert_es.json \
-  --dry-run
+  --execute
 ```
 
 8. On the server, check that the Meta template exists and is approved:
@@ -247,23 +282,25 @@ uv run python src/scripts/whatsapp_templates.py check \
   --fail-on-unapproved
 ```
 
-Server verification:
+Server verification targets the real CRM host. Keep `127.0.0.1:8000` examples
+only for local development or for commands explicitly run inside an SSH session
+on the server.
 
 ```bash
 curl -fsS -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
-  http://127.0.0.1:8000/api/client-lead-sources
+  https://crm.fgoiriz.com/api/client-lead-sources
 
 curl -fsS -X POST -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
-  http://127.0.0.1:8000/api/client-lead-sources/config/reload
+  https://crm.fgoiriz.com/api/client-lead-sources/config/reload
 
 curl -fsS -X POST -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
-  http://127.0.0.1:8000/api/client-lead-sources/{source_id}/sync
+  https://crm.fgoiriz.com/api/client-lead-sources/{source_id}/sync
 
 curl -fsS -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
-  http://127.0.0.1:8000/api/client-lead-sources/{source_id}/leads
+  https://crm.fgoiriz.com/api/client-lead-sources/{source_id}/leads
 
 curl -fsS -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
-  http://127.0.0.1:8000/api/client-lead-deliveries/pending
+  https://crm.fgoiriz.com/api/client-lead-deliveries/pending
 ```
 
 When verifying the frontend, open Delivery and confirm the selected contact
@@ -279,3 +316,9 @@ flow through `POST /api/client-lead-deliveries/{delivery_id}/delivery-failure`
 and should be retryable from `POST /api/client-leads/{delivery_id}/retry`.
 
 Read [references/rollout.md](references/rollout.md) for the exact env variables and the recommended sequence.
+
+Before any rollout with schema or data migrations, take a fresh `data/` volume
+backup with `scripts/backup_contadores_data.sh --output-dir /path/outside/repo`.
+Use `--dry-run` first to inspect included SQLite/WAL/SHM and data roots. Restore
+requires stopping backend and bot, then `scripts/restore_contadores_data.sh
+--archive /path/contadores-data.tar.gz --yes`.

@@ -5,8 +5,10 @@ from __future__ import annotations
 import math
 import os
 import json
+import hashlib
 import mimetypes
 import re
+import time
 from pathlib import Path
 from typing import Any, Literal
 from collections.abc import Callable
@@ -14,6 +16,7 @@ from collections.abc import Callable
 import httpx
 from pydantic import BaseModel, Field
 
+from backend.creative_limits import CREATIVE_ASSET_MAX_UPLOAD_BYTES
 from backend.database import (
     DATA_DIR,
     ClientLeadSource,
@@ -29,6 +32,9 @@ from backend.funnel_config import (
     slugify_funnel_id,
     upsert_funnel,
 )
+
+
+CREATIVE_UPLOAD_PENDING_TTL_SECONDS = 15 * 60
 
 
 class MetaAdsPublishError(RuntimeError):
@@ -108,6 +114,7 @@ class MetaCreativeAssetUploadResult(BaseModel):
     ad_account_id: str = ""
     api_version: str = ""
     provider_asset_type: Literal["image", "video", "creative"] = "image"
+    file_size_bytes: int = 0
     image_hash: str = ""
     video_id: str = ""
     meta_creative_id: str = ""
@@ -121,6 +128,8 @@ class MetaPublishBudgetSummary(BaseModel):
     """Budget totals reviewed before a staged Meta plan can be approved."""
 
     currency: str = "USD"
+    ad_account_id: str = ""
+    ad_account_currency: str = ""
     total_daily_budget_usd: int = 0
     total_lifetime_budget_usd: int = 0
     estimated_monthly_budget_usd: int = 0
@@ -291,6 +300,47 @@ def _extract_uploaded_video_id(response: dict[str, Any]) -> str:
     return _clean(response.get("id")) or _clean(response.get("video_id"))
 
 
+def _file_sha256(file_path: Path) -> str:
+    digest = hashlib.sha256()
+    with file_path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _creative_upload_attempt_key(attempt: dict[str, Any]) -> str:
+    """Return the provider-write identity for one creative upload attempt."""
+    return json.dumps(
+        {
+            "ad_account_id": _clean(attempt.get("ad_account_id")),
+            "provider_asset_type": _clean(attempt.get("provider_asset_type")),
+            "file_sha256": _clean(attempt.get("file_sha256")),
+            "path": _clean(attempt.get("path")),
+            "file_field": _clean(attempt.get("file_field")),
+            "request_params": attempt.get("request_params") if isinstance(attempt.get("request_params"), dict) else {},
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _creative_upload_provider_refs(attempt: dict[str, Any]) -> tuple[str, str]:
+    """Extract saved provider refs from a durable creative upload attempt."""
+    response = attempt.get("response") if isinstance(attempt.get("response"), dict) else {}
+    image_hash = _clean(attempt.get("image_hash")) or _extract_uploaded_image_hash(response)
+    video_id = _clean(attempt.get("video_id")) or _extract_uploaded_video_id(response)
+    return image_hash, video_id
+
+
+def _creative_upload_pending_is_fresh(attempt: dict[str, Any]) -> bool:
+    """Return whether a pending provider upload is still within the no-duplicate window."""
+    try:
+        started_at = float(attempt.get("started_at"))
+    except (TypeError, ValueError):
+        return False
+    return time.time() - started_at < CREATIVE_UPLOAD_PENDING_TTL_SECONDS
+
+
 def _link_uploaded_asset_to_publish_attempts(asset: PlatformCreativeAsset) -> list[str]:
     """Patch staged Meta plans that reference this asset with provider media IDs."""
     linked: list[str] = []
@@ -369,6 +419,10 @@ def _money_to_whole_usd(value: Any) -> int:
     if amount <= 0:
         return 0
     return math.ceil(amount)
+
+
+def _normalize_currency(value: Any) -> str:
+    return _clean(value).upper()
 
 
 def _require(condition: bool, field: str, blocked: list[str]) -> None:
@@ -492,7 +546,7 @@ def _plan_budget_summary(
 ) -> MetaPublishBudgetSummary:
     """Return summed budget values for one staged Meta plan."""
     ad_sets = plan.get("ad_sets") if isinstance(plan.get("ad_sets"), list) else []
-    currency = _clean(plan.get("budget_currency")) or "USD"
+    currency = _normalize_currency(plan.get("budget_currency")) or "USD"
     total_daily = 0
     total_lifetime = 0
     reviewed_sets: list[dict[str, Any]] = []
@@ -513,6 +567,7 @@ def _plan_budget_summary(
         )
     return MetaPublishBudgetSummary(
         currency=currency,
+        ad_account_id=_clean(plan.get("ad_account_id")),
         total_daily_budget_usd=total_daily,
         total_lifetime_budget_usd=total_lifetime,
         estimated_monthly_budget_usd=(total_daily * 30) + total_lifetime,
@@ -577,6 +632,60 @@ def _budget_blockers(summary: MetaPublishBudgetSummary) -> list[str]:
     return blocked
 
 
+def _ad_account_currency_from_inventory(
+    plan: dict[str, Any],
+    snapshot: PlatformMetaInventorySnapshot | None,
+) -> str:
+    """Return the selected ad account currency from a ready inventory snapshot."""
+    if snapshot is None or snapshot.status != "ready":
+        return ""
+    ad_account_id = _clean(plan.get("ad_account_id"))
+    inventory = snapshot.inventory()
+    selected = inventory.get("selected_ad_account") if isinstance(inventory.get("selected_ad_account"), dict) else {}
+    if not ad_account_id or _clean(selected.get("id")) == ad_account_id:
+        currency = _normalize_currency(selected.get("currency"))
+        if currency:
+            return currency
+    accounts = inventory.get("ad_accounts") if isinstance(inventory.get("ad_accounts"), list) else []
+    for account in accounts:
+        if isinstance(account, dict) and _clean(account.get("id")) == ad_account_id:
+            return _normalize_currency(account.get("currency"))
+    return ""
+
+
+def _account_currency_blockers(summary: MetaPublishBudgetSummary, *, require_account_currency: bool) -> list[str]:
+    """Return fail-closed blockers for the current USD-only budget policy."""
+    blocked: list[str] = []
+    account_currency = _normalize_currency(summary.ad_account_currency)
+    plan_currency = _normalize_currency(summary.currency)
+    if not require_account_currency:
+        return blocked
+    if not account_currency:
+        blocked.append("ad_account.currency")
+    elif account_currency != "USD":
+        blocked.append("ad_account.currency=USD")
+    if plan_currency and account_currency and plan_currency != account_currency:
+        blocked.append("budget_currency=ad_account.currency")
+    return blocked
+
+
+def _live_account_currency_blockers(plan: dict[str, Any]) -> list[str]:
+    """Fail closed before live writes if account currency cannot be proven."""
+    snapshot = _latest_inventory_snapshot(plan)
+    budget = _plan_budget_summary(
+        plan,
+        max_daily_budget_usd=10**12,
+        max_lifetime_budget_usd=10**12,
+        max_estimated_monthly_budget_usd=10**12,
+    )
+    budget.ad_account_currency = _ad_account_currency_from_inventory(plan, snapshot)
+    blocked = []
+    if snapshot is None or snapshot.status != "ready":
+        blocked.append("meta_inventory.ready")
+    blocked.extend(_account_currency_blockers(budget, require_account_currency=True))
+    return blocked
+
+
 def _latest_inventory_snapshot(plan: dict[str, Any]) -> PlatformMetaInventorySnapshot | None:
     """Return the most recent inventory snapshot for the plan's ad account."""
     ad_account_id = _clean(plan.get("ad_account_id"))
@@ -619,6 +728,23 @@ def _inventory_asset_blockers(plan: dict[str, Any], snapshot: PlatformMetaInvent
     whatsapp_phone_number_id = _clean(destination.get("whatsapp_phone_number_id"))
     if whatsapp_phone_number_id and not _payload_contains_id(inventory.get("whatsapp_phone_numbers"), whatsapp_phone_number_id):
         blocked.append("meta_inventory.whatsapp_phone_number_id")
+    creative_inventory = (
+        inventory.get("ad_creatives")
+        or inventory.get("adcreatives")
+        or inventory.get("creatives")
+    )
+    ad_sets = plan.get("ad_sets") if isinstance(plan.get("ad_sets"), list) else []
+    for ad_set_index, ad_set in enumerate(ad_sets, start=1):
+        if not isinstance(ad_set, dict):
+            continue
+        ads = ad_set.get("ads") if isinstance(ad_set.get("ads"), list) else []
+        for ad_index, ad in enumerate(ads, start=1):
+            if not isinstance(ad, dict):
+                continue
+            creative = ad.get("creative") if isinstance(ad.get("creative"), dict) else {}
+            meta_creative_id = _clean(creative.get("meta_creative_id"))
+            if meta_creative_id and not _payload_contains_id(creative_inventory, meta_creative_id):
+                blocked.append(f"meta_inventory.ad_sets[{ad_set_index}].ads[{ad_index}].creative.meta_creative_id")
     return blocked
 
 
@@ -951,6 +1077,7 @@ def upload_meta_creative_asset(
     live_writes_enabled = _env_truthy("META_MARKETING_LIVE_WRITES_ENABLED")
     clean_ad_account_id = _clean(ad_account_id) or _clean(os.getenv("META_AD_ACCOUNT_ID"))
     file_path = _resolve_creative_file(asset.file_path)
+    file_size_bytes = 0
     blocked: list[str] = []
     if not live_writes_requested:
         blocked.append("live_writes_requested=true")
@@ -969,6 +1096,9 @@ def upload_meta_creative_asset(
     elif not file_path.exists():
         blocked.append("asset.file_path.exists")
     else:
+        file_size_bytes = file_path.stat().st_size
+        if file_size_bytes > CREATIVE_ASSET_MAX_UPLOAD_BYTES:
+            blocked.append(f"asset.file_size<={CREATIVE_ASSET_MAX_UPLOAD_BYTES}")
         mime_type = mimetypes.guess_type(file_path.name)[0] or ""
         if provider_asset_type == "image" and not mime_type.startswith("image/"):
             blocked.append("asset.file_type=image")
@@ -984,6 +1114,7 @@ def upload_meta_creative_asset(
             ad_account_id=clean_ad_account_id,
             api_version=api_version,
             provider_asset_type=provider_asset_type,
+            file_size_bytes=file_size_bytes,
             blocked_reasons=list(dict.fromkeys(blocked)),
         )
         updated = PlatformCreativeAsset.update_meta_refs(
@@ -1000,6 +1131,88 @@ def upload_meta_creative_asset(
     path = f"/{clean_ad_account_id}/adimages" if provider_asset_type == "image" else f"/{clean_ad_account_id}/advideos"
     file_field = "filename" if provider_asset_type == "image" else "source"
     params = {"name": file_path.name} if provider_asset_type == "image" else {"title": file_path.stem or file_path.name}
+    upload_attempt = {
+        "schema_version": "konecta.meta_creative_upload_attempt.v1",
+        "status": "pending",
+        "started_at": time.time(),
+        "ad_account_id": clean_ad_account_id,
+        "provider_asset_type": provider_asset_type,
+        "file_path": str(file_path),
+        "file_size_bytes": file_size_bytes,
+        "file_sha256": _file_sha256(file_path),
+        "path": path,
+        "file_field": file_field,
+        "request_params": params,
+    }
+    existing_attempt = asset.meta_upload_response()
+    if existing_attempt.get("schema_version") == "konecta.meta_creative_upload_attempt.v1":
+        same_attempt = _creative_upload_attempt_key(existing_attempt) == _creative_upload_attempt_key(upload_attempt)
+        existing_status = _clean(existing_attempt.get("status"))
+        if not same_attempt and existing_status in {"pending", "uploaded"}:
+            result = MetaCreativeAssetUploadResult(
+                asset_id=asset.id,
+                campaign_id=asset.campaign_id,
+                status="blocked",
+                live_writes_requested=live_writes_requested,
+                ad_account_id=clean_ad_account_id,
+                api_version=api_version,
+                provider_asset_type=provider_asset_type,
+                file_size_bytes=file_size_bytes,
+                blocked_reasons=["creative_upload_attempt_conflict"],
+                response=existing_attempt,
+            )
+            _emit_creative_upload_event(asset, result, source=source, actor=actor)
+            return asset, result
+        saved_image_hash, saved_video_id = _creative_upload_provider_refs(existing_attempt)
+        if same_attempt and existing_status == "uploaded" and (saved_image_hash or saved_video_id):
+            updated = PlatformCreativeAsset.update_meta_refs(
+                asset.id,
+                status="uploaded_to_meta",
+                image_hash=saved_image_hash,
+                video_id=saved_video_id,
+                failure_reason="",
+            )
+            if updated is not None:
+                asset = updated
+            result = MetaCreativeAssetUploadResult(
+                asset_id=asset.id,
+                campaign_id=asset.campaign_id,
+                status="already_uploaded",
+                live_writes_requested=live_writes_requested,
+                ad_account_id=clean_ad_account_id,
+                api_version=api_version,
+                provider_asset_type=provider_asset_type,
+                file_size_bytes=file_size_bytes,
+                image_hash=asset.image_hash,
+                video_id=asset.video_id,
+                linked_publish_attempts=_link_uploaded_asset_to_publish_attempts(asset),
+                response=existing_attempt.get("response") if isinstance(existing_attempt.get("response"), dict) else existing_attempt,
+            )
+            _emit_creative_upload_event(asset, result, source=source, actor=actor)
+            return asset, result
+        if same_attempt and existing_status == "pending" and _creative_upload_pending_is_fresh(existing_attempt):
+            result = MetaCreativeAssetUploadResult(
+                asset_id=asset.id,
+                campaign_id=asset.campaign_id,
+                status="blocked",
+                live_writes_requested=live_writes_requested,
+                ad_account_id=clean_ad_account_id,
+                api_version=api_version,
+                provider_asset_type=provider_asset_type,
+                file_size_bytes=file_size_bytes,
+                blocked_reasons=["creative_upload_pending"],
+                response=existing_attempt,
+            )
+            _emit_creative_upload_event(asset, result, source=source, actor=actor)
+            return asset, result
+    pending = PlatformCreativeAsset.update_meta_refs(
+        asset.id,
+        status="upload_pending",
+        meta_upload_response=upload_attempt,
+        failure_reason="",
+    )
+    if pending is not None:
+        asset = pending
     try:
         response = _sanitize_provider_payload(uploader(path, file_path, file_field, params))
         image_hash = _extract_uploaded_image_hash(response) if provider_asset_type == "image" else ""
@@ -1008,12 +1221,28 @@ def upload_meta_creative_asset(
             raise MetaAdsPublishError("Meta adimages response did not include an image hash")
         if provider_asset_type == "video" and not video_id:
             raise MetaAdsPublishError("Meta advideos response did not include a video id")
+        uploaded_attempt = {
+            **upload_attempt,
+            "status": "uploaded",
+            "response": response,
+            "image_hash": image_hash,
+            "video_id": video_id,
+        }
+        saved = PlatformCreativeAsset.update_meta_refs(
+            asset.id,
+            status="upload_provider_succeeded",
+            meta_upload_response=uploaded_attempt,
+            failure_reason="",
+        )
+        if saved is None:
+            raise MetaAdsPublishError(f"Creative asset disappeared during upload: {asset.id}")
+        asset = saved
         updated = PlatformCreativeAsset.update_meta_refs(
             asset.id,
             status="uploaded_to_meta",
             image_hash=image_hash,
             video_id=video_id,
-            meta_upload_response=response,
+            meta_upload_response=uploaded_attempt,
             failure_reason="",
         )
         if updated is None:
@@ -1029,6 +1258,7 @@ def upload_meta_creative_asset(
             ad_account_id=clean_ad_account_id,
             api_version=api_version,
             provider_asset_type=provider_asset_type,
+            file_size_bytes=file_size_bytes,
             image_hash=asset.image_hash,
             video_id=asset.video_id,
             linked_publish_attempts=linked_attempts,
@@ -1044,11 +1274,13 @@ def upload_meta_creative_asset(
             ad_account_id=clean_ad_account_id,
             api_version=api_version,
             provider_asset_type=provider_asset_type,
+            file_size_bytes=file_size_bytes,
             blocked_reasons=[error_text[:12000]],
         )
         updated = PlatformCreativeAsset.update_meta_refs(
             asset.id,
             status="upload_failed",
+            meta_upload_response={**upload_attempt, "status": "failed", "error": error_text[:12000]},
             failure_reason=error_text[:4000],
         )
         if updated is not None:
@@ -1080,6 +1312,7 @@ def _emit_creative_upload_event(
             "live_write_executed": result.live_write_executed,
             "ad_account_id": result.ad_account_id,
             "provider_asset_type": result.provider_asset_type,
+            "file_size_bytes": result.file_size_bytes,
             "image_hash": result.image_hash,
             "video_id": result.video_id,
             "blocked_reasons": result.blocked_reasons,
@@ -1116,6 +1349,7 @@ def preflight_meta_publish_attempt(
 
     if live_writes_requested:
         blocked.extend(_provider_creative_blockers(plan))
+        blocked.extend(_live_account_currency_blockers(plan))
         if not live_writes_enabled:
             blocked.append("META_MARKETING_LIVE_WRITES_ENABLED")
         if not token_present:
@@ -1242,6 +1476,35 @@ def _provider_ids_from_state(state: dict[str, Any]) -> dict[str, str]:
     return provider_ids
 
 
+def _persist_incremental_execution_state(
+    *,
+    attempt_id: str,
+    campaign_id: str,
+    plan: dict[str, Any],
+    api_version: str,
+    live_writes_requested: bool,
+    operation_results: list[MetaPublishOperationResult],
+) -> None:
+    """Persist provider IDs after each successful provider write."""
+    result = MetaPublishExecutionResult(
+        attempt_id=attempt_id,
+        campaign_id=campaign_id,
+        status="submitted",
+        live_writes_requested=live_writes_requested,
+        live_write_executed=any(item.status == "executed" for item in operation_results),
+        api_version=api_version,
+        warnings=["execution.in_progress"],
+        operation_results=operation_results,
+    )
+    updated_plan = dict(plan)
+    updated_plan["live_execution_state"] = result.model_dump(mode="json")
+    PlatformMetaPublishAttempt.update_execution(
+        attempt_id,
+        request_payload=updated_plan,
+        response_payload=result.model_dump(mode="json"),
+    )
+
+
 def _execution_preflight_blockers(
     *,
     attempt: PlatformMetaPublishAttempt,
@@ -1268,6 +1531,8 @@ def _execution_preflight_blockers(
         blocked.append("plan.live_writes_allowed=true")
     if not _has_approval_gate_event(attempt.id):
         blocked.append("meta_publish.approval_gate")
+    if live_writes_requested:
+        blocked.extend(_live_account_currency_blockers(plan))
     return list(dict.fromkeys(blocked))
 
 
@@ -1367,6 +1632,14 @@ def execute_meta_publish_attempt(
                     request_params=request_params,
                     response=response,
                 )
+            )
+            _persist_incremental_execution_state(
+                attempt_id=attempt.id,
+                campaign_id=attempt.campaign_id,
+                plan=plan,
+                api_version=api_version,
+                live_writes_requested=live_writes_requested,
+                operation_results=operation_results,
             )
         except Exception as error:
             error_text = _redact_graph_error(error)
@@ -1494,12 +1767,14 @@ def approve_meta_publish_attempt(
         raise MetaAdsPublishError("approved_by is required for Meta publish approval")
 
     plan = attempt.request_payload()
+    inventory_snapshot = _latest_inventory_snapshot(plan)
     budget = _plan_budget_summary(
         plan,
         max_daily_budget_usd=max(1, int(max_daily_budget_usd or 50)),
         max_lifetime_budget_usd=max(0, int(max_lifetime_budget_usd or 0)),
         max_estimated_monthly_budget_usd=max(1, int(max_estimated_monthly_budget_usd or 1500)),
     )
+    budget.ad_account_currency = _ad_account_currency_from_inventory(plan, inventory_snapshot)
     blocked = list(
         dict.fromkeys(
             [
@@ -1508,13 +1783,13 @@ def approve_meta_publish_attempt(
                 *_status_blockers(plan),
                 *_provider_creative_blockers(plan),
                 *_budget_blockers(budget),
+                *_account_currency_blockers(budget, require_account_currency=require_inventory_ready),
             ]
         )
     )
     warnings: list[str] = []
     if not attempt.idempotency_key:
         blocked.append("idempotency_key")
-    inventory_snapshot = _latest_inventory_snapshot(plan)
     if approve_live_writes and not require_inventory_ready:
         blocked.append("require_inventory_ready=true")
     if require_inventory_ready:

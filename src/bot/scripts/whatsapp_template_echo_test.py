@@ -21,7 +21,10 @@ BOT_DIR = Path(__file__).resolve().parents[1]
 REPO_ROOT = BOT_DIR.parent
 if str(BOT_DIR) not in sys.path:
     sys.path.insert(0, str(BOT_DIR))
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
+from backend.redaction import redact_identifier, redact_sensitive_text
 from providers import WhatsAppInboundEvent, WhatsAppProvider
 
 
@@ -57,6 +60,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ngrok-start-timeout-seconds", type=float, default=20.0)
     parser.add_argument("--server-start-timeout-seconds", type=float, default=10.0)
     parser.add_argument("--log-level", default="info")
+    parser.add_argument("--include-sensitive", action="store_true", help="Print raw phone/text values.")
     return parser.parse_args()
 
 
@@ -158,7 +162,12 @@ async def run(args: argparse.Namespace) -> int:
         logger.info("Using callback URL override: %s", callback_url_override)
 
     async def on_inbound(event: WhatsAppInboundEvent) -> None:
-        logger.info("Inbound webhook event: phone=%s external_id=%s text=%r", event.phone, event.external_id, event.text)
+        logger.info(
+            "Inbound webhook event: phone=%s external_id=%s text=%r",
+            redact_sensitive_text(event.phone),
+            redact_identifier(event.external_id),
+            event.text if args.include_sensitive else redact_sensitive_text(event.text, limit=120),
+        )
         await inbound_queue.put(event)
 
     app = FastAPI(title="WhatsApp template echo test")
@@ -194,25 +203,27 @@ async def run(args: argparse.Namespace) -> int:
         )
         logger.info(
             "Template sent: to=%s message_id=%s delivered_text=%r",
-            args.to,
-            template_receipt.external_id,
-            template_receipt.delivered_text,
+            args.to if args.include_sensitive else redact_sensitive_text(args.to),
+            redact_identifier(template_receipt.external_id),
+            template_receipt.delivered_text if args.include_sensitive else redact_sensitive_text(template_receipt.delivered_text, limit=120),
         )
         print(f"SENT_TEMPLATE:{template_receipt.external_id}")
         print(f"WAITING_INBOUND_FOR_SECONDS:{args.timeout_seconds}")
 
         inbound_event = await asyncio.wait_for(inbound_queue.get(), timeout=args.timeout_seconds)
-        print(f"INBOUND_RECEIVED:{inbound_event.external_id or 'none'}:{inbound_event.text}")
+        inbound_text = inbound_event.text if args.include_sensitive else redact_sensitive_text(inbound_event.text, limit=120)
+        print(f"INBOUND_RECEIVED:{redact_identifier(inbound_event.external_id or 'none')}:{inbound_text}")
 
         mirrored_text = f"{args.echo_prefix}{inbound_event.text}"
         echo_receipt = await provider.send_message(inbound_event.phone, mirrored_text)
         logger.info(
             "Mirror message sent: to=%s message_id=%s text=%r",
-            inbound_event.phone,
-            echo_receipt.external_id,
-            mirrored_text,
+            inbound_event.phone if args.include_sensitive else redact_sensitive_text(inbound_event.phone),
+            redact_identifier(echo_receipt.external_id),
+            mirrored_text if args.include_sensitive else redact_sensitive_text(mirrored_text, limit=120),
         )
-        print(f"SENT_ECHO:{echo_receipt.external_id}:{mirrored_text}")
+        echo_text = mirrored_text if args.include_sensitive else redact_sensitive_text(mirrored_text, limit=120)
+        print(f"SENT_ECHO:{redact_identifier(echo_receipt.external_id)}:{echo_text}")
         return 0
     except TimeoutError:
         logger.error(

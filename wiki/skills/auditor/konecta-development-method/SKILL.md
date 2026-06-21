@@ -5,6 +5,10 @@ description: Master operating system for Konecta Auditor engineering. Use for im
 
 # Konecta Development Method
 
+> Historical import: this method belongs to the old `konecta-auditor` repo. It is
+> preserved for background patterns only and is not the active Contadores
+> engineering workflow.
+
 ## Load Companion Skills In Order
 Load and follow these companion skills in this exact sequence:
 1. `zen-of-development`

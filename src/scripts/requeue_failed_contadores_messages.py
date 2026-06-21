@@ -39,12 +39,11 @@ def list_failed_message_ids(*, opener_only: bool) -> list[int]:
         return [message_id for message_id in session.exec(statement).all() if message_id is not None]
 
 
-def requeue_failed_messages(*, dry_run: bool, opener_only: bool, reset_attempts: bool) -> int:
+def requeue_failed_messages(*, execute: bool, opener_only: bool, reset_attempts: bool) -> tuple[int, int]:
     """Requeue failed outbound messages and record an audit event."""
     message_ids = list_failed_message_ids(opener_only=opener_only)
-    if dry_run:
-        print(f"failed_messages={len(message_ids)}")
-        return len(message_ids)
+    if not execute:
+        return len(message_ids), 0
 
     requeued = 0
     for message_id in message_ids:
@@ -55,23 +54,27 @@ def requeue_failed_messages(*, dry_run: bool, opener_only: bool, reset_attempts:
         if row is None:
             continue
         requeued += 1
-    return requeued
+    return len(message_ids), requeued
 
 
 def main() -> None:
     """Run the one-off requeue command."""
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--execute", action="store_true", help="Actually requeue messages. Default is preview only.")
+    parser.add_argument("--dry-run", action="store_true", help="Preview only. Kept for older safe runbooks.")
     parser.add_argument("--opener-only", action="store_true")
     parser.add_argument("--keep-attempts", action="store_true")
     args = parser.parse_args()
+    if args.execute and args.dry_run:
+        parser.error("--execute cannot be combined with --dry-run")
 
-    count = requeue_failed_messages(
-        dry_run=args.dry_run,
+    candidate_count, requeued_count = requeue_failed_messages(
+        execute=args.execute,
         opener_only=args.opener_only,
         reset_attempts=not args.keep_attempts,
     )
-    print(f"requeued_failed_messages={0 if args.dry_run else count}")
+    print(f"candidate_failed_messages={candidate_count}")
+    print(f"requeued_failed_messages={requeued_count}")
 
 
 if __name__ == "__main__":

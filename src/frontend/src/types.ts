@@ -254,6 +254,139 @@ export interface QuickActionResponse {
   queued_message_ids: number[];
 }
 
+export interface PlatformOverviewCounts {
+  active_blockers: number;
+  open_human_questions: number;
+  blocked_meta_attempts: number;
+  blocked_meta_inventory: number;
+  pending_campaigns: number;
+  meetings: number;
+  campaigns: number;
+  creative_assets: number;
+  meta_inventory_snapshots: number;
+  client_updates: number;
+  agent_runs: number;
+  failed_agent_runs: number;
+  stale_agent_runs: number;
+  agent_tool_calls: number;
+  failed_agent_tool_calls: number;
+  runtime_alerts: number;
+  unresolved_runtime_alerts: number;
+  unnotified_runtime_alerts: number;
+  recent_events: number;
+}
+
+export interface PlatformEventItem {
+  id: number;
+  event_type: string;
+  lifecycle_stage: string;
+  target_type: string;
+  target_id: string;
+  funnel_id: string;
+  severity: string;
+  source: string;
+  actor: string;
+  summary: string;
+  created_at: string;
+}
+
+export interface PlatformHumanQuestionItem {
+  id: string;
+  workflow: string;
+  target_type: string;
+  target_id: string;
+  funnel_id: string;
+  status: string;
+  context_summary: string;
+  trying_to_do: string;
+  question: string;
+  default_action: string;
+  timeout_at: string | null;
+  created_at: string;
+}
+
+export interface PlatformMetaPublishAttemptItem {
+  id: string;
+  campaign_id: string;
+  status: string;
+  approval_status: string;
+  error: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PlatformMetaInventorySnapshotItem {
+  id: string;
+  status: string;
+  source: string;
+  actor: string;
+  ad_account_id: string;
+  business_id: string;
+  errors: unknown[];
+  created_at: string;
+}
+
+export interface PlatformAdCampaignItem {
+  id: string;
+  client_id: string;
+  funnel_id: string;
+  status: string;
+  objective: string;
+  budget_daily_usd: number | null;
+  budget_currency: string;
+  approval_status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PlatformAgentRunItem {
+  id: string;
+  agent_kind: string;
+  target_type: string;
+  target_id: string;
+  status: string;
+  error: string;
+  started_at: string;
+  completed_at: string | null;
+  stale: boolean;
+}
+
+export interface PlatformAgentToolCallItem {
+  id: number;
+  run_id: string;
+  tool_name: string;
+  status: string;
+  error: string;
+  started_at: string;
+  completed_at: string | null;
+}
+
+export interface PlatformRuntimeAlertItem {
+  id: number;
+  lead_id: string;
+  funnel_label: string;
+  alert_type: string;
+  error: string;
+  fallback_action: string;
+  notified_at: string | null;
+  resolved_at: string | null;
+  created_at: string;
+}
+
+export interface PlatformOverviewResponse {
+  generated_at: string;
+  counts: PlatformOverviewCounts;
+  events: PlatformEventItem[];
+  ad_campaigns: PlatformAdCampaignItem[];
+  meta_inventory_snapshots: PlatformMetaInventorySnapshotItem[];
+  meta_publish_attempts: PlatformMetaPublishAttemptItem[];
+  human_questions: PlatformHumanQuestionItem[];
+  agent_runs: PlatformAgentRunItem[];
+  stale_agent_runs: PlatformAgentRunItem[];
+  runtime_alerts: PlatformRuntimeAlertItem[];
+  agent_tool_calls: PlatformAgentToolCallItem[];
+}
+
 export interface BulkActionItem {
   lead_id: string;
   ok: boolean;
@@ -445,6 +578,8 @@ export interface ClientLeadSource {
   sheet_gid: string | null;
   sheet_tab_name: string | null;
   sheet_poll_seconds: number;
+  meta_page_id: string | null;
+  meta_lead_form_id: string | null;
   recipient_name: string | null;
   recipient_phone: string | null;
   normalized_recipient_phone: string | null;

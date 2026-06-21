@@ -119,3 +119,25 @@ def test_log_whatsapp_status_activity_uses_provider_read_state(caplog) -> None:
 
     messages = [record.getMessage() for record in caplog.records]
     assert messages == ["📲 message #44 status changed to read."]
+
+
+def test_log_whatsapp_inbound_activity_masks_sensitive_identifiers(caplog) -> None:
+    logger = logging.getLogger("bot.test.whatsapp.inbound")
+    caplog.set_level(logging.INFO, logger=logger.name)
+
+    logging_utils.log_whatsapp_inbound_activity(
+        logger,
+        {
+            "status": "processed",
+            "route": "contadores",
+            "phone": "+5491111112222",
+            "profile_name": "Nombre Largo de WhatsApp",
+            "referral": {"source_id": "source-secret-123456789", "ctwa_clid": "clid-secret-123456789"},
+        },
+    )
+
+    message = caplog.records[0].getMessage()
+    assert "+5491111112222" not in message
+    assert "Nombre Largo de WhatsApp" not in message
+    assert "source-secret-123456789" not in message
+    assert "*2222" in message

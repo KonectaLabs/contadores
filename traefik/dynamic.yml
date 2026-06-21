@@ -12,17 +12,38 @@ http:
       entryPoints:
         - web
       service: codex-approval
+    codex-approval-secure:
+      rule: "Host(`codex-approval.fgoiriz.com`)"
+      priority: 100
+      entryPoints:
+        - websecure
+      tls: {}
+      service: codex-approval
     backend:
-      rule: "(Host(`crm.fgoiriz.com`) || Host(`chatterface.fgoiriz.com`)) && PathPrefix(`/`)"
+      rule: "Host(`crm.fgoiriz.com`) && PathPrefix(`/`)"
       priority: 1
       entryPoints:
         - web
       service: backend
+    backend-secure:
+      rule: "Host(`crm.fgoiriz.com`) && PathPrefix(`/`)"
+      priority: 1
+      entryPoints:
+        - websecure
+      tls: {}
+      service: backend
     bot:
-      rule: "(Host(`crm.fgoiriz.com`) || Host(`chatterface.fgoiriz.com`)) && PathPrefix(`/webhook`)"
+      rule: "Host(`crm.fgoiriz.com`) && PathPrefix(`/webhook`)"
       priority: 10
       entryPoints:
         - web
+      service: bot
+    bot-secure:
+      rule: "Host(`crm.fgoiriz.com`) && PathPrefix(`/webhook`)"
+      priority: 10
+      entryPoints:
+        - websecure
+      tls: {}
       service: bot
   services:
     didactiqo-education:

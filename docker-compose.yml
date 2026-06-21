@@ -1,6 +1,7 @@
 services:
   traefik:
     image: traefik:v3.3
+    restart: unless-stopped
     logging:
       driver: json-file
       options:
@@ -10,8 +11,10 @@ services:
       - "--providers.file.filename=/etc/traefik/dynamic/dynamic.yml"
       - "--providers.file.watch=true"
       - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
     ports:
       - "80:80"
+      - "443:443"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -19,6 +22,7 @@ services:
 
   backend:
     build: .
+    restart: unless-stopped
     logging:
       driver: json-file
       options:
@@ -48,6 +52,7 @@ services:
     build:
       context: .
       dockerfile: src/bot/Dockerfile
+    restart: unless-stopped
     logging:
       driver: json-file
       options:
@@ -66,4 +71,16 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://localhost:8100/health', timeout=2).status == 200 else sys.exit(1)",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
     command: ["uv", "run", "fastapi", "run", "main.py", "--host", "0.0.0.0", "--port", "8100"]

@@ -107,9 +107,11 @@ first-run config, and `data/funnels.json` can override it per server.
     transcript, sees an exclusion, or hits an uncovered situation, do not guess.
     For an ordinary unanswered factual/commercial question, create an
     `unanswered_lead_question` email ticket. When an operator replies to that
-    email with the exact WhatsApp text, the backend sends it, stores it in
+    email, it must start with `Respuesta:` followed by the exact WhatsApp text.
+    The backend rejects ambiguous, quoted, signed, or oversized email bodies
+    before queueing WhatsApp; valid replies are sent, stored in
     `contadores-lead-reply-playbook/references/operator-learned-answers.md`,
-    and resumes the lead stage. Media/exclusions still pause in `needs_human`
+    and resume the lead stage. Media/exclusions still pause in `needs_human`
     and alert the operators.
     If the CRM conversation was already answered before the operator email
     reply arrives, the backend only saves the answer as learning and resolves

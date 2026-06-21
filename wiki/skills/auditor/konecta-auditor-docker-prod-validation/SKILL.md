@@ -5,6 +5,10 @@ description: Production-like Docker validation for agnostic Konecta Auditor back
 
 # Konecta Auditor Docker Validation
 
+> Historical import: this wiki-only file describes the old Konecta Auditor
+> container workflow. Do not run it as Contadores validation unless a
+> Contadores-specific skill explicitly adapts the commands.
+
 ## Validate In Containerized Mode
 Run Docker Compose checks against the backend service.
 

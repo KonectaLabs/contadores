@@ -88,6 +88,12 @@ class FakeTurn:
         return {"interrupted": True}
 
 
+class HangingFakeTurn(FakeTurn):
+    async def stream(self):
+        await asyncio.sleep(10)
+        yield FakeEvent(FakeTurnCompletedNotification(turn=FakeCompletedTurn()))
+
+
 class FakeThread:
     def __init__(self, calls, thread_id="thread-123"):
         self.calls = calls
@@ -96,7 +102,8 @@ class FakeThread:
     async def turn(self, input_value, **kwargs):
         self.calls["input_value"] = input_value
         self.calls["turn_kwargs"] = kwargs
-        turn = FakeTurn(self.calls)
+        turn_class = self.calls.get("turn_class", FakeTurn)
+        turn = turn_class(self.calls)
         self.calls["turn"] = turn
         return turn
 
@@ -255,6 +262,16 @@ def test_run_codex_with_context_exposes_active_turn(monkeypatch, tmp_path):
 def test_run_codex_with_context_rejects_empty_prompt():
     with pytest.raises(ValueError, match="prompt"):
         asyncio.run(codex_utils.run_codex_with_context("   "))
+
+
+def test_run_codex_with_context_times_out_and_interrupts_turn(monkeypatch, tmp_path):
+    calls = {"turn_class": HangingFakeTurn}
+    monkeypatch.setattr(codex_utils, "_load_codex_sdk", lambda: fake_sdk(calls))
+
+    with pytest.raises(codex_utils.CodexTurnTimeoutError, match="timed out after 0s"):
+        asyncio.run(codex_utils.run_codex_with_context("hang", cwd=tmp_path, timeout_seconds=0.01))
+
+    assert calls["turn"].interrupted is True
 
 
 def test_run_codex_text_returns_plain_response(monkeypatch, tmp_path):

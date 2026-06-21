@@ -7,15 +7,15 @@ import inspect
 import json
 import logging
 import mimetypes
+import os
 import shutil
 import subprocess
-import tempfile
 import uuid
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Literal
+from typing import Coroutine, Literal
 from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
@@ -27,6 +27,10 @@ from backend.ai.codex_agent_runtime import run_codex_agent
 from backend.ai.codex_agent_tools import tool_specs as codex_agent_tool_specs
 import backend.database as database_module
 from backend.codex_utils import CodexSkill, interrupt_turn, run_codex_with_context, steer_turn
+from backend.workstation_renderer import (
+    WorkstationRenderError,
+    render_landing_page_video_sync as render_landing_page_video_sync_runtime,
+)
 from backend.config import (
     CODEX_AGENT_TOOLS_ENABLED,
     CODEX_AGENT_TOOLS_WORKSTATION_ENABLED,
@@ -93,6 +97,28 @@ async def await_if_needed(value):
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PROFESSIONAL_PHOTO_SKILL = Path(".codex/skills/client-professional-photo/SKILL.md")
 PROFESSIONAL_PHOTO_EDIT_SKILL = Path(".codex/skills/client-professional-photo-edit/SKILL.md")
+
+
+def positive_int_env(name: str, default: int) -> int:
+    """Read one positive integer env var."""
+    try:
+        value = int(os.getenv(name, ""))
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+WORKSTATION_PRO_PHOTO_CREATE_MAX_IMAGES = positive_int_env("WORKSTATION_PRO_PHOTO_CREATE_MAX_IMAGES", 4)
+WORKSTATION_PRO_PHOTO_EDIT_MAX_EXTRA_IMAGES = positive_int_env("WORKSTATION_PRO_PHOTO_EDIT_MAX_EXTRA_IMAGES", 3)
+WORKSTATION_PRO_PHOTO_MAX_IMAGE_BYTES = positive_int_env("WORKSTATION_PRO_PHOTO_MAX_IMAGE_BYTES", 10 * 1024 * 1024)
+WORKSTATION_MEDIA_MAX_UPLOAD_BYTES = positive_int_env("WORKSTATION_MEDIA_MAX_UPLOAD_BYTES", 25 * 1024 * 1024)
+WORKSTATION_MAX_LANDING_PAGE_VERSIONS = positive_int_env("WORKSTATION_MAX_LANDING_PAGE_VERSIONS", 10)
+WORKSTATION_PRO_PHOTO_MAX_TOTAL_IMAGE_BYTES = positive_int_env(
+    "WORKSTATION_PRO_PHOTO_MAX_TOTAL_IMAGE_BYTES",
+    32 * 1024 * 1024,
+)
+WORKSTATION_PRO_PHOTO_MAX_CONTEXT_CHARS = positive_int_env("WORKSTATION_PRO_PHOTO_MAX_CONTEXT_CHARS", 4000)
+WORKSTATION_PRO_PHOTO_MAX_PROMPT_CHARS = positive_int_env("WORKSTATION_PRO_PHOTO_MAX_PROMPT_CHARS", 4000)
 SOLO_PAGE_SKILL = Path(".codex/skills/workstation-solo-page/SKILL.md")
 ACTIVE_PROFESSIONAL_PHOTO_JOB_STATUSES = {"queued", "running"}
 WORKSTATION_INTAKE_SEQUENCE_STEP = "workstation_intake"
@@ -104,6 +130,44 @@ WORKSTATION_PING_1_SEQUENCE_STEP = "workstation_ping_1"
 WORKSTATION_PING_2_SEQUENCE_STEP = "workstation_ping_2"
 WORKSTATION_HANDOFF_SEQUENCE_STEP = "workstation_handoff"
 WORKSTATION_CODEX_HEARTBEAT_REASON = "periodic_workstation_heartbeat"
+WORKSTATION_PUBLIC_PAGE_HEADERS = {
+    "Content-Security-Policy": (
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; "
+        "font-src 'self' data:; "
+        "connect-src 'none'; "
+        "frame-src 'none'; "
+        "object-src 'none'; "
+        "base-uri 'none'; "
+        "form-action 'none'"
+    ),
+    "Referrer-Policy": "no-referrer",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+    "X-Content-Type-Options": "nosniff",
+    "Cache-Control": "no-store",
+}
+SAFE_INLINE_UPLOADED_MEDIA_TYPES = {
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "image/gif",
+    "video/mp4",
+    "video/webm",
+    "audio/mpeg",
+    "audio/ogg",
+    "audio/wav",
+}
+DANGEROUS_UPLOADED_MEDIA_TYPES = {
+    "image/svg+xml",
+    "text/html",
+    "application/xhtml+xml",
+    "application/xml",
+    "text/xml",
+    "text/javascript",
+    "application/javascript",
+}
 WORKSTATION_BACKOFF_SECONDS = 20 * 60
 WORKSTATION_PING_1_DELAY_SECONDS = 24 * 60 * 60
 WORKSTATION_PING_2_DELAY_SECONDS = 48 * 60 * 60
@@ -428,6 +492,40 @@ def safe_upload_filename(filename: str | None) -> str:
     return f"{stem}{suffix}" if suffix else stem
 
 
+def clean_content_type(value: str | None) -> str:
+    """Normalize one MIME type value."""
+    return (value or "").split(";", 1)[0].strip().lower()
+
+
+def safe_uploaded_media_content_type(filename: str, declared_content_type: str | None) -> str:
+    """Return a safe preview MIME type or force untrusted bytes to octet-stream."""
+    guessed = clean_content_type(mimetypes.guess_type(filename)[0])
+    declared = clean_content_type(declared_content_type)
+    if guessed in DANGEROUS_UPLOADED_MEDIA_TYPES or declared in DANGEROUS_UPLOADED_MEDIA_TYPES:
+        return "application/octet-stream"
+    content_type = guessed or declared
+    if content_type in SAFE_INLINE_UPLOADED_MEDIA_TYPES:
+        return content_type
+    return "application/octet-stream"
+
+
+def uploaded_media_file_response(
+    path: Path,
+    *,
+    filename: str,
+    content_type: str | None,
+) -> FileResponse:
+    """Serve uploaded media inline only for explicitly safe preview types."""
+    media_type = safe_uploaded_media_content_type(filename or path.name, content_type)
+    return FileResponse(
+        path,
+        media_type=media_type,
+        filename=filename or path.name,
+        content_disposition_type="inline" if media_type in SAFE_INLINE_UPLOADED_MEDIA_TYPES else "attachment",
+        headers={"X-Content-Type-Options": "nosniff"},
+    )
+
+
 def lead_summary_for_workstation(lead: ContadoresLead) -> ContadoresLeadSummary:
     """Serialize a lead for Workstation views."""
     config = get_effective_funnel_config(lead.funnel_id)
@@ -606,11 +704,31 @@ def build_client_zip(client: WorkstationClient) -> Path:
     folder = client_folder(client)
     zip_path = folder / f"{client.folder_name}.zip"
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        for path in sorted(folder.rglob("*")):
-            if path == zip_path or path.is_dir():
-                continue
-            archive.write(path, path.relative_to(folder))
+        for path, archive_name in workstation_zip_manifest(client):
+            archive.write(path, archive_name)
     return zip_path
+
+
+def workstation_zip_manifest(client: WorkstationClient) -> list[tuple[Path, Path]]:
+    """Return the small set of client-safe files exported in the handoff ZIP."""
+    folder = client_folder(client)
+    allowed: list[tuple[Path, Path]] = []
+    notes = folder / "notes.txt"
+    if notes.is_file():
+        allowed.append((notes, Path("notes.txt")))
+    media_root = folder / "media"
+    if media_root.is_dir():
+        allowed.extend((path, path.relative_to(folder)) for path in sorted(media_root.rglob("*")) if path.is_file())
+    current_page = latest_landing_page_version_dir(client)
+    if current_page is not None:
+        for name in ("index.html", "styles.css", "script.js"):
+            path = current_page / name
+            if path.is_file():
+                allowed.append((path, Path("landing-page") / current_page.name / name))
+        assets = current_page / "assets"
+        if assets.is_dir():
+            allowed.extend((path, path.relative_to(folder)) for path in sorted(assets.rglob("*")) if path.is_file())
+    return allowed
 
 
 class WorkstationMediaAssetResponse(BaseModel):
@@ -802,11 +920,112 @@ class ProfessionalPhotoJobRecord:
 professional_photo_jobs: dict[str, ProfessionalPhotoJobRecord] = {}
 
 
+def reset_professional_photo_jobs() -> None:
+    """Reset in-process professional-photo jobs for deterministic tests."""
+    for job_id in list(professional_photo_jobs):
+        professional_photo_jobs.pop(job_id, None)
+
+
+def professional_photo_jobs_root(client: WorkstationClient) -> Path:
+    """Return the durable professional-photo job metadata folder."""
+    root = professional_photo_root(client) / "jobs"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def professional_photo_job_path(client: WorkstationClient, job_id: str) -> Path:
+    """Return a safe metadata path for one job."""
+    clean_job_id = Path(job_id or "").name
+    if not clean_job_id:
+        raise HTTPException(status_code=404, detail="Professional photo job not found")
+    return professional_photo_jobs_root(client) / f"{clean_job_id}.json"
+
+
+def serialize_professional_photo_job(job: ProfessionalPhotoJobRecord) -> dict[str, object]:
+    """Convert one job record to JSON-safe metadata."""
+    return {
+        "job_id": job.job_id,
+        "client_id": job.client_id,
+        "status": job.status,
+        "created_at": job.created_at,
+        "started_at": job.started_at,
+        "completed_at": job.completed_at,
+        "error": job.error,
+        "result": job.result.model_dump(mode="json") if job.result is not None else None,
+    }
+
+
+def deserialize_professional_photo_job(payload: dict[str, object]) -> ProfessionalPhotoJobRecord | None:
+    """Build a job record from durable metadata."""
+    job_id = str(payload.get("job_id") or "").strip()
+    client_id = str(payload.get("client_id") or "").strip()
+    status = str(payload.get("status") or "").strip()
+    created_at = str(payload.get("created_at") or "").strip()
+    if not job_id or not client_id or status not in {"queued", "running", "completed", "failed"} or not created_at:
+        return None
+    result_payload = payload.get("result")
+    result = WorkstationProfessionalPhotoVersion.model_validate(result_payload) if isinstance(result_payload, dict) else None
+    return ProfessionalPhotoJobRecord(
+        job_id=job_id,
+        client_id=client_id,
+        status=status,  # type: ignore[arg-type]
+        created_at=created_at,
+        started_at=str(payload.get("started_at") or "").strip() or None,
+        completed_at=str(payload.get("completed_at") or "").strip() or None,
+        error=str(payload.get("error") or "").strip() or None,
+        result=result,
+    )
+
+
+def save_professional_photo_job(client: WorkstationClient, job: ProfessionalPhotoJobRecord) -> None:
+    """Persist one photo job status beside generated outputs."""
+    professional_photo_job_path(client, job.job_id).write_text(
+        json.dumps(serialize_professional_photo_job(job), ensure_ascii=True, indent=2),
+        encoding="utf-8",
+    )
+
+
+def load_professional_photo_job(client: WorkstationClient, job_id: str) -> ProfessionalPhotoJobRecord | None:
+    """Load one photo job from durable metadata."""
+    path = professional_photo_job_path(client, job_id)
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    job = deserialize_professional_photo_job(payload)
+    if job is None or job.client_id != client.id:
+        return None
+    return job
+
+
+def list_saved_professional_photo_jobs(client: WorkstationClient) -> list[ProfessionalPhotoJobRecord]:
+    """Return durable job metadata rows for one client."""
+    jobs: list[ProfessionalPhotoJobRecord] = []
+    for path in sorted(professional_photo_jobs_root(client).glob("*.json")):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, dict) and (job := deserialize_professional_photo_job(payload)) is not None:
+            if job.client_id == client.id:
+                jobs.append(job)
+    return jobs
+
+
+async def schedule_background_task(coro: Coroutine[object, object, object]) -> None:
+    """Schedule background work without waiting for it."""
+    asyncio.create_task(coro)
+
+
 class CreateProfessionalPhotoCommand(BaseModel):
     """Generate professional photo from selected media assets."""
 
     media_asset_ids: list[str] = Field(default_factory=list, min_length=1)
-    context: str = ""
+    context: str = Field(default="", max_length=WORKSTATION_PRO_PHOTO_MAX_CONTEXT_CHARS)
 
 
 class StartSoloPageWorkCommand(BaseModel):
@@ -825,7 +1044,7 @@ class EditProfessionalPhotoCommand(BaseModel):
     """Create a new professional photo version from an existing version."""
 
     base_version: str = Field(min_length=1)
-    prompt: str = Field(min_length=1)
+    prompt: str = Field(min_length=1, max_length=WORKSTATION_PRO_PHOTO_MAX_PROMPT_CHARS)
     media_asset_ids: list[str] = Field(default_factory=list)
 
 
@@ -840,6 +1059,7 @@ class WorkstationAutomationTickResponse(BaseModel):
     pings_sent: int = 0
     human_handoffs: int = 0
     failures: int = 0
+    automation_claims_skipped: int = 0
     scheduled_agent_tasks_created: int = 0
     scheduled_agent_tasks_processed: int = 0
 
@@ -926,6 +1146,7 @@ def close_workstation_for_closed_lead(
         automation_status=WorkstationAutomationStatus.NEEDS_HUMAN,
         last_automation_handled_at=now,
     ) or client
+    WorkstationPublicPage.deactivate_for_client(client.id, reason="closed")
     append_workstation_progress(updated, "Linked CRM lead is closed. Workstation automation stopped.")
     return updated
 
@@ -1142,10 +1363,7 @@ async def run_workstation_automation_tick() -> WorkstationAutomationTickResponse
         summary = WorkstationAutomationTickResponse()
         now = now_utc()
         summary.scheduled_agent_tasks_created = ensure_workstation_codex_heartbeat_tasks(now=now)
-        for task in ScheduledAgentTask.list_due(now=now, limit=20):
-            if task.target_type != "workstation_client":
-                continue
-            ScheduledAgentTask.mark_status(task.id, status="running", timestamp=now)
+        for task in ScheduledAgentTask.claim_due(now=now, limit=20, target_type="workstation_client"):
             client = WorkstationClient.get_by_id(task.target_id)
             if client is None:
                 ScheduledAgentTask.mark_status(
@@ -1212,8 +1430,21 @@ async def run_workstation_automation_tick() -> WorkstationAutomationTickResponse
             work_type=WorkstationClientWorkType.SOLO_PAGINA,
             limit=100,
         ):
-            metrics = await advance_solo_page_client(client, now=now)
-            merge_workstation_metrics(summary, metrics)
+            if not WorkstationClient.claim_automation(client.id, claimed_at=now):
+                summary.automation_claims_skipped += 1
+                continue
+            try:
+                metrics = await advance_solo_page_client(client, now=now)
+                merge_workstation_metrics(summary, metrics)
+            except Exception as error:
+                WorkstationClient.release_automation_claim(
+                    client.id,
+                    error=f"{error.__class__.__name__}: {error}",
+                    released_at=now_utc(),
+                )
+                summary.failures += 1
+            else:
+                WorkstationClient.release_automation_claim(client.id, released_at=now_utc())
         return summary
 
 
@@ -1265,14 +1496,26 @@ def build_professional_photo_job_response(
 
 def get_professional_photo_job(client_id: str, job_id: str) -> ProfessionalPhotoJobRecord:
     """Return a job owned by one client or raise a 404."""
+    client = get_required_client(client_id)
     job = professional_photo_jobs.get(job_id)
+    if job is None:
+        job = load_professional_photo_job(client, job_id)
     if job is None or job.client_id != client_id:
         raise HTTPException(status_code=404, detail="Professional photo job not found")
+    if job.status in ACTIVE_PROFESSIONAL_PHOTO_JOB_STATUSES and job_id not in professional_photo_jobs:
+        recovered = latest_professional_photo_version(client)
+        job.status = "completed" if recovered is not None else "failed"
+        job.result = recovered
+        job.error = None if recovered is not None else "Backend restarted before this job completed. Start a new job."
+        job.completed_at = current_job_timestamp()
+        save_professional_photo_job(client, job)
+    professional_photo_jobs[job.job_id] = job
     return job
 
 
 def get_active_professional_photo_job(client_id: str) -> ProfessionalPhotoJobRecord | None:
     """Return the newest queued/running photo job for one client."""
+    client = WorkstationClient.get_by_id(client_id)
     jobs = sorted(
         professional_photo_jobs.values(),
         key=lambda job: job.created_at,
@@ -1281,6 +1524,15 @@ def get_active_professional_photo_job(client_id: str) -> ProfessionalPhotoJobRec
     for job in jobs:
         if job.client_id == client_id and job.status in ACTIVE_PROFESSIONAL_PHOTO_JOB_STATUSES:
             return job
+    if client is None:
+        return None
+    for job in sorted(list_saved_professional_photo_jobs(client), key=lambda item: item.created_at, reverse=True):
+        if job.status not in ACTIVE_PROFESSIONAL_PHOTO_JOB_STATUSES:
+            continue
+        job.status = "failed"
+        job.error = "Backend restarted before this job completed. Start a new job."
+        job.completed_at = current_job_timestamp()
+        save_professional_photo_job(client, job)
     return None
 
 
@@ -1329,6 +1581,35 @@ def get_client_image_assets(client: WorkstationClient, media_asset_ids: list[str
     return assets
 
 
+def validate_professional_photo_vision_payload(
+    *,
+    image_paths: list[Path],
+    max_images: int,
+    include_base_image: bool = False,
+) -> None:
+    """Fail early when a Codex vision payload is too large."""
+    reference_count = len(image_paths) - (1 if include_base_image else 0)
+    if reference_count > max_images:
+        raise HTTPException(status_code=400, detail=f"Too many reference images selected. Max is {max_images}.")
+
+    total_bytes = 0
+    for path in image_paths:
+        try:
+            image_bytes = path.stat().st_size
+        except OSError as error:
+            raise HTTPException(status_code=404, detail=f"Media file not found: {path.name}") from error
+        if image_bytes > WORKSTATION_PRO_PHOTO_MAX_IMAGE_BYTES:
+            raise HTTPException(status_code=400, detail=f"Image is too large: {path.name}")
+        total_bytes += image_bytes
+    if total_bytes > WORKSTATION_PRO_PHOTO_MAX_TOTAL_IMAGE_BYTES:
+        raise HTTPException(status_code=400, detail="Selected images are too large together.")
+
+
+def media_asset_paths(assets: list[WorkstationMediaAsset]) -> list[Path]:
+    """Return resolved local paths for media assets."""
+    return [path for path in (resolve_media_path(asset.stored_path) for asset in assets) if path is not None]
+
+
 def write_professional_photo_metadata(
     *,
     version_dir: Path,
@@ -1366,8 +1647,11 @@ async def generate_professional_photo(
     context: str,
 ) -> WorkstationProfessionalPhotoVersion:
     """Run Codex SDK to create a professional photo version."""
-    source_paths = [resolve_media_path(asset.stored_path) for asset in assets]
-    resolved_source_paths = [path for path in source_paths if path is not None]
+    resolved_source_paths = media_asset_paths(assets)
+    validate_professional_photo_vision_payload(
+        image_paths=resolved_source_paths,
+        max_images=WORKSTATION_PRO_PHOTO_CREATE_MAX_IMAGES,
+    )
     version_dir = next_professional_photo_version_dir(client)
     output_path = version_dir / "professional-photo.jpg"
     prompt = f"""
@@ -1446,6 +1730,7 @@ async def run_create_professional_photo_job(
 
     job.status = "running"
     job.started_at = current_job_timestamp()
+    save_professional_photo_job(client, job)
 
     try:
         version = await generate_professional_photo(
@@ -1457,16 +1742,19 @@ async def run_create_professional_photo_job(
         job.status = "failed"
         job.error = str(error.detail)
         job.completed_at = current_job_timestamp()
+        save_professional_photo_job(client, job)
         return
     except Exception as error:
         job.status = "failed"
         job.error = str(error)
         job.completed_at = current_job_timestamp()
+        save_professional_photo_job(client, job)
         return
 
     job.status = "completed"
     job.result = version
     job.completed_at = current_job_timestamp()
+    save_professional_photo_job(client, job)
 
 
 async def edit_professional_photo(
@@ -1482,8 +1770,12 @@ async def edit_professional_photo(
     if not base_image.exists():
         raise HTTPException(status_code=404, detail="Base professional photo version not found")
 
-    source_paths = [resolve_media_path(asset.stored_path) for asset in assets]
-    resolved_source_paths = [path for path in source_paths if path is not None]
+    resolved_source_paths = media_asset_paths(assets)
+    validate_professional_photo_vision_payload(
+        image_paths=[base_image, *resolved_source_paths],
+        max_images=WORKSTATION_PRO_PHOTO_EDIT_MAX_EXTRA_IMAGES,
+        include_base_image=True,
+    )
     version_dir = next_professional_photo_version_dir(client)
     output_path = version_dir / "professional-photo.jpg"
     prompt = f"""
@@ -1583,6 +1875,30 @@ def latest_landing_page_version_dir(client: WorkstationClient) -> Path | None:
     return sorted(versions)[-1] if versions else None
 
 
+def workstation_artifact_prune_candidates(client: WorkstationClient) -> list[Path]:
+    """List old generated page versions that can be explicitly pruned."""
+    if WORKSTATION_MAX_LANDING_PAGE_VERSIONS <= 0:
+        return []
+    root = landing_page_root(client)
+    versions = sorted(
+        path for path in root.iterdir() if path.is_dir() and path.name.startswith("v") and path.name[1:].isdigit()
+    )
+    keep = {path.resolve() for path in versions[-WORKSTATION_MAX_LANDING_PAGE_VERSIONS:]}
+    public_page = WorkstationPublicPage.get_by_client_id(client.id)
+    if public_page is not None:
+        keep.add(resolve_public_page_version_dir(public_page).resolve())
+    return [path for path in versions if path.resolve() not in keep]
+
+
+def prune_workstation_artifacts(client: WorkstationClient, *, confirm: bool = False) -> list[str]:
+    """Report or explicitly delete old generated page versions."""
+    candidates = workstation_artifact_prune_candidates(client)
+    if confirm:
+        for path in candidates:
+            shutil.rmtree(path)
+    return [relative_data_path(path) for path in candidates]
+
+
 def copy_previous_landing_page_version(*, previous_version: Path | None, version_dir: Path) -> None:
     """Seed a new version with the last page files so revisions stay visually stable."""
     if previous_version is None:
@@ -1653,79 +1969,8 @@ def commit_landing_page_version(client: WorkstationClient, version_dir: Path, *,
 
 
 def render_landing_page_video_sync(*, index_path: Path, output_path: Path) -> None:
-    """Record a desktop scroll preview of a static landing page as MP4."""
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError as error:
-        raise RuntimeError("playwright is required to render Workstation preview videos") from error
-
-    with tempfile.TemporaryDirectory() as temp_dir:
-        temp_path = Path(temp_dir)
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
-            context = browser.new_context(
-                viewport={"width": 1440, "height": 900},
-                record_video_dir=str(temp_path),
-                record_video_size={"width": 1440, "height": 900},
-            )
-            page = context.new_page()
-            page.goto(index_path.resolve().as_uri(), wait_until="networkidle")
-            page.wait_for_timeout(800)
-            page.evaluate(
-                """
-                async () => {
-                  const max = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
-                  const root = document.documentElement;
-                  const previousBehavior = root.style.scrollBehavior;
-                  root.style.scrollBehavior = "auto";
-                  window.scrollTo(0, 0);
-                  await new Promise((resolve) => setTimeout(resolve, 700));
-
-                  const durationMs = Math.min(18000, Math.max(9500, max / 0.55));
-                  const start = performance.now();
-                  await new Promise((resolve) => {
-                    const step = (now) => {
-                      const progress = Math.min(1, (now - start) / durationMs);
-                      window.scrollTo(0, Math.round(max * progress));
-                      if (progress < 1) {
-                        window.requestAnimationFrame(step);
-                        return;
-                      }
-                      resolve();
-                    };
-                    window.requestAnimationFrame(step);
-                  });
-
-                  await new Promise((resolve) => setTimeout(resolve, 900));
-                  root.style.scrollBehavior = previousBehavior;
-                }
-                """
-            )
-            context.close()
-            browser.close()
-
-        webm_files = sorted(temp_path.glob("*.webm"))
-        if not webm_files:
-            raise RuntimeError("Playwright did not record a preview video")
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        command = [
-            "ffmpeg",
-            "-y",
-            "-i",
-            str(webm_files[0]),
-            "-c:v",
-            "libx264",
-            "-pix_fmt",
-            "yuv420p",
-            "-movflags",
-            "+faststart",
-            "-an",
-            str(output_path),
-        ]
-        completed = subprocess.run(command, capture_output=True, text=True, check=False)
-        if completed.returncode != 0:
-            error_text = (completed.stderr or completed.stdout or "ffmpeg failed").strip()
-            raise RuntimeError(f"ffmpeg could not create preview video: {error_text}")
+    """Compatibility wrapper for tests and endpoint-local monkeypatching."""
+    render_landing_page_video_sync_runtime(index_path=index_path, output_path=output_path)
 
 
 def inbound_after(messages: list[ContadoresMessage], timestamp: datetime | None) -> list[ContadoresMessage]:
@@ -2501,6 +2746,9 @@ Operator instruction for this run:
 
 Requirements:
 - Create only static files: index.html, styles.css, script.js, assets/.
+- Do not use remote scripts, external fonts, analytics pixels, iframes,
+  external image/video URLs, or network fetches. Put required assets under
+  assets/ and reference only local files.
 - Write preview-message.txt with the exact WhatsApp message to send alongside
   the preview video. Choose copy that fits this client and this run. Ask for
   changes or approval clearly, but do not hardcode a generic template.
@@ -2703,6 +2951,10 @@ async def generate_solo_page_version(
         return version_dir
     except WorkstationCodexStopped as error:
         append_workstation_progress(client, str(error))
+        shutil.rmtree(version_dir, ignore_errors=True)
+        raise
+    except WorkstationRenderError as error:
+        append_workstation_progress(client, f"Renderer failed at {error.stage}: {error.message}")
         shutil.rmtree(version_dir, ignore_errors=True)
         raise
     except Exception as error:
@@ -4163,11 +4415,30 @@ def get_public_page_or_404(public_token: str) -> WorkstationPublicPage:
     return public_page
 
 
+PUBLIC_PAGE_ROOT_FILES = {"index.html", "styles.css", "script.js"}
+
+
+def is_allowed_public_page_asset(path: Path) -> bool:
+    """Allow only generated page files intended for public delivery."""
+    if len(path.parts) == 1:
+        return path.name in PUBLIC_PAGE_ROOT_FILES
+    return path.parts[0] == "assets"
+
+
 def resolve_public_page_file(public_page: WorkstationPublicPage, asset_path: str | None) -> Path:
     """Resolve a public page asset without allowing directory traversal."""
     version_dir = resolve_public_page_version_dir(public_page)
     clean_path = (asset_path or "index.html").strip() or "index.html"
-    candidate = (version_dir / Path(clean_path)).resolve()
+    raw_parts = clean_path.split("/")
+    path = Path(clean_path)
+    if (
+        path.is_absolute()
+        or "\\" in clean_path
+        or any(part in {"", ".", ".."} or part.startswith(".") for part in raw_parts)
+        or not is_allowed_public_page_asset(path)
+    ):
+        raise HTTPException(status_code=404, detail="Public page asset not found")
+    candidate = (version_dir / path).resolve()
     try:
         candidate.relative_to(version_dir)
     except ValueError:
@@ -4177,11 +4448,25 @@ def resolve_public_page_file(public_page: WorkstationPublicPage, asset_path: str
     return candidate
 
 
+def public_workstation_file_response(path: Path, *, media_type: str) -> FileResponse:
+    """Serve a public page file with strict browser egress policy."""
+    return FileResponse(
+        path,
+        media_type=media_type,
+        content_disposition_type="inline",
+        headers=WORKSTATION_PUBLIC_PAGE_HEADERS,
+    )
+
+
 @public_workstation_router.get("/p/{public_token}")
 async def redirect_public_workstation_page(public_token: str) -> RedirectResponse:
     """Redirect slashless public trial URLs to the static page root."""
     get_public_page_or_404(public_token)
-    return RedirectResponse(url=f"/p/{public_token}/", status_code=307)
+    return RedirectResponse(
+        url=f"/p/{public_token}/",
+        status_code=307,
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @public_workstation_router.get("/p/{public_token}/")
@@ -4189,7 +4474,7 @@ async def serve_public_workstation_page(public_token: str) -> FileResponse:
     """Serve the current public trial page HTML."""
     public_page = get_public_page_or_404(public_token)
     path = resolve_public_page_file(public_page, "index.html")
-    return FileResponse(path, media_type="text/html", content_disposition_type="inline")
+    return public_workstation_file_response(path, media_type="text/html")
 
 
 @public_workstation_router.get("/p/{public_token}/{asset_path:path}")
@@ -4198,7 +4483,7 @@ async def serve_public_workstation_page_asset(public_token: str, asset_path: str
     public_page = get_public_page_or_404(public_token)
     path = resolve_public_page_file(public_page, asset_path)
     media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-    return FileResponse(path, media_type=media_type, content_disposition_type="inline")
+    return public_workstation_file_response(path, media_type=media_type)
 
 
 @workstation_router.get("/clients", response_model=WorkstationClientListResponse)
@@ -4334,6 +4619,7 @@ async def close_workstation_client(client_id: str) -> WorkstationClientDetailRes
         automation_status=WorkstationAutomationStatus.NEEDS_HUMAN,
         last_automation_handled_at=now,
     ) or client
+    WorkstationPublicPage.deactivate_for_client(client.id, reason="closed")
     ContadoresLead.update_flow_state(
         lead.id,
         stage="closed",
@@ -4469,6 +4755,10 @@ async def start_workstation_professional_photo_job(
     """Start async professional portrait generation from selected client media."""
     client = get_required_client(client_id)
     assets = get_client_image_assets(client, command.media_asset_ids)
+    validate_professional_photo_vision_payload(
+        image_paths=media_asset_paths(assets),
+        max_images=WORKSTATION_PRO_PHOTO_CREATE_MAX_IMAGES,
+    )
 
     active_job = get_active_professional_photo_job(client.id)
     if active_job is not None:
@@ -4481,7 +4771,8 @@ async def start_workstation_professional_photo_job(
         created_at=current_job_timestamp(),
     )
     professional_photo_jobs[job.job_id] = job
-    asyncio.create_task(
+    save_professional_photo_job(client, job)
+    await schedule_background_task(
         run_create_professional_photo_job(
             job_id=job.job_id,
             client=client,
@@ -4515,6 +4806,10 @@ async def create_workstation_professional_photo(
     """Generate a professional portrait from selected client media images."""
     client = get_required_client(client_id)
     assets = get_client_image_assets(client, command.media_asset_ids)
+    validate_professional_photo_vision_payload(
+        image_paths=media_asset_paths(assets),
+        max_images=WORKSTATION_PRO_PHOTO_CREATE_MAX_IMAGES,
+    )
     version = await generate_professional_photo(
         client=client,
         assets=assets,
@@ -4534,6 +4829,14 @@ async def edit_workstation_professional_photo(
     """Generate a new professional portrait version from a user edit prompt."""
     client = get_required_client(client_id)
     assets = get_client_image_assets(client, command.media_asset_ids) if command.media_asset_ids else []
+    base_image = professional_photo_root(client) / Path(command.base_version).name / "professional-photo.jpg"
+    if not base_image.exists():
+        raise HTTPException(status_code=404, detail="Base professional photo version not found")
+    validate_professional_photo_vision_payload(
+        image_paths=[base_image, *media_asset_paths(assets)],
+        max_images=WORKSTATION_PRO_PHOTO_EDIT_MAX_EXTRA_IMAGES,
+        include_base_image=True,
+    )
     version = await edit_professional_photo(
         client=client,
         base_version=command.base_version,
@@ -4563,9 +4866,11 @@ async def upload_workstation_media(
 ) -> WorkstationMediaAssetResponse:
     """Attach one media file to a converted client folder."""
     client = get_required_client(client_id)
-    contents = await file.read()
+    contents = await file.read(WORKSTATION_MEDIA_MAX_UPLOAD_BYTES + 1)
     if not contents:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
+    if len(contents) > WORKSTATION_MEDIA_MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail=f"File must be at most {WORKSTATION_MEDIA_MAX_UPLOAD_BYTES} bytes")
 
     asset_id = str(uuid.uuid4())
     safe_name = safe_upload_filename(file.filename)
@@ -4579,7 +4884,7 @@ async def upload_workstation_media(
         original_filename=Path(file.filename or "file").name,
         stored_filename=stored_filename,
         stored_path=relative_data_path(media_path),
-        content_type=file.content_type or mimetypes.guess_type(safe_name)[0],
+        content_type=safe_uploaded_media_content_type(safe_name, file.content_type),
         size_bytes=len(contents),
     )
     write_client_files(WorkstationClient.get_by_id(client.id) or client)
@@ -4636,11 +4941,10 @@ async def get_workstation_media_file(asset_id: str) -> FileResponse:
     path = resolve_media_path(asset.stored_path)
     if path is None or not path.is_file():
         raise HTTPException(status_code=404, detail="Media file not found")
-    return FileResponse(
+    return uploaded_media_file_response(
         path,
-        media_type=asset.content_type or mimetypes.guess_type(path.name)[0] or "application/octet-stream",
         filename=asset.original_filename or path.name,
-        content_disposition_type="inline",
+        content_type=asset.content_type,
     )
 
 
@@ -4652,11 +4956,10 @@ async def get_workstation_professional_photo_file(client_id: str, version: str) 
     path = professional_photo_root(client) / safe_version / "professional-photo.jpg"
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Professional photo not found")
-    return FileResponse(
+    return uploaded_media_file_response(
         path,
-        media_type="image/jpeg",
         filename=f"{client.folder_name}-{safe_version}-professional-photo.jpg",
-        content_disposition_type="inline",
+        content_type="image/jpeg",
     )
 
 

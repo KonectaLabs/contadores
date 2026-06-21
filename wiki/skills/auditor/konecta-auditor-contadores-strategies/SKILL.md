@@ -5,6 +5,10 @@ description: Add or adjust Contadores sequence strategies, weights, media payloa
 
 # Konecta Auditor Contadores Strategies
 
+> Contadores adaptation: this wiki-only auditor import has been adjusted for the
+> current Contadores repository layout. Use the commands below only from
+> `/Users/fgoiriz/private/repos/contadores`.
+
 ## Purpose
 Use this skill when adding a new Contadores sequence strategy, changing rollout weights, or debugging strategy assignment/statistics.
 
@@ -49,10 +53,10 @@ Stats count:
 ## Validation
 Run:
 ```bash
-uv run --with pytest pytest backend/tests/test_contadores.py -q
-cd bot && uv run --with pytest pytest tests/test_contadores_flow.py -q
-node --check frontend/static/js/app.js
-uv run python -m py_compile backend/database.py backend/endpoints/contadores.py backend/contadores_strategies/__init__.py
+PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 uv run --group dev pytest -p no:cacheprovider src/backend/tests/test_contadores.py -q
+cd src/bot && PYTHONDONTWRITEBYTECODE=1 uv run --with pytest pytest -p no:cacheprovider tests/test_contadores_flow.py -q
+cd src/frontend && npm run build
+PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 uv run python -m py_compile src/backend/database.py src/backend/endpoints/contadores.py src/backend/contadores_strategies/__init__.py
 ```
 
 ## Guardrails

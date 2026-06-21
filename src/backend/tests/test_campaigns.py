@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+import backend.endpoints.campaigns as campaigns_endpoints
+import backend.database as database_module
 from backend.database import (
     ClientLeadDelivery,
     ClientLeadDeliveryStatus,
@@ -21,7 +23,8 @@ from backend.database import (
 )
 from backend import meta_ads_lifecycle
 from backend.main import app
-from backend.tests.test_contadores import configure_contadores_db
+from backend.meta_conversions import MetaConversionResult
+from backend.tests.support import configure_contadores_db
 
 
 def campaign_payload() -> dict[str, object]:
@@ -107,8 +110,13 @@ def test_campaign_api_creates_converted_client_and_queues_delivery(monkeypatch, 
         public_response = client.get(f"/api/public/campaigns/{campaign['public_slug']}")
         assert public_response.status_code == 200
         public_campaign = public_response.json()["campaign"]
+        assert "id" not in public_campaign
+        assert "status" not in public_campaign
         assert "name" not in public_campaign
         assert public_campaign["form_schema"]["fields"][0]["id"] == "full_name"
+        public_html = client.get(f"/c/{campaign['public_slug']}/").text
+        assert f'"id": "{campaign["id"]}"' not in public_html
+        assert f'"status": "{campaign["status"]}"' not in public_html
 
         submit_response = client.post(
             f"/api/public/campaigns/{campaign['public_slug']}/submissions",
@@ -120,12 +128,24 @@ def test_campaign_api_creates_converted_client_and_queues_delivery(monkeypatch, 
                     "necesidad": "Quiero mas informacion",
                 },
                 "idempotency_key": "campaign-submit-1",
+                "tracking": {
+                    "href": "https://forms.example/c/abc?email=lead@example.com&utm_source=bad#private",
+                    "referrer": "https://ads.example/path?fbclid=secret#frag",
+                    "utm_source": "facebook",
+                    "utm_medium": "paid",
+                    "utm_campaign": "junio",
+                    "fbp": "fb.1.123",
+                    "fbc": "fb.1.456",
+                    "unexpected": "secret",
+                },
             },
         )
         assert submit_response.status_code == 200, submit_response.text
         submitted = submit_response.json()
         assert submitted["delivery_queued"] is True
-        assert set(submitted["submission"]) == {"id", "created_at"}
+        assert submitted["event_id"].startswith("evt_")
+        assert set(submitted["submission"]) == {"event_id", "created_at"}
+        assert submitted["submission"]["event_id"] == submitted["event_id"]
 
         duplicate_response = client.post(
             f"/api/public/campaigns/{campaign['public_slug']}/submissions",
@@ -139,14 +159,25 @@ def test_campaign_api_creates_converted_client_and_queues_delivery(monkeypatch, 
             },
         )
         assert duplicate_response.status_code == 200
-        assert duplicate_response.json()["duplicate"] is True
+        duplicate_payload = duplicate_response.json()
+        assert duplicate_payload["duplicate"] is True
+        assert duplicate_payload["event_id"] == submitted["event_id"]
         assert "meta_event_response" not in duplicate_response.text
+        assert "submission_id" not in duplicate_response.text
 
         submissions = LeadCaptureSubmission.list_by_campaign(campaign["id"])
         deliveries = ClientLeadDelivery.list_by_source(campaign["client_lead_source_id"])
         assert len(submissions) == 1
         assert len(deliveries) == 1
         assert submissions[0].email == "leadñ@gmail.com"
+        assert submissions[0].tracking["href"] == "https://forms.example/c/abc"
+        assert submissions[0].tracking["referrer"] == "https://ads.example/path"
+        assert submissions[0].tracking["utm_source"] == "facebook"
+        assert submissions[0].tracking["utm_medium"] == "paid"
+        assert submissions[0].tracking["utm_campaign"] == "junio"
+        assert submissions[0].tracking["fbp"] == "fb.1.123"
+        assert submissions[0].tracking["fbc"] == "fb.1.456"
+        assert "unexpected" not in submissions[0].tracking
         assert deliveries[0].raw_row["email"] == "leadñ@gmail.com"
         assert deliveries[0].raw_row["necesidad"] == "Quiero mas informacion"
         assert submissions[0].meta_event_status == "disabled"
@@ -178,11 +209,18 @@ def test_campaign_delete_hard_removes_owned_rows(monkeypatch, tmp_path) -> None:
             },
         )
         assert submit_response.status_code == 200, submit_response.text
-        submission_id = submit_response.json()["submission"]["id"]
+        submission_id = LeadCaptureSubmission.list_by_campaign(campaign["id"])[0].id
         source_id = campaign["client_lead_source_id"]
         platform_campaign_id = campaign["platform_ad_campaign_id"]
 
-        PlatformCreativeAsset.add(campaign_id=platform_campaign_id, client_id=campaign["client_id"], file_path="media/test.png")
+        creative_file = database_module.DATA_DIR / "platform" / "creative-assets" / "test.png"
+        creative_file.parent.mkdir(parents=True, exist_ok=True)
+        creative_file.write_bytes(b"creative")
+        PlatformCreativeAsset.add(
+            campaign_id=platform_campaign_id,
+            client_id=campaign["client_id"],
+            file_path=f"data/platform/creative-assets/{creative_file.name}",
+        )
         PlatformMetaPublishAttempt.add(
             campaign_id=platform_campaign_id,
             request_payload={"campaign_id": platform_campaign_id},
@@ -219,6 +257,7 @@ def test_campaign_delete_hard_removes_owned_rows(monkeypatch, tmp_path) -> None:
         assert deleted["client_lead_deliveries"] == 1
         assert deleted["platform_ad_campaigns"] == 1
         assert deleted["platform_creative_assets"] == 1
+        assert deleted["platform_creative_asset_files"] == 1
         assert deleted["platform_meta_publish_attempts"] == 1
         assert deleted["platform_client_updates"] == 1
 
@@ -228,6 +267,7 @@ def test_campaign_delete_hard_removes_owned_rows(monkeypatch, tmp_path) -> None:
         assert ClientLeadDelivery.list_by_source(source_id) == []
         assert PlatformAdCampaign.get_by_id(platform_campaign_id) is None
         assert PlatformCreativeAsset.list_recent(campaign_id=platform_campaign_id) == []
+        assert not creative_file.exists()
         assert PlatformMetaPublishAttempt.list_recent(campaign_id=platform_campaign_id) == []
         assert PlatformClientUpdate.list_recent(campaign_id=campaign["id"]) == []
         assert PlatformEvent.list_recent(target_type="lead_capture_campaign", target_id=campaign["id"]) == []
@@ -321,6 +361,43 @@ def test_deleting_campaign_blocks_when_live_meta_pause_fails(monkeypatch, tmp_pa
         assert LeadCaptureCampaign.get_by_id(campaign["id"]) is not None
 
 
+def test_pausing_campaign_blocks_when_live_meta_pause_fails(monkeypatch, tmp_path) -> None:
+    """Patch should not hide a campaign locally if known Meta spend could remain live."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("META_MARKETING_LIVE_WRITES_ENABLED", "true")
+    monkeypatch.setenv("META_MARKETING_ACCESS_TOKEN", "test-token")
+    monkeypatch.setenv("META_MARKETING_API_VERSION", "v25.0")
+
+    def fake_graph_post(path: str, params: dict[str, object]) -> dict[str, object]:
+        raise RuntimeError(f"Meta rejected pause for {path}")
+
+    monkeypatch.setattr(
+        meta_ads_lifecycle,
+        "_default_graph_poster",
+        lambda *, api_version, access_token: fake_graph_post,
+    )
+
+    with TestClient(app) as client:
+        create_response = client.post("/api/campaigns", json=campaign_payload())
+        assert create_response.status_code == 200, create_response.text
+        campaign = create_response.json()["campaign"]
+        LeadCaptureCampaign.update(campaign["id"], meta_campaign_id="meta-campaign-patch")
+
+        pause_response = client.patch(f"/api/campaigns/{campaign['id']}", json={"status": "paused"})
+        assert pause_response.status_code == 409
+        assert "not fully paused" in pause_response.json()["detail"]
+
+    refreshed = LeadCaptureCampaign.get_by_id(campaign["id"])
+    assert refreshed is not None
+    assert refreshed.status == "active"
+    pause_events = [
+        event for event in PlatformEvent.list_recent(target_type="lead_capture_campaign", limit=20)
+        if event.event_type == "meta_campaign.pause_checked"
+    ]
+    assert pause_events
+    assert pause_events[0].payload_dict()["status"] == "failed"
+
+
 def test_public_submission_queues_delivery_for_each_campaign_contact(monkeypatch, tmp_path) -> None:
     """Campaign Delivery should queue one notification row per configured recipient."""
     configure_contadores_db(monkeypatch, tmp_path)
@@ -380,7 +457,8 @@ def test_public_submission_queues_delivery_for_each_campaign_contact(monkeypatch
         receipt = submit_response.json()
         assert receipt["delivery_queued"] is True
 
-        delivery_prefix = f"campaign-submission:{receipt['submission']['id']}"
+        stored_submission = LeadCaptureSubmission.list_by_campaign(campaign["id"])[0]
+        delivery_prefix = f"campaign-submission:{stored_submission.id}"
         deliveries = ClientLeadDelivery.list_by_source_row_key_prefix(delivery_prefix)
         delivery_statuses = {
             (
@@ -601,8 +679,9 @@ def test_public_submission_skips_delivery_when_campaign_delivery_disabled(monkey
         receipt = submit_response.json()
         assert receipt["delivery_queued"] is False
 
+        stored_submission = LeadCaptureSubmission.list_by_campaign(campaign["id"])[0]
         deliveries = ClientLeadDelivery.list_by_source_row_key_prefix(
-            f"campaign-submission:{receipt['submission']['id']}"
+            f"campaign-submission:{stored_submission.id}"
         )
         assert deliveries == []
 
@@ -939,14 +1018,23 @@ def test_public_form_html_escapes_configured_schema(monkeypatch, tmp_path) -> No
         assert create_response.status_code == 200
         campaign = create_response.json()["campaign"]
 
-        html_response = client.get(f"/c/{campaign['public_slug']}")
+        redirect_response = client.get(f"/c/{campaign['public_slug']}", follow_redirects=False)
+        html_response = client.get(f"/c/{campaign['public_slug']}/")
+        assert redirect_response.status_code == 307
+        assert redirect_response.headers["cache-control"] == "no-store"
         assert html_response.status_code == 200
+        assert html_response.headers["cache-control"] == "no-store"
         html = html_response.text
 
         assert '</script><div id="owned">' not in html
         assert "Nombre Interno De Campania" not in html
         assert "<title>Consulta</title>" in html
         assert "campaignTitle" not in html
+        assert "validEmail" in html
+        assert "validPhone" in html
+        assert "Revisa el WhatsApp" in html
+        assert "Revisa el email" in html
+        assert "Elegi una opcion" in html
         assert "${option}</button>" not in html
         assert ">OK</button>" not in html
         assert "Siguiente" in html
@@ -954,6 +1042,88 @@ def test_public_form_html_escapes_configured_schema(monkeypatch, tmp_path) -> No
         assert "requestSubmit()" in html
         assert "escapeHtml(field.label || field.id)" in html
         assert "escapeAttr(option)" in html
+
+
+def test_public_form_presentation_fields_are_safe_and_public(monkeypatch, tmp_path) -> None:
+    """Lead-facing presentation copy should be configurable without exposing internal names."""
+    configure_contadores_db(monkeypatch, tmp_path)
+
+    payload = campaign_payload()
+    payload["name"] = "Nombre Interno Super Secreto"
+    payload["campaign_info"] = {
+        "public_presentation": {
+            "title": 'Consulta & ayuda <script>alert("x")</script>',
+            "eyebrow": "Turnos privados",
+            "subtitle": "Contanos que paso y te respondemos por WhatsApp.",
+            "trust_cue": "Sin costo inicial <img src=x>",
+            "submit_label": "Enviar consulta",
+            "theme": "unknown-theme",
+        }
+    }
+
+    with TestClient(app) as client:
+        create_response = client.post("/api/campaigns", json=payload)
+        assert create_response.status_code == 200, create_response.text
+        campaign = create_response.json()["campaign"]
+        public_response = client.get(f"/api/public/campaigns/{campaign['public_slug']}")
+        html_response = client.get(f"/c/{campaign['public_slug']}/")
+
+    presentation = campaign["campaign_info"]["public_presentation"]
+    assert presentation["title"].startswith("Consulta & ayuda")
+    assert "<script>" not in presentation["title"]
+    assert presentation["trust_cue"] == "Sin costo inicial"
+    assert presentation["theme"] == "default"
+
+    assert public_response.status_code == 200
+    public_campaign = public_response.json()["campaign"]
+    assert "name" not in public_campaign
+    assert public_campaign["public_presentation"]["submit_label"] == "Enviar consulta"
+    assert public_campaign["public_presentation"]["theme"] == "default"
+
+    html = html_response.text
+    assert "Nombre Interno Super Secreto" not in html
+    assert "<title>Consulta &amp; ayuda alert(&quot;x&quot;)</title>" in html
+    assert '<body class="theme-default">' in html
+    assert "Turnos privados" in html
+    assert "Enviar consulta" in html
+    assert '<img src=x>' not in html
+    assert "<script>alert" not in html
+    assert "</script><" not in html
+    assert "Sin costo inicial" in html
+
+
+def test_campaign_delivery_presets_can_come_from_server_config(monkeypatch, tmp_path) -> None:
+    """The frontend should read Delivery presets from the server, not ship them itself."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    monkeypatch.setenv(
+        "CAMPAIGN_DELIVERY_PRESETS_JSON",
+        '[{"id":"ops","label":"Operaciones","phone":"549110001111"}]',
+    )
+
+    payload = campaign_payload()
+    payload["delivery_config"] = {
+        "enabled": True,
+        "contacts": [
+            {"id": "client", "kind": "client"},
+            {"id": "ops"},
+        ],
+    }
+
+    with TestClient(app) as client:
+        presets_response = client.get("/api/campaigns/delivery/presets")
+        assert presets_response.status_code == 200
+        assert presets_response.json()["presets"] == [
+            {"id": "ops", "label": "Operaciones", "phone": "549110001111", "kind": "preset"}
+        ]
+
+        create_response = client.post("/api/campaigns", json=payload)
+        assert create_response.status_code == 200, create_response.text
+        campaign = create_response.json()["campaign"]
+        assert [item["id"] for item in campaign["delivery_config"]["contacts"]] == ["client", "ops"]
+        assert {item["recipient_phone"] for item in campaign["delivery_sources"]} == {
+            "+5491123456789",
+            "549110001111",
+        }
 
 
 def test_public_idempotency_is_campaign_scoped_and_phone_dedupes(monkeypatch, tmp_path) -> None:
@@ -1002,6 +1172,169 @@ def test_public_idempotency_is_campaign_scoped_and_phone_dedupes(monkeypatch, tm
         assert repeat_phone.status_code == 200
         assert repeat_phone.json()["duplicate"] is True
         assert len(ClientLeadDelivery.list_by_source(first_campaign["client_lead_source_id"])) == 1
+
+
+def test_public_submission_idempotency_insert_race_returns_existing(monkeypatch, tmp_path) -> None:
+    """A duplicate idempotency insert race should resolve to the already stored row."""
+    configure_contadores_db(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        create_response = client.post("/api/campaigns", json=campaign_payload())
+        assert create_response.status_code == 200
+        campaign = create_response.json()["campaign"]
+
+    scoped_key = f"lead-capture:{campaign['id']}:raced-browser-key"
+    existing = LeadCaptureSubmission.add(
+        campaign_id=campaign["id"],
+        client_id=campaign["client_id"],
+        idempotency_key=scoped_key,
+        full_name="Lead Existente",
+        phone="+5491199988877",
+        email=None,
+        answers={"full_name": "Lead Existente", "phone": "+5491199988877", "necesidad": "Info"},
+        tracking={},
+        meta_event_status="pending",
+    )
+
+    original_get = LeadCaptureSubmission.get_by_idempotency_key
+    calls = {"count": 0}
+
+    def race_get(cls, idempotency_key: str | None) -> LeadCaptureSubmission | None:
+        del cls
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return None
+        return original_get(idempotency_key)
+
+    monkeypatch.setattr(LeadCaptureSubmission, "get_by_idempotency_key", classmethod(race_get))
+
+    raced = LeadCaptureSubmission.add(
+        campaign_id=campaign["id"],
+        client_id=campaign["client_id"],
+        idempotency_key=scoped_key,
+        full_name="Lead Carrera",
+        phone="+5491199988878",
+        email=None,
+        answers={"full_name": "Lead Carrera", "phone": "+5491199988878", "necesidad": "Info"},
+        tracking={},
+        meta_event_status="pending",
+    )
+
+    assert raced.id == existing.id
+    assert len(LeadCaptureSubmission.list_by_campaign(campaign["id"])) == 1
+
+
+def test_public_submission_retry_completes_missing_side_effects(monkeypatch, tmp_path) -> None:
+    """Idempotent retries should repair missing Delivery and Meta side effects."""
+    configure_contadores_db(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        create_response = client.post("/api/campaigns", json=campaign_payload())
+        assert create_response.status_code == 200
+        campaign = create_response.json()["campaign"]
+
+        scoped_key = f"lead-capture:{campaign['id']}:partial-submit"
+        partial = LeadCaptureSubmission.add(
+            campaign_id=campaign["id"],
+            client_id=campaign["client_id"],
+            idempotency_key=scoped_key,
+            full_name="Lead Parcial",
+            phone="+5491199988877",
+            email=None,
+            answers={"full_name": "Lead Parcial", "phone": "+5491199988877", "necesidad": "Info"},
+            tracking={},
+            meta_event_status="pending",
+        )
+        assert ClientLeadDelivery.list_by_source_row_key_prefix(f"campaign-submission:{partial.id}") == []
+
+        retry_response = client.post(
+            f"/api/public/campaigns/{campaign['public_slug']}/submissions",
+            json={
+                "answers": {"full_name": "Lead Parcial", "phone": "+5491199988877", "necesidad": "Info"},
+                "idempotency_key": "partial-submit",
+            },
+        )
+        assert retry_response.status_code == 200, retry_response.text
+        receipt = retry_response.json()
+        assert receipt["duplicate"] is True
+        assert receipt["delivery_queued"] is True
+
+        refreshed = LeadCaptureSubmission.get_by_id(partial.id)
+        assert refreshed is not None
+        assert refreshed.client_lead_delivery_id
+        assert refreshed.meta_event_status == "disabled"
+        deliveries = ClientLeadDelivery.list_by_source_row_key_prefix(f"campaign-submission:{partial.id}")
+        assert len(deliveries) == 1
+        assert deliveries[0].delivery_status == ClientLeadDeliveryStatus.PENDING
+        assert PlatformEvent.get_by_idempotency_key(f"lead-capture-submission:{partial.id}") is not None
+
+
+def test_public_submission_throttle_drops_unique_abuse_before_side_effects(monkeypatch, tmp_path) -> None:
+    """Public throttling should accept quietly without inserting, delivering, or tracking Meta."""
+    configure_contadores_db(monkeypatch, tmp_path)
+    campaigns_endpoints._reset_public_submission_throttle()
+    monkeypatch.setenv("PUBLIC_SUBMISSION_THROTTLE_ENABLED", "true")
+    monkeypatch.setenv("PUBLIC_SUBMISSION_IP_MAX", "1")
+    monkeypatch.setenv("PUBLIC_SUBMISSION_CAMPAIGN_MAX", "1")
+    meta_calls: list[str] = []
+
+    def fake_meta_event(**kwargs) -> MetaConversionResult:
+        meta_calls.append(str(kwargs["event_id"]))
+        return MetaConversionResult(status="sent", event_id=str(kwargs["event_id"]), live_write_executed=True)
+
+    monkeypatch.setattr(campaigns_endpoints, "send_meta_conversion_event", fake_meta_event)
+
+    with TestClient(app) as client:
+        create_response = client.post(
+            "/api/campaigns",
+            json={**campaign_payload(), "meta_pixel_id": "pixel-1", "meta_events_enabled": True},
+        )
+        assert create_response.status_code == 200
+        campaign = create_response.json()["campaign"]
+        submit_url = f"/api/public/campaigns/{campaign['public_slug']}/submissions"
+
+        first_response = client.post(
+            submit_url,
+            json={
+                "answers": {"full_name": "Lead Uno", "phone": "+5491199988877", "necesidad": "Info"},
+                "idempotency_key": "throttle-submit-1",
+            },
+        )
+        assert first_response.status_code == 200, first_response.text
+        first_receipt = first_response.json()
+        assert first_receipt["duplicate"] is False
+        assert len(meta_calls) == 1
+
+        retry_response = client.post(
+            submit_url,
+            json={
+                "answers": {"full_name": "Lead Uno", "phone": "+5491199988877", "necesidad": "Info"},
+                "idempotency_key": "throttle-submit-1",
+            },
+        )
+        assert retry_response.status_code == 200
+        assert retry_response.json()["duplicate"] is True
+        assert len(meta_calls) == 1
+
+        throttled_response = client.post(
+            submit_url,
+            json={
+                "answers": {"full_name": "Lead Dos", "phone": "+5491199988878", "necesidad": "Info"},
+                "idempotency_key": "throttle-submit-2",
+            },
+        )
+        assert throttled_response.status_code == 200
+        throttled_receipt = throttled_response.json()
+        assert throttled_receipt["accepted"] is True
+        assert throttled_receipt["duplicate"] is False
+        assert "submission" not in throttled_receipt
+        assert throttled_receipt["delivery_queued"] is False
+
+        submissions = LeadCaptureSubmission.list_by_campaign(campaign["id"])
+        deliveries = ClientLeadDelivery.list_by_source(campaign["client_lead_source_id"])
+        assert len(submissions) == 1
+        assert len(deliveries) == 1
+        assert len(meta_calls) == 1
 
 
 def test_agent_campaign_endpoints_support_dry_run_and_submissions(monkeypatch, tmp_path) -> None:
@@ -1110,7 +1443,10 @@ def test_campaign_meta_tracking_uses_automatic_pixel(monkeypatch, tmp_path) -> N
         public_html = client.get(f"/c/{campaign['public_slug']}/").text
         assert "https://connect.facebook.net/en_US/fbevents.js" in public_html
         assert "pixel-auto-1234" in public_html
-        assert "eventID: String(payload.submission.id)" in public_html
+        assert "eventID: String(payload.event_id)" in public_html
+        assert "payload.submission.id" not in public_html
+        assert "window.location.href," not in public_html
+        assert "document.referrer," not in public_html
 
         submit_response = client.post(
             f"/api/public/campaigns/{campaign['public_slug']}/submissions",
@@ -1120,8 +1456,10 @@ def test_campaign_meta_tracking_uses_automatic_pixel(monkeypatch, tmp_path) -> N
             },
         )
         assert submit_response.status_code == 200
+        event_id = submit_response.json()["event_id"]
+        assert event_id.startswith("evt_")
         submission = LeadCaptureSubmission.list_by_campaign(campaign["id"])[0]
-        assert submission.meta_event_id == submission.id
+        assert submission.meta_event_id == event_id
         assert submission.meta_event_status == "blocked"
 
 

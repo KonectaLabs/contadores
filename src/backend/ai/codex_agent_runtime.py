@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -21,11 +23,58 @@ from backend.config import (
     OPENAI_API_KEY,
 )
 from backend.database import AgentRun, AgentToolCall
+from backend.redaction import redact_json, redact_sensitive_text
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 AGENT_HARNESS_SKILL = REPO_ROOT / ".codex" / "skills" / "contadores-agent-harness" / "SKILL.md"
 TOOL_RUNNER_MODULE = "backend.ai.codex_agent_runtime"
+AGENT_CONTEXT_RETENTION_DAYS = 30
+
+
+def _env_int(name: str) -> int:
+    try:
+        return max(0, int(os.getenv(name, "0") or "0"))
+    except ValueError:
+        return 0
+
+
+def normalize_codex_usage(usage: Any, *, model: str = "", provider: str = "codex") -> dict[str, Any]:
+    """Return bounded usage metadata, never prompts or responses."""
+    if usage is None:
+        return {}
+    payload = usage if isinstance(usage, dict) else getattr(usage, "__dict__", {})
+    if not isinstance(payload, dict):
+        return {}
+    keys = {
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "cached_input_tokens",
+        "reasoning_output_tokens",
+        "total",
+    }
+    normalized = {key: int(value) for key, value in payload.items() if key in keys and isinstance(value, int)}
+    if "total_tokens" not in normalized and "total" in normalized:
+        normalized["total_tokens"] = normalized["total"]
+    if model:
+        normalized["model"] = model
+    normalized["provider"] = provider
+    return normalized
+
+
+def codex_budget_status(usage: dict[str, Any]) -> str:
+    """Classify one run against optional token budget env vars."""
+    total = int(usage.get("total_tokens") or 0)
+    if total <= 0:
+        return "unknown"
+    hard = _env_int("CODEX_RUN_HARD_TOKEN_BUDGET")
+    soft = _env_int("CODEX_RUN_SOFT_TOKEN_BUDGET")
+    if hard and total >= hard:
+        return "hard_exceeded"
+    if soft and total >= soft:
+        return "soft_exceeded"
+    return "ok"
 
 
 @dataclass(frozen=True)
@@ -70,6 +119,68 @@ def agent_memory_path(target_type: str, target_id: str) -> Path:
     root = database_module.DATA_DIR / "agent-memory" / _safe_memory_segment(target_type)
     root.mkdir(parents=True, exist_ok=True)
     return root / f"{_safe_memory_segment(target_id)}.md"
+
+
+def _path_age_days(path: Path, *, now: datetime | None = None) -> float:
+    current = now or datetime.now(timezone.utc)
+    modified = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+    return (current - modified).total_seconds() / 86400
+
+
+def agent_artifact_retention_report(*, retention_days: int = AGENT_CONTEXT_RETENTION_DAYS) -> dict[str, Any]:
+    """Return a dry-run report for agent artifact retention."""
+    runs_root = database_module.DATA_DIR / "agent-runs"
+    memory_root = database_module.DATA_DIR / "agent-memory"
+    run_dirs = [path for path in runs_root.glob("*") if path.is_dir()] if runs_root.exists() else []
+    candidates: list[dict[str, Any]] = []
+    for run_dir in run_dirs:
+        row = AgentRun.get_by_id(run_dir.name)
+        if row is None or row.status not in {"completed", "failed"}:
+            continue
+        age_days = _path_age_days(run_dir)
+        if age_days < retention_days:
+            continue
+        candidates.append(
+            {
+                "run_id": run_dir.name,
+                "status": row.status,
+                "age_days": round(age_days, 1),
+                "files": sorted(path.name for path in run_dir.iterdir() if path.name in {"context.md", "memory.md", "tools.json"}),
+            }
+        )
+    return {
+        "retention_days": retention_days,
+        "classes": {
+            "audit_metadata": ["agent_runs", "agent_tool_calls"],
+            "sensitive_context": ["data/agent-runs/*/context.md", "memory.md", "tools.json"],
+            "durable_memory": ["data/agent-memory/**/*.md"],
+        },
+        "agent_run_dirs": len(run_dirs),
+        "agent_memory_files": len(list(memory_root.glob("**/*.md"))) if memory_root.exists() else 0,
+        "prune_candidates": candidates,
+    }
+
+
+def prune_agent_run_artifacts(*, retention_days: int = AGENT_CONTEXT_RETENTION_DAYS, dry_run: bool = True) -> dict[str, Any]:
+    """Prune old completed/failed run context files; active runs are preserved."""
+    report = agent_artifact_retention_report(retention_days=retention_days)
+    removed: list[str] = []
+    if not dry_run:
+        for candidate in report["prune_candidates"]:
+            run_dir = database_module.DATA_DIR / "agent-runs" / candidate["run_id"]
+            for name in candidate["files"]:
+                path = run_dir / name
+                if path.exists():
+                    path.unlink()
+                    removed.append(str(path))
+            summary_path = run_dir / "retention-summary.json"
+            summary_path.write_text(
+                json.dumps({"retention_days": retention_days, "removed_files": candidate["files"]}, ensure_ascii=True, indent=2),
+                encoding="utf-8",
+            )
+    report["dry_run"] = dry_run
+    report["removed"] = removed
+    return report
 
 
 def read_agent_memory_text(
@@ -155,6 +266,8 @@ How to use tools:
 - Command shape:
   uv run python -m {TOOL_RUNNER_MODULE} call --run-id {run_id} --tool TOOL_NAME --arguments-json 'JSON_OBJECT'
 - Tool calls are audited and are the product side effects.
+- Live tool calls that write local state or providers require idempotency_key.
+  Use a stable key from run id + target id + action + exact content.
 - You may call more than one tool if that is best for the client.
 - Use read_agent_memory/write_agent_memory for durable notes that the next run
   should know.
@@ -284,7 +397,7 @@ async def run_codex_agent(
                     context_dir / "runtime-events.jsonl",
                     {
                         "event": "chatgpt_fallback_to_api_key",
-                        "error": f"{chatgpt_error.__class__.__name__}: {chatgpt_error}",
+                        "error": redact_sensitive_text(f"{chatgpt_error.__class__.__name__}: {chatgpt_error}", limit=500),
                     },
                 )
         else:
@@ -301,12 +414,15 @@ async def run_codex_agent(
                 on_turn_started=on_turn_started,
             )
         tool_calls = AgentToolCall.list_by_run(run_id)
+        usage = normalize_codex_usage(codex_result.usage, model=codex_result.model)
         AgentRun.finish(
             run_id,
             status="completed",
             final_response=codex_result.final_response,
             codex_thread_id=codex_result.thread_id,
             codex_turn_id=codex_result.turn_id,
+            usage=usage,
+            budget_status=codex_budget_status(usage),
         )
         return CodexAgentRunResult(
             run_id=run_id,
@@ -318,7 +434,7 @@ async def run_codex_agent(
         AgentRun.finish(
             run_id,
             status="failed",
-            error=f"{error.__class__.__name__}: {error}",
+            error=redact_sensitive_text(f"{error.__class__.__name__}: {error}", limit=12000),
         )
         raise
 
@@ -345,7 +461,7 @@ def _call_tool_from_cli(argv: list[str]) -> int:
     except json.JSONDecodeError as error:
         payload = {"_json_error": str(error), "_raw": args.arguments_json}
     result = call_tool(run_id=args.run_id, tool_name=args.tool, arguments=payload)
-    print(json.dumps(result, ensure_ascii=True, default=str))
+    print(json.dumps(redact_json(result), ensure_ascii=True, default=str))
     return 0 if result.get("ok") else 1
 
 

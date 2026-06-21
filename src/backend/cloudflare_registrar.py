@@ -596,10 +596,14 @@ def list_zones(name: str | None = None) -> None:
 def create_zone(
     domain: str,
     zone_type: str = typer.Option("full", "--type", help="full, partial, secondary, or internal."),
+    yes: bool = typer.Option(False, help="Confirm the live Cloudflare zone write."),
 ) -> None:
     """Create a Cloudflare DNS zone."""
     if zone_type not in {"full", "partial", "secondary", "internal"}:
         raise typer.BadParameter("Use full, partial, secondary, or internal.", param_hint="--type")
+    if not yes:
+        print_json({"domain": normalize_domain(domain), "dry_run": True, "type": zone_type, "next_step": "Rerun with --yes."})
+        return
     run_client_action(lambda client: print_json(client.create_zone(domain, zone_type=zone_type)))
 
 
@@ -615,21 +619,37 @@ def add_record(
     dns_only: bool = False,
     priority: int | None = None,
     comment: str | None = None,
+    yes: bool = typer.Option(False, help="Confirm the live Cloudflare DNS write."),
 ) -> None:
     """Create a DNS record in a zone."""
+    payload = build_dns_record_payload(
+        record_type=record_type,
+        name=_dns_record_name(name, zone),
+        content=content,
+        ttl=ttl,
+        proxied=_dns_record_proxied(proxied, dns_only),
+        priority=priority,
+        comment=comment,
+    )
+    if not yes and zone_id:
+        print_json({"dry_run": True, "zone_id": zone_id, "record": payload, "next_step": "Rerun with --yes."})
+        return
 
     def action(client: CloudflareClient) -> None:
         selected_zone_id = _resolve_zone_id(client, zone_id, zone)
+        if not yes:
+            print_json({"dry_run": True, "zone_id": selected_zone_id, "record": payload, "next_step": "Rerun with --yes."})
+            return
         print_json(
             client.create_dns_record(
                 zone_id=selected_zone_id,
-                record_type=record_type,
-                name=_dns_record_name(name, zone),
-                content=content,
-                ttl=ttl,
-                proxied=_dns_record_proxied(proxied, dns_only),
-                priority=priority,
-                comment=comment,
+                record_type=payload["type"],
+                name=payload["name"],
+                content=payload["content"],
+                ttl=payload["ttl"],
+                proxied=payload.get("proxied"),
+                priority=payload.get("priority"),
+                comment=payload.get("comment"),
             )
         )
 
@@ -648,21 +668,37 @@ def upsert_record(
     dns_only: bool = False,
     priority: int | None = None,
     comment: str | None = None,
+    yes: bool = typer.Option(False, help="Confirm the live Cloudflare DNS write."),
 ) -> None:
     """Create or update one DNS record in a zone."""
+    payload = build_dns_record_payload(
+        record_type=record_type,
+        name=_dns_record_name(name, zone),
+        content=content,
+        ttl=ttl,
+        proxied=_dns_record_proxied(proxied, dns_only),
+        priority=priority,
+        comment=comment,
+    )
+    if not yes and zone_id:
+        print_json({"dry_run": True, "zone_id": zone_id, "record": payload, "next_step": "Rerun with --yes."})
+        return
 
     def action(client: CloudflareClient) -> None:
         selected_zone_id = _resolve_zone_id(client, zone_id, zone)
+        if not yes:
+            print_json({"dry_run": True, "zone_id": selected_zone_id, "record": payload, "next_step": "Rerun with --yes."})
+            return
         print_json(
             client.upsert_dns_record(
                 zone_id=selected_zone_id,
-                record_type=record_type,
-                name=_dns_record_name(name, zone),
-                content=content,
-                ttl=ttl,
-                proxied=_dns_record_proxied(proxied, dns_only),
-                priority=priority,
-                comment=comment,
+                record_type=payload["type"],
+                name=payload["name"],
+                content=payload["content"],
+                ttl=payload["ttl"],
+                proxied=payload.get("proxied"),
+                priority=payload.get("priority"),
+                comment=payload.get("comment"),
             )
         )
 

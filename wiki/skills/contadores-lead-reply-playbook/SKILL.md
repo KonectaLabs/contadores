@@ -304,9 +304,10 @@ scheduling details that Facu must coordinate.
 
 When the runtime cannot answer a factual/commercial lead question safely, it
 creates an `unanswered_lead_question` email ticket instead of guessing. The
-operator replies to that email with the exact WhatsApp text to send; the backend
-sends that text to the lead and appends it to
-`references/operator-learned-answers.md` so similar questions can be answered
+operator reply must start with `Respuesta:` followed by the exact WhatsApp text
+to send. The backend rejects ambiguous, quoted, signed, or oversized email
+bodies before queueing WhatsApp; valid replies are sent to the lead and appended
+to `references/operator-learned-answers.md` so similar questions can be answered
 next time.
 
 The bot does not send calendar links. It collects email, day, time, and timezone

@@ -135,6 +135,107 @@ def test_ensure_contact_inbox_keeps_existing_thread_on_current_inbox(monkeypatch
     assert state.inbox_id == "legacy-thread-inbox@agentmail.to"
 
 
+def test_ensure_webhook_skips_writes_by_default() -> None:
+    provider = AgentMailProvider()
+    provider.webhook_url = "https://bot.example.com/webhooks/agentmail"
+
+    class FakeWebhooksApi:
+        async def list(self, **kwargs):
+            raise AssertionError("webhook list should not run without provisioning gate")
+
+        async def create(self, **kwargs):
+            raise AssertionError("webhook create should not run without provisioning gate")
+
+        async def update(self, *args, **kwargs):
+            raise AssertionError("webhook update should not run without provisioning gate")
+
+    provider._client = SimpleNamespace(webhooks=FakeWebhooksApi())
+
+    asyncio.run(provider.ensure_webhook({"inbox-1"}))
+
+
+def test_ensure_webhook_allows_writes_when_provisioning_gate_is_enabled() -> None:
+    provider = AgentMailProvider()
+    provider.webhook_url = "https://bot.example.com/webhooks/agentmail"
+    provider.provisioning_writes_enabled = True
+    calls: list[dict[str, object]] = []
+
+    async def fake_find_webhook():
+        return None
+
+    class FakeWebhooksApi:
+        async def create(self, **kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(secret="whsec_test", inbox_ids=kwargs["inbox_ids"])
+
+    provider._find_webhook = fake_find_webhook
+    provider._client = SimpleNamespace(webhooks=FakeWebhooksApi())
+
+    asyncio.run(provider.ensure_webhook({"inbox-1"}))
+
+    assert calls == [
+        {
+            "url": "https://bot.example.com/webhooks/agentmail",
+            "event_types": ["message.received", "message.delivered", "message.bounced", "message.rejected"],
+            "inbox_ids": ["inbox-1"],
+            "client_id": "contadores-agentmail-webhook",
+        }
+    ]
+    assert provider.webhook_secret == "whsec_test"
+
+
+def test_sync_contact_inbox_display_name_skips_writes_by_default() -> None:
+    provider = AgentMailProvider()
+
+    class FakeInboxesApi:
+        async def get(self, inbox_id: str):
+            raise AssertionError("inbox get should not run without display-name gate")
+
+        async def update(self, inbox_id: str, **kwargs):
+            raise AssertionError("inbox update should not run without display-name gate")
+
+    provider._client = SimpleNamespace(inboxes=FakeInboxesApi())
+
+    asyncio.run(
+        provider._sync_contact_inbox_display_name(
+            inbox_id="inbox-1",
+            inbox_address="lead@agentmail.to",
+        )
+    )
+
+
+def test_sync_contact_inbox_display_name_allows_writes_when_gate_is_enabled() -> None:
+    provider = AgentMailProvider()
+    provider.sync_inbox_display_names_enabled = True
+    updates: list[dict[str, str]] = []
+
+    class FakeInboxesApi:
+        async def get(self, inbox_id: str):
+            assert inbox_id == "inbox-1"
+            return SimpleNamespace(display_name="Old")
+
+        async def update(self, inbox_id: str, **kwargs):
+            updates.append({"inbox_id": inbox_id, "display_name": kwargs["display_name"]})
+
+    provider._client = SimpleNamespace(inboxes=FakeInboxesApi())
+
+    asyncio.run(
+        provider._sync_contact_inbox_display_name(
+            inbox_id="inbox-1",
+            inbox_address="lead@agentmail.to",
+        )
+    )
+
+    assert updates == [{"inbox_id": "inbox-1", "display_name": "lead"}]
+
+
+def test_verify_webhook_payload_requires_configured_secret() -> None:
+    provider = AgentMailProvider()
+
+    with pytest.raises(RuntimeError, match="AgentMail webhook secret is not configured"):
+        provider.verify_webhook_payload(payload="{}", headers={})
+
+
 def test_poll_inbound_events_returns_received_messages_even_if_agentmail_archives_them() -> None:
     provider = AgentMailProvider()
     labels_by_message = {

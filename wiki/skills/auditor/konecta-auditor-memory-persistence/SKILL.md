@@ -5,6 +5,9 @@ description: Persistent memory discipline for Konecta Auditor. Use whenever a be
 
 # Konecta Auditor Memory Persistence
 
+> Historical import: this wiki-only file points to old Konecta Auditor memory
+> files. Do not update those paths while working in Contadores.
+
 ## Persist Process Improvements Immediately
 Update all relevant memory surfaces whenever a stable insight is discovered:
 - `/Users/fgoiriz/private/repos/konecta-auditor/.cursor/skills/konecta-auditor-development-memory/SKILL.md`

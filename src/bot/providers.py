@@ -36,6 +36,8 @@ DEFAULT_EMAIL_SUBJECT = "Inquiry"
 AGENTMAIL_ALERT_INBOX_CLIENT_ID = "contadores-alerts"
 AGENTMAIL_WEBHOOK_CLIENT_ID = "contadores-agentmail-webhook"
 AGENTMAIL_SHARED_INBOX_IDS_ENV = "AGENTMAIL_SHARED_INBOX_IDS"
+AGENTMAIL_PROVISIONING_WRITES_ENABLED_ENV = "AGENTMAIL_PROVISIONING_WRITES_ENABLED"
+AGENTMAIL_SYNC_INBOX_DISPLAY_NAMES_ENV = "AGENTMAIL_SYNC_INBOX_DISPLAY_NAMES"
 DEFAULT_AGENTMAIL_SHARED_INBOX_IDS = (
     "maximorodriguez@agentmail.to",
     "rodrio@agentmail.to",
@@ -49,6 +51,9 @@ AGENTMAIL_WEBHOOK_EVENT_TYPES = [
 ]
 WHATSAPP_MEDIA_TYPES = ("image", "video", "audio", "document", "sticker")
 EMAIL_LOCAL_DISALLOWED_CHARACTERS = set('<>,;:"[]\\()')
+DEFAULT_WA_INBOUND_MEDIA_MAX_BYTES = 25 * 1024 * 1024
+REPO_ROOT = Path(__file__).resolve().parents[2]
+OUTBOUND_MEDIA_TEMPLATE_ROOT = REPO_ROOT / "media" / "templates"
 
 
 class InvalidRecipientEmailError(ValueError):
@@ -58,6 +63,12 @@ class InvalidRecipientEmailError(ValueError):
 def normalize_email_address(value: str) -> str:
     """Normalize one email address candidate for provider validation."""
     return parseaddr(value or "")[1].strip().lower()
+
+
+def env_truthy(name: str, *, default: bool = False) -> bool:
+    """Return True for explicit env truthy values."""
+    fallback = "true" if default else "false"
+    return (os.getenv(name, fallback) or fallback).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _has_unsafe_email_character(value: str) -> bool:
@@ -467,6 +478,8 @@ class AgentMailProvider:
         self.domain = (os.getenv("AGENTMAIL_DOMAIN", "") or "").strip() or None
         self.webhook_url = self._resolve_webhook_url()
         self.webhook_secret = (os.getenv("AGENTMAIL_WEBHOOK_SECRET", "") or "").strip() or None
+        self.provisioning_writes_enabled = env_truthy(AGENTMAIL_PROVISIONING_WRITES_ENABLED_ENV)
+        self.sync_inbox_display_names_enabled = env_truthy(AGENTMAIL_SYNC_INBOX_DISPLAY_NAMES_ENV)
         self._alert_inbox_id_env = (
             (os.getenv("AGENTMAIL_ALERT_INBOX_ID", "") or "").strip()
             or (os.getenv("AGENTMAIL_CRM_INBOX_ID", "") or "").strip()
@@ -641,6 +654,8 @@ class AgentMailProvider:
         if not cleaned_inbox_ids:
             return
         if not self.webhook_url:
+            return
+        if not self.provisioning_writes_enabled:
             return
 
         async with self._webhook_lock:
@@ -938,6 +953,8 @@ class AgentMailProvider:
         clean_inbox_address = normalize_email_address(inbox_address)
         if not clean_inbox_id or not clean_inbox_address:
             return
+        if not self.sync_inbox_display_names_enabled:
+            return
         if clean_inbox_id in self._synced_contact_inbox_display_names:
             return
 
@@ -1079,6 +1096,11 @@ class WhatsAppProvider:
         self.max_inbound_age_seconds = self._resolve_inbound_max_age_seconds(
             os.getenv("WA_INBOUND_MAX_AGE_SECONDS", "").strip()
         )
+        self.max_inbound_media_bytes = self._resolve_positive_int(
+            os.getenv("WA_INBOUND_MEDIA_MAX_BYTES", "").strip(),
+            default=DEFAULT_WA_INBOUND_MEDIA_MAX_BYTES,
+        )
+        self.webhook_auto_register_enabled = env_truthy("WA_WEBHOOK_AUTO_REGISTER_ENABLED", default=False)
         self.business_phone_digits = self._normalize_phone_digits(
             os.getenv("WA_BUSINESS_PHONE", "").strip()
         )
@@ -1095,8 +1117,11 @@ class WhatsAppProvider:
         if not self.verify_token:
             logger.error("❌ WhatsApp webhooks are disabled because WA_VERIFY_TOKEN is missing.")
             return
+        if not self.app_secret:
+            logger.error("❌ WhatsApp webhooks are disabled because WA_APP_SECRET is required for webhook validation.")
+            return
         if not self.callback_url:
-            logger.warning("⚠️ WA_CALLBACK_URL is missing. Automatic webhook registration will be skipped.")
+            logger.warning("⚠️ WA_CALLBACK_URL is missing. Webhook auto-registration will be skipped.")
 
         self._session = httpx.AsyncClient(
             timeout=httpx.Timeout(30.0, connect=10.0),
@@ -1139,11 +1164,11 @@ class WhatsAppProvider:
             "server": app,
             "webhook_endpoint": self.webhook_endpoint,
             "verify_token": self.verify_token,
-            "app_secret": self.app_secret or None,
-            "validate_updates": bool(self.app_secret),
+            "app_secret": self.app_secret,
+            "validate_updates": True,
             "webhook_challenge_delay": self.webhook_challenge_delay,
         }
-        if self._callback_base_url:
+        if self._callback_base_url and self.webhook_auto_register_enabled:
             kwargs.update(
                 {
                     "callback_url": self._callback_base_url,
@@ -1193,6 +1218,14 @@ class WhatsAppProvider:
             return int(clean)
         logger.warning("Ignoring invalid WA_INBOUND_MAX_AGE_SECONDS value: %r. Using default 3600", raw)
         return 3600
+
+    @staticmethod
+    def _resolve_positive_int(raw: str, *, default: int) -> int:
+        """Resolve a positive integer env value."""
+        clean = (raw or "").strip()
+        if clean.isdigit() and int(clean) > 0:
+            return int(clean)
+        return default
 
     @staticmethod
     def _normalize_phone_digits(raw: str | None) -> str:
@@ -1439,6 +1472,19 @@ class WhatsAppProvider:
         except ValueError:
             return str(resolved)
 
+    def _inbound_media_size_bytes(self, media: Any) -> int | None:
+        """Return provider-reported media size when available."""
+        for attr in ("file_size", "size_bytes", "size"):
+            try:
+                value = getattr(media, attr, None)
+                if value is not None:
+                    parsed = int(value)
+                    if parsed > 0:
+                        return parsed
+            except (TypeError, ValueError):
+                continue
+        return None
+
     async def _download_inbound_media(self, *, media_type: str, media: Any) -> str | None:
         """Download inbound WhatsApp media into the shared data volume."""
         media_id = str(getattr(media, "id", "") or "").strip()
@@ -1448,6 +1494,11 @@ class WhatsAppProvider:
         data_dir = Path(os.getenv("DATA_DIR", Path.cwd() / "data")).expanduser().resolve()
         target_dir = data_dir / "contadores" / "inbound_media"
         target_dir.mkdir(parents=True, exist_ok=True)
+        max_bytes = getattr(self, "max_inbound_media_bytes", DEFAULT_WA_INBOUND_MEDIA_MAX_BYTES)
+        reported_size = self._inbound_media_size_bytes(media)
+        if reported_size is not None and reported_size > max_bytes:
+            logger.warning("Skipping oversized inbound WhatsApp media %s before download.", media_id)
+            return None
         filename = self._build_media_filename(
             media_type=media_type,
             media_id=media_id,
@@ -1455,7 +1506,19 @@ class WhatsAppProvider:
             filename=str(getattr(media, "filename", "") or "").strip() or None,
         )
         downloaded = await media.download(path=target_dir, filename=filename)
-        return self._relative_data_path(Path(downloaded))
+        if not downloaded:
+            return None
+        downloaded_path = Path(downloaded).expanduser().resolve()
+        try:
+            downloaded_path.relative_to(target_dir.resolve())
+        except ValueError:
+            logger.warning("Skipping inbound WhatsApp media saved outside the inbound media root.")
+            return None
+        if downloaded_path.stat().st_size > max_bytes:
+            downloaded_path.unlink(missing_ok=True)
+            logger.warning("Deleted oversized inbound WhatsApp media %s after download.", media_id)
+            return None
+        return self._relative_data_path(downloaded_path)
 
     def _extract_in_reply_to_message_id(self, msg: types.Message) -> str | None:
         """Extract replied outbound message id from inbound message context when present."""
@@ -1746,22 +1809,32 @@ class WhatsAppProvider:
         )
 
     def _resolve_local_media_path(self, media_path: str) -> Path:
-        """Resolve a repo/data media path from Docker or local bot cwd."""
+        """Resolve outbound media only from the data root or bundled templates."""
         raw_path = (media_path or "").strip()
         if not raw_path:
             raise RuntimeError("Missing WhatsApp media path")
 
-        candidate = Path(raw_path)
-        candidates = [candidate]
-        if not candidate.is_absolute():
-            candidates.append(Path.cwd() / candidate)
-            candidates.append(Path.cwd().parent / candidate)
+        data_dir = Path(os.getenv("DATA_DIR", Path.cwd() / "data")).expanduser().resolve()
+        template_dir = OUTBOUND_MEDIA_TEMPLATE_ROOT.resolve()
+        candidate = Path(raw_path).expanduser()
+        if candidate.is_absolute():
+            candidates = [candidate]
+        else:
+            parts = candidate.parts
+            if parts and parts[0] == "data":
+                candidates = [data_dir.joinpath(*parts[1:])]
+            elif len(parts) >= 2 and parts[:2] == ("media", "templates"):
+                candidates = [REPO_ROOT.joinpath(*parts)]
+            else:
+                raise RuntimeError("WhatsApp media path must be under data/ or media/templates/")
 
+        allowed_roots = [data_dir, template_dir]
         for item in candidates:
-            if item.exists() and item.is_file():
-                return item
+            resolved = item.resolve()
+            if any(resolved == root or resolved.is_relative_to(root) for root in allowed_roots) and resolved.is_file():
+                return resolved
 
-        raise RuntimeError(f"WhatsApp media file not found: {raw_path}")
+        raise RuntimeError("WhatsApp media file not found in allowed media roots")
 
     def _render_intro_message_text(
         self,

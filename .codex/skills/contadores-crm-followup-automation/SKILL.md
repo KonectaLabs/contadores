@@ -48,11 +48,11 @@ Also read these skills when relevant:
   outage unless the local runner or direct shell checks also fail.
 - For read-only hourly analysis, prefer the production snapshot endpoint over
   SSH. Fetch all Contadores/Abogados chats, not only attention-needed chats:
-  `GET http://149.50.136.121/api/contadores/followup/snapshot?limit=20000&messages_per_lead=12`.
-  Send `Host: crm.fgoiriz.com` and `X-Internal-Token`.
+  `GET https://crm.fgoiriz.com/api/contadores/followup/snapshot?limit=20000&messages_per_lead=12`.
+  Send `X-Internal-Token`.
 - For spreadsheet-style analysis, use
-  `GET http://149.50.136.121/api/contadores/followup/snapshot.csv?limit=20000&messages_per_lead=12`
-  with the same headers.
+  `GET https://crm.fgoiriz.com/api/contadores/followup/snapshot.csv?limit=20000&messages_per_lead=12`
+  for summary CSV, or add `profile=full` only when raw contact/message text is required.
 - In snapshot payloads, treat `stage=converted` as the operator-facing converted
   state. Use `raw_stage` only for historical legacy debugging.
 - If a standalone Codex cron reports `Operation not permitted` before SSH
@@ -144,37 +144,37 @@ Lead Delivery instead of direct message writes.
 
 For shell HTTP calls, every production request below must include:
 
-- `Host: crm.fgoiriz.com`
 - `X-Internal-Token: <INTERNAL_API_TOKEN>`
 
 Read current CRM state through the agent API:
 
 ```text
-GET http://149.50.136.121/api/agent/queues/needs-attention?limit=200&messages_per_lead=12
-GET http://149.50.136.121/api/agent/conversations?limit=20000&messages_per_lead=12
-GET http://149.50.136.121/api/agent/conversations/{lead_id}
-GET http://149.50.136.121/api/agent/conversations/{lead_id}/messages
+GET https://crm.fgoiriz.com/api/agent/queues/needs-attention?limit=200&messages_per_lead=12
+GET https://crm.fgoiriz.com/api/agent/conversations?limit=20000&messages_per_lead=12
+GET https://crm.fgoiriz.com/api/agent/conversations/{lead_id}
+GET https://crm.fgoiriz.com/api/agent/conversations/{lead_id}/messages
 ```
 
 The legacy snapshot remains useful for bulk read-only hourly analysis and CSV
 exports:
 
 ```text
-GET http://149.50.136.121/api/contadores/followup/snapshot?limit=20000&messages_per_lead=12
-GET http://149.50.136.121/api/contadores/followup/snapshot.csv?limit=20000&messages_per_lead=12
+GET https://crm.fgoiriz.com/api/contadores/followup/snapshot?limit=20000&messages_per_lead=12
+GET https://crm.fgoiriz.com/api/contadores/followup/snapshot.csv?limit=20000&messages_per_lead=12
+GET https://crm.fgoiriz.com/api/contadores/followup/snapshot.csv?profile=full&limit=20000&messages_per_lead=12
 ```
 
 Queue one custom message inside the open WhatsApp 24-hour window:
 
 ```text
-POST http://149.50.136.121/api/agent/conversations/{lead_id}/messages
+POST https://crm.fgoiriz.com/api/agent/conversations/{lead_id}/messages
 {"text":"...", "idempotency_key":"crm-followup-..."}
 ```
 
 Run an existing CRM action:
 
 ```text
-POST http://149.50.136.121/api/agent/conversations/{lead_id}/actions
+POST https://crm.fgoiriz.com/api/agent/conversations/{lead_id}/actions
 {"action":"send-manual-ping"}
 ```
 
@@ -187,7 +187,7 @@ Allowed action values are the existing quick actions, including
 Update one lead's classification/stage:
 
 ```text
-PATCH http://149.50.136.121/api/agent/conversations/{lead_id}
+PATCH https://crm.fgoiriz.com/api/agent/conversations/{lead_id}
 {"stage":"needs_human", "classification_label":"needs_human", "classification_reason":"...", "manual_reply_status":"answered"}
 ```
 
@@ -299,14 +299,24 @@ launchctl kickstart -k gui/$(id -u)/com.konecta.contadores.crm-followup
 ```
 
 The runner script is
-`scripts/run_contadores_crm_hourly_followup.sh`. It loads `.env`, preflights
-the production snapshot endpoint, extracts the prompt from
+`scripts/run_contadores_crm_hourly_followup.sh`. The wrapper may load `.env`,
+but the `codex exec` child receives only a minimal allowlisted environment
+(`HOME`, `CODEX_HOME`, `PATH`, `INTERNAL_API_TOKEN`, and
+`CONTADORES_CRM_FOLLOWUP_*`). It preflights the production snapshot endpoint, extracts the prompt from
 `references/automation-prompt.md`, runs `codex exec` in a new session, writes
 timestamped logs under `data/reports/`, writes the latest final summary to
 `data/reports/contadores-crm-followup-latest.md`, and uses a lock under
 `data/locks/` so hourly runs do not overlap. At startup it copies itself to
 `data/tmp/` and executes the copy, so a repo edit during a long run cannot
 change the already-running shell script.
+
+Runner targets are explicit env vars: `CONTADORES_RUNNER_SNAPSHOT_URL`,
+`CONTADORES_RUNNER_STATUS_URL`, and `CONTADORES_RUNNER_SERVER_HOST`. Defaults use
+`https://crm.fgoiriz.com`; non-local plain HTTP requires
+`CONTADORES_RUNNER_ALLOW_INSECURE_HTTP=1` and should be treated as temporary
+emergency routing. Local reports are retained by
+`CONTADORES_RUNNER_REPORT_RETENTION_DAYS` and `CONTADORES_RUNNER_RUN_RECORD_KEEP`;
+dry-run pruning is available with `--prune-only --dry-run`.
 
 The real local Mac dashboard is
 `data/reports/contadores-crm-followup-dashboard.html`. Generate or refresh it
@@ -315,21 +325,25 @@ with `scripts/render_contadores_crm_runner_dashboard.py`, then open it with
 that HTML on every `running`, `failed`, and `completed` status update. It reads
 the local LaunchAgent, local lock, local logs, latest local summary, and
 `data/reports/contadores-crm-followup-history.md`. The dashboard should stay
+offline-safe and self-contained: no external CDN scripts or remote assets. It
+should also stay
 human-first and delta-first: show what changed since the previous run, what now
 needs action, latest run Markdown, accumulated notes, and a recent-run timeline.
 Keep stdout/log tails behind technical details.
 It also provides a Codex handoff prompt/command that includes the latest run and
 history so Facu can ask follow-up questions or request a corrected next action.
 
-The visual Runner tab in the backoffice reads
-`GET /api/contadores/followup/runner/status`. The local LaunchAgent also syncs
-its latest summary/log tail back to production through
+The deployed backoffice does not include a visual runner view. Remote status is the
+protected API `GET /api/contadores/followup/runner/status`, which returns
+redacted/bounded status, `state`, `lock_state`, artifact errors, delta, latest
+summary, and log tails. The local LaunchAgent also syncs its latest
+summary/log tail back to production through
 `POST /api/contadores/followup/runner/status` via
 `scripts/sync_contadores_crm_runner_status.py`, using `INTERNAL_API_TOKEN`.
-That lets the deployed backoffice show the latest local runner result. Keep the
-Runner tab human-first too: structured delta and action-needed leads first,
-latest Markdown and timeline second, accumulated Markdown history and technical
-tails collapsed.
+That lets the server retain the latest local runner result as a triage summary,
+not as a raw log archive. Keep the local dashboard human-first: structured delta
+and action-needed leads first, latest Markdown and timeline second, accumulated
+Markdown history and technical tails collapsed.
 
 Avoid editing or reinstalling the runner while it is executing. The stable copy
 protects the active shell process, but changing scheduler files mid-run makes

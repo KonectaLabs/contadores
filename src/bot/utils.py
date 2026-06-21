@@ -6,16 +6,18 @@ import asyncio
 import csv
 import logging
 import os
+import re
 from datetime import datetime
 from io import BytesIO, StringIO
 from time import monotonic
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
 from pydantic import BaseModel, Field
 
 try:
+    from .logging_utils import get_current_request_id
     from .providers import (
         AgentMailProvider,
         DeliveryReceipt,
@@ -23,8 +25,10 @@ try:
         WhatsAppInboundEvent,
         WhatsAppMessageStatusEvent,
         WhatsAppProvider,
-    )
+        normalize_whatsapp_phone,
+)
 except ImportError:
+    from logging_utils import get_current_request_id
     from providers import (
         AgentMailProvider,
         DeliveryReceipt,
@@ -32,11 +36,14 @@ except ImportError:
         WhatsAppInboundEvent,
         WhatsAppMessageStatusEvent,
         WhatsAppProvider,
+        normalize_whatsapp_phone,
     )
 
 logger = logging.getLogger(__name__)
 
 SHEET_IMPORT_HEADERS = {"id", "phone_number"}
+GOOGLE_SHEETS_HOSTS = {"docs.google.com", "spreadsheets.google.com"}
+MAX_CONTADORES_SHEET_RESPONSE_BYTES = 5 * 1024 * 1024
 
 BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "http://backend:8000").strip().rstrip("/")
 CONTADORES_REVIEW_BASE_URL = (
@@ -65,6 +72,68 @@ CONTADORES_DELIVERY_RETRY_DELAY_SECONDS = max(
     0,
     int(os.getenv("CONTADORES_DELIVERY_RETRY_DELAY_SECONDS", "60")),
 )
+CONTADORES_ALERT_ALLOWED_EMAILS_ENV = "CONTADORES_ALERT_ALLOWED_EMAILS"
+CONTADORES_ALERT_ALLOWED_DOMAINS_ENV = "CONTADORES_ALERT_ALLOWED_DOMAINS"
+
+
+def normalize_sendable_whatsapp_phone(value: str) -> str:
+    """Return a WhatsApp-sendable phone, rejecting ambiguous local digits."""
+    raw = str(value or "").strip()
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    normalized = normalize_whatsapp_phone(raw)
+    if not normalized:
+        return ""
+    if raw.startswith("+") or digits.startswith("00"):
+        return normalized if len(normalized) >= 8 else ""
+    if normalized != digits:
+        return normalized if len(normalized) >= 8 else ""
+    if len(digits) > 10 and not digits.startswith("0"):
+        return normalized
+    return ""
+
+
+def _split_env_list(name: str) -> list[str]:
+    """Read a comma/newline separated env list."""
+    raw = os.getenv(name, "")
+    return [part.strip() for part in re.split(r"[\s,]+", raw) if part.strip()]
+
+
+def normalize_alert_email(value: str | None) -> str:
+    """Normalize a simple alert email address for bot-side policy checks."""
+    clean = (value or "").strip().lower()
+    if clean.count("@") != 1:
+        return ""
+    local, domain = clean.rsplit("@", 1)
+    if not local or not domain or "." not in domain:
+        return ""
+    return clean
+
+
+def allowed_alert_emails() -> set[str]:
+    """Return exact alert recipients allowed by env policy."""
+    return {email for value in _split_env_list(CONTADORES_ALERT_ALLOWED_EMAILS_ENV) if (email := normalize_alert_email(value))}
+
+
+def allowed_alert_domains() -> set[str]:
+    """Return alert recipient domains allowed by env policy."""
+    domains: set[str] = set()
+    for value in _split_env_list(CONTADORES_ALERT_ALLOWED_DOMAINS_ENV):
+        domain = value.strip().lower().lstrip("@")
+        if domain and re.fullmatch(r"[a-z0-9.-]+\.[a-z]{2,}", domain):
+            domains.add(domain)
+    return domains
+
+
+def alert_recipient_allowed(email: str) -> bool:
+    """Return True when the bot may send a sensitive alert to this address."""
+    normalized = normalize_alert_email(email)
+    if not normalized:
+        return False
+    allowed_emails = allowed_alert_emails()
+    allowed_domains = allowed_alert_domains()
+    if not allowed_emails and not allowed_domains:
+        return True
+    return normalized in allowed_emails or normalized.rsplit("@", 1)[-1] in allowed_domains
 
 
 class ContadoresConfigPayload(BaseModel):
@@ -81,6 +150,7 @@ class ContadoresConfigPayload(BaseModel):
     post_loom_min_seconds: int
     post_loom_quiet_seconds: int
     last_sheet_sync_at: str | None = None
+    last_sheet_sync_success_at: str | None = None
     last_sheet_sync_status: str | None = None
     last_sheet_sync_note: str | None = None
     last_alert_at: str | None = None
@@ -262,7 +332,17 @@ class DispatchResult(BaseModel):
 def build_backend_client() -> httpx.AsyncClient:
     """Create one shared async HTTP client for backend API requests."""
     headers = {INTERNAL_API_TOKEN_HEADER: INTERNAL_API_TOKEN} if INTERNAL_API_TOKEN else {}
-    return httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0), headers=headers)
+
+    async def add_request_id(request: httpx.Request) -> None:
+        request_id = get_current_request_id()
+        if request_id and "X-Request-ID" not in request.headers:
+            request.headers["X-Request-ID"] = request_id
+
+    return httpx.AsyncClient(
+        timeout=httpx.Timeout(30.0, connect=10.0),
+        headers=headers,
+        event_hooks={"request": [add_request_id]},
+    )
 
 
 def backend_url(path: str) -> str:
@@ -301,11 +381,32 @@ async def wait_for_backend_ready(
         await asyncio.sleep(poll_seconds)
 
 
-async def fetch_contadores_config(client: httpx.AsyncClient) -> ContadoresConfigPayload:
+async def fetch_contadores_config(
+    client: httpx.AsyncClient,
+    *,
+    funnel_id: str = "contadores",
+) -> ContadoresConfigPayload:
     """Fetch Contadores runtime config from the backend."""
-    response = await client.get(backend_url("/api/contadores/config"))
+    response = await client.get(backend_url("/api/contadores/config"), params={"funnel_id": funnel_id})
     response.raise_for_status()
     return ContadoresConfigPayload.model_validate(response.json())
+
+
+async def record_contadores_sheet_sync_state(
+    client: httpx.AsyncClient,
+    *,
+    funnel_id: str,
+    status: str,
+    note: str | None = None,
+) -> dict[str, Any]:
+    """Persist scheduled sheet sync state in the backend."""
+    response = await client.post(
+        backend_url("/api/contadores/sheet-sync-state"),
+        json={"funnel_id": funnel_id, "status": status, "note": note},
+    )
+    response.raise_for_status()
+    payload = response.json()
+    return payload if isinstance(payload, dict) else {"status": "invalid"}
 
 
 async def fetch_funnels(client: httpx.AsyncClient) -> list[FunnelConfigPayload]:
@@ -343,10 +444,10 @@ async def fetch_pending_contadores_outbound(
     *,
     limit: int = 200,
 ) -> list[PendingContadoresDeliveryMessage]:
-    """Fetch Contadores outbound messages ready for WhatsApp dispatch."""
-    response = await client.get(
-        backend_url("/api/contadores/messages/pending-delivery"),
-        params={"limit": limit},
+    """Claim Contadores outbound messages ready for WhatsApp dispatch."""
+    response = await client.post(
+        backend_url("/api/contadores/messages/pending-delivery/claim"),
+        json={"limit": limit},
     )
     response.raise_for_status()
     payload = PendingContadoresDeliveryResponse.model_validate(response.json())
@@ -358,9 +459,9 @@ async def fetch_pending_client_lead_notifications(
     *,
     limit: int = 200,
 ) -> list[PendingClientLeadNotification]:
-    """Fetch Delivery notifications ready for WhatsApp dispatch."""
-    response = await client.get(
-        backend_url("/api/client-lead-deliveries/pending"),
+    """Claim Delivery notifications ready for WhatsApp dispatch."""
+    response = await client.post(
+        backend_url("/api/client-lead-deliveries/pending/claim"),
         params={"limit": limit},
     )
     response.raise_for_status()
@@ -368,33 +469,49 @@ async def fetch_pending_client_lead_notifications(
     return payload.notifications
 
 
+def parse_contadores_sheet_target(config: ContadoresConfigPayload) -> tuple[str, str | None] | None:
+    """Return spreadsheet id and gid from a raw id or Google Sheets URL."""
+    sheet_url = (config.sheet_url or "").strip()
+    if not sheet_url:
+        return None
+
+    if re.fullmatch(r"[A-Za-z0-9-_]+", sheet_url):
+        return sheet_url, (config.sheet_gid or "").strip() or None
+
+    parsed = urlparse(sheet_url)
+    if parsed.scheme not in {"http", "https"}:
+        return None
+    if (parsed.hostname or "").lower() not in GOOGLE_SHEETS_HOSTS:
+        return None
+
+    match = re.fullmatch(r"/spreadsheets/d/([A-Za-z0-9-_]+)(?:/.*)?", parsed.path)
+    if not match:
+        return None
+
+    gid = (config.sheet_gid or "").strip() or None
+    if gid is None:
+        query_params = parse_qs(parsed.query)
+        fragment_params = parse_qs(parsed.fragment)
+        gid = query_params.get("gid", [None])[0] or fragment_params.get("gid", [None])[0]
+    return match.group(1), gid
+
+
 def build_contadores_sheet_csv_url(config: ContadoresConfigPayload) -> str | None:
     """Resolve a public Google Sheets CSV URL from backend config."""
-    base_url = (config.sheet_url or "").strip()
-    if not base_url:
+    target = parse_contadores_sheet_target(config)
+    if target is None:
         return None
-    if any(marker in base_url for marker in ["output=csv", "format=csv", "tqx=out:csv"]):
-        return base_url
-
-    gid = (config.sheet_gid or "").strip()
-    separator = "&" if "?" in base_url else "?"
-    if gid and "gid=" not in base_url:
-        return f"{base_url}{separator}gid={gid}&output=csv"
-    if "?" in base_url:
-        return f"{base_url}&output=csv"
-    return f"{base_url}?output=csv"
+    spreadsheet_id, gid = target
+    suffix = f"&gid={gid}" if gid else ""
+    return f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/export?format=csv{suffix}"
 
 
 def build_contadores_sheet_xlsx_url(config: ContadoresConfigPayload) -> str | None:
     """Resolve a public Google Sheets XLSX URL from backend config."""
-    base_url = (config.sheet_url or "").strip()
-    if not base_url or "docs.google.com/spreadsheets/d/" not in base_url:
+    target = parse_contadores_sheet_target(config)
+    if target is None:
         return None
-
-    marker = "/spreadsheets/d/"
-    spreadsheet_id = base_url.split(marker, 1)[1].split("/", 1)[0].split("?", 1)[0]
-    if not spreadsheet_id:
-        return None
+    spreadsheet_id, _gid = target
     return f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/export?format=xlsx"
 
 
@@ -440,6 +557,12 @@ def read_xlsx_sheet_rows(content: bytes) -> list[dict[str, str]]:
     return []
 
 
+def ensure_contadores_sheet_response_size(content: bytes) -> None:
+    """Reject unexpectedly large sheet exports before parsing."""
+    if len(content) > MAX_CONTADORES_SHEET_RESPONSE_BYTES:
+        raise RuntimeError("Contadores sheet export is too large to import safely.")
+
+
 async def fetch_contadores_sheet_rows(
     *,
     config: ContadoresConfigPayload,
@@ -452,8 +575,9 @@ async def fetch_contadores_sheet_rows(
     async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0), follow_redirects=True) as client:
         response = await client.get(csv_url)
         response.raise_for_status()
+    ensure_contadores_sheet_response_size(response.content)
 
-    reader = csv.DictReader(StringIO(response.text))
+    reader = csv.DictReader(StringIO(response.content.decode("utf-8-sig")))
     csv_rows = [dict(row) for row in reader]
     if has_sheet_import_headers(csv_rows):
         return csv_rows
@@ -465,6 +589,7 @@ async def fetch_contadores_sheet_rows(
     async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0), follow_redirects=True) as client:
         response = await client.get(xlsx_url)
         response.raise_for_status()
+    ensure_contadores_sheet_response_size(response.content)
     return read_xlsx_sheet_rows(response.content)
 
 
@@ -513,7 +638,7 @@ async def run_contadores_sheet_sync_iteration(
     funnel: FunnelConfigPayload | None = None,
 ) -> dict[str, Any]:
     """Fetch the configured sheet and import new leads."""
-    config = await fetch_contadores_config(client) if funnel is None else ContadoresConfigPayload(
+    config = await fetch_contadores_config(client, funnel_id=funnel_id) if funnel is None else ContadoresConfigPayload(
         enabled=funnel.enabled,
         sheet_url=funnel.sheet_url,
         sheet_gid=funnel.sheet_gid,
@@ -876,11 +1001,12 @@ async def mark_backend_contadores_alert_sent(
     client: httpx.AsyncClient,
     *,
     lead_id: str,
+    recipients: list[str] | None = None,
 ) -> None:
     """Mark one pending Contadores needs-human alert as sent."""
     response = await client.post(
         backend_url(f"/api/contadores/leads/{lead_id}/mark-alerted"),
-        json={},
+        json={"recipients": recipients or []},
     )
     response.raise_for_status()
 
@@ -890,9 +1016,12 @@ async def mark_backend_contadores_runtime_alert_sent(
     *,
     runtime_alert_id: int,
     receipt: DeliveryReceipt | None = None,
+    recipients: list[str] | None = None,
 ) -> None:
     """Mark one pending runtime alert as sent."""
     payload: dict[str, Any] = {}
+    if recipients:
+        payload["recipients"] = recipients
     if receipt is not None:
         payload.update(
             {
@@ -906,6 +1035,37 @@ async def mark_backend_contadores_runtime_alert_sent(
         backend_url(f"/api/contadores/runtime-alerts/{runtime_alert_id}/mark-alerted"),
         json=payload,
     )
+    response.raise_for_status()
+
+
+async def mark_backend_contadores_alert_delivery(
+    client: httpx.AsyncClient,
+    *,
+    alert_kind: str,
+    target_id: str,
+    recipient: str,
+    success: bool,
+    error: str | None = None,
+    receipt: DeliveryReceipt | None = None,
+) -> None:
+    """Persist one AgentMail alert recipient outcome."""
+    payload: dict[str, Any] = {
+        "alert_kind": alert_kind,
+        "target_id": target_id,
+        "recipient": recipient,
+        "success": success,
+        "error": error,
+    }
+    if receipt is not None:
+        payload.update(
+            {
+                "email_thread_id": receipt.thread_id,
+                "email_message_id": receipt.external_id,
+                "email_inbox_id": receipt.inbox_id,
+                "email_inbox_address": receipt.inbox_address or receipt.from_email,
+            }
+        )
+    response = await client.post(backend_url("/api/contadores/alert-deliveries/mark"), json=payload)
     response.raise_for_status()
 
 
@@ -956,13 +1116,16 @@ async def send_contadores_pending_alerts(
     alert_inbox = await email_provider.ensure_alert_inbox()
     outcomes: list[dict[str, Any]] = []
     for item in items:
-        recipients = [email for email in item.alert_emails if email]
+        configured_recipients = [email for email in item.alert_emails if email]
+        recipients = [email for email in configured_recipients if alert_recipient_allowed(email)]
+        blocked_recipients = [email for email in configured_recipients if email not in recipients]
         if not recipients:
             outcomes.append(
                 {
                     "lead_id": item.lead_id,
                     "status": "skipped",
-                    "reason": "missing_alert_emails",
+                    "reason": "alert_email_recipient_not_allowed" if blocked_recipients else "missing_alert_emails",
+                    "blocked_recipients": blocked_recipients,
                 }
             )
             continue
@@ -1011,9 +1174,8 @@ async def send_contadores_pending_alerts(
                     "Conversacion reciente:",
                     item.conversation_transcript or item.latest_inbound_text or "-",
                     "",
-                    "Responde este email con el texto exacto para mandar por WhatsApp.",
+                    "Responde este email empezando con `Respuesta:` y el texto exacto para mandar por WhatsApp.",
                     "El sistema va a enviar esa respuesta tal cual y guardarla como aprendizaje para preguntas parecidas.",
-                    "Si queres ser explicito, empeza con `Respuesta:`.",
                 ]
             )
         elif runtime_alert:
@@ -1071,6 +1233,8 @@ async def send_contadores_pending_alerts(
         body = "\n".join(body_parts)
         first_receipt: DeliveryReceipt | None = None
         failed_recipients: list[str] = []
+        alert_kind = "runtime" if runtime_alert and item.runtime_alert_id is not None else "lead"
+        target_id = str(item.runtime_alert_id) if alert_kind == "runtime" else item.lead_id
         for recipient in recipients:
             try:
                 receipt = await email_provider.send_message(
@@ -1084,14 +1248,30 @@ async def send_contadores_pending_alerts(
                     in_reply_to=None,
                     references=None,
                 )
-            except Exception:
+            except Exception as exc:
                 failed_recipients.append(recipient)
+                await mark_backend_contadores_alert_delivery(
+                    client,
+                    alert_kind=alert_kind,
+                    target_id=target_id,
+                    recipient=recipient,
+                    success=False,
+                    error=str(exc),
+                )
                 logger.exception(
                     "Failed to send Contadores alert email for lead %s to %s.",
                     item.lead_id,
                     recipient,
                 )
                 continue
+            await mark_backend_contadores_alert_delivery(
+                client,
+                alert_kind=alert_kind,
+                target_id=target_id,
+                recipient=recipient,
+                success=True,
+                receipt=receipt,
+            )
             if first_receipt is None:
                 first_receipt = receipt
         if first_receipt is None:
@@ -1105,19 +1285,33 @@ async def send_contadores_pending_alerts(
                 }
             )
             continue
+        if failed_recipients:
+            outcomes.append(
+                {
+                    "lead_id": item.lead_id,
+                    "status": "partial_failed",
+                    "reason": "alert_email_partial_send_failed",
+                    "recipients": recipients,
+                    "blocked_recipients": blocked_recipients,
+                    "failed_recipients": failed_recipients,
+                }
+            )
+            continue
         if runtime_alert and item.runtime_alert_id is not None:
             await mark_backend_contadores_runtime_alert_sent(
                 client,
                 runtime_alert_id=item.runtime_alert_id,
                 receipt=first_receipt,
+                recipients=recipients,
             )
         else:
-            await mark_backend_contadores_alert_sent(client, lead_id=item.lead_id)
+            await mark_backend_contadores_alert_sent(client, lead_id=item.lead_id, recipients=recipients)
         outcomes.append(
             {
                 "lead_id": item.lead_id,
                 "status": "sent",
                 "recipients": recipients,
+                "blocked_recipients": blocked_recipients,
                 "failed_recipients": failed_recipients,
             }
         )
@@ -1282,7 +1476,7 @@ async def dispatch_one_client_lead_notification(
     to_phone = item.recipient_phone or item.normalized_recipient_phone
     if not str(to_phone or "").strip():
         raise ValueError("missing_whatsapp_phone: Delivery source has no recipient phone")
-    if len("".join(ch for ch in str(to_phone) if ch.isdigit())) < 8:
+    if not normalize_sendable_whatsapp_phone(to_phone):
         raise ValueError(f"invalid_whatsapp_phone: {to_phone}")
     return await whatsapp_provider.send_template_message(
         to=to_phone,

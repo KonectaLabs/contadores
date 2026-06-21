@@ -168,6 +168,12 @@ def esc(value: object) -> str:
     return html.escape("" if value is None else str(value), quote=True)
 
 
+def render_markdown_text(value: str) -> str:
+    """Render local report Markdown as escaped, offline-safe text."""
+    text = str(value or "").replace("![", "[")
+    return f'<pre class="markdown-pre">{esc(text)}</pre>'
+
+
 def metric_int(metrics: dict[object, object], key: str) -> int:
     """Read one integer metric without trusting the JSON shape."""
     try:
@@ -229,6 +235,9 @@ def render_dashboard(root: Path, status: str, active_log: Path | None, output: P
         "history_markdown": history_markdown,
     }
     context_json = json.dumps(prompt_context, ensure_ascii=False).replace("</", "<\\/")
+    latest_summary_html = render_markdown_text(latest_summary)
+    history_html = render_markdown_text(history_markdown)
+    delta_html = render_markdown_text(delta_markdown)
     needs_action = metric_int(delta_metrics, "needs_action")
     new_replies = metric_int(delta_metrics, "new_replies")
     delivery_changes = metric_int(delta_metrics, "delivery_changes")
@@ -298,7 +307,6 @@ def render_dashboard(root: Path, status: str, active_log: Path | None, output: P
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="refresh" content="60">
   <title>Contadores CRM Follow-Up</title>
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <style>
     :root {{
       color-scheme: light;
@@ -386,6 +394,7 @@ def render_dashboard(root: Path, status: str, active_log: Path | None, output: P
     .markdown p {{ margin: 8px 0; }}
     .markdown ul {{ margin: 8px 0 14px; padding-left: 22px; }}
     .markdown li {{ margin: 4px 0; }}
+    .markdown-pre {{ white-space: pre-wrap; word-break: break-word; margin: 8px 0 0; }}
     .markdown code {{
       padding: 1px 5px; border-radius: 5px; background: var(--surface-2);
       color: #3c4643; font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -473,15 +482,15 @@ def render_dashboard(root: Path, status: str, active_log: Path | None, output: P
         </div>
         <details>
           <summary>Delta</summary>
-          <div id="deltaMarkdown" class="markdown"></div>
+          <div class="markdown">{delta_html}</div>
         </details>
         <details>
           <summary>Last run</summary>
-          <div id="latestMarkdown" class="markdown"></div>
+          <div class="markdown">{latest_summary_html}</div>
         </details>
         <details>
           <summary>History</summary>
-          <div id="historyMarkdown" class="markdown"></div>
+          <div class="markdown">{history_html}</div>
         </details>
       </article>
     </section>
@@ -511,28 +520,6 @@ def render_dashboard(root: Path, status: str, active_log: Path | None, output: P
   <script>
     const context = JSON.parse(document.getElementById("runner-context").textContent);
     const statusEl = document.getElementById("copyStatus");
-
-    function renderMarkdown(targetId, markdown) {{
-      const target = document.getElementById(targetId);
-      if (window.marked && typeof window.marked.parse === "function") {{
-        target.innerHTML = window.marked.parse(escapeMarkdownHtml(neutralizeMarkdownImages(markdown || "")));
-      }} else {{
-        target.textContent = markdown || "";
-      }}
-    }}
-
-    function neutralizeMarkdownImages(value) {{
-      return String(value)
-        .replace(/!\\[([^\\]]*)\\]\\(([^)]*)\\)/g, "[$1]($2)")
-        .replace(/!\\[([^\\]]*)\\]/g, "$1");
-    }}
-
-    function escapeMarkdownHtml(value) {{
-      return String(value)
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;");
-    }}
 
     function buildPrompt() {{
       const request = document.getElementById("codexRequest").value.trim();
@@ -596,9 +583,6 @@ def render_dashboard(root: Path, status: str, active_log: Path | None, output: P
       }});
     }});
 
-    renderMarkdown("latestMarkdown", context.latest_summary);
-    renderMarkdown("deltaMarkdown", context.delta_markdown);
-    renderMarkdown("historyMarkdown", context.history_markdown);
   </script>
 </body>
 </html>

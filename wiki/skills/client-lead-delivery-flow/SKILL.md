@@ -164,11 +164,11 @@ rows should not be notified until the user confirms.
 2. Edit the server `data/client-lead-sources.json` for runtime-only client
    data, or `config/default-client-lead-sources.json` only for safe versioned
    defaults/examples.
-3. Reload config:
+3. Reload config on the real server:
 
 ```bash
 curl -fsS -X POST -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
-  http://127.0.0.1:8000/api/client-lead-sources/config/reload
+  https://crm.fgoiriz.com/api/client-lead-sources/config/reload
 ```
 
 4. Verify the template:
@@ -188,18 +188,22 @@ uv run python src/scripts/whatsapp_templates.py check \
 ```
 
 5. If approved and the user wants it live, set `enabled: true`, reload config,
-   run one controlled API sync for verification, then inspect leads and pending notifications:
+   run one controlled API sync against the real server, then inspect leads and
+   pending notifications:
 
 ```bash
 curl -fsS -X POST -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
-  http://127.0.0.1:8000/api/client-lead-sources/{source_id}/sync
+  https://crm.fgoiriz.com/api/client-lead-sources/{source_id}/sync
 
 curl -fsS -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
-  http://127.0.0.1:8000/api/client-lead-sources/{source_id}/leads
+  https://crm.fgoiriz.com/api/client-lead-sources/{source_id}/leads
 
 curl -fsS -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
-  http://127.0.0.1:8000/api/client-lead-deliveries/pending
+  https://crm.fgoiriz.com/api/client-lead-deliveries/pending
 ```
+
+Use `127.0.0.1:8000` only for local development or from an SSH session where
+the command is intentionally targeting the backend inside the server context.
 
 6. For Meta Lead Ads instant forms, do not create a separate delivery path. If
    you only have the webhook `leadgen_id`, fetch and import it into the selected

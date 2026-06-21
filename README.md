@@ -70,6 +70,36 @@ curl http://127.0.0.1:8000/api/platform/overview
 encolados. Es la base para observar sheet import, mensajes, AI, scheduling,
 conversion, ads, delivery y client updates sin depender de logs sueltos.
 
+### Migraciones de esquema
+
+El backend usa una migracion liviana en SQLite: `schema_migrations` registra
+cada cambio de esquema que debe correr una sola vez. `init_db()` todavia crea
+tablas y columnas aditivas para arranques limpios, pero cambios destructivos o
+constraints de identidad deben ir por helpers explicitos con preflight de
+duplicados. Si el preflight encuentra datos ambiguos, el startup falla con una
+lista corta de filas a corregir en vez de aplicar un indice opaco.
+
+Verificar el esquema sin mutar datos:
+
+```bash
+PYTHONPATH=src uv run python -m backend.database verify-schema
+```
+
+Antes de un deploy con migraciones o cambios de datos, crear un backup fresco
+del volumen `data/`:
+
+```bash
+scripts/backup_contadores_data.sh --dry-run
+scripts/backup_contadores_data.sh --output-dir /ruta/fuera/del/repo
+```
+
+El backup incluye SQLite junto con WAL/SHM si existen. Para restaurar, detener
+backend y bot, mover el `data/` actual aparte y usar:
+
+```bash
+scripts/restore_contadores_data.sh --archive /ruta/contadores-data.tar.gz --yes
+```
+
 `/api/runtime` no expone URLs de sheets ni secretos. Expone `ready`, los
 funnels de campaña habilitados, los funnels con sheet lista y los problemas de
 setup. Un funnel incompleto no rompe el server; simplemente aparece como
@@ -188,7 +218,13 @@ nombre interno de campaña. Las campañas `active` / `published` necesitan al
 menos una pregunta en `form_schema`; un draft puede quedar incompleto. Si una
 respuesta del formulario usa una clave interna como `campaign_name`, `id` o
 `phone_number`, Delivery conserva la metadata interna y guarda la respuesta como
-`answer_<clave>`.
+`answer_<clave>`. Las submissions publicas tienen throttling en memoria por
+campaña y por IP vista por FastAPI; los retries con la misma idempotency key se
+reconcilian antes del throttle. Los knobs son
+`PUBLIC_SUBMISSION_THROTTLE_ENABLED`, `PUBLIC_SUBMISSION_IP_WINDOW_SECONDS`,
+`PUBLIC_SUBMISSION_IP_MAX`, `PUBLIC_SUBMISSION_CAMPAIGN_WINDOW_SECONDS` y
+`PUBLIC_SUBMISSION_CAMPAIGN_MAX`. Si el deploy corre varios workers, usar
+Cloudflare/CAPTCHA o storage compartido para enforcement cross-worker.
 
 Cada campaña owned tiene Delivery inline: un toggle prende/apaga el envio de
 templates WhatsApp cuando llega una submission, el cliente de la campaña queda
@@ -197,6 +233,8 @@ custom. El backend expande esos contactos a fuentes `ClientLeadSource` por
 destinatario y crea una fila `ClientLeadDelivery` por cada contacto. La seleccion
 se respeta por contacto elegido, no por telefono, para que el preset `Facu`
 siga visible aunque comparta numero con el cliente default. La vista
+`Ads` pide los presets al backend; el server puede pisarlos con
+`CAMPAIGN_DELIVERY_PRESETS_JSON` sin volver a compilar el frontend.
 de submissions en Ads se muestra como tabla, con fecha y los leads mas recientes
 abajo; si el formulario no pidio telefono real, la UI muestra `Sin WhatsApp` en
 vez del placeholder interno.
@@ -275,8 +313,10 @@ Flujo Meta agent-native:
    `meta_page_id` / `meta_lead_form_id`.
 5. `create_meta_lead_form` crea el instant form en la Page y puede vincular el
    `lead_form_id` devuelto con `client_lead_source_id`. `subscribe_meta_lead_webhook`
-   suscribe la Page al campo `leadgen`. Ambos son writes externos y requieren
-   `live_writes_requested=true` + `META_MARKETING_LIVE_WRITES_ENABLED=true`.
+   suscribe la Page al campo `leadgen`. Ambos son writes externos idempotentes:
+   guardan un intento antes del write y reutilizan el resultado exitoso si el
+   mismo pedido se repite. Requieren `live_writes_requested=true` +
+   `META_MARKETING_LIVE_WRITES_ENABLED=true`.
 6. `stage_meta_publish_plan` arma el plan tipado `Campaign -> Ad Set ->
    Ad/Creative`, siempre en modo `PAUSED` y sin writes externos. El destino
    tambien declara el ruteo: Click-to-WhatsApp usa el funnel y, si ya existe,
@@ -300,8 +340,8 @@ Flujo Meta agent-native:
    storage y guarda `image_hash` o `video_id` en el asset y en los publish plans
    que lo referencian. Es un write externo acotado: exige
    `live_writes_requested=true`, `META_MARKETING_LIVE_WRITES_ENABLED=true`,
-   credenciales y archivo local existente, pero no crea Campaign, Ad Set,
-   Creative ni Ad.
+   credenciales, archivo local existente y el mismo limite de tamano que el
+   upload de la UI, pero no crea Campaign, Ad Set, Creative ni Ad.
 9. Si faltan `ad_account_id`, `page_id`, destino WhatsApp/form, ruteo de leads,
    presupuesto, targeting o creatividades, el resultado incluye
    `required_before_live_publish` y el agente debe usar `ask_human_question` en
@@ -315,8 +355,9 @@ Flujo Meta agent-native:
    intento y bloquea cualquier live write si faltan credenciales, aprobacion o
    politica.
 11. `approve_meta_publish_plan` aplica el gate de aprobacion: presupuesto dentro
-   de caps, inventario listo, `idempotency_key`, todo creado en `PAUSED`, y
-   aprobacion explicita del operador antes de permitir un candidato live.
+   de caps USD, inventario listo con cuenta publicitaria USD, `idempotency_key`,
+   todo creado en `PAUSED`, y aprobacion explicita del operador antes de
+   permitir un candidato live.
 12. `execute_meta_publish_plan` es el unico paso que puede crear objetos de
    campana en Meta:
    requiere `live_writes_requested=true`, `META_MARKETING_LIVE_WRITES_ENABLED`,
@@ -332,8 +373,9 @@ Flujo Meta agent-native:
    con conflicto y la campaña sigue visible para que no quede gasto oculto.
 13. Cuando un instant form genera un `leadgen_id`, el webhook publico
    `GET/POST /api/meta-leads/webhook` verifica el challenge con
-   `META_LEAD_WEBHOOK_VERIFY_TOKEN`, resuelve la fuente por `meta_lead_form_id`
-   y usa Graph API para meter el lead en Delivery. Si hace falta backfill, usar
+   `META_LEAD_WEBHOOK_VERIFY_TOKEN`, exige firma `X-Hub-Signature-256` con
+   `META_APP_SECRET` o `META_LEAD_WEBHOOK_APP_SECRET`, resuelve la fuente por `meta_lead_form_id` y
+   usa Graph API para meter el lead en Delivery. Si hace falta backfill, usar
    `backfill_meta_lead_form_to_delivery`.
 14. Cuando un instant form genera un `leadgen_id`, el agente usa
    `fetch_meta_lead_form_to_delivery` para traer `field_data` desde Graph API y
@@ -342,18 +384,18 @@ Flujo Meta agent-native:
 15. `stage_meta_publish_attempt` queda para payloads crudos, respuestas de Meta
    o registros manuales del publicador aprobado.
 
-Credenciales Meta locales validadas el 2026-05-31:
+Configurar credenciales Meta desde secretos locales o del server:
 
 - API version: `v25.0`
-- Ad account: `act_396900435976478`
-- Business: `1017654719078489`
-- Page: `100444969619229`
-- WhatsApp phone number: `881994095003323`
-- WABA: `1873936066568522`
+- Ad account: `act_<META_AD_ACCOUNT_ID>`
+- Business: `<META_BUSINESS_ID>`
+- Page: `<META_PAGE_ID>`
+- WhatsApp phone number: `<META_WHATSAPP_PHONE_NUMBER_ID>`
+- WABA: `<META_WHATSAPP_BUSINESS_ACCOUNT_ID>`
 
-El access token vive solo en secretos locales, como `.env`, bashrc local o
-1Password; no commitear tokens. `META_MARKETING_LIVE_WRITES_ENABLED` queda
-`false` hasta una aprobacion explicita de publish real.
+Los IDs reales y el access token viven solo en `.env`, 1Password o secretos del
+server; no commitear provider IDs reales. `META_MARKETING_LIVE_WRITES_ENABLED`
+queda `false` hasta una aprobacion explicita de publish real.
 
 Ejemplo de plan Meta staged:
 
@@ -443,7 +485,7 @@ uv run python src/scripts/funnel_config_template.py dentistas \
   --offer-text "Son 599 USD mensuales. A cambio recibis consultas directo a tu WhatsApp." \
   --calendly-base-url "https://calendly.com/tu-equipo/dentistas" \
   --alert-email "operador@example.com" \
-  --whatsapp-referral-source-id "120000000000000000" \
+  --whatsapp-referral-source-id "<META_WHATSAPP_REFERRAL_SOURCE_ID>" \
   --output data/funnels.json
 ```
 
@@ -502,7 +544,7 @@ Formato base:
       "calendly_intro_text": "Para avanzar, decime dia, horario y email y coordinamos la llamada:",
       "calendly_base_url": "https://calendly.com/tu-equipo/dentistas",
       "alert_emails": ["operador@example.com"],
-      "whatsapp_referral_source_ids": ["120000000000000000"],
+      "whatsapp_referral_source_ids": ["<META_WHATSAPP_REFERRAL_SOURCE_ID>"],
       "initial_reply_quiet_seconds": 30,
       "post_loom_min_seconds": 600,
       "post_loom_quiet_seconds": 30,
@@ -622,6 +664,19 @@ abajo y en las skills `contadores-rollout` y `contadores-spreadsheet`.
 
 ## Desarrollo local
 
+Auth debe estar activo en produccion: `AUTH_DISABLE=true` solo es para tests o
+desarrollo aislado, y con `APP_ENV=production` el backend no arranca salvo que
+`AUTH_DISABLE_LOCAL_ONLY=true` este explicito. Las cookies de sesion son Secure
+por defecto; para HTTP local se puede usar `AUTH_COOKIE_SECURE=false`. Los
+logouts persistentes se guardan hasheados en `AUTH_REVOCATIONS_PATH` o, por
+default, en `data/auth-session-revocations.json`. El login publico usa
+`AUTH_LOGIN_FAILURE_LIMIT` y `AUTH_LOGIN_WINDOW_SECONDS` para frenar intentos
+fallidos repetidos.
+
+Los tests bloquean red externa por defecto y limpian secretos de proveedores.
+Para una prueba externa deliberada usar `@pytest.mark.network` o correr con
+`PYTEST_ALLOW_NETWORK=true`.
+
 Instalar dependencias:
 
 ```bash
@@ -713,11 +768,14 @@ uv run python -m backend.cloudflare_registrar register ejemplo-contable.com --ma
 uv run python -m backend.cloudflare_registrar poll-registration ejemplo-contable.com
 ```
 
-Crear zona DNS y agregar registros:
+Crear zona DNS y agregar registros. Sin `--yes` estos comandos imprimen dry-run;
+agregar `--yes` solo despues de revisar el payload exacto:
 
 ```bash
 uv run python -m backend.cloudflare_registrar create-zone ejemplo-contable.com
+uv run python -m backend.cloudflare_registrar create-zone ejemplo-contable.com --yes
 uv run python -m backend.cloudflare_registrar upsert-record --zone ejemplo-contable.com --type CNAME --name www --content contadores.fgoiriz.com --proxied
+uv run python -m backend.cloudflare_registrar upsert-record --zone ejemplo-contable.com --type CNAME --name www --content contadores.fgoiriz.com --proxied --yes
 ```
 
 Ejecutar un tick interno de Workstation desde el worker o localmente:
@@ -730,24 +788,31 @@ curl -X POST -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
 Snapshot read-only para automations de follow-up:
 
 ```bash
-curl -H "Host: crm.fgoiriz.com" \
-  -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
-  "http://149.50.136.121/api/contadores/followup/snapshot?limit=20000&messages_per_lead=12"
+curl -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
+  "https://crm.fgoiriz.com/api/contadores/followup/snapshot?limit=20000&messages_per_lead=12"
 ```
 
-Export CSV del mismo snapshot:
+Export CSV summary del mismo snapshot. Este es el default y redacted para
+diagnostico rutinario:
 
 ```bash
-curl -H "Host: crm.fgoiriz.com" \
-  -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
-  "http://149.50.136.121/api/contadores/followup/snapshot.csv?limit=20000&messages_per_lead=12"
+curl -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
+  "https://crm.fgoiriz.com/api/contadores/followup/snapshot.csv?limit=20000&messages_per_lead=12"
 ```
 
-Estos endpoints de snapshot no mandan mensajes ni mutan la base. Exponen todos
+Export CSV full solo cuando una automation necesita texto/contactos raw:
+
+```bash
+curl -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
+  "https://crm.fgoiriz.com/api/contadores/followup/snapshot.csv?profile=full&limit=20000&messages_per_lead=12"
+```
+
+Estos endpoints de snapshot no mandan mensajes ni mutan la base. El JSON expone
 los chats recientes de `contadores` y `abogados`, ultimos mensajes, estado de
 delivery, exclusiones fuertes y buckets sugeridos para que una automation pueda
-analizar el CRM sin depender de SSH. Usar `include_all_funnels=true` si se quiere
-incluir tambien inboxes/funnels fuera de Contadores y Abogados.
+analizar el CRM sin depender de SSH. El CSV default es summary/redacted; `profile=full`
+es un artefacto sensible. Usar `include_all_funnels=true` si se quiere incluir
+tambien inboxes/funnels fuera de Contadores y Abogados.
 En el snapshot, `stage` sigue el contrato operator-facing nuevo y devuelve
 `converted` para conversiones; `raw_stage` conserva el valor legacy persistido.
 
@@ -774,8 +839,17 @@ Runner horario de follow-up:
   `.codex/skills/contadores-crm-followup-automation/SKILL.md`, consulta la API
   de produccion y opera solo mediante endpoints internos aprobados o SSH al
   server real cuando hace falta debug.
-- Requiere `INTERNAL_API_TOKEN` en `.env` local o en el entorno. El runner carga
-  `.env`, pero nunca imprime el token.
+- Requiere `INTERNAL_API_TOKEN` en `.env` local o en el entorno. El wrapper puede
+  leer `.env`, pero el proceso hijo de `codex exec` recibe un entorno minimo:
+  `HOME`, `CODEX_HOME`, `PATH`, `INTERNAL_API_TOKEN` y variables
+  `CONTADORES_CRM_FOLLOWUP_*`. No hereda credenciales provider ajenas.
+- Targets canonicos del runner: `CONTADORES_RUNNER_SNAPSHOT_URL`,
+  `CONTADORES_RUNNER_STATUS_URL` y `CONTADORES_RUNNER_SERVER_HOST`. El default
+  usa `https://crm.fgoiriz.com`. HTTP no-local queda bloqueado salvo
+  `CONTADORES_RUNNER_ALLOW_INSECURE_HTTP=1` como emergencia temporal.
+- Retencion local: los reportes timestamped del runner se podan con
+  `CONTADORES_RUNNER_REPORT_RETENTION_DAYS` y `CONTADORES_RUNNER_RUN_RECORD_KEEP`.
+  Dry-run: `CONTADORES_RUNNER_PRUNE_DRY_RUN=1 scripts/run_contadores_crm_hourly_followup.sh --prune-only --dry-run`.
 - Instalar o actualizar el LaunchAgent:
 
 ```bash
@@ -814,15 +888,17 @@ open data/reports/contadores-crm-followup-dashboard.html
   cambios de estado, cambios de delivery, proximos pasos que quedaron due y
   acciones humanas. Despues muestra el ultimo run, historial acumulado como
   Markdown renderizado, timeline y un panel para copiar un prompt o comando
-  `codex exec` con el contexto del run.
+  `codex exec` con el contexto del run. El dashboard es autocontenido/offline:
+  no carga scripts CDN ni assets remotos.
 - Estado remoto por API: `GET /api/contadores/followup/runner/status` devuelve
-  el delta estructurado, ultimo resumen, historial acumulado, timeline y logs
-  tecnicos. Esta ruta queda protegida por sesion o `X-Internal-Token`; no es
-  publica. Ya no hay una vista visual de Runner en el backoffice.
+  el delta estructurado redacted/bounded, ultimo resumen, historial acumulado,
+  timeline, `state`, `lock_state`, `artifact_errors` y logs tecnicos acotados.
+  Esta ruta queda protegida por sesion o `X-Internal-Token`; no es publica. Ya
+  no hay una vista visual de Runner en el backoffice.
 - El LaunchAgent local tambien sincroniza su ultimo estado al server real con
   `POST /api/contadores/followup/runner/status`, usando `INTERNAL_API_TOKEN`.
-  Asi el server real conserva el ultimo resumen/log tail aunque la ejecucion
-  haya corrido en la Mac.
+  El payload remoto es un resumen de triage redacted/bounded, no un archivo raw
+  de logs. Los logs completos quedan locales bajo la politica de retencion.
 
 Verificar API de funnels:
 
@@ -893,6 +969,12 @@ Entrada Click-to-WhatsApp:
 - Por defecto no se usa el texto prellenado del anuncio para rutear porque el usuario puede editarlo antes de enviarlo.
 - Excepcion aprobada: el texto normalizado `Hola! Quiero mas informacion de su propuesta para abogados!` rutea directo a `abogados` cuando no hay reply/referral usable.
 - Si no hay `referral.source_id`, ni frase aprobada, ni match de funnel, el mensaje se guarda como lead en el buzon `general`.
+- El challenge de setup usa `WA_VERIFY_TOKEN`; los POST entrantes requieren
+  `WA_APP_SECRET` para validar `X-Hub-Signature-256` antes de ejecutar handlers.
+  Produccion no debe correr webhooks de WhatsApp sin firma.
+- `WA_CALLBACK_URL` define la ruta local que monta PyWA. No autoriza escrituras
+  en Meta por si solo: `WA_WEBHOOK_AUTO_REGISTER_ENABLED=false` es el default, y
+  solo con `true` se pasan `callback_url` y scope para auto-registrar el webhook.
 - El servicio `bot` guarda cada webhook inbound de WhatsApp en
   `BOT_WEBHOOK_INBOX_PATH` antes de llamar al backend. Si el backend esta caido,
   el evento queda en ese SQLite y se reintenta en el worker hasta que
@@ -907,6 +989,9 @@ Client Lead Delivery:
 - Cada fuente guarda URL/GID del Google Sheet, intervalo de polling, destinatario
   WhatsApp, mapping de columnas, campos de contexto, template Meta y, cuando
   aplica, `meta_page_id` / `meta_lead_form_id` para resolver webhooks.
+- El sync de fuentes solo acepta `sheet_url` HTTPS de `docs.google.com` o
+  `spreadsheets.google.com` (o un spreadsheet_id crudo) y reconstruye la URL
+  export segura en `docs.google.com`; no se aceptan CSV externos.
 - Los Meta instant forms staged con `stage_meta_publish_plan` deben declarar
   `destination.client_lead_source_id`; el gate de publish bloquea si la fuente
   no existe, esta deshabilitada o no tiene sheet/destinatario/template listo.
@@ -914,7 +999,9 @@ Client Lead Delivery:
   puede vincular el form devuelto a una fuente con `client_lead_source_id`.
 - `POST /api/meta-leads/webhook-subscriptions` suscribe la Page a `leadgen`.
   `GET /api/meta-leads/webhook` responde el challenge de Meta con
-  `META_LEAD_WEBHOOK_VERIFY_TOKEN`; `POST /api/meta-leads/webhook` recibe
+  `META_LEAD_WEBHOOK_VERIFY_TOKEN`; `POST /api/meta-leads/webhook` exige firma
+  `X-Hub-Signature-256` con `META_APP_SECRET` o
+  `META_LEAD_WEBHOOK_APP_SECRET`, recibe
   `leadgen_id`, resuelve la fuente por `form_id` o
   `META_LEAD_WEBHOOK_DEFAULT_SOURCE_ID`, y fetch/importa el lead.
 - Cuando el lead de un instant form ya fue recuperado desde Meta por API o por
@@ -922,9 +1009,13 @@ Client Lead Delivery:
   `POST /api/client-lead-sources/{source_id}/meta-lead` o al tool
   `import_meta_lead_form_to_delivery`. El backend aplana `field_data`, usa
   `leadgen_id` como clave idempotente por fuente, guarda el raw row en
-  `client_lead_deliveries`, apendea el nuevo row al Google Sheet por service
-  account cuando esta configurado, y deja la notificacion WhatsApp `pending`
-  igual que un sync de Sheets.
+  `client_lead_deliveries`, apendea una proyeccion minima al Google Sheet por
+  service account cuando esta configurado, y deja la notificacion WhatsApp
+  `pending` igual que un sync de Sheets. Por defecto el append exporta
+  `id`, `leadgen_id`, `created_time`, nombres visibles de anuncio/campana,
+  `platform`, `full_name`, `phone_number` y `email`; no exporta ids crudos como
+  `form_id`, `ad_id`, `adset_id` o `campaign_id` salvo que se agreguen en
+  `META_SHEET_APPEND_EXTRA_FIELDS`.
 - Si solo tenes el `leadgen_id` del webhook, usar
   `POST /api/client-lead-sources/{source_id}/meta-lead/fetch` o el tool
   `fetch_meta_lead_form_to_delivery`. El fetch lee
@@ -934,7 +1025,9 @@ Client Lead Delivery:
   `META_MARKETING_LIVE_WRITES_ENABLED` porque es read-only.
 - Para recuperar historico reciente de un form, usar
   `POST /api/client-lead-sources/{source_id}/meta-leads/backfill` o
-  `backfill_meta_lead_form_to_delivery`; tambien deduplica por `leadgen_id` y
+  `backfill_meta_lead_form_to_delivery`; pagina Graph dentro de `max_pages` /
+  `max_leads`, marca `partial` si queda truncado o falla una pagina posterior,
+  tambien deduplica por `leadgen_id` y
   apendea solo imports nuevos al Sheet.
 - Las fuentes tambien se pueden declarar por archivo. El seed versionado es
   `config/default-client-lead-sources.json`; el override editable del server es
@@ -1111,12 +1204,19 @@ Bot conversacional post-offer y post-meeting:
 - Codex SDK (`run_codex_with_context`) solo corre si `CODEX_BACKEND_ENABLED=true`
   (opt-in explicito; por defecto no gasta tokens Codex). Con Codex activo, el
   orden es ChatGPT Codex solo si `CODEX_PREFER_CHATGPT_LOGIN=true`, sino Codex
-  con `OPENAI_API_KEY`, y despues DSPy/Grok. Si falla ChatGPT Codex, el lead no se pausa
+  con `OPENAI_API_KEY`, y despues DSPy/Grok. Cada turno tiene deadline
+  `CODEX_TURN_TIMEOUT_SECONDS=600` para no dejar streams colgados. Si falla ChatGPT Codex, el lead no se pausa
   por eso: se crea una alerta runtime por email con link/comando para
   reautenticar y se responde con el siguiente fallback disponible. El fallback usa
   `OPENROUTER_GROK_4_3_MODEL=openrouter/x-ai/grok-4.3` cuando hay
   `OPENROUTER_API_KEY`; si no, usa `gpt-5.4-mini`. Si todos fallan, ahi si
   pasa a `needs_human`.
+- Los agent runs guardan uso Codex compacto en `agent_runs.usage_json` y
+  `budget_status`. `CODEX_RUN_SOFT_TOKEN_BUDGET` y
+  `CODEX_RUN_HARD_TOKEN_BUDGET` son umbrales opcionales en tokens; `0` los
+  deja apagados. Los artefactos sensibles de `data/agent-runs/` tienen reporte
+  dry-run/prune desde `backend.ai.codex_agent_runtime`; `data/agent-memory/`
+  queda como memoria durable.
 - El bot devuelve una accion estructurada:
   `send_reply`, `offer_solo_page_promo`, `send_page_example_video`,
   `start_workstation_solo_page`, `ask_scheduling_details`, `handoff_human`,
@@ -1140,8 +1240,10 @@ Bot conversacional post-offer y post-meeting:
 - Si el bot no sabe responder una pregunta factual/comercial, no manda una
   respuesta insegura ni corta el flujo permanentemente: crea un runtime alert
   `unanswered_lead_question` por AgentMail. El operador responde ese mismo
-  thread con el texto exacto para WhatsApp; el backend lo manda, restaura el
-  stage anterior, y guarda la respuesta en
+  thread empezando con `Respuesta:` y el texto exacto para WhatsApp; el backend
+  rechaza cuerpos ambiguos, firmas y respuestas demasiado largas antes de
+  encolar WhatsApp. Cuando la respuesta es valida, restaura el stage anterior y
+  guarda la respuesta en
   `.codex/skills/contadores-lead-reply-playbook/references/operator-learned-answers.md`
   y `wiki/skills/contadores-lead-reply-playbook/references/operator-learned-answers.md`
   para futuras preguntas parecidas.
@@ -1149,6 +1251,12 @@ Bot conversacional post-offer y post-meeting:
   esa respuesta de email solo se guarda como conocimiento y resuelve el ticket:
   no se encola otro WhatsApp duplicado. Los emails de alerta incluyen la
   conversacion reciente en orden cronologico, no solamente el ultimo inbound.
+- AgentMail puede enviar y verificar webhooks con inboxes ya configurados, pero
+  no crea/actualiza webhooks al iniciar salvo que
+  `AGENTMAIL_PROVISIONING_WRITES_ENABLED=true`. La sincronizacion de display
+  names de inbox requiere `AGENTMAIL_SYNC_INBOX_DISPLAY_NAMES=true`. Para
+  provisionar, encender el gate solo durante un arranque controlado del bot,
+  confirmar webhook/inboxes, y volver a dejarlo apagado.
 - Si el lead rechaza el servicio o dice que no quiere avanzar, el bot envia
   exactamente `1) Muy caros los 599 dolares`, `2) No me sirve la pagina web +
   publicidades`, `3) No es mi momento para invertir`, `4) Otro motivo`, con
@@ -1180,7 +1288,9 @@ Bot conversacional post-offer y post-meeting:
 - Los audios inbound se transcriben antes de llegar al bot con
   `OPENAI_AUDIO_TRANSCRIPTION_MODEL=gpt-4o-transcribe` por defecto. Si WhatsApp
   entrega `.ogg`, Docker incluye `ffmpeg` para convertirlo a un formato aceptado
-  por OpenAI. Si sale bien, el audio queda como mensaje reproducible y el
+  por OpenAI. `AUDIO_TRANSCRIPTION_MAX_SOURCE_BYTES` y
+  `AUDIO_TRANSCRIPTION_MAX_UPLOAD_BYTES` limitan el archivo original y el archivo
+  convertido antes de llamar a OpenAI. Si sale bien, el audio queda como mensaje reproducible y el
   transcript se guarda como el siguiente inbound con
   `sequence_step=audio_transcript`. Si descarga/transcripcion falla, se conserva
   el audio reproducible y recien ahi pasa como media sin transcript.
@@ -1195,8 +1305,9 @@ Acciones manuales de Meeting:
 - `Meeting link only` encola solo el link legacy de agenda.
 - El link legacy sale de `calendly_base_url` del funnel activo.
 - Ambas acciones registran `calendly_sent_at` y mantienen el lead en Manual.
-- El webhook Calendly registra `meeting_scheduled_at`, mueve el lead al hito
-  `Meeting`, pausa la automatizacion y no setea `booked_at/converted_at`.
+- El webhook Calendly exige `CALENDLY_WEBHOOK_SIGNING_KEY`, registra
+  `meeting_scheduled_at`, mueve el lead al hito `Meeting`, pausa la
+  automatizacion y no setea `booked_at/converted_at`.
 - La automatizacion nueva no manda links automaticamente. Para avanzar, el
   bot pide email, dia, horario y timezone.
 - Cuando esos datos estan completos, un agente puede usar
@@ -1267,7 +1378,11 @@ Media en WhatsApp:
   lead.
 - La media o archivos que envia el operador desde `Manual outbound` se guardan
   en `data/contadores/outbound_media/{lead_id}/`, se muestran en el chat y el
-  bot los despacha por WhatsApp como imagen, video, audio o documento.
+  bot los despacha por WhatsApp como imagen, video, audio o documento. El
+  backend limita esos envios con `CONTADORES_MANUAL_MEDIA_MAX_FILES`,
+  `CONTADORES_MANUAL_MEDIA_MAX_FILE_BYTES` y
+  `CONTADORES_MANUAL_MEDIA_MAX_TOTAL_BYTES`; si un lote supera esos limites, no
+  se encola ningun adjunto parcial.
 - Si un lead envia solo media sin texto, se guarda un placeholder textual como `[image]` o `[video]`.
 - Los videos salientes de estrategia usan el `media_path` configurado, por ejemplo `data/contadores/videos/loom_60_seconds_captions.mp4`.
 - El frontend sirve esos videos desde una URL estable basada en `media_path`, asi el mismo archivo se reutiliza para todos los leads que recibieron ese video.
@@ -1302,6 +1417,9 @@ titulo, copia de notas, copia de todo el contexto, foto profesional generada
 desde fotos fuente, y export ZIP. La media se puede subir con el selector de
 archivo, arrastrando un archivo sobre el panel `Media`, o pegando una imagen o
 archivo desde el portapapeles mientras ese panel esta activo.
+Las subidas de media de Workstation se limitan con
+`WORKSTATION_MEDIA_MAX_UPLOAD_BYTES`; archivos mas grandes se rechazan antes de
+escribir en disco.
 
 La foto profesional se dispara desde el boton `Actions` del cliente. La accion
 `Hacer foto profesional` abre un modal para seleccionar imagenes de `media/`,
@@ -1338,8 +1456,8 @@ aprobado como `Manual ping`.
 Para reencolar mensajes historicos que ya quedaron en `failed`:
 
 ```bash
-uv run python src/scripts/requeue_failed_contadores_messages.py --dry-run
 uv run python src/scripts/requeue_failed_contadores_messages.py
+uv run python src/scripts/requeue_failed_contadores_messages.py --execute
 ```
 
 ## Promo web profesional mayo 2026
@@ -1360,6 +1478,10 @@ uv run python src/scripts/contadores_promo_web_20260505.py --execute
 
 El modo default es dry-run: genera `data/reports/promo-web-profesional-2026-05-05-preview.csv`
 y `data/contadores/promo-web-profesional-2026-05-05-aliases.csv`.
+El preview redacta texto renderizado y parametros por default; usar
+`--include-sensitive` solo cuando el operador necesita revisar el contenido
+completo. `--list-retention-targets` lista en dry-run los reportes/ledgers
+conocidos para decidir limpieza despues del periodo de retencion.
 El script excluye convertidos, Workstation, legacy booked, closed, archived, opt-outs
 de marketing y, salvo que se pase `--include-provider-failures`, leads cuyo
 ultimo outbound ya fallo en Meta. Los precios `19/29/49/99` se eligen de forma
@@ -1455,6 +1577,10 @@ que la autenticacion de Codex pueda persistir en el volumen `data/`. Si
 lanzar Codex para priorizar el login ChatGPT/Codex. Si se configura en `false`,
 el proceso Codex conserva `OPENAI_API_KEY`.
 
+La dependencia directa `openai-codex-app-server-sdk` debe quedar pinneada a un
+commit en `pyproject.toml`. Para actualizarla, cambiar el commit del Git URL,
+correr `uv lock`, luego el smoke de backend y los tests de Agent API.
+
 Cada cliente `solo_pagina` con una version generada tiene una URL publica de
 prueba estable, no autenticada e indescifrable:
 
@@ -1466,7 +1592,12 @@ La URL vive en `workstation_public_pages`, una fila por cliente. El token no
 cambia entre versiones; cuando el backend crea `v002`, `v003`, etc. actualiza la
 fila para que la misma URL sirva siempre la ultima version. El detalle de
 Workstation muestra botones para abrir y copiar esa URL, y `profile.json`
-incluye `public_page` para que el agente Codex tambien la conozca.
+incluye `public_page` para que el agente Codex tambien la conozca. Las rutas
+publicas `/p/{token}` sirven solo assets de pagina; metadata y previews quedan
+solo para operadores.
+La URL deja de servir cuando el cliente de Workstation se cierra, cuando el lead
+CRM vinculado se cierra y el tick lo detecta, o cuando supera
+`WORKSTATION_PUBLIC_PAGE_TTL_DAYS` si ese valor es mayor que cero.
 
 La URL de prueba se genera apenas existe `index.html` en una version y el
 backend termina de renderizar el preview. El primer envio al cliente puede ser
@@ -1561,9 +1692,19 @@ aprobados. Los nombres son configurables por `.env`:
 - `WORKSTATION_PING_TEMPLATE_2_NAME=konecta_workstation_ping_2_es_v1`
 - `WORKSTATION_HANDOFF_TEMPLATE_NAME=konecta_workstation_handoff_es_v1`
 - `WORKSTATION_PUBLIC_PAGE_BASE_URL=https://crm.fgoiriz.com`
+- `WORKSTATION_PUBLIC_PAGE_TTL_DAYS=0` deja los links sin expiracion por tiempo;
+  igual se desactivan al cerrar el lead/cliente.
+- `WORKSTATION_MAX_LANDING_PAGE_VERSIONS=10` controla el reporte/prune explicito
+  de versiones viejas, siempre saltando la version publica actual.
 - `CONTADORES_REVIEW_BASE_URL=https://crm.fgoiriz.com`
 - `WORKSTATION_CODEX_HEARTBEAT_ENABLED=true`
 - `WORKSTATION_CODEX_HEARTBEAT_INTERVAL_HOURS=12`
+- Foto profesional con Codex vision: `WORKSTATION_PRO_PHOTO_CREATE_MAX_IMAGES=4`,
+  `WORKSTATION_PRO_PHOTO_EDIT_MAX_EXTRA_IMAGES=3`,
+  `WORKSTATION_PRO_PHOTO_MAX_IMAGE_BYTES=10485760`,
+  `WORKSTATION_PRO_PHOTO_MAX_TOTAL_IMAGE_BYTES=33554432`,
+  `WORKSTATION_PRO_PHOTO_MAX_CONTEXT_CHARS=4000` y
+  `WORKSTATION_PRO_PHOTO_MAX_PROMPT_CHARS=4000`.
 
 La cadencia es 24h, 48h y 72h desde el ultimo preview. Si faltan templates o
 falla WhatsApp/Codex, se alerta por email y no se manda texto custom fuera de la
@@ -1578,6 +1719,10 @@ El ZIP se descarga desde:
 ```bash
 curl -L http://127.0.0.1:8000/api/workstation/clients/{client_id}/zip -o client.zip
 ```
+
+El ZIP usa allowlist: incluye `notes.txt`, media del cliente y la version publica
+actual (`index.html`, `styles.css`, `script.js` y `assets/`). No exporta
+`profile.json`, `conversation.txt`, `.git/`, metadata, prompts ni zips previos.
 
 Codex debe usar esa carpeta como fuente de verdad para trabajos manuales futuros
 como landing pages, imagenes o materiales de entrega. No se llama a GPT Image por
@@ -1598,6 +1743,12 @@ Servicios:
 - `bot`: webhooks de WhatsApp/Meeting y worker de automatización.
 - `traefik`: entrada HTTP para mantener el despliegue detrás de Traefik.
 
+Los tres servicios usan `restart: unless-stopped`. `backend` y `bot` tienen
+healthchecks de liveness contra `/health`; readiness de negocio se verifica
+aparte con `/api/runtime` y el smoke del server. El host publico aprobado para
+CRM/Workstation es `crm.fgoiriz.com`; aliases nuevos tienen que agregarse de
+forma explicita en `.env`, Traefik y docs.
+
 El backend corre con un solo worker de Uvicorn mientras use SQLite. La base
 local queda en `data/database.sqlite`, montada como volumen persistente, y el
 engine activa WAL + busy timeout para reducir locks entre el backend y el bot.
@@ -1608,6 +1759,12 @@ El bot tambien usa el volumen persistente `data/` para
 `bot-webhook-inbox.sqlite`. Ese inbox es el buffer antifallos de inbound
 WhatsApp entre Meta y el backend; no borrarlo durante deploys o limpiezas.
 
+El build context de Docker no debe recibir `data/`, `auth.toml`, `.env`,
+credenciales JSON, pickles ni salidas locales de tests/browser. Esos archivos
+entran solo por `env_file`, volumenes documentados o provisionamiento del
+server. Si aparece una carpeta nueva de estado local, agregarla a `.gitignore`
+y `.dockerignore` en el mismo cambio.
+
 ## Rollout recomendado
 
 `ALWAYS_DEPLOY`: un cambio de producto no esta terminado por compilar local,
@@ -1616,12 +1773,24 @@ server real y se verifico ahi.
 
 Este repo se trabaja server-first: `localhost` sirve para desarrollar, verificar, mover git, pushear y deployar. Un cambio de producto se considera terminado cuando está en el server real, salvo que explícitamente se pida local-only.
 
-1. Trabajar y mergear directo a `main`.
-2. Pushear `main`.
-3. Deployar el servidor desde `main`.
-4. Verificar `/api/runtime`, `/api/funnels`, la ingesta de sheet y el flujo de WhatsApp en el server.
-5. Si el cambio toca Client Lead Delivery, verificar fuentes, sync, pendientes,
+1. Correr verificacion local pre-deploy.
+2. Trabajar y mergear directo a `main`.
+3. Pushear `main`.
+4. Deployar el servidor desde `main`.
+5. Correr smoke read-only del server.
+6. Verificar `/api/runtime`, `/api/funnels`, la ingesta de sheet y el flujo de WhatsApp en el server.
+7. Si el cambio toca Client Lead Delivery, verificar fuentes, sync, pendientes,
    delivery callbacks y aprobacion del template en el server real.
+
+Verificacion local pre-deploy:
+
+```bash
+./scripts/verify_local.sh
+```
+
+Este comando corre el guard de nombres duplicados de pytest, smoke import del
+backend, tests backend, tests bot y build frontend. No deploya ni prueba el
+server real.
 
 Deploy remoto:
 
@@ -1629,10 +1798,34 @@ Deploy remoto:
 ./deploy_to_server.sh
 ```
 
-El script usa SSH en `149.50.136.121:5389`.
+El script usa SSH en `149.50.136.121:5389` y corta antes de hacer `checkout`,
+`pull` o `docker compose build` si el worktree tracked del server esta sucio.
+Para resolverlo, inspeccionar el diff remoto y commitear el cambio intencional
+en `main`, o mover config server-only a `.env`, `auth.toml`, `data/` o archivos
+untracked documentados. Nunca deployar con infra tracked sucia.
+Tambien corta si faltan `.env` o `auth.toml`, si encuentra referencias de
+fallback a credenciales de otro proyecto en esos archivos, si `backend`, `bot`
+o `traefik` no quedan corriendo/healthy, o si falla `/health` desde Docker o
+`https://crm.fgoiriz.com/health`. La salida de error imprime `docker compose ps`
+y logs recientes de backend/bot sin imprimir secretos.
+
+El primer provisionamiento del server debe crear `.env` y `auth.toml` propios
+de Contadores/Konecta. No usar archivos temporales ni fallback de CleverApply,
+Konecta Auditor u otro cliente.
 
 Logs remotos:
 
 ```bash
 ./server_logs.sh
 ```
+
+Smoke read-only del server despues del deploy:
+
+```bash
+./verify_server.sh
+```
+
+El smoke revisa commit remoto, `docker compose ps`, health de backend/bot,
+`https://crm.fgoiriz.com/health`, `/api/runtime`, `/api/funnels` y errores
+recientes de backend/bot. No prueba ingestion real de sheets, envios WhatsApp,
+ni escrituras Meta: esos checks siguen siendo manuales y especificos del plan.

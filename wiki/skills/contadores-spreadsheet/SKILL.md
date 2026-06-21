@@ -112,8 +112,9 @@ Meta instant-form publish plans must reference a ready source with
 must stay blocked because the leads would not have a delivery path.
 Instant-form sources should store `meta_page_id` and `meta_lead_form_id` so
 `POST /api/meta-leads/webhook` can resolve the Delivery source from the webhook
-`form_id`. `META_LEAD_WEBHOOK_DEFAULT_SOURCE_ID` is only a fallback for narrow
-single-source deployments.
+`form_id`. `POST` requires `X-Hub-Signature-256` signed with
+`META_LEAD_WEBHOOK_APP_SECRET`. `META_LEAD_WEBHOOK_DEFAULT_SOURCE_ID` is only a
+fallback for narrow single-source deployments.
 When a Meta Lead Ads webhook only has `leadgen_id`, fetch and import it through
 `fetch_meta_lead_form_to_delivery` or
 `POST /api/client-lead-sources/{source_id}/meta-lead/fetch`. When the full
@@ -175,12 +176,15 @@ rows before enabling it. Repeated syncs are idempotent: `source_id` is the
 preferred row key, and rows without it use a stable row-number/hash key.
 
 Polling should respect `sheet_poll_seconds` per enabled source. Manual rollout
-or debugging can force one sync with:
+or debugging can force one sync on the real server with the public CRM host:
 
 ```bash
 curl -fsS -X POST -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
-  http://127.0.0.1:8000/api/client-lead-sources/{source_id}/sync
+  https://crm.fgoiriz.com/api/client-lead-sources/{source_id}/sync
 ```
+
+Use `127.0.0.1:8000` only for local development or from an SSH session where
+the command is intentionally targeting the backend inside the server context.
 
 Sheet access order:
 
@@ -193,7 +197,11 @@ For private sheets, set `CONTADORES_GOOGLE_SERVICE_ACCOUNT_FILE` or
 The service account only needs readonly Sheets access for Delivery import.
 If Meta Lead Ads imports should append the new lead back into the connected
 Sheet, the same service account needs Editor access. The backend appends only
-new `leadgen_id` imports and preserves/extends the header row.
+new `leadgen_id` imports and writes a minimized export projection by default:
+`id`, `leadgen_id`, `created_time`, visible ad/campaign names, `platform`,
+`full_name`, `phone_number`, and `email`. Raw provider ids such as `form_id`,
+`ad_id`, `adset_id`, and `campaign_id` stay in the app database unless they are
+explicitly listed in `META_SHEET_APPEND_EXTRA_FIELDS`.
 
 Delivery statuses are `pending`, `sent`, `delivered`, `failed`, `blocked`, and
 `skipped`. Invalid lead phones or invalid recipient phones become `blocked`
@@ -224,11 +232,13 @@ Endpoints:
 
 The default WhatsApp template spec is versioned at
 `src/scripts/whatsapp_template_specs/konecta_delivery_lead_alert_es.json`.
-It uses positional params: source label, lead name, lead phone, email, and the
+It uses 3 positional params: campaign/source title, one lead-data block, and the
 plain `https://wa.me/{phone}` chat link without a `text=` parameter.
 Context-enabled sources use
 `src/scripts/whatsapp_template_specs/konecta_delivery_lead_alert_context_es.json`
-with the same first five params plus a single-line context param.
+with the same 3-param shape. Context fields are appended inside the lead-data
+block as `Nombre del campo: valor`; Meta receives that whole block as one
+single positional parameter.
 
 ## Quick Start
 
@@ -286,20 +296,24 @@ Do not rely on public spreadsheets for production contact workflows.
 
 ## How To Use The Sheet In This Project
 
-Treat the spreadsheet as the source of truth for:
+Treat the spreadsheet as intake/config input only:
 
-- lead ingestion;
-- whether the lead was already contacted;
-- which message sequence the lead is in;
-- which step was already sent;
-- whether the conversational bot already sent `ai_reply` or
-  `scheduling_handoff_confirmation`;
-- whether an inbound audio was transcribed into text or remained media-only for
-  human review;
-- whether Codex failed and the Grok/DSPy fallback answered, which should create
-  a runtime alert without changing the lead stage;
-- when the next action should happen;
-- whether automation should stop and hand off to a human.
+- lead ingestion rows;
+- source-specific contact fields;
+- whether a row was already contacted before import;
+- per-funnel sheet source configuration through `data/funnels.json` or
+  `FUNNELS_CONFIG_PATH`.
+
+Runtime state lives in backend persistence and the CRM/backoffice:
+
+- message sequence, sent steps, delivery state, and retry/error state live in
+  `contadores_messages`;
+- lead stage, automation ownership, handoff state, and next-action decisions live
+  in `contadores_leads`;
+- runtime alerts live in `contadores_runtime_alerts` and alert delivery tables;
+- scheduled sheet-sync cadence/failure state lives in backend sync-state rows;
+- operators review and change state in the CRM/backoffice, not by editing
+  operational sheet columns.
 
 Operational rule:
 
@@ -313,43 +327,28 @@ Operational rule:
 
 For the MVP:
 
-- read rows every 30 seconds;
-- find leads that are eligible for action;
-- lock the row before sending;
-- send the WhatsApp message;
-- only after a successful send, update the sheet state.
+- enabled campaign funnels poll their configured sheet cadence;
+- eligible rows are imported into backend persistence;
+- automation and outbound delivery run from backend state;
+- the sheet remains intake/config input, not the runtime execution layer.
 
 Do not mark a lead as contacted before the outbound message succeeds.
 Do not add a runtime mode switch to avoid configuring the sheet source.
 
 ## Suggested Operational Pattern
 
-Use the existing lead columns as input data and add operational columns in the same sheet.
-
-Recommended additional columns:
-
-- `wa_status`
-- `wa_sequence`
-- `wa_step`
-- `wa_last_outbound_at`
-- `wa_last_inbound_at`
-- `wa_next_action_at`
-- `wa_message_id`
-- `wa_error`
-- `wa_lock_token`
-- `wa_lock_until`
-- `wa_human_handoff`
-- `wa_notes`
-
-These fields let the sheet replace local state in the first version.
+Use the existing lead columns as input data. Do not add new `wa_*` runtime
+columns for active automation. If an old sheet already has those columns, treat
+them as legacy/historical hints only; do not make them authoritative without a
+new product decision.
 
 ## Working Rules
 
 - Keep code simple and skimmable.
 - Prefer explicit column names over inferred positions.
 - Normalize booleans and timestamps as strings that are easy to inspect in Sheets.
-- Avoid hidden state outside the sheet unless there is a clear operational reason.
-- If multiple workers ever exist, use row locks in the sheet before sending messages.
+- Keep runtime state in backend tables and expose it through the CRM/backoffice.
+- Do not reintroduce sheet-managed locks or runtime mode switches.
 
 ## When To Read References
 

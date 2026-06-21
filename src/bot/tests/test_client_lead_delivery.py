@@ -20,7 +20,7 @@ def test_fetch_and_dispatch_client_lead_notifications(monkeypatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content.decode("utf-8")) if request.content else None
         requests.append((request.method, request.url.path, body))
-        if request.url.path == "/api/client-lead-deliveries/pending":
+        if request.method == "POST" and request.url.path == "/api/client-lead-deliveries/pending/claim":
             return httpx.Response(
                 200,
                 json={
@@ -75,6 +75,7 @@ def test_fetch_and_dispatch_client_lead_notifications(monkeypatch) -> None:
     results = asyncio.run(run())
 
     assert [result.status for result in results] == ["delivered"]
+    assert requests[0] == ("POST", "/api/client-lead-deliveries/pending/claim", None)
     assert sent_templates == [
         {
             "to": "+5491122223333",
@@ -117,6 +118,41 @@ def test_fetch_and_dispatch_client_lead_notifications(monkeypatch) -> None:
             ),
         },
     )
+
+
+def test_dispatch_client_lead_notification_rejects_ambiguous_recipient_phone() -> None:
+    """Delivery dispatch should fail before provider send for local-looking digits."""
+    sent_templates: list[dict[str, object]] = []
+
+    async def fake_send_template_message(**kwargs) -> DeliveryReceipt:
+        sent_templates.append(kwargs)
+        return DeliveryReceipt(external_id="wamid.delivery.bad", delivered_text=kwargs.get("delivered_text"))
+
+    notification = utils.PendingClientLeadNotification(
+        delivery_id="delivery-local-phone",
+        source_id="source-1",
+        source_label="MMB Ads",
+        recipient_phone="22223333",
+        normalized_recipient_phone="22223333",
+        template_name="konecta_delivery_lead_alert_es",
+        template_language="es",
+        template_body_params=["MMB Ads", "Nombre: Ana", "https://wa.me/5491111111111"],
+        delivered_text="Nuevo Lead: MMB Ads.",
+    )
+
+    async def run():
+        return await utils.dispatch_one_client_lead_notification(
+            item=notification,
+            whatsapp_provider=SimpleNamespace(send_template_message=fake_send_template_message),
+        )
+
+    try:
+        asyncio.run(run())
+    except ValueError as exc:
+        assert str(exc) == "invalid_whatsapp_phone: 22223333"
+    else:
+        raise AssertionError("Ambiguous recipient phone was sent")
+    assert sent_templates == []
 
 
 def test_whatsapp_template_body_params_are_meta_safe() -> None:

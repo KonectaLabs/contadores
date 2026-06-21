@@ -17,6 +17,7 @@ import phonenumbers
 from phonenumbers import NumberParseException
 from sqlmodel import Session, select
 
+from backend.csv_safety import neutralize_spreadsheet_formula
 from backend.database import (
     ContadoresLead,
     ContadoresLeadStage,
@@ -31,6 +32,8 @@ from backend.endpoints.contadores import (
     ensure_utc_datetime,
     parse_delivery_error_code,
 )
+from backend.redaction import redact_sensitive_text
+from operator_report_retention import list_report_targets
 
 
 CAMPAIGN_ID = "promo_web_profesional_20260505"
@@ -369,19 +372,23 @@ def write_alias_file(
         writer.writeheader()
         for lead in leads:
             alias = aliases[lead.id]
+            row = {
+                "lead_id": lead.id,
+                "funnel_id": lead.funnel_id,
+                "full_name": lead.full_name or "",
+                "alias": alias.alias,
+                "alias_source": alias.source,
+                "needs_review": str(alias.needs_review).lower(),
+            }
             writer.writerow(
                 {
-                    "lead_id": lead.id,
-                    "funnel_id": lead.funnel_id,
-                    "full_name": lead.full_name or "",
-                    "alias": alias.alias,
-                    "alias_source": alias.source,
-                    "needs_review": str(alias.needs_review).lower(),
+                    field: neutralize_spreadsheet_formula(row.get(field, ""))
+                    for field in fieldnames
                 }
             )
 
 
-def write_preview(path: Path, candidates: list[CampaignCandidate]) -> None:
+def write_preview(path: Path, candidates: list[CampaignCandidate], *, include_sensitive: bool = False) -> None:
     """Write a CSV preview of the exact promo rows that would be queued."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = [
@@ -401,19 +408,25 @@ def write_preview(path: Path, candidates: list[CampaignCandidate]) -> None:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         for candidate in candidates:
+            row = {
+                "lead_id": candidate.lead.id,
+                "funnel_id": candidate.lead.funnel_id,
+                "full_name": candidate.lead.full_name or "",
+                "alias": candidate.alias.alias,
+                "country_code": candidate.country_code,
+                "country": candidate.country_name,
+                "profession": candidate.profession,
+                "price": candidate.price,
+                "latest_outbound_failed": str(candidate.latest_outbound_failed).lower(),
+                "template_params_json": json.dumps(candidate.template_params, ensure_ascii=False)
+                if include_sensitive
+                else "[redacted]",
+                "rendered_text": candidate.text if include_sensitive else redact_sensitive_text(candidate.text, limit=160),
+            }
             writer.writerow(
                 {
-                    "lead_id": candidate.lead.id,
-                    "funnel_id": candidate.lead.funnel_id,
-                    "full_name": candidate.lead.full_name or "",
-                    "alias": candidate.alias.alias,
-                    "country_code": candidate.country_code,
-                    "country": candidate.country_name,
-                    "profession": candidate.profession,
-                    "price": candidate.price,
-                    "latest_outbound_failed": str(candidate.latest_outbound_failed).lower(),
-                    "template_params_json": json.dumps(candidate.template_params, ensure_ascii=False),
-                    "rendered_text": candidate.text,
+                    field: neutralize_spreadsheet_formula(row.get(field, ""))
+                    for field in fieldnames
                 }
             )
 
@@ -507,7 +520,14 @@ def main() -> None:
     parser.add_argument("--alias-path", type=Path, default=DEFAULT_ALIAS_PATH)
     parser.add_argument("--preview-path", type=Path, default=DEFAULT_PREVIEW_PATH)
     parser.add_argument("--ledger-path", type=Path, default=DEFAULT_LEDGER_PATH)
+    parser.add_argument("--include-sensitive", action="store_true", help="Write full rendered text/params to preview CSV.")
+    parser.add_argument("--retention-days", type=int, default=30)
+    parser.add_argument("--list-retention-targets", action="store_true", help="Dry-run list of known one-off report files.")
     args = parser.parse_args()
+
+    if args.list_retention_targets:
+        print(json.dumps(list_report_targets([args.preview_path, args.ledger_path], retention_days=args.retention_days), indent=2))
+        return
 
     init_db()
     leads = list_campaign_leads()
@@ -529,7 +549,7 @@ def main() -> None:
     if args.limit > 0:
         candidates = candidates[: args.limit]
 
-    write_preview(args.preview_path, candidates)
+    write_preview(args.preview_path, candidates, include_sensitive=args.include_sensitive)
 
     queued_message_ids: list[int] = []
     if args.execute:

@@ -12,7 +12,7 @@ import dspy
 from pydantic import BaseModel
 
 from backend.base import Program
-from backend.config import gpt_5_4_mini
+from backend.config import get_gpt_5_4_mini
 
 
 class PostLoomReplyClassificationResult(BaseModel):
@@ -67,7 +67,7 @@ class PostLoomReplyClassifierProgram(Program):
     """DSPy program that classifies post-Loom replies."""
 
     def __init__(self, lm: dspy.LM | None = None):
-        super().__init__(lm=lm or gpt_5_4_mini)
+        super().__init__(lm=lm or get_gpt_5_4_mini(reasoning_effort="medium", verbosity="low"))
         self.predict = dspy.Predict(PostLoomReplyClassifierSignature)
 
     async def aforward(
@@ -152,7 +152,7 @@ class PostLoomServiceRecapProgram(Program):
     """DSPy program that writes the post-video service recap message."""
 
     def __init__(self, lm: dspy.LM | None = None):
-        super().__init__(lm=lm or gpt_5_4_mini)
+        super().__init__(lm=lm or get_gpt_5_4_mini(reasoning_effort="medium", verbosity="low"))
         self.predict = dspy.Predict(PostLoomServiceRecapSignature)
 
     async def aforward(

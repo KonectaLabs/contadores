@@ -389,7 +389,8 @@ def create_command(
         help="Positional example value. Repeat in order for POSITIONAL templates.",
     ),
     footer: str | None = typer.Option(None, "--footer", help="Optional footer."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Validate/prepare only."),
+    execute: bool = typer.Option(False, "--execute", help="Create templates in Meta. Default is preview only."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview only. Kept for older safe runbooks."),
     as_json: bool = typer.Option(False, "--json", help="JSON output."),
     token: str | None = typer.Option(
         None, "--token", envvar=ENV_WA_ACCESS_TOKEN, help="WhatsApp access token."
@@ -401,7 +402,10 @@ def create_command(
         help="WhatsApp business account id.",
     ),
 ) -> None:
-    """Create templates from inline flags and/or spec file."""
+    """Preview or create templates from inline flags and/or spec file."""
+    if execute and dry_run:
+        raise typer.BadParameter("--execute cannot be combined with --dry-run.")
+
     specs: list[dict[str, Any]] = []
     if spec_file:
         specs.extend(_load_specs(spec_file))
@@ -425,11 +429,11 @@ def create_command(
     if not specs:
         raise typer.BadParameter("No templates provided. Use --spec-file and/or --name + --body.")
 
-    if dry_run:
-        results = create_templates(wa=None, specs=specs, dry_run=True)
-    else:
+    if execute:
         wa = _get_client(token, business_account_id)
         results = create_templates(wa=wa, specs=specs, dry_run=False)
+    else:
+        results = create_templates(wa=None, specs=specs, dry_run=True)
 
     _print_results(results, as_json, "CREATE RESULTS")
     if any(not result.get("ok", False) for result in results):
@@ -501,7 +505,8 @@ def delete_command(
     spec_file: Path | None = typer.Option(
         None, "--spec-file", help="Optional spec file; names are taken from it."
     ),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be deleted."),
+    execute: bool = typer.Option(False, "--execute", help="Delete templates in Meta. Default is preview only."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview only. Kept for older safe runbooks."),
     as_json: bool = typer.Option(False, "--json", help="JSON output."),
     token: str | None = typer.Option(
         None, "--token", envvar=ENV_WA_ACCESS_TOKEN, help="WhatsApp access token."
@@ -513,16 +518,19 @@ def delete_command(
         help="WhatsApp business account id.",
     ),
 ) -> None:
-    """Delete templates by name."""
+    """Preview or delete templates by name."""
+    if execute and dry_run:
+        raise typer.BadParameter("--execute cannot be combined with --dry-run.")
+
     names = _collect_names(name, spec_file)
     if not names:
         raise typer.BadParameter("Provide --name and/or --spec-file.")
 
-    if dry_run:
-        results = delete_templates(None, names, dry_run=True)
-    else:
+    if execute:
         wa = _get_client(token, business_account_id)
         results = delete_templates(wa, names, dry_run=False)
+    else:
+        results = delete_templates(None, names, dry_run=True)
     _print_results(results, as_json, "DELETE RESULTS")
 
     if any(not result.get("ok", False) for result in results):

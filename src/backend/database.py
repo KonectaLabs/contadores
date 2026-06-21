@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import logging
 import os
@@ -14,27 +15,42 @@ from datetime import datetime, timedelta, timezone
 from email.utils import parseaddr
 from enum import Enum
 from pathlib import Path
-from typing import Any, Literal, Optional, overload
+from typing import Any, Iterable, Literal, Optional, overload
 from urllib.parse import parse_qs, unquote, urlsplit, urlunsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import phonenumbers
 from pydantic import BaseModel, Field as PydanticField, field_serializer
 from phonenumbers import NumberParseException
-from sqlalchemy import Column, Enum as SQLAlchemyEnum, String, UniqueConstraint, and_, delete, event, inspect, or_
+from sqlalchemy import Column, Enum as SQLAlchemyEnum, String, UniqueConstraint, and_, delete, event, func, inspect, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import aliased
 from sqlmodel import Field, Session, SQLModel, create_engine, select
 
 from backend.calendly import normalize_calendly_url
+from backend.redaction import redact_sensitive_text
 
 logger = logging.getLogger(__name__)
+
+_CURRENT_CORRELATION_ID: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "contadores_correlation_id",
+    default=None,
+)
 
 DATA_DIR = Path(os.getenv("DATA_DIR", Path(__file__).resolve().parents[2] / "data"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 DEFAULT_DATABASE_URL = f"sqlite:///{DATA_DIR / 'database.sqlite'}"
 DATABASE_URL = os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL)
+
+
+def _positive_int_env(name: str, default: int) -> int:
+    """Read one non-negative integer env var."""
+    try:
+        value = int(os.getenv(name, ""))
+    except ValueError:
+        return default
+    return value if value >= 0 else default
 
 
 def _is_sqlite_url(database_url: str) -> bool:
@@ -54,6 +70,42 @@ def _build_engine():
 
 
 engine = _build_engine()
+
+
+def get_current_correlation_id() -> str | None:
+    """Return the request correlation id bound to this context."""
+    return _CURRENT_CORRELATION_ID.get()
+
+
+def set_current_correlation_id(value: str | None) -> contextvars.Token[str | None]:
+    """Bind one request correlation id to this context."""
+    clean_value = (value or "").strip() or None
+    return _CURRENT_CORRELATION_ID.set(clean_value)
+
+
+def reset_current_correlation_id(token: contextvars.Token[str | None]) -> None:
+    """Restore the previous request correlation id."""
+    _CURRENT_CORRELATION_ID.reset(token)
+
+
+def _safe_data_file_path(file_path: str | None) -> Path | None:
+    """Resolve a stored path only when it stays under DATA_DIR."""
+    clean_path = (file_path or "").strip()
+    if not clean_path:
+        return None
+    data_dir = DATA_DIR.expanduser().resolve()
+    candidate = Path(clean_path).expanduser()
+    if candidate.is_absolute():
+        resolved = candidate.resolve()
+    else:
+        parts = candidate.parts
+        relative_parts = parts[1:] if parts and parts[0] == "data" else parts
+        resolved = data_dir.joinpath(*relative_parts).resolve()
+    try:
+        resolved.relative_to(data_dir)
+    except ValueError:
+        return None
+    return resolved
 
 
 if _is_sqlite_url(DATABASE_URL):
@@ -787,6 +839,12 @@ def deserialize_contadores_tags(raw_value: str | None) -> list[str]:
     return normalize_contadores_tags([str(item) for item in parsed])
 
 
+def preserve_existing_when_blank(existing: str | None, incoming: str | None) -> str | None:
+    """Return incoming text when present, otherwise keep the existing value."""
+    clean_incoming = (incoming or "").strip()
+    return clean_incoming or existing
+
+
 class ContadoresLeadStage(str, Enum):
     """Lifecycle stage for one Contadores lead."""
 
@@ -1066,6 +1124,76 @@ class ContadoresConfig(SQLModel, table=True):
             session.commit()
 
 
+def normalize_contadores_funnel_id(funnel_id: str | None) -> str:
+    """Return the canonical Contadores-style funnel id."""
+    return (funnel_id or "").strip() or "contadores"
+
+
+def build_contadores_external_lead_id(*, funnel_id: str | None, source_row_id: str) -> str:
+    """Return the canonical sheet lead id for one funnel."""
+    clean_funnel_id = normalize_contadores_funnel_id(funnel_id)
+    clean_source_row_id = (source_row_id or "").strip()
+    if not clean_source_row_id:
+        raise ValueError("source_row_id is required")
+    if clean_funnel_id == "contadores":
+        return clean_source_row_id
+    prefix = f"{clean_funnel_id}:"
+    if clean_source_row_id.startswith(prefix):
+        return clean_source_row_id
+    return f"{prefix}{clean_source_row_id}"
+
+
+class ContadoresSheetSyncState(SQLModel, table=True):
+    """Per-funnel sheet sync cadence and health state."""
+
+    __tablename__ = "contadores_sheet_sync_states"
+
+    funnel_id: str = Field(primary_key=True)
+    last_attempt_at: datetime | None = Field(default=None, index=True)
+    last_success_at: datetime | None = Field(default=None, index=True)
+    last_sync_status: str | None = Field(default=None)
+    last_sync_note: str | None = Field(default=None)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
+
+    @classmethod
+    def get(cls, funnel_id: str | None) -> Optional["ContadoresSheetSyncState"]:
+        """Return persisted sync state for one funnel."""
+        with Session(engine) as session:
+            item = session.get(cls, normalize_contadores_funnel_id(funnel_id))
+            if item:
+                session.expunge(item)
+            return item
+
+    @classmethod
+    def mark_sync(
+        cls,
+        *,
+        funnel_id: str | None,
+        status: str,
+        note: str | None = None,
+        synced_at: datetime | None = None,
+    ) -> "ContadoresSheetSyncState":
+        """Persist one scheduled sheet sync attempt/result."""
+        clean_status = (status or "").strip() or "unknown"
+        now = synced_at or datetime.now(timezone.utc)
+        with Session(engine) as session:
+            clean_funnel_id = normalize_contadores_funnel_id(funnel_id)
+            item = session.get(cls, clean_funnel_id)
+            if item is None:
+                item = cls(funnel_id=clean_funnel_id)
+            item.last_attempt_at = now
+            if clean_status == "ok":
+                item.last_success_at = now
+            item.last_sync_status = clean_status
+            item.last_sync_note = " ".join(str(note or "").split()).strip()[:1000] or None
+            item.updated_at = now
+            session.add(item)
+            session.commit()
+            session.refresh(item)
+            session.expunge(item)
+            return item
+
+
 class ContadoresLead(SQLModel, table=True):
     """Contadores lead state tracked independently from audit contacts."""
 
@@ -1106,6 +1234,7 @@ class ContadoresLead(SQLModel, table=True):
     last_outbound_at: datetime | None = Field(default=None, index=True)
     conversation_processing_started_at: datetime | None = Field(default=None, index=True)
     conversation_processing_latest_inbound_id: int | None = Field(default=None, index=True)
+    alert_claimed_at: datetime | None = Field(default=None, index=True)
     codex_conversation_thread_id: str | None = Field(default=None, index=True)
     archived_at: datetime | None = Field(default=None, index=True)
     automation_paused: bool = Field(default=False, index=True)
@@ -1428,6 +1557,13 @@ class ContadoresLead(SQLModel, table=True):
         funnel_id: str | None = None,
         stage: ContadoresLeadStage | str | None = None,
         platform: str | None = None,
+        converted: bool | None = None,
+        needs_human: bool | None = None,
+        archived: bool | None = None,
+        pipeline_stage: str | None = None,
+        queue_state: str | None = None,
+        terminal_state: str | None = None,
+        attention_state: str | None = None,
         include_archived: bool = True,
     ) -> list["ContadoresLead"]:
         """List recent leads with optional filters."""
@@ -1439,6 +1575,26 @@ class ContadoresLead(SQLModel, table=True):
                 statement = statement.where(cls.stage == cls.normalize_stage(stage))
             if platform is not None:
                 statement = statement.where(cls.platform == ((platform or "").strip() or None))
+            if converted is True:
+                statement = statement.where(cls.booked_at.is_not(None))
+            elif converted is False:
+                statement = statement.where(cls.booked_at.is_(None))
+            if needs_human is True:
+                statement = statement.where(cls.stage == ContadoresLeadStage.NEEDS_HUMAN)
+            elif needs_human is False:
+                statement = statement.where(cls.stage != ContadoresLeadStage.NEEDS_HUMAN)
+            if archived is True:
+                statement = statement.where(or_(cls.stage == ContadoresLeadStage.ARCHIVED, cls.archived_at.is_not(None)))
+            elif archived is False:
+                statement = statement.where(cls.stage != ContadoresLeadStage.ARCHIVED, cls.archived_at.is_(None))
+            if pipeline_stage is not None:
+                statement = statement.where(cls.pipeline_stage == pipeline_stage)
+            if queue_state is not None:
+                statement = statement.where(cls.queue_state == queue_state)
+            if terminal_state is not None:
+                statement = statement.where(cls.terminal_state == terminal_state)
+            if attention_state is not None:
+                statement = statement.where(cls.attention_state == attention_state)
             if not include_archived:
                 statement = statement.where(cls.stage != ContadoresLeadStage.ARCHIVED)
             statement = statement.order_by(cls.updated_at.desc(), cls.created_at.desc(), cls.id.desc()).limit(limit)
@@ -1471,6 +1627,48 @@ class ContadoresLead(SQLModel, table=True):
             for item in items:
                 session.expunge(item)
             return items
+
+    @classmethod
+    def claim_pending_alert(
+        cls,
+        *,
+        lead_id: str,
+        claimed_at: datetime,
+        stale_after_seconds: int,
+    ) -> bool:
+        """Claim one needs-human alert across processes."""
+        stale_before = claimed_at - timedelta(seconds=max(1, int(stale_after_seconds)))
+        with engine.begin() as connection:
+            result = connection.exec_driver_sql(
+                """
+                UPDATE contadores_leads
+                SET alert_claimed_at = ?,
+                    updated_at = ?
+                WHERE id = ?
+                  AND stage = ?
+                  AND needs_human_notified_at IS NULL
+                  AND (
+                    alert_claimed_at IS NULL
+                    OR alert_claimed_at <= ?
+                  )
+                """,
+                (claimed_at, claimed_at, lead_id, ContadoresLeadStage.NEEDS_HUMAN.name, stale_before),
+            )
+            return result.rowcount == 1
+
+    @classmethod
+    def clear_alert_claim(cls, *, lead_id: str) -> None:
+        """Release one needs-human alert claim."""
+        with engine.begin() as connection:
+            connection.exec_driver_sql(
+                """
+                UPDATE contadores_leads
+                SET alert_claimed_at = NULL,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (datetime.now(timezone.utc), lead_id),
+            )
 
     @classmethod
     def list_manual_attention_candidates(cls, *, funnel_ids: list[str]) -> list["ContadoresLead"]:
@@ -1509,14 +1707,17 @@ class ContadoresLead(SQLModel, table=True):
         if not normalized_phone:
             raise ValueError("phone is invalid")
 
+        clean_funnel_id = normalize_contadores_funnel_id(funnel_id)
+        clean_external_lead_id = external_lead_id.strip()
+
         with Session(engine) as session:
-            statement = select(cls).where(cls.external_lead_id == external_lead_id).limit(1)
+            statement = select(cls).where(cls.external_lead_id == clean_external_lead_id).limit(1)
             item = session.exec(statement).first()
             now = datetime.now(timezone.utc)
             if item is None:
                 item = cls(
-                    funnel_id=(funnel_id or "").strip() or "contadores",
-                    external_lead_id=external_lead_id.strip(),
+                    funnel_id=clean_funnel_id,
+                    external_lead_id=clean_external_lead_id,
                     phone=phone.strip(),
                     normalized_phone=normalized_phone,
                     full_name=(full_name or "").strip() or None,
@@ -1536,16 +1737,22 @@ class ContadoresLead(SQLModel, table=True):
                 session.expunge(item)
                 return item
 
+            if normalize_contadores_funnel_id(item.funnel_id) != clean_funnel_id:
+                raise ValueError(
+                    "external_lead_id belongs to another funnel; use the explicit move flow to change ownership"
+                )
+
             item.phone = phone.strip()
-            item.funnel_id = (funnel_id or "").strip() or item.funnel_id or "contadores"
+            item.funnel_id = clean_funnel_id
             item.normalized_phone = normalized_phone
-            item.full_name = (full_name or "").strip() or None
-            item.email = (normalize_email(email) or None) if email else None
-            item.platform = (platform or "").strip() or None
-            item.lead_status = (lead_status or "").strip() or None
+            item.full_name = preserve_existing_when_blank(item.full_name, full_name)
+            item.email = preserve_existing_when_blank(item.email, normalize_email(email) if email else None)
+            item.platform = preserve_existing_when_blank(item.platform, platform)
+            item.lead_status = preserve_existing_when_blank(item.lead_status, lead_status)
             if tags is not None:
                 item.tags_json = serialize_contadores_tags([*item.tags, *tags])
-            item.sheet_created_time = sheet_created_time
+            if sheet_created_time is not None:
+                item.sheet_created_time = sheet_created_time
             if reset_flow:
                 item.stage = ContadoresLeadStage.AWAITING_INITIAL_REPLY
                 item.last_classification_label = None
@@ -1766,7 +1973,13 @@ class ContadoresLead(SQLModel, table=True):
             if item is None:
                 return None
             normalized_stage = cls.normalize_stage(stage) if stage is not None else None
-            if stage is not None:
+            preserve_closed_stage = (
+                normalized_stage is not None
+                and normalized_stage != ContadoresLeadStage.CLOSED
+                and (item.stage == ContadoresLeadStage.CLOSED or item.closed_at is not None)
+                and not clear_closed_at
+            )
+            if stage is not None and not preserve_closed_stage:
                 item.stage = normalized_stage or cls.normalize_stage(stage)
             if last_classification_label is not None:
                 item.last_classification_label = (last_classification_label or "").strip() or None
@@ -1788,9 +2001,6 @@ class ContadoresLead(SQLModel, table=True):
                 item.meeting_scheduled_at = meeting_scheduled_at
             if booked_at is not None:
                 item.booked_at = booked_at
-            if normalized_stage is not None and normalized_stage != ContadoresLeadStage.CLOSED:
-                item.closed_at = None
-                item.stage_before_closed = None
             if closed_at is not None:
                 item.closed_at = closed_at
             elif clear_closed_at:
@@ -1885,7 +2095,11 @@ class ContadoresStrategyAssignment(SQLModel, table=True):
                 assigned_at=now,
             )
             session.add(row)
-            session.commit()
+            try:
+                session.commit()
+            except IntegrityError:
+                session.rollback()
+                raise
             session.refresh(row)
             session.expunge(row)
             return row
@@ -1980,17 +2194,33 @@ class ContadoresMessage(SQLModel, table=True):
         created_at: datetime | None = None,
     ) -> "ContadoresMessage":
         """Persist one lead message and keep lead activity timestamps updated."""
+        clean_external_id = (external_id or "").strip() or None
+        clean_text = text.strip()
         with Session(engine) as session:
             now = created_at or datetime.now(timezone.utc)
             effective_dispatch_after = dispatch_after or now
             if effective_dispatch_after.tzinfo is None:
                 effective_dispatch_after = effective_dispatch_after.replace(tzinfo=timezone.utc)
+            if clean_external_id:
+                existing = session.exec(
+                    select(cls)
+                    .where(
+                        cls.from_me.is_(from_me),
+                        cls.external_id == clean_external_id,
+                    )
+                    .limit(1)
+                ).first()
+                if existing is not None:
+                    if not from_me and existing.lead_id == lead_id and existing.text == clean_text:
+                        session.expunge(existing)
+                        return existing
+                    raise ValueError(f"Duplicate Contadores message external_id: {clean_external_id}")
             row = cls(
                 lead_id=lead_id,
                 from_me=from_me,
-                text=text.strip(),
+                text=clean_text,
                 delivery_status=Message.normalize_delivery_status(delivery_status, from_me=from_me),
-                external_id=(external_id or "").strip() or None,
+                external_id=clean_external_id,
                 dispatch_after=effective_dispatch_after,
                 sequence_step=(sequence_step or "").strip() or None,
                 strategy_assignment_id=strategy_assignment_id,
@@ -2024,7 +2254,25 @@ class ContadoresMessage(SQLModel, table=True):
                 lead.updated_at = now
                 ContadoresLead.refresh_lifecycle_fields(lead)
                 session.add(lead)
-            session.commit()
+            try:
+                session.commit()
+            except IntegrityError as error:
+                session.rollback()
+                if clean_external_id and not from_me:
+                    existing = session.exec(
+                        select(cls)
+                        .where(
+                            cls.from_me.is_(False),
+                            cls.external_id == clean_external_id,
+                        )
+                        .limit(1)
+                    ).first()
+                    if existing is not None and existing.lead_id == lead_id and existing.text == clean_text:
+                        session.expunge(existing)
+                        return existing
+                if clean_external_id:
+                    raise ValueError(f"Duplicate Contadores message external_id: {clean_external_id}") from error
+                raise error
             session.refresh(row)
             session.expunge(row)
             return row
@@ -2038,6 +2286,88 @@ class ContadoresMessage(SQLModel, table=True):
             for row in rows:
                 session.expunge(row)
             return rows
+
+    @classmethod
+    def list_by_lead_ids(
+        cls,
+        lead_ids: list[str],
+        *,
+        limit_per_lead: int | None = None,
+        from_me: bool | None = None,
+    ) -> dict[str, list["ContadoresMessage"]]:
+        """List messages for many leads in chronological order."""
+        clean_ids = [lead_id for lead_id in dict.fromkeys(lead_ids) if lead_id]
+        if not clean_ids:
+            return {}
+        clean_limit = int(limit_per_lead or 0)
+        with Session(engine) as session:
+            conditions = [cls.lead_id.in_(clean_ids)]
+            if from_me is not None:
+                conditions.append(cls.from_me.is_(from_me))
+            if clean_limit > 0:
+                ranked = (
+                    select(
+                        cls.id.label("message_id"),
+                        func.row_number()
+                        .over(
+                            partition_by=cls.lead_id,
+                            order_by=(cls.created_at.desc(), cls.id.desc()),
+                        )
+                        .label("message_rank"),
+                    )
+                    .where(*conditions)
+                    .subquery()
+                )
+                statement = (
+                    select(cls)
+                    .join(ranked, cls.id == ranked.c.message_id)
+                    .where(ranked.c.message_rank <= clean_limit)
+                    .order_by(cls.lead_id, cls.created_at, cls.id)
+                )
+            else:
+                statement = select(cls).where(*conditions).order_by(cls.lead_id, cls.created_at, cls.id)
+            rows = list(session.exec(statement).all())
+            grouped: dict[str, list[ContadoresMessage]] = {lead_id: [] for lead_id in clean_ids}
+            for row in rows:
+                session.expunge(row)
+                grouped.setdefault(row.lead_id, []).append(row)
+            return grouped
+
+    @classmethod
+    def latest_by_lead_ids(
+        cls,
+        lead_ids: list[str],
+        *,
+        from_me: bool,
+    ) -> dict[str, "ContadoresMessage"]:
+        """Get the latest inbound or outbound message for many leads."""
+        return {
+            lead_id: rows[-1]
+            for lead_id, rows in cls.list_by_lead_ids(lead_ids, limit_per_lead=1, from_me=from_me).items()
+            if rows
+        }
+
+    @classmethod
+    def lead_ids_with_outbound_sequence_step(
+        cls,
+        lead_ids: list[str],
+        *,
+        sequence_step: str,
+    ) -> set[str]:
+        """Return lead ids that already have one outbound sequence step."""
+        clean_ids = [lead_id for lead_id in dict.fromkeys(lead_ids) if lead_id]
+        clean_step = (sequence_step or "").strip()
+        if not clean_ids or not clean_step:
+            return set()
+        with Session(engine) as session:
+            rows = session.exec(
+                select(cls.lead_id).where(
+                    cls.lead_id.in_(clean_ids),
+                    cls.from_me.is_(True),
+                    cls.sequence_step == clean_step,
+                )
+            ).all()
+            return {str(lead_id) for lead_id in rows}
 
     @classmethod
     def get_by_id(cls, message_id: int) -> Optional["ContadoresMessage"]:
@@ -2161,6 +2491,25 @@ class ContadoresMessage(SQLModel, table=True):
             return len(list(session.exec(statement).all()))
 
     @classmethod
+    def count_delivery_issues_by_lead_ids(cls, lead_ids: list[str]) -> dict[str, int]:
+        """Count unacknowledged outbound delivery issues for many leads."""
+        clean_ids = [lead_id for lead_id in dict.fromkeys(lead_ids) if lead_id]
+        if not clean_ids:
+            return {}
+        with Session(engine) as session:
+            statement = (
+                select(cls.lead_id, func.count(cls.id))
+                .where(
+                    cls.lead_id.in_(clean_ids),
+                    cls.from_me.is_(True),
+                    cls.delivery_status == MessageDeliveryStatus.FAILED,
+                    cls.delivery_error_acknowledged_at.is_(None),
+                )
+                .group_by(cls.lead_id)
+            )
+            return {str(lead_id): int(count or 0) for lead_id, count in session.exec(statement).all()}
+
+    @classmethod
     def latest_delivery_issue_for_lead(cls, lead_id: str) -> str | None:
         """Return the newest stored delivery error for one lead."""
         with Session(engine) as session:
@@ -2177,6 +2526,31 @@ class ContadoresMessage(SQLModel, table=True):
                 .limit(1)
             )
             return session.exec(statement).first()
+
+    @classmethod
+    def latest_delivery_issues_by_lead_ids(cls, lead_ids: list[str]) -> dict[str, str]:
+        """Return newest stored delivery errors for many leads."""
+        clean_ids = [lead_id for lead_id in dict.fromkeys(lead_ids) if lead_id]
+        if not clean_ids:
+            return {}
+        with Session(engine) as session:
+            statement = (
+                select(cls)
+                .where(
+                    cls.lead_id.in_(clean_ids),
+                    cls.from_me.is_(True),
+                    cls.delivery_status == MessageDeliveryStatus.FAILED,
+                    cls.delivery_error_acknowledged_at.is_(None),
+                    cls.last_delivery_error.is_not(None),
+                )
+                .order_by(cls.lead_id, cls.last_delivery_error_at.desc(), cls.id.desc())
+            )
+            rows = list(session.exec(statement).all())
+            latest: dict[str, str] = {}
+            for row in rows:
+                if row.lead_id not in latest and row.last_delivery_error:
+                    latest[row.lead_id] = row.last_delivery_error
+            return latest
 
     @classmethod
     def list_pending_delivery(cls, *, limit: int = 100) -> list["ContadoresMessage"]:
@@ -2258,7 +2632,20 @@ class ContadoresMessage(SQLModel, table=True):
                 from_me=row.from_me,
             )
             if external_id is not None:
-                row.external_id = (external_id or "").strip() or None
+                clean_external_id = (external_id or "").strip() or None
+                if clean_external_id:
+                    duplicate = session.exec(
+                        select(cls.id)
+                        .where(
+                            cls.from_me.is_(row.from_me),
+                            cls.external_id == clean_external_id,
+                            cls.id != row.id,
+                        )
+                        .limit(1)
+                    ).first()
+                    if duplicate is not None:
+                        raise ValueError(f"Duplicate Contadores message external_id: {clean_external_id}")
+                row.external_id = clean_external_id
             if delivery_attempts is not None:
                 row.delivery_attempts = max(0, int(delivery_attempts))
             if dispatch_after is not None:
@@ -2276,7 +2663,14 @@ class ContadoresMessage(SQLModel, table=True):
             if lead:
                 lead.updated_at = datetime.now(timezone.utc)
                 session.add(lead)
-            session.commit()
+            try:
+                session.commit()
+            except IntegrityError as error:
+                session.rollback()
+                if external_id is not None:
+                    clean_external_id = (external_id or "").strip()
+                    raise ValueError(f"Duplicate Contadores message external_id: {clean_external_id}") from error
+                raise error
             session.refresh(row)
             session.expunge(row)
             return row
@@ -2485,6 +2879,20 @@ class ClientLeadSource(SQLModel, table=True):
             return item
 
     @classmethod
+    def get_by_ids(cls, source_ids: Iterable[str]) -> dict[str, "ClientLeadSource"]:
+        """Get sources keyed by id."""
+        clean_ids = list(dict.fromkeys(source_id.strip() for source_id in source_ids if source_id and source_id.strip()))
+        if not clean_ids:
+            return {}
+        with Session(engine) as session:
+            rows = list(session.exec(select(cls).where(cls.id.in_(clean_ids))).all())
+            result: dict[str, ClientLeadSource] = {}
+            for row in rows:
+                session.expunge(row)
+                result[row.id] = row
+            return result
+
+    @classmethod
     def list_all(cls) -> list["ClientLeadSource"]:
         """List every client lead source."""
         with Session(engine) as session:
@@ -2518,6 +2926,27 @@ class ClientLeadSource(SQLModel, table=True):
             return items
 
     @classmethod
+    def list_by_id_prefixes(cls, prefixes: Iterable[str]) -> dict[str, list["ClientLeadSource"]]:
+        """List sources grouped by stable id prefix."""
+        clean_prefixes = list(dict.fromkeys(prefix.strip() for prefix in prefixes if prefix and prefix.strip()))
+        if not clean_prefixes:
+            return {}
+        with Session(engine) as session:
+            statement = (
+                select(cls)
+                .where(or_(*(cls.id.like(f"{prefix}%") for prefix in clean_prefixes)))
+                .order_by(cls.label, cls.id)
+            )
+            rows = list(session.exec(statement).all())
+            result: dict[str, list[ClientLeadSource]] = {prefix: [] for prefix in clean_prefixes}
+            for row in rows:
+                session.expunge(row)
+                for prefix in clean_prefixes:
+                    if row.id.startswith(prefix):
+                        result[prefix].append(row)
+            return result
+
+    @classmethod
     def set_enabled(cls, source_id: str, enabled: bool) -> Optional["ClientLeadSource"]:
         """Enable or disable one source without changing its recipient/config."""
         with Session(engine) as session:
@@ -2535,20 +2964,36 @@ class ClientLeadSource(SQLModel, table=True):
     @classmethod
     def get_by_meta_lead_form_id(cls, form_id: str) -> Optional["ClientLeadSource"]:
         """Return the enabled Delivery source bound to one Meta instant form."""
+        matches = cls.list_by_meta_lead_form_id(form_id, enabled_only=True, limit=2)
+        if len(matches) > 1:
+            raise ValueError(f"Ambiguous Meta lead form routing: {form_id}")
+        return matches[0] if matches else None
+
+    @classmethod
+    def list_by_meta_lead_form_id(
+        cls,
+        form_id: str,
+        *,
+        enabled_only: bool = True,
+        limit: int = 20,
+    ) -> list["ClientLeadSource"]:
+        """List sources bound to one Meta instant form."""
         clean_form_id = " ".join(str(form_id or "").split()).strip()
         if not clean_form_id:
-            return None
+            return []
         with Session(engine) as session:
             statement = (
                 select(cls)
-                .where(cls.enabled.is_(True))
                 .where(cls.meta_lead_form_id == clean_form_id)
                 .order_by(cls.label, cls.id)
+                .limit(max(1, min(int(limit or 20), 500)))
             )
-            item = session.exec(statement).first()
-            if item:
+            if enabled_only:
+                statement = statement.where(cls.enabled.is_(True))
+            items = list(session.exec(statement).all())
+            for item in items:
                 session.expunge(item)
-            return item
+            return items
 
     @classmethod
     def upsert(
@@ -2615,8 +3060,27 @@ class ClientLeadSource(SQLModel, table=True):
             )
             item.context_field_mapping_json = json.dumps(clean_context_mapping, ensure_ascii=False)
             item.updated_at = now
+            guarded_meta_form_id = item.meta_lead_form_id
+            if item.enabled and item.meta_lead_form_id:
+                duplicate = session.exec(
+                    select(cls)
+                    .where(
+                        cls.enabled.is_(True),
+                        cls.meta_lead_form_id == item.meta_lead_form_id,
+                        cls.id != item.id,
+                    )
+                    .limit(1)
+                ).first()
+                if duplicate is not None:
+                    raise ValueError(f"Duplicate enabled Meta lead form routing: {item.meta_lead_form_id}")
             session.add(item)
-            session.commit()
+            try:
+                session.commit()
+            except IntegrityError as error:
+                session.rollback()
+                if guarded_meta_form_id:
+                    raise ValueError(f"Duplicate enabled Meta lead form routing: {guarded_meta_form_id}") from error
+                raise error
             session.refresh(item)
             session.expunge(item)
             return item
@@ -2729,6 +3193,52 @@ class ClientLeadDelivery(SQLModel, table=True):
             return item
 
     @classmethod
+    def list_by_campaign_submission_ids(
+        cls,
+        submission_ids: Iterable[str],
+        *,
+        delivery_ids: Iterable[str] | None = None,
+    ) -> dict[str, list["ClientLeadDelivery"]]:
+        """List Delivery rows grouped by public campaign submission id."""
+        clean_submission_ids = list(
+            dict.fromkeys(submission_id.strip() for submission_id in submission_ids if submission_id and submission_id.strip())
+        )
+        if not clean_submission_ids:
+            return {}
+        delivery_to_submission = {
+            delivery_id.strip(): submission_id
+            for delivery_id, submission_id in zip(delivery_ids or [], clean_submission_ids)
+            if delivery_id and delivery_id.strip()
+        }
+        submission_id_set = set(clean_submission_ids)
+        result: dict[str, list[ClientLeadDelivery]] = {submission_id: [] for submission_id in clean_submission_ids}
+        with Session(engine) as session:
+            for start in range(0, len(clean_submission_ids), 200):
+                chunk = clean_submission_ids[start : start + 200]
+                chunk_set = set(chunk)
+                exact_keys = [f"campaign-submission:{submission_id}" for submission_id in chunk]
+                conditions = [cls.source_row_key.in_(exact_keys)]
+                conditions.extend(cls.source_row_key.like(f"campaign-submission:{submission_id}:%") for submission_id in chunk)
+                chunk_delivery_ids = [
+                    delivery_id
+                    for delivery_id, submission_id in delivery_to_submission.items()
+                    if submission_id in chunk_set
+                ]
+                if chunk_delivery_ids:
+                    conditions.append(cls.id.in_(chunk_delivery_ids))
+                rows = list(session.exec(select(cls).where(or_(*conditions)).order_by(cls.created_at, cls.id)).all())
+                for row in rows:
+                    submission_id = ""
+                    if row.source_row_key.startswith("campaign-submission:"):
+                        submission_id = row.source_row_key.removeprefix("campaign-submission:").split(":", 1)[0]
+                    if not submission_id:
+                        submission_id = delivery_to_submission.get(row.id, "")
+                    if submission_id in submission_id_set:
+                        session.expunge(row)
+                        result.setdefault(submission_id, []).append(row)
+        return result
+
+    @classmethod
     def list_by_source(
         cls,
         source_id: str,
@@ -2747,6 +3257,51 @@ class ClientLeadDelivery(SQLModel, table=True):
             for item in items:
                 session.expunge(item)
             return items
+
+    @classmethod
+    def list_recipient_chat_deliveries(
+        cls,
+        source_ids: Iterable[str],
+        *,
+        limit: int,
+    ) -> list["ClientLeadDelivery"]:
+        """List visible recipient chat deliveries across sibling sources."""
+        clean_source_ids = [source_id for source_id in dict.fromkeys(source_ids) if source_id]
+        if not clean_source_ids:
+            return []
+        clean_limit = max(1, int(limit or 1))
+        visible_timestamp = func.coalesce(
+            cls.sent_at,
+            cls.delivered_at,
+            cls.last_delivery_error_at,
+            cls.updated_at,
+            cls.created_at,
+        )
+        with Session(engine) as session:
+            statement = (
+                select(cls)
+                .where(
+                    cls.source_id.in_(clean_source_ids),
+                    cls.delivery_status.notin_(
+                        [
+                            ClientLeadDeliveryStatus.PENDING,
+                            ClientLeadDeliveryStatus.BLOCKED,
+                        ]
+                    ),
+                    or_(
+                        cls.sent_text != "",
+                        cls.notification_text != "",
+                        cls.external_id.is_not(None),
+                        cls.last_delivery_error.is_not(None),
+                    ),
+                )
+                .order_by(visible_timestamp.desc(), cls.row_number.desc(), cls.id.desc())
+                .limit(clean_limit)
+            )
+            items = list(session.exec(statement).all())
+            for item in items:
+                session.expunge(item)
+            return list(reversed(items))
 
     @classmethod
     def list_by_source_row_key_prefix(
@@ -2797,13 +3352,18 @@ class ClientLeadDelivery(SQLModel, table=True):
     def count_by_status_for_sources(cls) -> dict[str, dict[str, int]]:
         """Return per-source delivery status counts."""
         with Session(engine) as session:
-            rows = session.exec(select(cls.source_id, cls.delivery_status)).all()
+            statement = select(cls.source_id, cls.delivery_status, func.count(cls.id)).group_by(
+                cls.source_id,
+                cls.delivery_status,
+            )
+            rows = session.exec(statement).all()
         counts: dict[str, dict[str, int]] = {}
-        for source_id, status in rows:
+        for source_id, status, count in rows:
             by_status = counts.setdefault(source_id, {})
             status_key = str(status.value if isinstance(status, ClientLeadDeliveryStatus) else status)
-            by_status[status_key] = by_status.get(status_key, 0) + 1
-            by_status["total"] = by_status.get("total", 0) + 1
+            count_value = int(count or 0)
+            by_status[status_key] = by_status.get(status_key, 0) + count_value
+            by_status["total"] = by_status.get("total", 0) + count_value
         return counts
 
     @classmethod
@@ -2897,7 +3457,19 @@ class ClientLeadDelivery(SQLModel, table=True):
             now = datetime.now(timezone.utc)
             row.delivery_status = cls.normalize_status(delivery_status)
             if external_id is not None:
-                row.external_id = (external_id or "").strip() or None
+                clean_external_id = (external_id or "").strip() or None
+                if clean_external_id:
+                    duplicate = session.exec(
+                        select(cls.id)
+                        .where(
+                            cls.external_id == clean_external_id,
+                            cls.id != row.id,
+                        )
+                        .limit(1)
+                    ).first()
+                    if duplicate is not None:
+                        raise ValueError(f"Duplicate Delivery external_id: {clean_external_id}")
+                row.external_id = clean_external_id
             if row.delivery_status == ClientLeadDeliveryStatus.SENT:
                 row.sent_at = now
             if row.delivery_status in {
@@ -2916,7 +3488,14 @@ class ClientLeadDelivery(SQLModel, table=True):
                 row.last_delivery_error_at = now if row.last_delivery_error else None
             row.updated_at = now
             session.add(row)
-            session.commit()
+            try:
+                session.commit()
+            except IntegrityError as error:
+                session.rollback()
+                if external_id is not None:
+                    clean_external_id = (external_id or "").strip()
+                    raise ValueError(f"Duplicate Delivery external_id: {clean_external_id}") from error
+                raise error
             session.refresh(row)
             session.expunge(row)
             return row
@@ -2934,10 +3513,12 @@ class ClientLeadDelivery(SQLModel, table=True):
         if not clean_external_id:
             return None
         with Session(engine) as session:
-            statement = select(cls).where(cls.external_id == clean_external_id).limit(1)
-            row = session.exec(statement).first()
-            if row is None:
+            rows = list(session.exec(select(cls).where(cls.external_id == clean_external_id).limit(2)).all())
+            if not rows:
                 return None
+            if len(rows) > 1:
+                raise ValueError(f"Duplicate Delivery external_id: {clean_external_id}")
+            row = rows[0]
             now = datetime.now(timezone.utc)
             row.delivery_status = cls.normalize_status(delivery_status)
             if row.delivery_status == ClientLeadDeliveryStatus.DELIVERED:
@@ -2947,7 +3528,15 @@ class ClientLeadDelivery(SQLModel, table=True):
                 row.last_delivery_error_at = now if row.last_delivery_error else None
             row.updated_at = now
             session.add(row)
-            session.commit()
+            try:
+                session.commit()
+            except IntegrityError:
+                session.rollback()
+                if clean_key:
+                    existing = cls.get_by_idempotency_key(clean_key)
+                    if existing is not None:
+                        return existing
+                raise
             session.refresh(row)
             session.expunge(row)
             return row
@@ -3222,7 +3811,15 @@ class LeadCaptureCampaign(SQLModel, table=True):
                 updated_at=now,
             )
             session.add(row)
-            session.commit()
+            try:
+                session.commit()
+            except IntegrityError as error:
+                session.rollback()
+                if clean_key:
+                    existing = cls.get_by_idempotency_key(clean_key)
+                    if existing is not None:
+                        return existing
+                raise error
             session.refresh(row)
             session.expunge(row)
             return row
@@ -3355,6 +3952,7 @@ class LeadCaptureCampaign(SQLModel, table=True):
             result = session.exec(statement)
             return int(getattr(result, "rowcount", 0) or 0)
 
+        deleted_files = 0
         with Session(engine) as session:
             row = session.get(cls, clean_campaign_id)
             if row is None:
@@ -3458,6 +4056,26 @@ class LeadCaptureCampaign(SQLModel, table=True):
                 session,
                 delete(PlatformMetaPublishAttempt).where(PlatformMetaPublishAttempt.campaign_id.in_(campaign_refs)),
             )
+            creative_rows = list(
+                session.exec(select(PlatformCreativeAsset).where(PlatformCreativeAsset.campaign_id.in_(campaign_refs))).all()
+            )
+            creative_row_ids = {asset.id for asset in creative_rows}
+            creative_paths = {asset.file_path for asset in creative_rows if (asset.file_path or "").strip()}
+            shared_paths = set()
+            for file_path in creative_paths:
+                other = session.exec(
+                    select(PlatformCreativeAsset.id)
+                    .where(PlatformCreativeAsset.file_path == file_path)
+                    .where(PlatformCreativeAsset.id.notin_(creative_row_ids))
+                    .limit(1)
+                ).first()
+                if other is not None:
+                    shared_paths.add(file_path)
+            cleanup_paths = [
+                path
+                for path in (_safe_data_file_path(file_path) for file_path in creative_paths - shared_paths)
+                if path is not None
+            ]
             counts["platform_creative_assets"] = delete_count(
                 session, delete(PlatformCreativeAsset).where(PlatformCreativeAsset.campaign_id.in_(campaign_refs))
             )
@@ -3491,6 +4109,11 @@ class LeadCaptureCampaign(SQLModel, table=True):
             session.delete(row)
             counts["lead_capture_campaigns"] = 1
             session.commit()
+            for path in cleanup_paths:
+                if path.is_file():
+                    path.unlink()
+                    deleted_files += 1
+            counts["platform_creative_asset_files"] = deleted_files
             return counts
 
     @property
@@ -3616,7 +4239,15 @@ class LeadCaptureSubmission(SQLModel, table=True):
                 updated_at=now,
             )
             session.add(row)
-            session.commit()
+            try:
+                session.commit()
+            except IntegrityError as error:
+                session.rollback()
+                if clean_key:
+                    existing = cls.get_by_idempotency_key(clean_key)
+                    if existing is not None:
+                        return existing
+                raise error
             session.refresh(row)
             session.expunge(row)
             return row
@@ -3673,14 +4304,19 @@ class LeadCaptureSubmission(SQLModel, table=True):
             return rows
 
     @classmethod
-    def count_by_campaign(cls) -> dict[str, int]:
+    def count_by_campaign(cls, campaign_ids: Iterable[str] | None = None) -> dict[str, int]:
         """Return submission counts per campaign."""
+        clean_campaign_ids = list(
+            dict.fromkeys(campaign_id.strip() for campaign_id in (campaign_ids or []) if campaign_id and campaign_id.strip())
+        )
+        if campaign_ids is not None and not clean_campaign_ids:
+            return {}
         with Session(engine) as session:
-            rows = session.exec(select(cls.campaign_id)).all()
-        counts: dict[str, int] = {}
-        for campaign_id in rows:
-            counts[campaign_id] = counts.get(campaign_id, 0) + 1
-        return counts
+            statement = select(cls.campaign_id, func.count(cls.id)).group_by(cls.campaign_id)
+            if clean_campaign_ids:
+                statement = statement.where(cls.campaign_id.in_(clean_campaign_ids))
+            rows = session.exec(statement).all()
+        return {campaign_id: int(count or 0) for campaign_id, count in rows}
 
     @property
     def answers(self) -> dict[str, Any]:
@@ -3714,6 +4350,8 @@ class AgentRun(SQLModel, table=True):
     codex_turn_id: str | None = Field(default=None, index=True)
     final_response: str = Field(default="")
     error: str = Field(default="")
+    usage_json: str = Field(default="{}")
+    budget_status: str = Field(default="unknown", index=True)
     started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
     finished_at: datetime | None = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
@@ -3801,6 +4439,8 @@ class AgentRun(SQLModel, table=True):
         error: str = "",
         codex_thread_id: str | None = None,
         codex_turn_id: str | None = None,
+        usage: dict[str, Any] | None = None,
+        budget_status: str = "unknown",
         finished_at: datetime | None = None,
     ) -> Optional["AgentRun"]:
         """Mark one autonomous run as completed or failed."""
@@ -3815,6 +4455,9 @@ class AgentRun(SQLModel, table=True):
                 row.codex_thread_id = (codex_thread_id or "").strip() or None
             if codex_turn_id is not None:
                 row.codex_turn_id = (codex_turn_id or "").strip() or None
+            if usage is not None:
+                row.usage_json = json.dumps(usage, ensure_ascii=True, default=str)[:4000]
+            row.budget_status = (budget_status or "unknown").strip()[:40] or "unknown"
             row.finished_at = finished_at or datetime.now(timezone.utc)
             session.add(row)
             session.commit()
@@ -3877,14 +4520,16 @@ class AgentToolCall(SQLModel, table=True):
         error: str = "",
     ) -> "AgentToolCall":
         """Persist one audited tool call."""
+        from backend.redaction import redact_json
+
         with Session(engine) as session:
             row = cls(
                 run_id=(run_id or "").strip(),
                 tool_name=(tool_name or "").strip(),
                 target_type=(target_type or "").strip(),
                 target_id=(target_id or "").strip(),
-                arguments_json=json.dumps(arguments or {}, ensure_ascii=True, default=str),
-                result_json=json.dumps(result or {}, ensure_ascii=True, default=str),
+                arguments_json=json.dumps(redact_json(arguments or {}), ensure_ascii=True, default=str)[:8000],
+                result_json=json.dumps(redact_json(result or {}), ensure_ascii=True, default=str)[:8000],
                 status=(status or "").strip() or "succeeded",
                 idempotency_key=(idempotency_key or "").strip() or None,
                 error=str(error or "")[:12000],
@@ -3927,6 +4572,27 @@ class AgentToolCall(SQLModel, table=True):
                 session.expunge(row)
             return rows
 
+    @classmethod
+    def get_succeeded_by_idempotency_key(
+        cls,
+        *,
+        idempotency_key: str | None,
+        tool_name: str | None = None,
+    ) -> Optional["AgentToolCall"]:
+        """Return the latest successful tool call for one idempotency key."""
+        clean_key = (idempotency_key or "").strip()
+        if not clean_key:
+            return None
+        with Session(engine) as session:
+            statement = select(cls).where(cls.idempotency_key == clean_key, cls.status == "succeeded")
+            if tool_name:
+                statement = statement.where(cls.tool_name == tool_name.strip())
+            statement = statement.order_by(cls.created_at.desc(), cls.id.desc()).limit(1)
+            row = session.exec(statement).first()
+            if row is not None:
+                session.expunge(row)
+            return row
+
 
 class PlatformEvent(SQLModel, table=True):
     """Append-only lifecycle event for platform observability."""
@@ -3968,6 +4634,7 @@ class PlatformEvent(SQLModel, table=True):
     ) -> "PlatformEvent":
         """Persist one event, preserving idempotency when a key is supplied."""
         clean_key = (idempotency_key or "").strip() or None
+        resolved_correlation_id = correlation_id if correlation_id is not None else get_current_correlation_id()
         if clean_key:
             existing = cls.get_by_idempotency_key(clean_key)
             if existing is not None:
@@ -3985,7 +4652,7 @@ class PlatformEvent(SQLModel, table=True):
                 summary=str(summary or "")[:1000],
                 payload_json=json.dumps(payload or {}, ensure_ascii=True, default=str),
                 idempotency_key=clean_key,
-                correlation_id=(correlation_id or "").strip() or None,
+                correlation_id=(resolved_correlation_id or "").strip() or None,
                 created_at=created_at or datetime.now(timezone.utc),
             )
             session.add(row)
@@ -4007,12 +4674,94 @@ class PlatformEvent(SQLModel, table=True):
             return row
 
     @classmethod
+    def claim_idempotency_key(
+        cls,
+        *,
+        idempotency_key: str,
+        event_type: str,
+        lifecycle_stage: str = "",
+        target_type: str = "",
+        target_id: str = "",
+        funnel_id: str = "",
+        source: str = "",
+        actor: str = "",
+        summary: str = "",
+        payload: dict[str, Any] | None = None,
+    ) -> tuple["PlatformEvent", bool]:
+        """Insert one idempotency marker, returning False when it already existed."""
+        clean_key = (idempotency_key or "").strip()
+        if not clean_key:
+            raise ValueError("idempotency_key is required")
+        row = cls(
+            event_type=(event_type or "").strip(),
+            lifecycle_stage=(lifecycle_stage or "").strip(),
+            target_type=(target_type or "").strip(),
+            target_id=(target_id or "").strip(),
+            funnel_id=(funnel_id or "").strip(),
+            source=(source or "").strip(),
+            actor=(actor or "").strip(),
+            summary=str(summary or "")[:1000],
+            payload_json=json.dumps(payload or {}, ensure_ascii=True, default=str),
+            idempotency_key=clean_key,
+        )
+        with Session(engine) as session:
+            session.add(row)
+            try:
+                session.commit()
+            except IntegrityError:
+                session.rollback()
+                existing = cls.get_by_idempotency_key(clean_key)
+                if existing is not None:
+                    return existing, False
+                raise
+            session.refresh(row)
+            session.expunge(row)
+            return row, True
+
+    @classmethod
+    def update_payload_by_idempotency_key(
+        cls,
+        *,
+        idempotency_key: str,
+        payload: dict[str, Any],
+        target_id: str = "",
+        funnel_id: str = "",
+        summary: str = "",
+    ) -> Optional["PlatformEvent"]:
+        """Update payload for an existing idempotency marker."""
+        clean_key = (idempotency_key or "").strip()
+        if not clean_key:
+            return None
+        with Session(engine) as session:
+            row = session.exec(select(cls).where(cls.idempotency_key == clean_key).limit(1)).first()
+            if row is None:
+                return None
+            row.payload_json = json.dumps(payload or {}, ensure_ascii=True, default=str)
+            if target_id:
+                row.target_id = target_id
+            if funnel_id:
+                row.funnel_id = funnel_id
+            if summary:
+                row.summary = summary[:1000]
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            session.expunge(row)
+            return row
+
+    @classmethod
     def list_recent(
         cls,
         *,
         target_type: str | None = None,
         target_id: str | None = None,
         funnel_id: str | None = None,
+        event_type: str | None = None,
+        severity: str | None = None,
+        source: str | None = None,
+        correlation_id: str | None = None,
+        created_after: datetime | None = None,
+        created_before: datetime | None = None,
         limit: int = 100,
     ) -> list["PlatformEvent"]:
         """List recent events, optionally scoped to one target or funnel."""
@@ -4025,6 +4774,18 @@ class PlatformEvent(SQLModel, table=True):
                 statement = statement.where(cls.target_id == target_id.strip())
             if funnel_id:
                 statement = statement.where(cls.funnel_id == funnel_id.strip())
+            if event_type:
+                statement = statement.where(cls.event_type == event_type.strip())
+            if severity:
+                statement = statement.where(cls.severity == severity.strip())
+            if source:
+                statement = statement.where(cls.source == source.strip())
+            if correlation_id:
+                statement = statement.where(cls.correlation_id == correlation_id.strip())
+            if created_after is not None:
+                statement = statement.where(cls.created_at >= created_after)
+            if created_before is not None:
+                statement = statement.where(cls.created_at <= created_before)
             statement = statement.order_by(cls.created_at.desc(), cls.id.desc()).limit(clean_limit)
             rows = list(session.exec(statement).all())
             for row in rows:
@@ -4383,7 +5144,26 @@ class PlatformClientProfile(SQLModel, table=True):
                 row.knowledge_json = _json_dumps(knowledge)
             row.updated_at = now
             session.add(row)
-            session.commit()
+            try:
+                session.commit()
+            except IntegrityError as error:
+                session.rollback()
+                existing = cls.list_recent(client_id=clean_client_id, limit=1)
+                if existing:
+                    return cls.upsert(
+                        client_id=client_id,
+                        lead_id=lead_id,
+                        funnel_id=funnel_id,
+                        status=status,
+                        source_meeting_id=source_meeting_id,
+                        business_summary=business_summary,
+                        offer_summary=offer_summary,
+                        market_summary=market_summary,
+                        objections=objections,
+                        segments=segments,
+                        knowledge=knowledge,
+                    )
+                raise error
             session.refresh(row)
             session.expunge(row)
             return row
@@ -4482,7 +5262,15 @@ class PlatformAdCampaign(SQLModel, table=True):
                 updated_at=now,
             )
             session.add(row)
-            session.commit()
+            try:
+                session.commit()
+            except IntegrityError as error:
+                session.rollback()
+                if clean_key:
+                    existing = cls.get_by_idempotency_key(clean_key)
+                    if existing is not None:
+                        return existing
+                raise error
             session.refresh(row)
             session.expunge(row)
             return row
@@ -5250,7 +6038,15 @@ class ScheduledAgentTask(SQLModel, table=True):
                 idempotency_key=clean_key,
             )
             session.add(row)
-            session.commit()
+            try:
+                session.commit()
+            except IntegrityError as error:
+                session.rollback()
+                if clean_key:
+                    existing = cls.get_by_idempotency_key(clean_key)
+                    if existing is not None:
+                        return existing
+                raise error
             session.refresh(row)
             session.expunge(row)
             return row
@@ -5284,6 +6080,83 @@ class ScheduledAgentTask(SQLModel, table=True):
             for row in rows:
                 session.expunge(row)
             return rows
+
+    @classmethod
+    def fail_stale_running(
+        cls,
+        *,
+        now: datetime,
+        stale_after_seconds: int = 3600,
+    ) -> int:
+        """Move old running tasks to failed instead of rerunning them blindly."""
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        cutoff = now - timedelta(seconds=max(60, int(stale_after_seconds or 3600)))
+        with engine.begin() as connection:
+            result = connection.exec_driver_sql(
+                """
+                UPDATE scheduled_agent_tasks
+                SET status = 'failed',
+                    completed_at = ?,
+                    last_error = 'stale_running_recovery'
+                WHERE status = 'running'
+                  AND claimed_at IS NOT NULL
+                  AND claimed_at < ?
+                """,
+                (now, cutoff),
+            )
+            return int(result.rowcount or 0)
+
+    @classmethod
+    def claim_due(
+        cls,
+        *,
+        now: datetime,
+        limit: int = 20,
+        target_type: str | None = None,
+        stale_after_seconds: int = 3600,
+    ) -> list["ScheduledAgentTask"]:
+        """Atomically reserve due tasks before workers perform side effects."""
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        clean_limit = max(1, min(int(limit or 20), 500))
+        clean_target_type = (target_type or "").strip()
+        cls.fail_stale_running(now=now, stale_after_seconds=stale_after_seconds)
+        target_clause = "AND target_type = ?" if clean_target_type else ""
+        params: list[Any] = [now, now]
+        if clean_target_type:
+            params.append(clean_target_type)
+        params.append(clean_limit)
+        with engine.begin() as connection:
+            result = connection.exec_driver_sql(
+                f"""
+                UPDATE scheduled_agent_tasks
+                SET status = 'running',
+                    claimed_at = ?,
+                    last_error = ''
+                WHERE id IN (
+                    SELECT id
+                    FROM scheduled_agent_tasks
+                    WHERE status = 'pending'
+                      AND due_at <= ?
+                      {target_clause}
+                    ORDER BY due_at, created_at, id
+                    LIMIT ?
+                )
+                RETURNING id
+                """,
+                tuple(params),
+            )
+            task_ids = [str(row[0]) for row in result.fetchall()]
+        if not task_ids:
+            return []
+        with Session(engine) as session:
+            rows = list(session.exec(select(cls).where(cls.id.in_(task_ids))).all())
+            rows_by_id = {row.id: row for row in rows}
+            ordered = [rows_by_id[task_id] for task_id in task_ids if task_id in rows_by_id]
+            for row in ordered:
+                session.expunge(row)
+            return ordered
 
     @classmethod
     def get_open_for_target(
@@ -5335,6 +6208,9 @@ class ScheduledAgentTask(SQLModel, table=True):
                 row.run_id = (run_id or "").strip() or None
             if row.status == "running":
                 row.claimed_at = now
+            if row.status == "pending":
+                row.claimed_at = None
+                row.completed_at = None
             if row.status in {"completed", "failed"}:
                 row.completed_at = now
             row.last_error = str(error or "")[:12000]
@@ -5398,6 +6274,7 @@ class ContadoresRuntimeAlert(SQLModel, table=True):
     email_inbox_address: str | None = Field(default=None)
     resolved_at: datetime | None = Field(default=None, index=True)
     operator_reply_text: str | None = Field(default=None)
+    alert_claimed_at: datetime | None = Field(default=None, index=True)
     notified_at: datetime | None = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
 
@@ -5422,7 +6299,7 @@ class ContadoresRuntimeAlert(SQLModel, table=True):
                 phone=(lead.phone or "").strip(),
                 full_name=(lead.full_name or "").strip() or None,
                 alert_type=(alert_type or "runtime_alert").strip() or "runtime_alert",
-                error=" ".join(str(error or "").split()).strip()[:2000],
+                error=redact_sensitive_text(error, limit=2000),
                 fallback_action=(fallback_action or "").strip(),
                 previous_stage=(previous_stage or "").strip() or None,
                 latest_inbound_text=(latest_inbound_text or "").strip()[:2000],
@@ -5454,6 +6331,82 @@ class ContadoresRuntimeAlert(SQLModel, table=True):
             for row in rows:
                 session.expunge(row)
             return rows
+
+    @classmethod
+    def list_recent(
+        cls,
+        *,
+        funnel_id: str | None = None,
+        unresolved_only: bool = False,
+        limit: int = 100,
+    ) -> list["ContadoresRuntimeAlert"]:
+        """List recent runtime alerts for platform observability."""
+        clean_limit = max(1, min(int(limit or 100), 500))
+        with Session(engine) as session:
+            statement = select(cls)
+            if funnel_id is not None:
+                statement = statement.where(cls.funnel_id == ((funnel_id or "").strip() or "contadores"))
+            if unresolved_only:
+                statement = statement.where(cls.resolved_at.is_(None))
+            statement = statement.order_by(cls.created_at.desc(), cls.id.desc()).limit(clean_limit)
+            rows = list(session.exec(statement).all())
+            for row in rows:
+                session.expunge(row)
+            return rows
+
+    @classmethod
+    def count_unresolved(cls, *, funnel_id: str | None = None) -> int:
+        """Count runtime alerts that still need operator resolution."""
+        with Session(engine) as session:
+            statement = select(cls.id).where(cls.resolved_at.is_(None))
+            if funnel_id is not None:
+                statement = statement.where(cls.funnel_id == ((funnel_id or "").strip() or "contadores"))
+            return len(list(session.exec(statement).all()))
+
+    @classmethod
+    def count_unnotified(cls, *, funnel_id: str | None = None) -> int:
+        """Count unresolved runtime alerts with no successful operator notification."""
+        with Session(engine) as session:
+            statement = select(cls.id).where(cls.resolved_at.is_(None), cls.notified_at.is_(None))
+            if funnel_id is not None:
+                statement = statement.where(cls.funnel_id == ((funnel_id or "").strip() or "contadores"))
+            return len(list(session.exec(statement).all()))
+
+    @classmethod
+    def claim_pending_alert(
+        cls,
+        *,
+        alert_id: int,
+        claimed_at: datetime,
+        stale_after_seconds: int,
+    ) -> bool:
+        """Claim one runtime alert across processes."""
+        stale_before = claimed_at - timedelta(seconds=max(1, int(stale_after_seconds)))
+        with engine.begin() as connection:
+            result = connection.exec_driver_sql(
+                """
+                UPDATE contadores_runtime_alerts
+                SET alert_claimed_at = ?
+                WHERE id = ?
+                  AND notified_at IS NULL
+                  AND resolved_at IS NULL
+                  AND (
+                    alert_claimed_at IS NULL
+                    OR alert_claimed_at <= ?
+                  )
+                """,
+                (claimed_at, alert_id, stale_before),
+            )
+            return result.rowcount == 1
+
+    @classmethod
+    def clear_alert_claim(cls, *, alert_id: int) -> None:
+        """Release one runtime alert claim."""
+        with engine.begin() as connection:
+            connection.exec_driver_sql(
+                "UPDATE contadores_runtime_alerts SET alert_claimed_at = NULL WHERE id = ?",
+                (alert_id,),
+            )
 
     @classmethod
     def list_recent_by_lead(
@@ -5495,6 +6448,7 @@ class ContadoresRuntimeAlert(SQLModel, table=True):
             if row is None:
                 return None
             row.notified_at = notified_at or datetime.now(timezone.utc)
+            row.alert_claimed_at = None
             if email_thread_id is not None:
                 row.email_thread_id = (email_thread_id or "").strip() or None
             if email_message_id is not None:
@@ -5554,6 +6508,168 @@ class ContadoresRuntimeAlert(SQLModel, table=True):
             session.refresh(row)
             session.expunge(row)
             return row
+
+
+class ContadoresAlertDelivery(SQLModel, table=True):
+    """Durable per-recipient state for AgentMail alert delivery."""
+
+    __tablename__ = "contadores_alert_deliveries"
+    __table_args__ = (
+        UniqueConstraint("alert_kind", "target_id", "recipient", name="uq_contadores_alert_deliveries_recipient"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    alert_kind: str = Field(index=True)
+    target_id: str = Field(index=True)
+    recipient: str = Field(index=True)
+    status: str = Field(default="pending", index=True)
+    attempts: int = Field(default=0, index=True)
+    last_attempt_at: datetime | None = Field(default=None, index=True)
+    next_attempt_at: datetime | None = Field(default=None, index=True)
+    last_error: str = ""
+    email_thread_id: str | None = Field(default=None, index=True)
+    email_message_id: str | None = Field(default=None, index=True)
+    email_inbox_id: str | None = Field(default=None, index=True)
+    email_inbox_address: str | None = Field(default=None)
+    delivered_at: datetime | None = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
+
+    @classmethod
+    def ensure_recipients(
+        cls,
+        *,
+        alert_kind: str,
+        target_id: str,
+        recipients: list[str],
+    ) -> None:
+        """Create missing recipient delivery rows."""
+        clean_kind = (alert_kind or "").strip()
+        clean_target = str(target_id or "").strip()
+        clean_recipients = [email for value in recipients if (email := normalize_email(value))]
+        if not clean_kind or not clean_target or not clean_recipients:
+            return
+        now = datetime.now(timezone.utc)
+        with Session(engine) as session:
+            existing = set(
+                session.exec(
+                    select(cls.recipient).where(
+                        cls.alert_kind == clean_kind,
+                        cls.target_id == clean_target,
+                    )
+                ).all()
+            )
+            for recipient in clean_recipients:
+                if recipient in existing:
+                    continue
+                session.add(
+                    cls(
+                        alert_kind=clean_kind,
+                        target_id=clean_target,
+                        recipient=recipient,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+            session.commit()
+
+    @classmethod
+    def list_due_recipients(
+        cls,
+        *,
+        alert_kind: str,
+        target_id: str,
+        recipients: list[str],
+        now: datetime | None = None,
+    ) -> list[str]:
+        """Return configured recipients that still need delivery."""
+        cls.ensure_recipients(alert_kind=alert_kind, target_id=target_id, recipients=recipients)
+        clean_recipients = [email for value in recipients if (email := normalize_email(value))]
+        if not clean_recipients:
+            return []
+        due_at = now or datetime.now(timezone.utc)
+        with Session(engine) as session:
+            rows = session.exec(
+                select(cls).where(
+                    cls.alert_kind == (alert_kind or "").strip(),
+                    cls.target_id == str(target_id or "").strip(),
+                    cls.recipient.in_(clean_recipients),
+                    cls.status != "delivered",
+                    or_(cls.next_attempt_at.is_(None), cls.next_attempt_at <= due_at),
+                )
+            ).all()
+            due = {row.recipient for row in rows}
+        return [recipient for recipient in clean_recipients if recipient in due]
+
+    @classmethod
+    def mark_attempt(
+        cls,
+        *,
+        alert_kind: str,
+        target_id: str,
+        recipient: str,
+        sent_at: datetime,
+        success: bool,
+        error: str = "",
+        retry_after_seconds: int = 60,
+        email_thread_id: str | None = None,
+        email_message_id: str | None = None,
+        email_inbox_id: str | None = None,
+        email_inbox_address: str | None = None,
+    ) -> None:
+        """Persist one recipient send outcome."""
+        clean_recipient = normalize_email(recipient)
+        if not clean_recipient:
+            return
+        cls.ensure_recipients(alert_kind=alert_kind, target_id=target_id, recipients=[clean_recipient])
+        with Session(engine) as session:
+            row = session.exec(
+                select(cls).where(
+                    cls.alert_kind == (alert_kind or "").strip(),
+                    cls.target_id == str(target_id or "").strip(),
+                    cls.recipient == clean_recipient,
+                )
+            ).first()
+            if row is None:
+                return
+            row.attempts += 1
+            row.last_attempt_at = sent_at
+            row.updated_at = sent_at
+            if success:
+                row.status = "delivered"
+                row.delivered_at = sent_at
+                row.next_attempt_at = None
+                row.last_error = ""
+                row.email_thread_id = (email_thread_id or "").strip() or None
+                row.email_message_id = (email_message_id or "").strip() or None
+                row.email_inbox_id = (email_inbox_id or "").strip() or None
+                row.email_inbox_address = (email_inbox_address or "").strip() or None
+            else:
+                row.status = "failed"
+                row.next_attempt_at = sent_at + timedelta(seconds=max(0, int(retry_after_seconds)))
+                row.last_error = str(error or "")[:1000]
+            session.add(row)
+            session.commit()
+
+    @classmethod
+    def all_delivered(cls, *, alert_kind: str, target_id: str, recipients: list[str]) -> bool:
+        """Return True when every configured recipient has a delivered row."""
+        clean_recipients = [email for value in recipients if (email := normalize_email(value))]
+        if not clean_recipients:
+            return False
+        cls.ensure_recipients(alert_kind=alert_kind, target_id=target_id, recipients=clean_recipients)
+        with Session(engine) as session:
+            delivered = set(
+                session.exec(
+                    select(cls.recipient).where(
+                        cls.alert_kind == (alert_kind or "").strip(),
+                        cls.target_id == str(target_id or "").strip(),
+                        cls.recipient.in_(clean_recipients),
+                        cls.status == "delivered",
+                    )
+                ).all()
+            )
+        return set(clean_recipients) <= delivered
 
 
 class WorkstationClientStatus(str, Enum):
@@ -5659,6 +6775,8 @@ class WorkstationClient(SQLModel, table=True):
     folder_name: str = Field(default="", index=True)
     notes: str = Field(default="")
     last_automation_handled_at: datetime | None = Field(default=None, index=True)
+    automation_claimed_at: datetime | None = Field(default=None, index=True)
+    automation_claim_error: str = Field(default="")
     last_preview_sent_at: datetime | None = Field(default=None, index=True)
     approved_at: datetime | None = Field(default=None, index=True)
     ping_1_sent_at: datetime | None = Field(default=None, index=True)
@@ -5677,6 +6795,20 @@ class WorkstationClient(SQLModel, table=True):
             return item
 
     @classmethod
+    def get_by_ids(cls, client_ids: Iterable[str]) -> dict[str, "WorkstationClient"]:
+        """Get Workstation clients keyed by id."""
+        clean_ids = list(dict.fromkeys(client_id.strip() for client_id in client_ids if client_id and client_id.strip()))
+        if not clean_ids:
+            return {}
+        with Session(engine) as session:
+            rows = list(session.exec(select(cls).where(cls.id.in_(clean_ids))).all())
+            result: dict[str, WorkstationClient] = {}
+            for row in rows:
+                session.expunge(row)
+                result[row.id] = row
+            return result
+
+    @classmethod
     def get_by_lead_id(cls, lead_id: str) -> Optional["WorkstationClient"]:
         """Get one Workstation client by source lead."""
         clean_lead_id = (lead_id or "").strip()
@@ -5688,6 +6820,21 @@ class WorkstationClient(SQLModel, table=True):
             if item:
                 session.expunge(item)
             return item
+
+    @classmethod
+    def get_by_lead_ids(cls, lead_ids: list[str]) -> dict[str, "WorkstationClient"]:
+        """Get Workstation clients keyed by source lead id."""
+        clean_ids = [lead_id for lead_id in dict.fromkeys(lead_ids) if lead_id]
+        if not clean_ids:
+            return {}
+        with Session(engine) as session:
+            statement = select(cls).where(cls.lead_id.in_(clean_ids))
+            rows = list(session.exec(statement).all())
+            result: dict[str, WorkstationClient] = {}
+            for row in rows:
+                session.expunge(row)
+                result[row.lead_id] = row
+            return result
 
     @classmethod
     def list_recent(
@@ -5749,6 +6896,55 @@ class WorkstationClient(SQLModel, table=True):
             for row in rows:
                 session.expunge(row)
             return rows
+
+    @classmethod
+    def claim_automation(
+        cls,
+        client_id: str,
+        *,
+        claimed_at: datetime,
+        stale_after_seconds: int = 3600,
+    ) -> bool:
+        """Durably claim one client before automation side effects."""
+        stale_before = claimed_at - timedelta(seconds=max(60, int(stale_after_seconds or 3600)))
+        with engine.begin() as connection:
+            result = connection.exec_driver_sql(
+                """
+                UPDATE workstation_clients
+                SET automation_claimed_at = ?,
+                    automation_claim_error = '',
+                    updated_at = ?
+                WHERE id = ?
+                  AND (
+                    automation_claimed_at IS NULL
+                    OR automation_claimed_at <= ?
+                  )
+                """,
+                (claimed_at, claimed_at, (client_id or "").strip(), stale_before),
+            )
+            return result.rowcount == 1
+
+    @classmethod
+    def release_automation_claim(
+        cls,
+        client_id: str,
+        *,
+        error: str = "",
+        released_at: datetime | None = None,
+    ) -> None:
+        """Release one durable automation claim."""
+        now = released_at or datetime.now(timezone.utc)
+        with engine.begin() as connection:
+            connection.exec_driver_sql(
+                """
+                UPDATE workstation_clients
+                SET automation_claimed_at = NULL,
+                    automation_claim_error = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (str(error or "")[:1000], now, (client_id or "").strip()),
+            )
 
     @classmethod
     def create_for_lead(
@@ -5965,6 +7161,8 @@ class WorkstationPublicPage(SQLModel, table=True):
         clean_token = (public_token or "").strip()
         if not clean_token:
             return None
+        ttl_days = _positive_int_env("WORKSTATION_PUBLIC_PAGE_TTL_DAYS", 0)
+        expires_before = datetime.now(timezone.utc) - timedelta(days=ttl_days) if ttl_days else None
         with Session(engine) as session:
             statement = (
                 select(cls)
@@ -5973,6 +7171,25 @@ class WorkstationPublicPage(SQLModel, table=True):
                 .limit(1)
             )
             item = session.exec(statement).first()
+            item_updated_at = None
+            if item is not None:
+                item_updated_at = item.updated_at
+                if item_updated_at.tzinfo is None:
+                    item_updated_at = item_updated_at.replace(tzinfo=timezone.utc)
+            if item is not None and expires_before is not None and item_updated_at is not None and item_updated_at < expires_before:
+                item.status = "expired"
+                item.updated_at = datetime.now(timezone.utc)
+                session.add(item)
+                session.commit()
+                return None
+            if item is not None:
+                client = session.get(WorkstationClient, item.client_id)
+                if client is None or client.status == WorkstationClientStatus.CLOSED:
+                    item.status = "inactive"
+                    item.updated_at = datetime.now(timezone.utc)
+                    session.add(item)
+                    session.commit()
+                    return None
             if item:
                 session.expunge(item)
             return item
@@ -6025,6 +7242,26 @@ class WorkstationPublicPage(SQLModel, table=True):
             if item is None:
                 return None
             item.last_sent_at = sent_at or datetime.now(timezone.utc)
+            item.updated_at = datetime.now(timezone.utc)
+            session.add(item)
+            session.commit()
+            session.refresh(item)
+            session.expunge(item)
+            return item
+
+    @classmethod
+    def deactivate_for_client(cls, client_id: str, *, reason: str = "inactive") -> Optional["WorkstationPublicPage"]:
+        """Deactivate one client's public page without changing its token."""
+        clean_client_id = (client_id or "").strip()
+        if not clean_client_id:
+            return None
+        status = (reason or "inactive").strip()[:80] or "inactive"
+        with Session(engine) as session:
+            statement = select(cls).where(cls.client_id == clean_client_id).limit(1)
+            item = session.exec(statement).first()
+            if item is None:
+                return None
+            item.status = status
             item.updated_at = datetime.now(timezone.utc)
             session.add(item)
             session.commit()
@@ -7854,12 +9091,372 @@ class Message(SQLModel, table=True):
             return row
 
 
+class SchemaMigration(SQLModel, table=True):
+    """One schema migration applied to the persistent SQLite database."""
+
+    __tablename__ = "schema_migrations"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(sa_column=Column(String, unique=True, index=True, nullable=False))
+    applied_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
+    details_json: str = Field(default="{}")
+
+
+def list_applied_schema_migrations() -> list[SchemaMigration]:
+    """Return applied schema migrations in apply order."""
+    with Session(engine) as session:
+        rows = list(session.exec(select(SchemaMigration).order_by(SchemaMigration.applied_at, SchemaMigration.id)).all())
+        for row in rows:
+            session.expunge(row)
+        return rows
+
+
+def run_schema_migration(
+    name: str,
+    migrate: Any,
+    *,
+    details: dict[str, Any] | None = None,
+) -> bool:
+    """Run one named schema migration once."""
+    clean_name = " ".join(str(name or "").split()).strip()
+    if not clean_name:
+        raise ValueError("schema migration name is required")
+    with Session(engine) as session:
+        existing = session.exec(select(SchemaMigration).where(SchemaMigration.name == clean_name).limit(1)).first()
+        if existing is not None:
+            return False
+
+    migrate()
+
+    with Session(engine) as session:
+        row = SchemaMigration(
+            name=clean_name,
+            details_json=json.dumps(details or {}, ensure_ascii=True, default=str),
+        )
+        session.add(row)
+        try:
+            session.commit()
+        except IntegrityError:
+            session.rollback()
+            return False
+    logger.info("Applied schema migration %s", clean_name)
+    return True
+
+
+def run_schema_migrations() -> list[str]:
+    """Run startup schema migrations that must be explicit and one-time."""
+    applied: list[str] = []
+    migrations = [
+        (
+            "20260621_drop_legacy_contadores_events_table",
+            drop_legacy_contadores_events_table,
+            {"table": "contadores_events"},
+        ),
+    ]
+    for name, migrate, details in migrations:
+        if run_schema_migration(name, migrate, details=details):
+            applied.append(name)
+    return applied
+
+
+def _table_exists(connection: Any, table_name: str) -> bool:
+    """Return True when a table exists on the current connection."""
+    return table_name in inspect(connection).get_table_names()
+
+
+def _index_exists(connection: Any, table_name: str, index_name: str) -> bool:
+    """Return True when an index exists on the current connection."""
+    return any(index.get("name") == index_name for index in inspect(connection).get_indexes(table_name))
+
+
+def _rows(sql: str) -> list[dict[str, Any]]:
+    """Run a read-only schema-audit SQL query."""
+    with engine.connect() as connection:
+        return [dict(row) for row in connection.exec_driver_sql(sql).mappings().all()]
+
+
+def _duplicate_rows(connection: Any, sql: str) -> list[dict[str, Any]]:
+    """Return duplicate rows for a schema guard query."""
+    return [dict(row) for row in connection.exec_driver_sql(sql).mappings().all()]
+
+
+def _raise_if_duplicates(label: str, rows: list[dict[str, Any]]) -> None:
+    """Block unsafe unique-index creation with a readable duplicate summary."""
+    if not rows:
+        return
+    sample = rows[:5]
+    raise RuntimeError(f"Duplicate {label} values block schema migration: {sample}")
+
+
+def find_duplicate_client_lead_delivery_external_ids() -> list[dict[str, Any]]:
+    """Report duplicate non-empty Delivery provider ids."""
+    return _rows(
+        """
+        SELECT external_id, COUNT(*) AS count, GROUP_CONCAT(id) AS delivery_ids
+        FROM client_lead_deliveries
+        WHERE external_id IS NOT NULL AND external_id != ''
+        GROUP BY external_id
+        HAVING COUNT(*) > 1
+        ORDER BY count DESC, external_id
+        """
+    )
+
+
+def find_duplicate_client_lead_source_meta_form_ids() -> list[dict[str, Any]]:
+    """Report enabled Delivery sources sharing one Meta form id."""
+    return _rows(
+        """
+        SELECT meta_lead_form_id, COUNT(*) AS count, GROUP_CONCAT(id) AS source_ids, GROUP_CONCAT(label) AS labels
+        FROM client_lead_sources
+        WHERE enabled = 1 AND meta_lead_form_id IS NOT NULL AND meta_lead_form_id != ''
+        GROUP BY meta_lead_form_id
+        HAVING COUNT(*) > 1
+        ORDER BY count DESC, meta_lead_form_id
+        """
+    )
+
+
+def find_duplicate_contadores_message_external_ids() -> list[dict[str, Any]]:
+    """Report duplicate non-empty WhatsApp provider ids by direction."""
+    return _rows(
+        """
+        SELECT from_me, external_id, COUNT(*) AS count, GROUP_CONCAT(id) AS message_ids
+        FROM contadores_messages
+        WHERE external_id IS NOT NULL AND external_id != ''
+        GROUP BY from_me, external_id
+        HAVING COUNT(*) > 1
+        ORDER BY count DESC, external_id
+        """
+    )
+
+
+def find_duplicate_scheduled_agent_task_idempotency_keys() -> list[dict[str, Any]]:
+    """Report duplicate scheduled task idempotency keys."""
+    return _rows(
+        """
+        SELECT idempotency_key, COUNT(*) AS count, GROUP_CONCAT(id) AS task_ids
+        FROM scheduled_agent_tasks
+        WHERE idempotency_key IS NOT NULL AND idempotency_key != ''
+        GROUP BY idempotency_key
+        HAVING COUNT(*) > 1
+        ORDER BY count DESC, idempotency_key
+        """
+    )
+
+
+def find_duplicate_platform_logical_identities() -> dict[str, list[dict[str, Any]]]:
+    """Report duplicate platform idempotency keys and client profile ids."""
+    return {
+        "platform_events.idempotency_key": _rows(
+            """
+            SELECT idempotency_key, COUNT(*) AS count, GROUP_CONCAT(id) AS ids
+            FROM platform_events
+            WHERE idempotency_key IS NOT NULL AND idempotency_key != ''
+            GROUP BY idempotency_key
+            HAVING COUNT(*) > 1
+            ORDER BY count DESC, idempotency_key
+            """
+        ),
+        "platform_meetings.idempotency_key": _rows(
+            """
+            SELECT idempotency_key, COUNT(*) AS count, GROUP_CONCAT(id) AS ids
+            FROM platform_meetings
+            WHERE idempotency_key IS NOT NULL AND idempotency_key != ''
+            GROUP BY idempotency_key
+            HAVING COUNT(*) > 1
+            ORDER BY count DESC, idempotency_key
+            """
+        ),
+        "platform_ad_campaigns.idempotency_key": _rows(
+            """
+            SELECT idempotency_key, COUNT(*) AS count, GROUP_CONCAT(id) AS ids
+            FROM platform_ad_campaigns
+            WHERE idempotency_key IS NOT NULL AND idempotency_key != ''
+            GROUP BY idempotency_key
+            HAVING COUNT(*) > 1
+            ORDER BY count DESC, idempotency_key
+            """
+        ),
+        "platform_client_profiles.client_id": _rows(
+            """
+            SELECT client_id, COUNT(*) AS count, GROUP_CONCAT(id) AS ids
+            FROM platform_client_profiles
+            WHERE client_id IS NOT NULL AND client_id != ''
+            GROUP BY client_id
+            HAVING COUNT(*) > 1
+            ORDER BY count DESC, client_id
+            """
+        ),
+    }
+
+
+def ensure_client_lead_delivery_external_id_index() -> None:
+    """Enforce unique non-empty Delivery provider ids."""
+    with engine.begin() as connection:
+        if not _table_exists(connection, "client_lead_deliveries"):
+            return
+        index_name = "uq_client_lead_deliveries_external_id"
+        if _index_exists(connection, "client_lead_deliveries", index_name):
+            return
+        _raise_if_duplicates(
+            "client_lead_deliveries.external_id",
+            _duplicate_rows(
+                connection,
+                """
+                SELECT external_id, COUNT(*) AS count, GROUP_CONCAT(id) AS delivery_ids
+                FROM client_lead_deliveries
+                WHERE external_id IS NOT NULL AND external_id != ''
+                GROUP BY external_id
+                HAVING COUNT(*) > 1
+                ORDER BY count DESC, external_id
+                """,
+            ),
+        )
+        connection.exec_driver_sql(
+            f"""
+            CREATE UNIQUE INDEX IF NOT EXISTS {index_name}
+            ON client_lead_deliveries (external_id)
+            WHERE external_id IS NOT NULL AND external_id != ''
+            """
+        )
+
+
+def ensure_client_lead_source_meta_form_id_index() -> None:
+    """Enforce one enabled Delivery route per Meta form id."""
+    with engine.begin() as connection:
+        if not _table_exists(connection, "client_lead_sources"):
+            return
+        index_name = "uq_client_lead_sources_enabled_meta_form_id"
+        if _index_exists(connection, "client_lead_sources", index_name):
+            return
+        _raise_if_duplicates(
+            "enabled client_lead_sources.meta_lead_form_id",
+            _duplicate_rows(
+                connection,
+                """
+                SELECT meta_lead_form_id, COUNT(*) AS count, GROUP_CONCAT(id) AS source_ids
+                FROM client_lead_sources
+                WHERE enabled = 1 AND meta_lead_form_id IS NOT NULL AND meta_lead_form_id != ''
+                GROUP BY meta_lead_form_id
+                HAVING COUNT(*) > 1
+                ORDER BY count DESC, meta_lead_form_id
+                """,
+            ),
+        )
+        connection.exec_driver_sql(
+            f"""
+            CREATE UNIQUE INDEX IF NOT EXISTS {index_name}
+            ON client_lead_sources (meta_lead_form_id)
+            WHERE enabled = 1 AND meta_lead_form_id IS NOT NULL AND meta_lead_form_id != ''
+            """
+        )
+
+
+def ensure_contadores_message_external_id_index() -> None:
+    """Enforce unique non-empty WhatsApp provider ids per message direction."""
+    with engine.begin() as connection:
+        if not _table_exists(connection, "contadores_messages"):
+            return
+        index_name = "uq_contadores_messages_direction_external_id"
+        if _index_exists(connection, "contadores_messages", index_name):
+            return
+        _raise_if_duplicates(
+            "contadores_messages.from_me/external_id",
+            _duplicate_rows(
+                connection,
+                """
+                SELECT from_me, external_id, COUNT(*) AS count, GROUP_CONCAT(id) AS message_ids
+                FROM contadores_messages
+                WHERE external_id IS NOT NULL AND external_id != ''
+                GROUP BY from_me, external_id
+                HAVING COUNT(*) > 1
+                ORDER BY count DESC, external_id
+                """,
+            ),
+        )
+        connection.exec_driver_sql(
+            f"""
+            CREATE UNIQUE INDEX IF NOT EXISTS {index_name}
+            ON contadores_messages (from_me, external_id)
+            WHERE external_id IS NOT NULL AND external_id != ''
+            """
+        )
+
+
+def ensure_scheduled_agent_task_idempotency_index() -> None:
+    """Enforce unique non-empty scheduled task idempotency keys."""
+    with engine.begin() as connection:
+        if not _table_exists(connection, "scheduled_agent_tasks"):
+            return
+        index_name = "uq_scheduled_agent_tasks_idempotency_key"
+        if _index_exists(connection, "scheduled_agent_tasks", index_name):
+            return
+        _raise_if_duplicates(
+            "scheduled_agent_tasks.idempotency_key",
+            _duplicate_rows(
+                connection,
+                """
+                SELECT idempotency_key, COUNT(*) AS count, GROUP_CONCAT(id) AS task_ids
+                FROM scheduled_agent_tasks
+                WHERE idempotency_key IS NOT NULL AND idempotency_key != ''
+                GROUP BY idempotency_key
+                HAVING COUNT(*) > 1
+                ORDER BY count DESC, idempotency_key
+                """,
+            ),
+        )
+        connection.exec_driver_sql(
+            f"""
+            CREATE UNIQUE INDEX IF NOT EXISTS {index_name}
+            ON scheduled_agent_tasks (idempotency_key)
+            WHERE idempotency_key IS NOT NULL AND idempotency_key != ''
+            """
+        )
+
+
+def ensure_platform_logical_identity_indexes() -> None:
+    """Enforce unique logical ids for platform events, meetings, campaigns, and profiles."""
+    index_specs = [
+        ("platform_events", "idempotency_key", "uq_platform_events_idempotency_key"),
+        ("platform_meetings", "idempotency_key", "uq_platform_meetings_idempotency_key"),
+        ("platform_ad_campaigns", "idempotency_key", "uq_platform_ad_campaigns_idempotency_key"),
+        ("platform_client_profiles", "client_id", "uq_platform_client_profiles_client_id"),
+    ]
+    with engine.begin() as connection:
+        for table_name, column_name, index_name in index_specs:
+            if not _table_exists(connection, table_name) or _index_exists(connection, table_name, index_name):
+                continue
+            _raise_if_duplicates(
+                f"{table_name}.{column_name}",
+                _duplicate_rows(
+                    connection,
+                    f"""
+                    SELECT {column_name}, COUNT(*) AS count, GROUP_CONCAT(id) AS ids
+                    FROM {table_name}
+                    WHERE {column_name} IS NOT NULL AND {column_name} != ''
+                    GROUP BY {column_name}
+                    HAVING COUNT(*) > 1
+                    ORDER BY count DESC, {column_name}
+                    """,
+                ),
+            )
+            connection.exec_driver_sql(
+                f"""
+                CREATE UNIQUE INDEX IF NOT EXISTS {index_name}
+                ON {table_name} ({column_name})
+                WHERE {column_name} IS NOT NULL AND {column_name} != ''
+                """
+            )
+
+
 def init_db() -> None:
     """Create all persistence tables."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     SQLModel.metadata.create_all(engine)
+    applied_migrations = run_schema_migrations()
+    if applied_migrations:
+        logger.info("Schema migrations applied: %s", ", ".join(applied_migrations))
     ensure_client_lead_source_prefilled_reply_text_column()
-    drop_legacy_contadores_events_table()
     ensure_company_tags_column()
     ensure_company_normalized_source_url_column()
     ensure_contact_email_provider_columns()
@@ -7867,6 +9464,7 @@ def init_db() -> None:
     ensure_contadores_closed_state_columns()
     ensure_contadores_manual_reply_columns()
     ensure_contadores_conversation_processing_columns()
+    ensure_contadores_alert_claim_columns()
     ensure_contadores_codex_thread_columns()
     ensure_contadores_funnel_columns()
     ensure_contadores_tags_column()
@@ -7888,7 +9486,12 @@ def init_db() -> None:
     ensure_platform_creative_asset_meta_columns()
     ensure_platform_meta_publish_attempt_idempotency_index()
     ensure_platform_meeting_calendar_columns()
-    logger.info(f"Database initialized at {DATABASE_URL}")
+    ensure_client_lead_delivery_external_id_index()
+    ensure_client_lead_source_meta_form_id_index()
+    ensure_contadores_message_external_id_index()
+    ensure_scheduled_agent_task_idempotency_index()
+    ensure_platform_logical_identity_indexes()
+    logger.info("Database initialized at %s", redact_sensitive_text(DATABASE_URL, limit=300))
 
 
 def drop_legacy_contadores_events_table() -> None:
@@ -7914,6 +9517,56 @@ def ensure_platform_meta_publish_attempt_idempotency_index() -> None:
             WHERE idempotency_key IS NOT NULL
             """
         )
+
+
+def verify_schema() -> list[str]:
+    """Return schema problems without mutating the database."""
+    problems: list[str] = []
+    required_tables = {
+        "schema_migrations",
+        "client_lead_deliveries",
+        "client_lead_sources",
+        "contadores_messages",
+        "contadores_sheet_sync_states",
+        "scheduled_agent_tasks",
+        "platform_events",
+        "platform_meetings",
+        "platform_ad_campaigns",
+        "platform_client_profiles",
+    }
+    required_indexes = {
+        "client_lead_deliveries": "uq_client_lead_deliveries_external_id",
+        "client_lead_sources": "uq_client_lead_sources_enabled_meta_form_id",
+        "contadores_messages": "uq_contadores_messages_direction_external_id",
+        "scheduled_agent_tasks": "uq_scheduled_agent_tasks_idempotency_key",
+        "platform_events": "uq_platform_events_idempotency_key",
+        "platform_meetings": "uq_platform_meetings_idempotency_key",
+        "platform_ad_campaigns": "uq_platform_ad_campaigns_idempotency_key",
+        "platform_client_profiles": "uq_platform_client_profiles_client_id",
+    }
+    with engine.connect() as connection:
+        tables = set(inspect(connection).get_table_names())
+        for table_name in sorted(required_tables - tables):
+            problems.append(f"missing table: {table_name}")
+        for table_name, index_name in required_indexes.items():
+            if table_name in tables and not _index_exists(connection, table_name, index_name):
+                problems.append(f"missing index: {index_name}")
+    return problems
+
+
+def _main() -> None:
+    """Tiny schema CLI."""
+    import sys
+
+    command = sys.argv[1] if len(sys.argv) > 1 else ""
+    if command != "verify-schema":
+        raise SystemExit("usage: python -m backend.database verify-schema")
+    problems = verify_schema()
+    if problems:
+        for problem in problems:
+            print(problem)
+        raise SystemExit(1)
+    print("schema-ok")
 
 
 def ensure_platform_creative_asset_meta_columns() -> None:
@@ -8141,10 +9794,20 @@ def ensure_contadores_conversation_processing_columns() -> None:
                 f"ALTER TABLE contadores_leads ADD COLUMN {column_name} {column_type}"
             )
             logger.info("Added missing contadores_leads.%s column.", column_name)
-        for column_name in column_definitions:
+
+
+def ensure_contadores_alert_claim_columns() -> None:
+    """Add durable alert claim columns to existing SQLite databases."""
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        if "contadores_leads" in inspector.get_table_names():
+            columns = {column["name"] for column in inspector.get_columns("contadores_leads")}
+            if "alert_claimed_at" not in columns:
+                connection.exec_driver_sql("ALTER TABLE contadores_leads ADD COLUMN alert_claimed_at TIMESTAMP")
+                logger.info("Added missing contadores_leads.alert_claimed_at column.")
             connection.exec_driver_sql(
-                f"CREATE INDEX IF NOT EXISTS ix_contadores_leads_{column_name} "
-                f"ON contadores_leads ({column_name})"
+                "CREATE INDEX IF NOT EXISTS ix_contadores_leads_alert_claimed_at "
+                "ON contadores_leads (alert_claimed_at)"
             )
 
 
@@ -8163,6 +9826,7 @@ def ensure_contadores_runtime_alert_columns() -> None:
             "email_inbox_address": "TEXT",
             "resolved_at": "TIMESTAMP",
             "operator_reply_text": "TEXT",
+            "alert_claimed_at": "TIMESTAMP",
         }
         for column_name, column_type in column_definitions.items():
             if column_name in columns:
@@ -8171,7 +9835,14 @@ def ensure_contadores_runtime_alert_columns() -> None:
                 f"ALTER TABLE contadores_runtime_alerts ADD COLUMN {column_name} {column_type}"
             )
             logger.info("Added missing contadores_runtime_alerts.%s column.", column_name)
-        for column_name in ["previous_stage", "email_thread_id", "email_message_id", "email_inbox_id", "resolved_at"]:
+        for column_name in [
+            "previous_stage",
+            "email_thread_id",
+            "email_message_id",
+            "email_inbox_id",
+            "resolved_at",
+            "alert_claimed_at",
+        ]:
             connection.exec_driver_sql(
                 f"CREATE INDEX IF NOT EXISTS ix_contadores_runtime_alerts_{column_name} "
                 f"ON contadores_runtime_alerts ({column_name})"
@@ -8206,6 +9877,8 @@ def ensure_agent_run_codex_thread_columns() -> None:
         column_definitions = {
             "codex_thread_id": "TEXT",
             "codex_turn_id": "TEXT",
+            "usage_json": "TEXT NOT NULL DEFAULT '{}'",
+            "budget_status": "TEXT NOT NULL DEFAULT 'unknown'",
         }
         for column_name, column_type in column_definitions.items():
             if column_name in columns:
@@ -8234,6 +9907,8 @@ def ensure_workstation_client_automation_columns() -> None:
             "offer_price_usd": "INTEGER",
             "offer_currency": "TEXT NOT NULL DEFAULT 'USD'",
             "last_automation_handled_at": "TIMESTAMP",
+            "automation_claimed_at": "TIMESTAMP",
+            "automation_claim_error": "TEXT NOT NULL DEFAULT ''",
             "last_preview_sent_at": "TIMESTAMP",
             "approved_at": "TIMESTAMP",
             "ping_1_sent_at": "TIMESTAMP",
@@ -8284,6 +9959,7 @@ def ensure_workstation_client_automation_columns() -> None:
             "automation_status",
             "offer_price_usd",
             "last_automation_handled_at",
+            "automation_claimed_at",
             "last_preview_sent_at",
             "approved_at",
             "ping_1_sent_at",
@@ -8618,3 +10294,7 @@ def ensure_contact_email_provider_columns() -> None:
         connection.exec_driver_sql(
             "CREATE INDEX IF NOT EXISTS ix_contacts_email_inbox_id ON contacts (email_inbox_id)"
         )
+
+
+if __name__ == "__main__":
+    _main()

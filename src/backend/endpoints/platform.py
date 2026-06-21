@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import mimetypes
+import json
+import os
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
 
@@ -17,6 +19,7 @@ from pydantic import BaseModel, Field
 from backend.database import (
     AgentRun,
     AgentToolCall,
+    ContadoresRuntimeAlert,
     PlatformAdCampaign,
     PlatformClientProfile,
     PlatformClientUpdate,
@@ -28,6 +31,7 @@ from backend.database import (
     PlatformMetaPublishAttempt,
 )
 from backend.calendar_events import CalendarSchedulingError, schedule_meeting_calendar_event
+from backend.creative_limits import CREATIVE_ASSET_MAX_UPLOAD_BYTES
 from backend.platform_profile_extraction import PlatformProfileExtractionError, extract_client_profile_from_meeting
 from backend.meta_ads_publish import (
     MetaAdsPublishError,
@@ -40,8 +44,20 @@ from backend.meta_ads_inventory import MetaInventoryError, sync_meta_inventory
 
 platform_router = APIRouter(prefix="/api/platform", tags=["platform"])
 
-CREATIVE_ASSET_MAX_UPLOAD_BYTES = 250 * 1024 * 1024
 CREATIVE_ASSET_FILENAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
+CREATIVE_ASSET_DANGEROUS_SUFFIXES = {".html", ".htm", ".js", ".mjs", ".svg", ".xhtml", ".xml"}
+CREATIVE_ASSET_DANGEROUS_MEDIA_TYPES = {
+    "application/ecmascript",
+    "application/javascript",
+    "application/octet-stream",
+    "application/xhtml+xml",
+    "application/xml",
+    "image/svg+xml",
+    "text/html",
+    "text/javascript",
+    "text/xml",
+}
+DEFAULT_AGENT_RUN_STALE_AFTER_SECONDS = 3600
 
 
 class PlatformEventResponse(BaseModel):
@@ -83,8 +99,28 @@ class PlatformAgentRunResponse(BaseModel):
     codex_turn_id: str | None
     final_response_preview: str
     error_preview: str
+    usage: dict[str, Any] = Field(default_factory=dict)
+    budget_status: str = "unknown"
+    stale: bool = False
     started_at: datetime
     finished_at: datetime | None
+    created_at: datetime
+
+
+class PlatformRuntimeAlertResponse(BaseModel):
+    """Serialized runtime alert preview for platform observability."""
+
+    id: int
+    lead_id: str
+    funnel_id: str
+    funnel_label: str
+    alert_type: str
+    error_preview: str
+    fallback_action: str
+    previous_stage: str | None
+    latest_inbound_preview: str
+    notified_at: datetime | None
+    resolved_at: datetime | None
     created_at: datetime
 
 
@@ -581,8 +617,12 @@ class PlatformOverviewCounts(BaseModel):
     client_updates: int
     agent_runs: int
     failed_agent_runs: int
+    stale_agent_runs: int
     agent_tool_calls: int
     failed_agent_tool_calls: int
+    runtime_alerts: int
+    unresolved_runtime_alerts: int
+    unnotified_runtime_alerts: int
     recent_events: int
 
 
@@ -601,6 +641,8 @@ class PlatformOverviewResponse(BaseModel):
     client_updates: list[PlatformClientUpdateResponse]
     human_questions: list[PlatformHumanQuestionResponse]
     agent_runs: list[PlatformAgentRunResponse]
+    stale_agent_runs: list[PlatformAgentRunResponse]
+    runtime_alerts: list[PlatformRuntimeAlertResponse]
     agent_tool_calls: list[PlatformAgentToolCallResponse]
 
 
@@ -632,8 +674,33 @@ def compact_overview_text(value: str, *, limit: int = 500) -> str:
     return f"{text[: max(0, limit - 3)]}..."
 
 
-def serialize_agent_run(row: AgentRun) -> PlatformAgentRunResponse:
+def agent_run_stale_after_seconds() -> int:
+    """Return the stale-running threshold for agent diagnostics."""
+    raw_value = (os.getenv("CODEX_AGENT_RUN_STALE_AFTER_SECONDS", "") or "").strip()
+    if raw_value.isdigit() and int(raw_value) > 0:
+        return int(raw_value)
+    return DEFAULT_AGENT_RUN_STALE_AFTER_SECONDS
+
+
+def ensure_utc(value: datetime) -> datetime:
+    """Return a timezone-aware UTC datetime."""
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+def is_stale_agent_run(row: AgentRun, *, now: datetime | None = None) -> bool:
+    """Return True when a running agent row has exceeded the diagnostic threshold."""
+    if row.status != "running":
+        return False
+    current_time = now or datetime.now(timezone.utc)
+    return ensure_utc(row.started_at) <= current_time - timedelta(seconds=agent_run_stale_after_seconds())
+
+
+def serialize_agent_run(row: AgentRun, *, stale: bool = False) -> PlatformAgentRunResponse:
     """Convert one agent run to the platform cockpit shape."""
+    try:
+        usage = json.loads(row.usage_json or "{}")
+    except json.JSONDecodeError:
+        usage = {}
     return PlatformAgentRunResponse(
         id=row.id,
         agent_kind=row.agent_kind,
@@ -646,8 +713,29 @@ def serialize_agent_run(row: AgentRun) -> PlatformAgentRunResponse:
         codex_turn_id=row.codex_turn_id,
         final_response_preview=compact_overview_text(row.final_response),
         error_preview=compact_overview_text(row.error, limit=320),
+        usage=usage if isinstance(usage, dict) else {},
+        budget_status=row.budget_status or "unknown",
+        stale=stale,
         started_at=row.started_at,
         finished_at=row.finished_at,
+        created_at=row.created_at,
+    )
+
+
+def serialize_runtime_alert(row: ContadoresRuntimeAlert) -> PlatformRuntimeAlertResponse:
+    """Convert one runtime alert to a bounded platform overview preview."""
+    return PlatformRuntimeAlertResponse(
+        id=int(row.id or 0),
+        lead_id=row.lead_id,
+        funnel_id=row.funnel_id,
+        funnel_label=row.funnel_label,
+        alert_type=row.alert_type,
+        error_preview=compact_overview_text(row.error, limit=320),
+        fallback_action=row.fallback_action,
+        previous_stage=row.previous_stage,
+        latest_inbound_preview=compact_overview_text(row.latest_inbound_text, limit=240),
+        notified_at=row.notified_at,
+        resolved_at=row.resolved_at,
         created_at=row.created_at,
     )
 
@@ -799,11 +887,28 @@ def creative_asset_media_url(row: PlatformCreativeAsset, request: Request | None
 def classify_creative_asset_type(content_type: str | None, filename: str) -> str:
     """Map one uploaded media file to the creative asset family."""
     media_type = (content_type or mimetypes.guess_type(filename)[0] or "").lower()
+    guessed_type = (mimetypes.guess_type(filename)[0] or "").lower()
+    suffix = Path(filename).suffix.lower()
+    if suffix in CREATIVE_ASSET_DANGEROUS_SUFFIXES or media_type in CREATIVE_ASSET_DANGEROUS_MEDIA_TYPES:
+        raise HTTPException(status_code=400, detail="Upload a safe image or video file.")
+    if guessed_type in CREATIVE_ASSET_DANGEROUS_MEDIA_TYPES:
+        raise HTTPException(status_code=400, detail="Upload a safe image or video file.")
     if media_type.startswith("image/"):
         return "image"
     if media_type.startswith("video/"):
         return "video"
     raise HTTPException(status_code=400, detail="Upload an image or video file.")
+
+
+def creative_asset_file_response_settings(path: Path) -> tuple[str, str]:
+    """Return media type and disposition for an uploaded creative file."""
+    media_type = (mimetypes.guess_type(path.name)[0] or "").lower()
+    suffix = path.suffix.lower()
+    if suffix in CREATIVE_ASSET_DANGEROUS_SUFFIXES or media_type in CREATIVE_ASSET_DANGEROUS_MEDIA_TYPES:
+        return "application/octet-stream", "attachment"
+    if media_type.startswith("image/") or media_type.startswith("video/"):
+        return media_type, "inline"
+    return "application/octet-stream", "attachment"
 
 
 def serialize_creative_asset(
@@ -957,6 +1062,12 @@ async def list_platform_events(
     target_type: str | None = Query(default=None),
     target_id: str | None = Query(default=None),
     funnel_id: str | None = Query(default=None),
+    event_type: str | None = Query(default=None),
+    severity: str | None = Query(default=None),
+    source: str | None = Query(default=None),
+    correlation_id: str | None = Query(default=None),
+    created_after: datetime | None = Query(default=None),
+    created_before: datetime | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
 ) -> PlatformEventListResponse:
     """Return recent append-only lifecycle events."""
@@ -964,6 +1075,12 @@ async def list_platform_events(
         target_type=target_type,
         target_id=target_id,
         funnel_id=funnel_id,
+        event_type=event_type,
+        severity=severity,
+        source=source,
+        correlation_id=correlation_id,
+        created_after=created_after,
+        created_before=created_before,
         limit=limit,
     )
     return PlatformEventListResponse(events=[serialize_platform_event(event) for event in events])
@@ -985,19 +1102,32 @@ async def platform_overview(
     human_questions = PlatformHumanQuestion.list_recent(limit=limit)
     agent_runs = AgentRun.list_recent(limit=limit)
     agent_tool_calls = AgentToolCall.list_recent(limit=limit)
+    runtime_alerts = ContadoresRuntimeAlert.list_recent(limit=limit, unresolved_only=True)
+    unresolved_runtime_alerts = ContadoresRuntimeAlert.count_unresolved()
+    unnotified_runtime_alerts = ContadoresRuntimeAlert.count_unnotified()
 
+    generated_at = datetime.now(timezone.utc)
     open_questions = sum(1 for row in human_questions if is_open_human_question(row))
     blocked_meta = sum(1 for row in meta_publish_attempts if is_blocked_meta_attempt(row))
     blocked_inventory = 1 if meta_inventory_snapshots and is_blocked_meta_inventory(meta_inventory_snapshots[0]) else 0
     pending_campaigns = sum(1 for row in ad_campaigns if is_pending_campaign(row))
     updates_with_blockers = sum(1 for row in client_updates if row.blockers())
     failed_agent_runs = sum(1 for row in agent_runs if row.status in {"failed", "error", "blocked"})
+    stale_agent_runs = [row for row in agent_runs if is_stale_agent_run(row, now=generated_at)]
+    stale_agent_run_ids = {row.id for row in stale_agent_runs}
     failed_tool_calls = sum(1 for row in agent_tool_calls if row.status == "failed")
 
     return PlatformOverviewResponse(
-        generated_at=datetime.now(timezone.utc),
+        generated_at=generated_at,
         counts=PlatformOverviewCounts(
-            active_blockers=open_questions + blocked_meta + blocked_inventory + updates_with_blockers,
+            active_blockers=(
+                open_questions
+                + blocked_meta
+                + blocked_inventory
+                + updates_with_blockers
+                + len(stale_agent_runs)
+                + unresolved_runtime_alerts
+            ),
             open_human_questions=open_questions,
             blocked_meta_attempts=blocked_meta,
             blocked_meta_inventory=blocked_inventory,
@@ -1009,8 +1139,12 @@ async def platform_overview(
             client_updates=len(client_updates),
             agent_runs=len(agent_runs),
             failed_agent_runs=failed_agent_runs,
+            stale_agent_runs=len(stale_agent_runs),
             agent_tool_calls=len(agent_tool_calls),
             failed_agent_tool_calls=failed_tool_calls,
+            runtime_alerts=len(runtime_alerts),
+            unresolved_runtime_alerts=unresolved_runtime_alerts,
+            unnotified_runtime_alerts=unnotified_runtime_alerts,
             recent_events=len(events),
         ),
         events=[serialize_platform_event(event) for event in events],
@@ -1022,7 +1156,9 @@ async def platform_overview(
         meta_publish_attempts=[serialize_meta_publish_attempt(row) for row in meta_publish_attempts],
         client_updates=[serialize_client_update(row) for row in client_updates],
         human_questions=[serialize_human_question(row) for row in human_questions],
-        agent_runs=[serialize_agent_run(row) for row in agent_runs],
+        agent_runs=[serialize_agent_run(row, stale=row.id in stale_agent_run_ids) for row in agent_runs],
+        stale_agent_runs=[serialize_agent_run(row, stale=True) for row in stale_agent_runs],
+        runtime_alerts=[serialize_runtime_alert(row) for row in runtime_alerts],
         agent_tool_calls=[serialize_agent_tool_call(row) for row in agent_tool_calls],
     )
 
@@ -1326,12 +1462,13 @@ async def get_creative_asset_file(asset_id: str) -> FileResponse:
     file_path = resolve_creative_asset_file(row.file_path)
     if file_path is None or not file_path.is_file():
         raise HTTPException(status_code=404, detail="Creative asset file not found.")
-    media_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+    media_type, content_disposition_type = creative_asset_file_response_settings(file_path)
     return FileResponse(
         file_path,
         media_type=media_type,
         filename=file_path.name,
-        content_disposition_type="inline",
+        content_disposition_type=content_disposition_type,
+        headers={"X-Content-Type-Options": "nosniff"},
     )
 
 

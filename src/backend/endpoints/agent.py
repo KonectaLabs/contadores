@@ -32,6 +32,7 @@ from backend.database import (
     normalize_phone,
 )
 from backend.meta_ads_inventory import sync_meta_inventory
+from backend.redaction import redact_identifier, redact_json, redact_sensitive_text
 from backend.endpoints.campaigns import (
     CampaignMetaPlanDuplicateCommand,
     CampaignMetaPlanGraphCommand,
@@ -306,6 +307,14 @@ def _inventory_counts(inventory: dict[str, Any]) -> dict[str, int]:
     return {key: len(value) for key, value in inventory.items() if isinstance(value, list)}
 
 
+def _meta_error_preview(error: str) -> str:
+    """Hide provider resource ids while keeping the diagnosis suffix."""
+    text = redact_sensitive_text(error, limit=180)
+    if ":" in text:
+        return f"[resource:redacted]:{text.split(':', 1)[1]}"
+    return text
+
+
 def _meta_inventory_snapshot_payload(snapshot: PlatformMetaInventorySnapshot | None) -> dict[str, Any] | None:
     if snapshot is None:
         return None
@@ -315,13 +324,15 @@ def _meta_inventory_snapshot_payload(snapshot: PlatformMetaInventorySnapshot | N
         "status": snapshot.status,
         "source": snapshot.source,
         "actor": snapshot.actor,
-        "ad_account_id": snapshot.ad_account_id,
-        "business_id": snapshot.business_id,
+        "ad_account_id_configured": bool(snapshot.ad_account_id),
+        "ad_account_id_label": redact_identifier(snapshot.ad_account_id),
+        "business_id_configured": bool(snapshot.business_id),
+        "business_id_label": redact_identifier(snapshot.business_id),
         "api_version": snapshot.api_version,
         "created_at": format_timestamp_seconds(snapshot.created_at),
         "inventory_counts": _inventory_counts(inventory),
-        "inventory": inventory,
-        "errors": snapshot.errors(),
+        "inventory": redact_json(inventory),
+        "errors": [_meta_error_preview(error) for error in snapshot.errors()],
     }
 
 
@@ -329,21 +340,21 @@ def _meta_readiness_payload() -> dict[str, Any]:
     latest_snapshot = next(iter(PlatformMetaInventorySnapshot.list_recent(limit=1)), None)
     return {
         "configured": {
-            "api_version": os.getenv("META_MARKETING_API_VERSION", "").strip(),
+            "api_version_configured": bool(os.getenv("META_MARKETING_API_VERSION", "").strip()),
             "credentials_present": bool(
                 os.getenv("META_MARKETING_ACCESS_TOKEN", "").strip()
                 or os.getenv("META_ACCESS_TOKEN", "").strip()
             ),
-            "ad_account_id": os.getenv("META_AD_ACCOUNT_ID", "").strip(),
-            "business_id": os.getenv("META_BUSINESS_ID", "").strip(),
-            "page_ids": _env_list("META_PAGE_IDS", "META_PAGE_ID"),
-            "whatsapp_business_account_ids": _env_list(
-                "META_WHATSAPP_BUSINESS_ACCOUNT_IDS",
-                "META_WHATSAPP_BUSINESS_ACCOUNT_ID",
+            "ad_account_id_configured": bool(os.getenv("META_AD_ACCOUNT_ID", "").strip()),
+            "ad_account_id_label": redact_identifier(os.getenv("META_AD_ACCOUNT_ID", "").strip()),
+            "business_id_configured": bool(os.getenv("META_BUSINESS_ID", "").strip()),
+            "business_id_label": redact_identifier(os.getenv("META_BUSINESS_ID", "").strip()),
+            "page_ids_count": len(_env_list("META_PAGE_IDS", "META_PAGE_ID")),
+            "whatsapp_business_account_ids_count": len(
+                _env_list("META_WHATSAPP_BUSINESS_ACCOUNT_IDS", "META_WHATSAPP_BUSINESS_ACCOUNT_ID")
             ),
-            "whatsapp_phone_number_ids": _env_list(
-                "META_WHATSAPP_PHONE_NUMBER_IDS",
-                "META_WHATSAPP_PHONE_NUMBER_ID",
+            "whatsapp_phone_number_ids_count": len(
+                _env_list("META_WHATSAPP_PHONE_NUMBER_IDS", "META_WHATSAPP_PHONE_NUMBER_ID")
             ),
             "live_writes_enabled": _env_truthy("META_MARKETING_LIVE_WRITES_ENABLED"),
         },

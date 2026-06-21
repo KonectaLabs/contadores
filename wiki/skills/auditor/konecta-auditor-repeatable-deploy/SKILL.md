@@ -5,6 +5,10 @@ description: Repeatable Konecta Auditor deploy checklist. Use when the goal is t
 
 # Konecta Auditor Repeatable Deploy
 
+> Historical import: this wiki-only file references the old `konecta-auditor`
+> repository and VPS paths. Do not use it as the Contadores deploy runbook; use
+> the active Contadores rollout skill instead.
+
 ## Use This Skill When
 - deploying the current local changes to production,
 - wanting a simple exact checklist instead of re-thinking deploy steps,

@@ -4,7 +4,6 @@ version = "0.1.0"
 description = "Stateless channel bot for Contadores"
 requires-python = ">=3.13"
 dependencies = [
-  "dspy-ai>=3.0.4",
   "fastapi[standard]>=0.124.4",
   "httpx>=0.28.1",
   "phonenumbers>=9.0.19",
@@ -24,6 +23,12 @@ package = false
 [tool.deptry]
 package_module_name_map = { "pywa" = ["pywa", "pywa_async"] }
 
+[tool.pytest.ini_options]
+markers = [
+    "external: test intentionally touches an external service",
+    "network: test intentionally opens real network sockets",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -31,4 +36,5 @@ build-backend = "hatchling.build"
 [dependency-groups]
 dev = [
     "deptry>=0.24.0",
+    "pytest>=9.0.2",
 ]

@@ -51,6 +51,9 @@ This structure is rigid:
 - Do not reference `/data`, `../`, absolute filesystem paths, repo template
   paths, another client folder, or remote files that are required for the page
   to render.
+- Do not use remote scripts, external fonts, analytics pixels, iframes,
+  external image/video URLs, or network fetches. Put required assets under
+  `landing-page/vNNN/assets/`.
 - `preview.mp4` and `metadata.json` are backend-owned outputs. Do not create or
   edit them.
 

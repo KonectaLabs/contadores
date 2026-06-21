@@ -26,6 +26,7 @@ DEFAULT_PREFER_CHATGPT_LOGIN = os.getenv("CODEX_PREFER_CHATGPT_LOGIN", "false").
     "false",
     "no",
 }
+DEFAULT_CODEX_TURN_TIMEOUT_SECONDS = 600.0
 
 ReasoningEffortName = Literal["none", "minimal", "low", "medium", "high", "xhigh"]
 ServiceTierName = Literal["fast", "flex"]
@@ -33,6 +34,22 @@ ServiceTierName = Literal["fast", "flex"]
 
 def _codex_backend_enabled() -> bool:
     return os.getenv("CODEX_BACKEND_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+
+
+class CodexTurnTimeoutError(TimeoutError):
+    """Raised when one Codex turn exceeds its wall-clock deadline."""
+
+
+def codex_turn_timeout_seconds(value: float | int | str | None = None) -> float:
+    """Return the configured Codex turn timeout in seconds."""
+    raw_value = value if value is not None else os.getenv("CODEX_TURN_TIMEOUT_SECONDS")
+    if raw_value in (None, ""):
+        return DEFAULT_CODEX_TURN_TIMEOUT_SECONDS
+    try:
+        seconds = float(raw_value)
+    except (TypeError, ValueError):
+        return DEFAULT_CODEX_TURN_TIMEOUT_SECONDS
+    return seconds if seconds > 0 else DEFAULT_CODEX_TURN_TIMEOUT_SECONDS
 
 
 @dataclass(frozen=True)
@@ -222,6 +239,7 @@ async def run_codex_with_context(
     summary: Any | None = None,
     on_turn_started: Callable[[Any], Any | Awaitable[Any]] | None = None,
     max_attempts: int = 3,
+    timeout_seconds: float | int | None = None,
 ) -> CodexTurnResult:
     """Run one async Codex turn with optional persisted thread continuity."""
     runtime = CodexRuntimeConfig.build(
@@ -255,6 +273,7 @@ async def run_codex_with_context(
         summary=summary,
         on_turn_started=on_turn_started,
         max_attempts=max_attempts,
+        timeout_seconds=codex_turn_timeout_seconds(timeout_seconds),
     )
 
 
@@ -331,6 +350,7 @@ async def run_turn(
     summary: Any | None = None,
     on_turn_started: Callable[[Any], Any | Awaitable[Any]] | None = None,
     max_attempts: int = 3,
+    timeout_seconds: float = DEFAULT_CODEX_TURN_TIMEOUT_SECONDS,
 ) -> CodexTurnResult:
     """Run one Codex turn with retry around overload-style errors."""
     if max_attempts < 1:
@@ -349,6 +369,7 @@ async def run_turn(
                 personality=personality,
                 summary=summary,
                 on_turn_started=on_turn_started,
+                timeout_seconds=timeout_seconds,
             )
         except Exception as error:  # noqa: BLE001
             sdk = _load_codex_sdk()
@@ -446,6 +467,7 @@ async def _run_turn_once(
     personality: Any | None,
     summary: Any | None,
     on_turn_started: Callable[[Any], Any | Awaitable[Any]] | None,
+    timeout_seconds: float,
 ) -> CodexTurnResult:
     sdk = _load_codex_sdk()
     env = _build_child_env(
@@ -482,7 +504,11 @@ async def _run_turn_once(
             if inspect.isawaitable(callback_result):
                 await callback_result
 
-        run_result = await _collect_turn_result(sdk, turn)
+        try:
+            run_result = await asyncio.wait_for(_collect_turn_result(sdk, turn), timeout=timeout_seconds)
+        except asyncio.TimeoutError as error:
+            await _interrupt_turn_safely(turn)
+            raise CodexTurnTimeoutError(f"Codex turn timed out after {timeout_seconds:.0f}s") from error
         return CodexTurnResult(
             final_response=run_result["final_response"],
             thread_id=thread.id,
@@ -496,6 +522,16 @@ async def _run_turn_once(
             service_tier=runtime.service_tier,
             cwd=runtime.cwd,
         )
+
+
+async def _interrupt_turn_safely(turn: Any) -> None:
+    """Best-effort cancellation for a timed-out SDK turn."""
+    interrupt = getattr(turn, "interrupt", None)
+    if interrupt is None:
+        return
+    result = interrupt()
+    if inspect.isawaitable(result):
+        await result
 
 
 def _build_input_items(sdk: dict[str, Any], context: CodexInputContext) -> list[Any]:

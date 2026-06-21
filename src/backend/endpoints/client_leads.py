@@ -14,12 +14,14 @@ from typing import Any
 from urllib.parse import parse_qs, quote, urlparse
 
 import httpx
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Body, HTTPException, Query
 from pydantic import BaseModel, Field
+from sqlalchemy import update
+from sqlmodel import Session, select
 
+import backend.database as database_module
 from backend.client_lead_config import ClientLeadConfigSyncResult, sync_client_lead_sources_from_config
 from backend.database import (
-    CLIENT_LEAD_CONTEXT_TEMPLATE_NAME,
     CLIENT_LEAD_DEFAULT_COLUMN_MAPPING,
     CLIENT_LEAD_DEFAULT_TEMPLATE_LANGUAGE,
     CLIENT_LEAD_DEFAULT_TEMPLATE_NAME,
@@ -30,7 +32,6 @@ from backend.database import (
     ContadoresLeadStage,
     PlatformEvent,
     normalize_client_lead_context_field_mapping,
-    normalize_client_lead_column_mapping,
     normalize_phone,
 )
 from backend.meta_lead_ads import (
@@ -38,6 +39,7 @@ from backend.meta_lead_ads import (
     MetaLeadAdsCredentialsError,
     MetaLeadAdsError,
     fetch_meta_form_leads,
+    fetch_meta_form_leads_with_paging,
     fetch_meta_lead_payload,
 )
 
@@ -53,24 +55,24 @@ HEADER_ALIASES = {
     "email": ("email", "correo", "correo_electronico", "mail", "e_mail"),
 }
 DEFAULT_PENDING_LIMIT = 100
+CLAIM_LEASE_SECONDS = 15 * 60
 MAX_CONTEXT_VALUE_CHARS = 240
 MAX_CONTEXT_BLOCK_CHARS = 1000
 META_SHEET_PREFERRED_HEADERS = [
     "id",
     "leadgen_id",
     "created_time",
-    "form_id",
-    "ad_id",
     "ad_name",
-    "adset_id",
     "adset_name",
-    "campaign_id",
     "campaign_name",
     "platform",
     "full_name",
     "phone_number",
     "email",
 ]
+META_SHEET_RAW_PROVIDER_HEADERS = {"form_id", "ad_id", "adset_id", "campaign_id"}
+META_SHEET_EXTRA_FIELDS_ENV = "META_SHEET_APPEND_EXTRA_FIELDS"
+GOOGLE_SHEETS_HOSTS = {"docs.google.com", "spreadsheets.google.com"}
 
 
 class ClientLeadSourceCommand(BaseModel):
@@ -91,6 +93,10 @@ class ClientLeadSourceCommand(BaseModel):
     template_language: str | None = CLIENT_LEAD_DEFAULT_TEMPLATE_LANGUAGE
     column_mapping: dict[str, str] = Field(default_factory=lambda: dict(CLIENT_LEAD_DEFAULT_COLUMN_MAPPING))
     context_field_mapping: dict[str, str] = Field(default_factory=dict)
+
+
+class DuplicateDeliveryExternalIdError(ValueError):
+    """Raised when a provider id points at more than one Delivery row."""
 
 
 class ClientLeadSourceResponse(BaseModel):
@@ -216,6 +222,10 @@ class ClientLeadSyncResponse(BaseModel):
     queued: int = 0
     sheet_appended: int = 0
     sheet_append_errors: list[str] = Field(default_factory=list)
+    pages_fetched: int = 0
+    truncated: bool = False
+    complete: bool = True
+    next_cursor: str = ""
 
 
 class MetaLeadFormImportCommand(BaseModel):
@@ -249,6 +259,8 @@ class MetaLeadFormBackfillCommand(BaseModel):
     form_id: str | None = None
     fields: str | None = DEFAULT_META_LEAD_FIELDS
     limit: int = Field(default=100, ge=1, le=500)
+    max_pages: int = Field(default=5, ge=1, le=25)
+    max_leads: int = Field(default=500, ge=1, le=5000)
     reason: str | None = Field(default=None, max_length=1000)
 
 
@@ -304,6 +316,12 @@ class ClientLeadDeliveryFailureCommand(BaseModel):
     error_user_message: str | None = None
     max_attempts: int = Field(default=3, ge=1, le=10)
     retry_delay_seconds: int = Field(default=60, ge=0, le=3600)
+
+
+class ClientLeadDeliveryRetryCommand(BaseModel):
+    """Manual retry confirmation for resend-capable Delivery notifications."""
+
+    confirm: bool = False
 
 
 class ClientLeadCopyAllResponse(BaseModel):
@@ -418,6 +436,115 @@ def build_recipient_chat_message_response(item: ClientLeadDelivery) -> ClientLea
         last_delivery_error=item.last_delivery_error,
         created_at=format_timestamp_seconds(item.created_at) or "",
         updated_at=format_timestamp_seconds(item.updated_at) or "",
+    )
+
+
+def normalize_delivery_status_value(status: ClientLeadDeliveryStatus | str | None) -> ClientLeadDeliveryStatus:
+    """Return one known Delivery status value."""
+    return ClientLeadDelivery.normalize_status(status)
+
+
+def should_apply_delivery_status(
+    current: ClientLeadDeliveryStatus | str | None,
+    incoming: ClientLeadDeliveryStatus | str | None,
+) -> bool:
+    """Return True when an automatic status update may move the row forward."""
+    current_status = normalize_delivery_status_value(current)
+    incoming_status = normalize_delivery_status_value(incoming)
+    if current_status == incoming_status:
+        return True
+    if current_status == ClientLeadDeliveryStatus.PENDING:
+        return incoming_status in {
+            ClientLeadDeliveryStatus.SENT,
+            ClientLeadDeliveryStatus.DELIVERED,
+            ClientLeadDeliveryStatus.FAILED,
+            ClientLeadDeliveryStatus.BLOCKED,
+            ClientLeadDeliveryStatus.SKIPPED,
+        }
+    if current_status == ClientLeadDeliveryStatus.SENT:
+        return incoming_status == ClientLeadDeliveryStatus.DELIVERED
+    return False
+
+
+def get_delivery_by_external_id(external_id: str) -> ClientLeadDelivery | None:
+    """Return one Delivery row by provider id."""
+    clean_external_id = (external_id or "").strip()
+    if not clean_external_id:
+        return None
+    with Session(database_module.engine) as session:
+        items = list(
+            session.exec(
+                select(ClientLeadDelivery).where(ClientLeadDelivery.external_id == clean_external_id).limit(2)
+            ).all()
+        )
+        if not items:
+            return None
+        if len(items) > 1:
+            raise DuplicateDeliveryExternalIdError(f"Duplicate Delivery external_id: {clean_external_id}")
+        item = items[0]
+        session.expunge(item)
+        return item
+
+
+def claim_pending_notifications(limit: int) -> list[ClientLeadDelivery]:
+    """Reserve ready pending notifications with a no-schema dispatch lease."""
+    now = datetime.now(timezone.utc)
+    lease_until = now + timedelta(seconds=CLAIM_LEASE_SECONDS)
+    clean_limit = max(1, min(int(limit or DEFAULT_PENDING_LIMIT), 500))
+    with Session(database_module.engine) as session:
+        ids = list(
+            session.exec(
+                select(ClientLeadDelivery.id)
+                .join(ClientLeadSource, ClientLeadSource.id == ClientLeadDelivery.source_id)
+                .where(
+                    ClientLeadSource.enabled.is_(True),
+                    ClientLeadDelivery.delivery_status == ClientLeadDeliveryStatus.PENDING,
+                    ClientLeadDelivery.dispatch_after <= now,
+                )
+                .order_by(ClientLeadDelivery.dispatch_after, ClientLeadDelivery.created_at, ClientLeadDelivery.id)
+                .limit(clean_limit)
+            ).all()
+        )
+        if not ids:
+            return []
+        session.exec(
+            update(ClientLeadDelivery)
+            .where(
+                ClientLeadDelivery.id.in_(ids),
+                ClientLeadDelivery.delivery_status == ClientLeadDeliveryStatus.PENDING,
+                ClientLeadDelivery.dispatch_after <= now,
+            )
+            .values(dispatch_after=lease_until, updated_at=now)
+        )
+        session.commit()
+        items = list(
+            session.exec(
+                select(ClientLeadDelivery).where(
+                    ClientLeadDelivery.id.in_(ids),
+                    ClientLeadDelivery.delivery_status == ClientLeadDeliveryStatus.PENDING,
+                    ClientLeadDelivery.dispatch_after == lease_until,
+                )
+            ).all()
+        )
+        by_id = {item.id: item for item in items}
+        claimed = [by_id[delivery_id] for delivery_id in ids if delivery_id in by_id]
+        for item in claimed:
+            session.expunge(item)
+        return claimed
+
+
+def build_pending_notification(source: ClientLeadSource, item: ClientLeadDelivery) -> ClientLeadPendingNotification:
+    """Build the bot dispatch payload for one claimed or pending Delivery row."""
+    return ClientLeadPendingNotification(
+        delivery_id=item.id,
+        source_id=source.id,
+        source_label=source.label,
+        recipient_phone=source.recipient_phone,
+        normalized_recipient_phone=source.normalized_recipient_phone,
+        template_name=source.template_name,
+        template_language=source.template_language,
+        template_body_params=build_template_params(source, item),
+        delivered_text=build_delivery_notification_text(source, item),
     )
 
 
@@ -544,17 +671,63 @@ def stable_row_hash(row: dict[str, str]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
-def source_row_key_for(row: dict[str, str], *, row_number: int, source_id_value: str) -> str:
+def normalize_sendable_whatsapp_phone(value: str) -> str:
+    """Return a WhatsApp-sendable phone, rejecting ambiguous local digits."""
+    raw = str(value or "").strip()
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    normalized = normalize_phone(raw)
+    if not normalized:
+        return ""
+    if raw.startswith("+") or digits.startswith("00"):
+        return normalized if len(normalized) >= 8 else ""
+    if normalized != digits:
+        return normalized if len(normalized) >= 8 else ""
+    if len(digits) > 10 and not digits.startswith("0"):
+        return normalized
+    return ""
+
+
+def source_row_key_for(
+    row: dict[str, str],
+    *,
+    row_number: int,
+    source_id_value: str,
+    phone: str = "",
+    created_time_value: str = "",
+) -> str:
     """Build the idempotency key for one imported sheet row."""
     clean_source_id = " ".join((source_id_value or "").split()).strip()
     if clean_source_id:
         return clean_source_id[:240]
-    return f"row:{row_number}:{stable_row_hash(row)}"
+    identity = {
+        "created_time": " ".join((created_time_value or "").split()).strip(),
+        "phone": normalize_phone(phone),
+    }
+    return f"row:{row_number}:{stable_row_hash(identity)}"
+
+
+def find_existing_fallback_row_key(source_id: str, *, row_number: int, normalized_phone: str) -> str | None:
+    """Keep old row-hash imports idempotent after fallback identity changes."""
+    if not normalized_phone:
+        return None
+    prefix = f"row:{row_number}:"
+    with Session(database_module.engine) as session:
+        item = session.exec(
+            select(ClientLeadDelivery)
+            .where(
+                ClientLeadDelivery.source_id == source_id,
+                ClientLeadDelivery.source_row_key.like(f"{prefix}%"),
+                ClientLeadDelivery.normalized_phone == normalized_phone,
+            )
+            .order_by(ClientLeadDelivery.created_at, ClientLeadDelivery.id)
+            .limit(1)
+        ).first()
+        return item.source_row_key if item else None
 
 
 def build_wa_link(*, phone: str) -> str:
     """Build a plain wa.me chat link without a text query parameter."""
-    normalized_phone = normalize_phone(phone)
+    normalized_phone = normalize_sendable_whatsapp_phone(phone)
     return f"https://wa.me/{normalized_phone}" if normalized_phone else ""
 
 
@@ -710,7 +883,7 @@ def import_meta_lead_form_record(source: ClientLeadSource, command: MetaLeadForm
     if result.imported <= 0 or not source.sheet_url.strip():
         return result
     try:
-        append_record_to_sheet(source, row)
+        append_record_to_sheet(source, meta_sheet_append_row(row))
         result.sheet_appended = 1
     except Exception as exc:
         result.sheet_append_errors.append(str(exc))
@@ -791,11 +964,14 @@ def fetch_and_import_meta_lead_form_records(
     form_id = " ".join((command.form_id or source.meta_lead_form_id or "").split()).strip()
     if not form_id:
         raise MetaLeadAdsError("form_id is required")
-    payloads = fetch_meta_form_leads(
+    fetch_result = fetch_meta_form_leads_with_paging(
         form_id=form_id,
         fields=command.fields or DEFAULT_META_LEAD_FIELDS,
         limit=command.limit,
+        max_pages=command.max_pages,
+        max_leads=command.max_leads,
     )
+    payloads = fetch_result.leads
     totals = {
         "imported": 0,
         "updated": 0,
@@ -819,13 +995,17 @@ def fetch_and_import_meta_lead_form_records(
         totals["sheet_appended"] += result.sheet_appended
         sheet_append_errors.extend(result.sheet_append_errors)
 
+    status = "partial" if fetch_result.truncated or fetch_result.errors else "ok"
     note = (
         f"meta_form={form_id} fetched={len(payloads)} imported={totals['imported']} "
-        f"updated={totals['updated']} blocked={totals['blocked']} queued={totals['queued']}"
+        f"updated={totals['updated']} blocked={totals['blocked']} queued={totals['queued']} "
+        f"pages={fetch_result.pages_fetched} complete={str(fetch_result.complete).lower()}"
     )
-    source = ClientLeadSource.mark_sync(source.id, status="ok", note=note) or source
+    if fetch_result.next_cursor:
+        note = f"{note} next_cursor={fetch_result.next_cursor}"
+    source = ClientLeadSource.mark_sync(source.id, status=status, note=note) or source
     result = ClientLeadSyncResponse(
-        status="ok",
+        status=status,
         source=build_source_response(source, ClientLeadDelivery.count_by_status_for_sources()),
         fetched=len(payloads),
         imported=totals["imported"],
@@ -835,6 +1015,10 @@ def fetch_and_import_meta_lead_form_records(
         queued=totals["queued"],
         sheet_appended=totals["sheet_appended"],
         sheet_append_errors=sheet_append_errors,
+        pages_fetched=fetch_result.pages_fetched,
+        truncated=fetch_result.truncated,
+        complete=fetch_result.complete,
+        next_cursor=fetch_result.next_cursor,
     )
     PlatformEvent.add(
         event_type="client_lead.meta_form_backfilled",
@@ -854,8 +1038,13 @@ def fetch_and_import_meta_lead_form_records(
             "queued": result.queued,
             "sheet_appended": result.sheet_appended,
             "sheet_append_errors": result.sheet_append_errors,
+            "pages_fetched": result.pages_fetched,
+            "truncated": result.truncated,
+            "complete": result.complete,
+            "next_cursor": result.next_cursor,
+            "fetch_errors": fetch_result.errors,
         },
-        idempotency_key=f"meta_lead_backfill:{source.id}:{form_id}:{len(payloads)}",
+        idempotency_key=f"meta_lead_backfill:{source.id}:{form_id}:{len(payloads)}:{result.pages_fetched}:{result.truncated}",
     )
     return result
 
@@ -883,12 +1072,16 @@ def parse_sheet_target(sheet_url: str, sheet_gid: str | None) -> tuple[str, str 
     clean_sheet_url = (sheet_url or "").strip()
     if re.fullmatch(r"[A-Za-z0-9-_]+", clean_sheet_url):
         return clean_sheet_url, (sheet_gid or "").strip() or None
-    match = re.search(r"/spreadsheets/d/([A-Za-z0-9-_]+)", clean_sheet_url)
+    parsed = urlparse(clean_sheet_url)
+    if parsed.scheme != "https":
+        raise ValueError("La sheet debe ser una URL HTTPS de Google Sheets o un spreadsheet_id.")
+    if (parsed.hostname or "").lower() not in GOOGLE_SHEETS_HOSTS:
+        raise ValueError("La sheet debe ser una URL HTTPS de Google Sheets o un spreadsheet_id.")
+    match = re.fullmatch(r"/spreadsheets/d/([A-Za-z0-9-_]+)(?:/.*)?", parsed.path)
     if not match:
         raise ValueError("No pude extraer el spreadsheet_id de la sheet.")
     gid = (sheet_gid or "").strip() or None
     if gid is None:
-        parsed = urlparse(clean_sheet_url)
         query_params = parse_qs(parsed.query)
         fragment_params = parse_qs(parsed.fragment)
         gid = query_params.get("gid", [None])[0] or fragment_params.get("gid", [None])[0]
@@ -897,8 +1090,6 @@ def parse_sheet_target(sheet_url: str, sheet_gid: str | None) -> tuple[str, str 
 
 def public_csv_url(sheet_url: str, sheet_gid: str | None, sheet_tab_name: str | None = None) -> str:
     """Build a public CSV export URL for a Google Sheet."""
-    if any(marker in sheet_url for marker in ["output=csv", "format=csv", "tqx=out:csv"]):
-        return sheet_url
     spreadsheet_id, gid = parse_sheet_target(sheet_url, sheet_gid)
     clean_tab_name = " ".join((sheet_tab_name or "").split()).strip()
     if clean_tab_name:
@@ -940,13 +1131,33 @@ def records_have_mappable_headers(records: list[dict[str, str]], mapping: dict[s
     lookup = header_lookup(records[0])
     if not lookup:
         return False
+    return all(
+        any(header in lookup for header in mappable_headers_for_fields(mapping, fields))
+        for fields in [
+            ("source_id", "created_time"),
+            ("phone_number",),
+            ("full_name", "email"),
+        ]
+    )
+
+
+def mappable_headers_for_fields(mapping: dict[str, str], fields: tuple[str, ...]) -> set[str]:
+    """Return normalized configured headers and aliases for field detection."""
     expected_headers: set[str] = set()
-    for field in ["source_id", "created_time", "full_name", "phone_number", "email"]:
+    for field in fields:
         configured = normalize_header(mapping.get(field, ""))
         if configured:
             expected_headers.add(configured)
         expected_headers.update(normalize_header(alias) for alias in HEADER_ALIASES.get(field, ()))
-    return any(header in lookup for header in expected_headers if header)
+    return {header for header in expected_headers if header}
+
+
+def invalid_sheet_headers_message() -> str:
+    """Return the operator-facing reason for refusing a wrong Delivery tab."""
+    return (
+        "Wrong Delivery sheet tab or header row. Expected headers for row identity "
+        "(source_id/id or created_time), phone_number, and full_name or email."
+    )
 
 
 def read_xlsx_records(content: bytes, sheet_tab_name: str | None = None) -> list[dict[str, str]]:
@@ -1065,6 +1276,21 @@ def meta_sheet_headers_for_record(row: dict[str, str]) -> list[str]:
     return headers
 
 
+def meta_sheet_append_row(row: dict[str, str]) -> dict[str, str]:
+    """Return the explicit Meta lead projection exported to Google Sheets."""
+    extras = {
+        " ".join(item.split()).strip()
+        for item in os.getenv(META_SHEET_EXTRA_FIELDS_ENV, "").split(",")
+        if " ".join(item.split()).strip()
+    }
+    allowed = [*META_SHEET_PREFERRED_HEADERS, *sorted(extras)]
+    return {
+        key: row[key]
+        for key in allowed
+        if key in row and (key not in META_SHEET_RAW_PROVIDER_HEADERS or key in extras)
+    }
+
+
 def append_record_to_sheet(source: ClientLeadSource, row: dict[str, str]) -> dict[str, Any]:
     """Append one imported Meta lead row to the source Google Sheet."""
     if not source.sheet_url.strip():
@@ -1117,26 +1343,31 @@ async def fetch_sheet_records(source: ClientLeadSource) -> list[dict[str, str]]:
     if not source.sheet_url.strip():
         raise RuntimeError("Sheet URL is required.")
 
+    csv_url = public_csv_url(source.sheet_url, source.sheet_gid, source.sheet_tab_name)
+    xlsx_url = public_xlsx_url(source.sheet_url)
     public_access_errors: list[str] = []
+    saw_unmappable_records = False
     async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0), follow_redirects=True) as client:
         try:
-            response = await client.get(public_csv_url(source.sheet_url, source.sheet_gid, source.sheet_tab_name))
+            response = await client.get(csv_url)
             response.raise_for_status()
             records = [dict(row) for row in csv.DictReader(StringIO(response.text))]
             records = [row for row in records if not row_is_empty(row)]
             if records_have_mappable_headers(records, source.column_mapping):
                 return records
+            saw_unmappable_records = saw_unmappable_records or bool(records)
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code not in {401, 403, 404}:
                 raise
             public_access_errors.append(f"public CSV returned HTTP {exc.response.status_code}")
 
         try:
-            response = await client.get(public_xlsx_url(source.sheet_url))
+            response = await client.get(xlsx_url)
             response.raise_for_status()
             records = read_xlsx_records(response.content, source.sheet_tab_name)
             if records_have_mappable_headers(records, source.column_mapping):
                 return records
+            saw_unmappable_records = saw_unmappable_records or bool(records)
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code not in {401, 403, 404}:
                 raise
@@ -1149,6 +1380,9 @@ async def fetch_sheet_records(source: ClientLeadSource) -> list[dict[str, str]]:
     private_records = read_records_with_service_account(source)
     if records_have_mappable_headers(private_records, source.column_mapping):
         return private_records
+    saw_unmappable_records = saw_unmappable_records or bool(private_records)
+    if saw_unmappable_records:
+        raise RuntimeError(invalid_sheet_headers_message())
     return []
 
 
@@ -1162,7 +1396,7 @@ def import_sheet_records(source: ClientLeadSource, records: list[dict[str, str]]
     queued = 0
 
     mapping = source.column_mapping
-    recipient_valid = bool(normalize_phone(source.recipient_phone))
+    recipient_valid = bool(normalize_sendable_whatsapp_phone(source.recipient_phone))
 
     for index, row in enumerate(records, start=2):
         if row_is_empty(row):
@@ -1172,9 +1406,21 @@ def import_sheet_records(source: ClientLeadSource, records: list[dict[str, str]]
         name = get_mapped_value(row, mapping, "full_name")
         phone = get_mapped_value(row, mapping, "phone_number")
         email = get_mapped_value(row, mapping, "email")
-        created_time = parse_datetime(get_mapped_value(row, mapping, "created_time"))
-        normalized_phone = normalize_phone(phone)
-        source_row_key = source_row_key_for(row, row_number=index, source_id_value=source_id_value)
+        created_time_value = get_mapped_value(row, mapping, "created_time")
+        created_time = parse_datetime(created_time_value)
+        normalized_phone = normalize_sendable_whatsapp_phone(phone)
+        source_row_key = source_row_key_for(
+            row,
+            row_number=index,
+            source_id_value=source_id_value,
+            phone=phone,
+            created_time_value=created_time_value,
+        )
+        if not " ".join((source_id_value or "").split()).strip():
+            source_row_key = (
+                find_existing_fallback_row_key(source.id, row_number=index, normalized_phone=normalized_phone)
+                or source_row_key
+            )
         block_reason = ""
         if not normalized_phone:
             block_reason = "lead_phone_invalid"
@@ -1480,14 +1726,7 @@ async def get_client_lead_recipient_chat(
         for item in ClientLeadSource.list_all()
         if item.normalized_recipient_phone and item.normalized_recipient_phone == source.normalized_recipient_phone
     ] or [source.id]
-    deliveries = []
-    for sibling_source_id in sibling_source_ids:
-        deliveries.extend(
-            item
-            for item in ClientLeadDelivery.list_by_source(sibling_source_id, limit=5000)
-            if should_show_recipient_chat_message(item)
-        )
-    deliveries = sorted(deliveries, key=recipient_chat_sort_key)[-limit:]
+    deliveries = ClientLeadDelivery.list_recipient_chat_deliveries(sibling_source_ids, limit=limit)
     return ClientLeadRecipientChatResponse(
         source=build_source_response(source, counts),
         recipient_name=source.recipient_name,
@@ -1507,15 +1746,20 @@ async def get_client_lead_copy_all(delivery_id: str) -> ClientLeadCopyAllRespons
 
 
 @client_leads_actions_router.post("/{delivery_id}/retry", response_model=ClientLeadDeliveryResponse)
-async def retry_client_lead_notification(delivery_id: str) -> ClientLeadDeliveryResponse:
+async def retry_client_lead_notification(
+    delivery_id: str,
+    command: ClientLeadDeliveryRetryCommand | None = Body(default=None),
+) -> ClientLeadDeliveryResponse:
     """Requeue a failed client lead notification."""
     item = get_required_delivery(delivery_id)
     if item.delivery_status not in {ClientLeadDeliveryStatus.FAILED, ClientLeadDeliveryStatus.BLOCKED}:
         raise HTTPException(status_code=400, detail="Only failed or blocked client lead notifications can be retried.")
-    if not item.normalized_phone:
+    if command is None or not command.confirm:
+        raise HTTPException(status_code=409, detail="Retry confirmation required.")
+    if not normalize_sendable_whatsapp_phone(item.phone_number or item.normalized_phone):
         raise HTTPException(status_code=400, detail="Client lead phone is invalid.")
     source = get_required_source(item.source_id)
-    if not normalize_phone(source.recipient_phone):
+    if not normalize_sendable_whatsapp_phone(source.recipient_phone):
         raise HTTPException(status_code=400, detail="Recipient phone is invalid.")
     updated = ClientLeadDelivery.requeue_failed(item.id)
     if updated is None:
@@ -1527,32 +1771,36 @@ async def retry_client_lead_notification(delivery_id: str) -> ClientLeadDelivery
 async def list_pending_client_lead_notifications(
     limit: int = Query(default=DEFAULT_PENDING_LIMIT, ge=1, le=500),
 ) -> ClientLeadPendingNotificationResponse:
-    """Return Delivery notifications ready for bot dispatch."""
+    """Return ready Delivery notifications without reserving them."""
     notifications: list[ClientLeadPendingNotification] = []
     for item in ClientLeadDelivery.list_pending_notification(limit=limit):
         source = ClientLeadSource.get_by_id(item.source_id)
         if source is None or not source.enabled:
             continue
-        if not normalize_phone(source.recipient_phone):
+        if not normalize_sendable_whatsapp_phone(source.recipient_phone):
+            continue
+        notifications.append(build_pending_notification(source, item))
+    return ClientLeadPendingNotificationResponse(notifications=notifications)
+
+
+@client_lead_deliveries_router.post("/pending/claim", response_model=ClientLeadPendingNotificationResponse)
+async def claim_pending_client_lead_notifications(
+    limit: int = Query(default=DEFAULT_PENDING_LIMIT, ge=1, le=500),
+) -> ClientLeadPendingNotificationResponse:
+    """Reserve ready Delivery notifications before bot dispatch."""
+    notifications: list[ClientLeadPendingNotification] = []
+    for item in claim_pending_notifications(limit):
+        source = ClientLeadSource.get_by_id(item.source_id)
+        if source is None or not source.enabled:
+            continue
+        if not normalize_sendable_whatsapp_phone(source.recipient_phone):
             ClientLeadDelivery.update_delivery_status(
                 delivery_id=item.id,
                 delivery_status=ClientLeadDeliveryStatus.BLOCKED,
                 last_delivery_error="recipient_phone_invalid",
             )
             continue
-        notifications.append(
-            ClientLeadPendingNotification(
-                delivery_id=item.id,
-                source_id=source.id,
-                source_label=source.label,
-                recipient_phone=source.recipient_phone,
-                normalized_recipient_phone=source.normalized_recipient_phone,
-                template_name=source.template_name,
-                template_language=source.template_language,
-                template_body_params=build_template_params(source, item),
-                delivered_text=build_delivery_notification_text(source, item),
-            )
-        )
+        notifications.append(build_pending_notification(source, item))
     return ClientLeadPendingNotificationResponse(notifications=notifications)
 
 
@@ -1561,11 +1809,23 @@ async def update_client_lead_delivery_by_external_id(
     command: ClientLeadDeliveryByExternalIdCommand,
 ) -> ClientLeadDeliveryResponse:
     """Apply a WhatsApp delivery webhook by external message id."""
-    updated = ClientLeadDelivery.update_delivery_status_by_external_id(
-        external_id=command.external_id,
-        delivery_status=command.status,
-        last_delivery_error=normalize_delivery_error(command) if command.status == "failed" else None,
-    )
+    try:
+        item = get_delivery_by_external_id(command.external_id)
+    except DuplicateDeliveryExternalIdError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if item is None:
+        raise HTTPException(status_code=404, detail="Client lead notification not found.")
+    incoming_status = normalize_delivery_status_value(command.status)
+    if not should_apply_delivery_status(item.delivery_status, incoming_status):
+        return build_delivery_response(item)
+    try:
+        updated = ClientLeadDelivery.update_delivery_status_by_external_id(
+            external_id=command.external_id,
+            delivery_status=incoming_status,
+            last_delivery_error=normalize_delivery_error(command) if incoming_status == ClientLeadDeliveryStatus.FAILED else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if updated is None:
         raise HTTPException(status_code=404, detail="Client lead notification not found.")
     return build_delivery_response(updated)
@@ -1577,13 +1837,20 @@ async def update_client_lead_delivery_status(
     command: ClientLeadDeliveryUpdateCommand,
 ) -> ClientLeadDeliveryResponse:
     """Mark one Delivery notification as accepted by WhatsApp."""
-    updated = ClientLeadDelivery.update_delivery_status(
-        delivery_id=delivery_id,
-        delivery_status=command.status,
-        external_id=command.external_id,
-        sent_text=command.sent_text,
-        clear_delivery_error=True,
-    )
+    item = get_required_delivery(delivery_id)
+    incoming_status = normalize_delivery_status_value(command.status)
+    if not should_apply_delivery_status(item.delivery_status, incoming_status):
+        return build_delivery_response(item)
+    try:
+        updated = ClientLeadDelivery.update_delivery_status(
+            delivery_id=delivery_id,
+            delivery_status=incoming_status,
+            external_id=command.external_id,
+            sent_text=command.sent_text,
+            clear_delivery_error=True,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if updated is None:
         raise HTTPException(status_code=404, detail="Client lead not found.")
     return build_delivery_response(updated)
@@ -1595,6 +1862,9 @@ async def record_client_lead_delivery_failure(
     command: ClientLeadDeliveryFailureCommand,
 ) -> ClientLeadDeliveryResponse:
     """Record one failed Delivery WhatsApp send attempt."""
+    item = get_required_delivery(delivery_id)
+    if not should_apply_delivery_status(item.delivery_status, ClientLeadDeliveryStatus.FAILED):
+        return build_delivery_response(item)
     updated = ClientLeadDelivery.record_delivery_failure(
         delivery_id=delivery_id,
         error=normalize_delivery_error(command),

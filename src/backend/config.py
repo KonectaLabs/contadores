@@ -1,5 +1,6 @@
 """Configuration management for Contadores."""
 
+from functools import lru_cache
 import os
 from pathlib import Path
 from typing import Literal
@@ -10,6 +11,15 @@ from dspy.adapters.baml_adapter import BAMLAdapter
 
 env_path = Path(__file__).resolve().parents[2] / ".env"
 load_dotenv(env_path, override=True)
+
+if os.getenv("CONTADORES_TEST_CLEAR_PROVIDER_KEYS", "").strip().lower() in {"1", "true", "yes", "on"}:
+    for name in (
+        "GEMINI_API_KEY",
+        "OPENAI_API_KEY",
+        "OPENROUTER_API_KEY",
+        "PERPLEXITY_API_KEY",
+    ):
+        os.environ.pop(name, None)
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 PERPLEXITY_API_KEY = os.getenv("PERPLEXITY_API_KEY", "")
@@ -116,6 +126,7 @@ INSTANTLY_API_KEY = os.getenv("INSTANTLY_API_KEY", "")
 INSTANTLY_MCP_URL = os.getenv("INSTANTLY_MCP_URL", "https://mcp.instantly.ai/mcp")
 
 
+@lru_cache(maxsize=None)
 def get_gpt_5_mini(
     reasoning_effort: Literal["minimal", "low", "medium", "high"] = "low",
     verbosity: Literal["low", "medium", "high"] = "low",
@@ -130,10 +141,11 @@ def get_gpt_5_mini(
         reasoning_effort=reasoning_effort,
         verbosity=verbosity,
         allowed_openai_params=["reasoning_effort", "verbosity"],
-        api_key=OPENAI_API_KEY,
+        api_key=os.getenv("OPENAI_API_KEY", ""),
     )
 
 
+@lru_cache(maxsize=None)
 def get_gpt_5_4_mini(
     reasoning_effort: Literal["minimal", "low", "medium", "high"] = "low",
     verbosity: Literal["low", "medium", "high"] = "low",
@@ -148,10 +160,11 @@ def get_gpt_5_4_mini(
         reasoning_effort=reasoning_effort,
         verbosity=verbosity,
         allowed_openai_params=["reasoning_effort", "verbosity"],
-        api_key=OPENAI_API_KEY,
+        api_key=os.getenv("OPENAI_API_KEY", ""),
     )
 
 
+@lru_cache(maxsize=None)
 def get_grok_4_3():
     """Get Grok 4.3 through OpenRouter."""
     full_model = os.getenv("OPENROUTER_GROK_4_3_MODEL", "openrouter/x-ai/grok-4.3")
@@ -160,10 +173,11 @@ def get_grok_4_3():
         full_model,
         temperature=0.7,
         max_tokens=16_384,
-        api_key=OPENROUTER_API_KEY,
+        api_key=os.getenv("OPENROUTER_API_KEY", ""),
     )
 
 
+@lru_cache(maxsize=None)
 def get_gpt_5_2(
     reasoning_effort: Literal["minimal", "low", "medium", "high"] = "low",
     verbosity: Literal["low", "medium", "high"] = "low",
@@ -178,66 +192,115 @@ def get_gpt_5_2(
         reasoning_effort=reasoning_effort,
         verbosity=verbosity,
         allowed_openai_params=["reasoning_effort", "verbosity"],
-        api_key=OPENAI_API_KEY,
+        api_key=os.getenv("OPENAI_API_KEY", ""),
     )
 
 REASONING_EFFORT: Literal["minimal", "low", "medium", "high"] = "low"
 VERBOSITY: Literal["low", "medium", "high"] = "low"
 CACHE: bool = True
 
-gpt_5_mini = get_gpt_5_mini(reasoning_effort=REASONING_EFFORT, verbosity=VERBOSITY)
-gpt_5_4_mini = get_gpt_5_4_mini(reasoning_effort="medium", verbosity="low")
-grok_4_3 = get_grok_4_3()
-gpt_5_2 = get_gpt_5_2(reasoning_effort="high", verbosity="high")
 
-
-gemini_pro_3_1 = dspy.LM(
+@lru_cache(maxsize=None)
+def get_gemini_pro_3_1():
+    return dspy.LM(
         "openrouter/google/gemini-3.1-pro-preview",
         temperature=1.0,
         max_tokens=16_384,
-        api_key=OPENROUTER_API_KEY,
+        api_key=os.getenv("OPENROUTER_API_KEY", ""),
     )
 
-kimi_2_5 = dspy.LM(
-    "openrouter/moonshotai/kimi-k2.5",
-    temperature=1.0,
-    max_tokens=16_384,
-    api_key=OPENROUTER_API_KEY,
-)
-grok_4_1_fast_non_reasoning = dspy.LM(
-    "openrouter/x-ai/grok-4.1-fast",
-    temperature=1.0,
-    max_tokens=16_384,
-    api_key=OPENROUTER_API_KEY,
-)
 
-grok_4_1_fast_reasoning = dspy.LM(
-    "openrouter/x-ai/grok-4.1-fast",
-    temperature=1.0,
-    max_tokens=16_384,
-    reasoning={"effort": "high"},
-    include_reasoning=True,
-    api_key=OPENROUTER_API_KEY,
-)
+@lru_cache(maxsize=None)
+def get_kimi_2_5():
+    return dspy.LM(
+        "openrouter/moonshotai/kimi-k2.5",
+        temperature=1.0,
+        max_tokens=16_384,
+        api_key=os.getenv("OPENROUTER_API_KEY", ""),
+    )
 
 
-gemini_3_1_flash_lite_preview = dspy.LM(
-    "openrouter/google/gemini-3.1-flash-lite-preview",
-    temperature=1.0,
-    max_tokens=32_768,
-    api_key=OPENROUTER_API_KEY,
-)
+@lru_cache(maxsize=None)
+def get_grok_4_1_fast_non_reasoning():
+    return dspy.LM(
+        "openrouter/x-ai/grok-4.1-fast",
+        temperature=1.0,
+        max_tokens=16_384,
+        api_key=os.getenv("OPENROUTER_API_KEY", ""),
+    )
 
 
-FAST_MODEL = grok_4_1_fast_reasoning
-SMART_MODEL = gpt_5_2
-CONVERSATION_BOT_MODEL = grok_4_3 if OPENROUTER_API_KEY else gpt_5_4_mini
+@lru_cache(maxsize=None)
+def get_grok_4_1_fast_reasoning():
+    return dspy.LM(
+        "openrouter/x-ai/grok-4.1-fast",
+        temperature=1.0,
+        max_tokens=16_384,
+        reasoning={"effort": "high"},
+        include_reasoning=True,
+        api_key=os.getenv("OPENROUTER_API_KEY", ""),
+    )
 
 
-# DSPY CONFIGURATION
-adapter = BAMLAdapter()
-dspy.configure(lm=FAST_MODEL, adapter=adapter)
-dspy.configure_cache(enable_disk_cache=CACHE, enable_memory_cache=CACHE)
+@lru_cache(maxsize=None)
+def get_gemini_3_1_flash_lite_preview():
+    return dspy.LM(
+        "openrouter/google/gemini-3.1-flash-lite-preview",
+        temperature=1.0,
+        max_tokens=32_768,
+        api_key=os.getenv("OPENROUTER_API_KEY", ""),
+    )
+
+
+@lru_cache(maxsize=None)
+def get_fast_model():
+    return get_grok_4_1_fast_reasoning()
+
+
+@lru_cache(maxsize=None)
+def get_smart_model():
+    return get_gpt_5_2(reasoning_effort="high", verbosity="high")
+
+
+@lru_cache(maxsize=None)
+def get_conversation_bot_model():
+    if os.getenv("OPENROUTER_API_KEY", "").strip():
+        return get_grok_4_3()
+    return get_gpt_5_4_mini(reasoning_effort="medium", verbosity="low")
+
+
+_DSPY_CONFIGURED = False
+
+
+def configure_dspy_if_needed(lm=None) -> None:
+    """Configure DSPy lazily when a DSPy program is constructed."""
+    global _DSPY_CONFIGURED
+    if _DSPY_CONFIGURED:
+        return
+    dspy.configure(lm=lm or get_fast_model(), adapter=BAMLAdapter())
+    dspy.configure_cache(enable_disk_cache=CACHE, enable_memory_cache=CACHE)
+    _DSPY_CONFIGURED = True
+
+
+def reset_ai_model_cache() -> None:
+    """Reset lazy AI model state for tests."""
+    global _DSPY_CONFIGURED
+    for accessor in (
+        get_gpt_5_mini,
+        get_gpt_5_4_mini,
+        get_grok_4_3,
+        get_gpt_5_2,
+        get_gemini_pro_3_1,
+        get_kimi_2_5,
+        get_grok_4_1_fast_non_reasoning,
+        get_grok_4_1_fast_reasoning,
+        get_gemini_3_1_flash_lite_preview,
+        get_fast_model,
+        get_smart_model,
+        get_conversation_bot_model,
+    ):
+        accessor.cache_clear()
+    _DSPY_CONFIGURED = False
 
 
 ## PARALLEL EXECUTION

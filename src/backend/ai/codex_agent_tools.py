@@ -19,6 +19,8 @@ from backend.ai.codex_agent_runtime import (
     run_context_dir,
     write_jsonl,
 )
+from backend.ai.tools.platform_config import tool_registrations as platform_config_tool_registrations
+from backend.ai.tools.registry import ToolEffect, ToolRegistration
 from backend.client_lead_config import (
     get_client_lead_sources_config_path,
     get_client_lead_sources_seed_config_path,
@@ -51,6 +53,7 @@ from backend.database import (
     WorkstationClientStatus,
     WorkstationClientWorkType,
 )
+from backend.redaction import redact_identifier, redact_json, redact_path, redact_sensitive_text
 from backend.calendar_events import CalendarSchedulingError, schedule_meeting_calendar_event
 from backend.funnel_config import (
     FunnelDefinition,
@@ -277,6 +280,8 @@ class BackfillMetaLeadFormToDeliveryArgs(BaseModel):
     form_id: str | None = Field(default=None, max_length=160)
     fields: str | None = DEFAULT_META_LEAD_FIELDS
     limit: int = Field(default=100, ge=1, le=500)
+    max_pages: int = Field(default=5, ge=1, le=25)
+    max_leads: int = Field(default=500, ge=1, le=5000)
     reason: str = Field(default="Backfilled from Meta Lead Ads by Codex agent.", max_length=1000)
 
 
@@ -670,17 +675,11 @@ class WriteProgressArgs(ClientToolArgs):
 
 def tool_specs() -> list[CodexAgentToolSpec]:
     """Return the toolbelt exposed to Codex."""
+    registered_specs = [
+        (registration.name, registration.description, registration.args_model)
+        for registration in tool_registrations()
+    ]
     specs: list[tuple[str, str, type[BaseModel]]] = [
-        (
-            "read_platform_config",
-            "Read funnels, delivery sources, config file paths, validation issues, and optional schemas.",
-            ReadPlatformConfigArgs,
-        ),
-        (
-            "validate_platform_config",
-            "Validate funnel and delivery setup before enabling automation.",
-            ValidatePlatformConfigArgs,
-        ),
         (
             "configure_text_offer_funnel",
             "Create or update a text-first $599-style funnel without using the UI.",
@@ -850,7 +849,7 @@ def tool_specs() -> list[CodexAgentToolSpec]:
             description=description,
             schema=model.model_json_schema(),
         )
-        for name, description, model in specs
+        for name, description, model in [*registered_specs, *specs]
     ]
 
 
@@ -877,6 +876,21 @@ def _dispatch_after(minutes: int) -> datetime | None:
 def _clean_text(value: str | None) -> str:
     """Return compact freeform text."""
     return " ".join(str(value or "").split()).strip()
+
+
+def tool_registrations() -> list[ToolRegistration]:
+    """Return the first converted tool domain registrations."""
+    return platform_config_tool_registrations(
+        read_args_model=ReadPlatformConfigArgs,
+        validate_args_model=ValidatePlatformConfigArgs,
+        read_handler=read_platform_config,
+        validate_handler=validate_platform_config,
+    )
+
+
+def registered_tools_by_name() -> dict[str, ToolRegistration]:
+    """Return converted tool registrations keyed by name."""
+    return {registration.name: registration for registration in tool_registrations()}
 
 
 def _clean_multiline(value: str | None) -> str:
@@ -940,13 +954,14 @@ def _funnel_payload(funnel: FunnelDefinition) -> dict[str, Any]:
         "default_campaign_count": funnel.default_campaign_count,
         "default_daily_ad_budget_usd": funnel.default_daily_ad_budget_usd,
         "sheet_url_configured": bool(funnel.sheet_url),
-        "sheet_gid": funnel.sheet_gid,
+        "sheet_gid_configured": bool(funnel.sheet_gid),
+        "sheet_gid_label": redact_identifier(funnel.sheet_gid),
         "template_language": funnel.template_language,
         "opener_template_name": funnel.opener_template_name,
         "manual_ping_template_name": funnel.manual_ping_template_name,
         "calendly_base_url_configured": bool(funnel.calendly_base_url),
-        "alert_emails": funnel.alert_emails,
-        "whatsapp_referral_source_ids": funnel.whatsapp_referral_source_ids,
+        "alert_email_count": len(funnel.alert_emails),
+        "whatsapp_referral_source_id_count": len(funnel.whatsapp_referral_source_ids),
         "strategies": [
             {
                 "step": strategy.step,
@@ -957,7 +972,7 @@ def _funnel_payload(funnel: FunnelDefinition) -> dict[str, Any]:
                 "sequence_step": strategy.sequence_step,
                 "has_message_text": bool(strategy.message_text),
                 "media_type": strategy.media_type,
-                "media_path": strategy.media_path,
+                "media_path_label": redact_path(strategy.media_path),
             }
             for strategy in funnel.strategies
         ],
@@ -973,14 +988,16 @@ def _client_source_payload(source: ClientLeadSource) -> dict[str, Any]:
         "label": source.label,
         "enabled": source.enabled,
         "sheet_url_configured": bool(source.sheet_url),
-        "sheet_gid": source.sheet_gid,
+        "sheet_gid_configured": bool(source.sheet_gid),
+        "sheet_gid_label": redact_identifier(source.sheet_gid),
         "sheet_tab_name": source.sheet_tab_name,
-        "meta_page_id": source.meta_page_id,
-        "meta_lead_form_id": source.meta_lead_form_id,
+        "meta_page_id_configured": bool(source.meta_page_id),
+        "meta_page_id_label": redact_identifier(source.meta_page_id),
+        "meta_lead_form_id_configured": bool(source.meta_lead_form_id),
+        "meta_lead_form_id_label": redact_identifier(source.meta_lead_form_id),
         "sheet_poll_seconds": source.sheet_poll_seconds,
-        "recipient_name": source.recipient_name,
+        "recipient_name_configured": bool(source.recipient_name),
         "recipient_phone_configured": bool(source.recipient_phone),
-        "normalized_recipient_phone": source.normalized_recipient_phone,
         "template_name": source.template_name,
         "template_language": source.template_language,
         "context_field_mapping": source.context_field_mapping,
@@ -1040,14 +1057,20 @@ def read_platform_config(arguments: dict[str, Any]) -> dict[str, Any]:
     funnels, funnel_errors = list_funnels_with_config_errors()
     delivery_entries, delivery_config_errors = list_file_backed_client_lead_sources()
     payload: dict[str, Any] = {
-        "funnel_seed_config_path": str(get_funnels_seed_config_path()),
-        "funnel_config_path": str(get_funnels_config_path()),
+        "field_sensitivity_policy": {
+            "safe": ["configured booleans", "counts", "short labels", "readiness issues"],
+            "redacted": ["sheet URLs", "recipient phones", "local paths", "provider account IDs"],
+            "operator_full_config": "Inspect local config files on the server shell when approved.",
+        },
+        "funnel_seed_config_path_label": redact_path(get_funnels_seed_config_path()),
+        "funnel_config_path_label": redact_path(get_funnels_config_path()),
         "funnel_config_errors": funnel_errors,
         "funnels": [_funnel_payload(funnel) for funnel in funnels],
-        "delivery_seed_config_path": str(get_client_lead_sources_seed_config_path()),
-        "delivery_config_path": str(get_client_lead_sources_config_path()),
+        "delivery_seed_config_path_label": redact_path(get_client_lead_sources_seed_config_path()),
+        "delivery_config_path_label": redact_path(get_client_lead_sources_config_path()),
         "delivery_config_errors": delivery_config_errors,
-        "file_backed_delivery_sources": [entry.model_dump(mode="json") for entry in delivery_entries],
+        "file_backed_delivery_source_count": len(delivery_entries),
+        "file_backed_delivery_sources": [redact_json(entry.model_dump(mode="json")) for entry in delivery_entries],
         "delivery_sources": [_client_source_payload(source) for source in ClientLeadSource.list_all()],
         "meta_marketing": {
             "api_version_configured": bool(os.getenv("META_MARKETING_API_VERSION", "").strip()),
@@ -1436,6 +1459,8 @@ def backfill_meta_lead_form_to_delivery(arguments: dict[str, Any]) -> dict[str, 
         form_id=args.form_id,
         fields=args.fields or DEFAULT_META_LEAD_FIELDS,
         limit=args.limit,
+        max_pages=args.max_pages,
+        max_leads=args.max_leads,
         reason=args.reason,
     )
     try:
@@ -3076,6 +3101,7 @@ TOOL_HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {
     "send_workstation_public_page_link": send_workstation_public_page_link,
     "mark_preview_approved": mark_preview_approved,
 }
+TOOL_HANDLERS.update({name: registration.handler for name, registration in registered_tools_by_name().items()})
 
 RUN_AWARE_TOOLS = {
     "schedule_followup",
@@ -3084,12 +3110,32 @@ RUN_AWARE_TOOLS = {
     "list_agent_tool_calls",
     "answer_human_question",
 }
+RUN_AWARE_TOOLS.update(
+    name for name, registration in registered_tools_by_name().items() if registration.run_aware
+)
+
+TOOL_EFFECTS: dict[str, ToolEffect] = {
+    name: "side_effect"
+    for name in TOOL_HANDLERS
+}
+TOOL_EFFECTS.update({name: registration.effect for name, registration in registered_tools_by_name().items()})
+TOOL_EFFECTS.update(
+    {
+        "get_lead_context": "read",
+        "read_agent_memory": "read",
+        "list_agent_tool_calls": "read",
+        "check_domain_availability": "read",
+        "get_workstation_context": "read",
+    }
+)
+STRICT_IDEMPOTENCY_ARGUMENT_TOOLS = {"stage_meta_publish_plan"}
 
 
 def _audit_target_for_tool(tool_name: str, arguments: dict[str, Any]) -> tuple[str, str]:
     """Return the product target used for tool-call audit rows."""
-    if tool_name in {"read_platform_config", "validate_platform_config"}:
-        return "platform", "platform"
+    registration = registered_tools_by_name().get(tool_name)
+    if registration and registration.audit_target is not None:
+        return registration.audit_target(arguments)
     if tool_name == "upsert_funnel_config":
         funnel = arguments.get("funnel")
         funnel_id = funnel.get("id") if isinstance(funnel, dict) else ""
@@ -3143,6 +3189,42 @@ def _audit_target_for_tool(tool_name: str, arguments: dict[str, Any]) -> tuple[s
     return str(arguments.get("target_type") or "lead"), str(arguments.get("target_id") or "")
 
 
+def _json_object(text: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(text or "{}")
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _json_ready_object(payload: dict[str, Any]) -> dict[str, Any]:
+    clean = json.loads(json.dumps(payload or {}, ensure_ascii=True, default=str))
+    return clean if isinstance(clean, dict) else {}
+
+
+def _tool_call_arguments_match(duplicate: AgentToolCall, arguments: dict[str, Any]) -> bool:
+    return _json_object(duplicate.arguments_json) == _json_ready_object(redact_json(arguments))
+
+
+def _duplicate_tool_payload(tool_name: str, duplicate: AgentToolCall) -> dict[str, Any]:
+    """Return the shared duplicate response for HTTP and CLI tool calls."""
+    return {
+        "ok": True,
+        "duplicate": True,
+        "tool": tool_name,
+        "result": _json_object(duplicate.result_json),
+        "tool_call_id": duplicate.id,
+        "idempotency_key": duplicate.idempotency_key,
+    }
+
+
+def _tool_requires_idempotency(tool_name: str, arguments: dict[str, Any]) -> bool:
+    """Return True when a non-dry-run live tool call needs a retry key."""
+    if bool(arguments.get("dry_run")):
+        return False
+    return TOOL_EFFECTS.get(tool_name, "side_effect") != "read"
+
+
 def call_tool(*, run_id: str, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     """Validate, execute, and audit one product tool call."""
     clean_tool_name = (tool_name or "").strip()
@@ -3164,6 +3246,27 @@ def call_tool(*, run_id: str, tool_name: str, arguments: dict[str, Any]) -> dict
     try:
         if handler is None:
             raise AgentToolError(f"Unknown tool: {clean_tool_name}")
+        if _tool_requires_idempotency(clean_tool_name, arguments) and not idempotency_key:
+            raise AgentToolError("Live agent tool calls require idempotency_key.")
+        duplicate = AgentToolCall.get_succeeded_by_idempotency_key(
+            idempotency_key=idempotency_key,
+            tool_name=clean_tool_name,
+        )
+        if duplicate is not None:
+            if clean_tool_name in STRICT_IDEMPOTENCY_ARGUMENT_TOOLS and not _tool_call_arguments_match(
+                duplicate,
+                arguments,
+            ):
+                raise AgentToolError("Live agent tool idempotency conflict: request arguments changed.")
+            payload = _duplicate_tool_payload(clean_tool_name, duplicate)
+            write_jsonl(run_context_dir(run_id) / "tool_calls.jsonl", payload | {"arguments": redact_json(arguments)})
+            if direct_audit_run:
+                AgentRun.finish(
+                    run_id,
+                    status="completed",
+                    final_response=json.dumps(payload, ensure_ascii=True, default=str),
+                )
+            return payload
         if clean_tool_name in RUN_AWARE_TOOLS:
             result = handler(arguments, run_id=run_id)
         else:
@@ -3184,7 +3287,7 @@ def call_tool(*, run_id: str, tool_name: str, arguments: dict[str, Any]) -> dict
             "ok": False,
             "tool": clean_tool_name,
             "error_type": error.__class__.__name__,
-            "error": str(error),
+            "error": redact_sensitive_text(str(error), limit=12000),
         }
         AgentToolCall.add(
             run_id=run_id,
@@ -3195,14 +3298,14 @@ def call_tool(*, run_id: str, tool_name: str, arguments: dict[str, Any]) -> dict
             target_type=target_type,
             target_id=target_id,
             idempotency_key=idempotency_key,
-            error=f"{error.__class__.__name__}: {error}",
+            error=redact_sensitive_text(f"{error.__class__.__name__}: {error}", limit=12000),
         )
-    write_jsonl(run_context_dir(run_id) / "tool_calls.jsonl", payload | {"arguments": arguments})
+    write_jsonl(run_context_dir(run_id) / "tool_calls.jsonl", payload | {"arguments": redact_json(arguments)})
     if direct_audit_run:
         AgentRun.finish(
             run_id,
             status="completed" if payload["ok"] else "failed",
             final_response=json.dumps(payload, ensure_ascii=True, default=str),
-            error=str(payload.get("error") or ""),
+            error=redact_sensitive_text(str(payload.get("error") or ""), limit=12000),
         )
     return payload

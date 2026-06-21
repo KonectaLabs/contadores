@@ -7,7 +7,7 @@ import argparse
 
 from sqlmodel import Session, select
 
-from backend.contadores_strategies import LOOM_MP4_PATH, LOOM_STEP
+from backend.contadores_strategies import LOOM_STEP, get_contadores_strategy
 from backend.database import (
     ContadoresLead,
     ContadoresLeadStage,
@@ -27,6 +27,16 @@ LOOM_LINK_MP4_INTRO_STEP = "loom_link_mp4_intro_20260424"
 LOOM_LINK_MP4_VIDEO_STEP = "loom_link_mp4_video_20260424"
 LOOM_LINK_MP4_INTRO_TEXT = "No se si pudiste ver el video, te lo mando por aca, dura solo 60 segundos"
 LOOM_LINK_MP4_VIDEO_TEXT = "Video de explicación enviado por WhatsApp."
+
+
+def get_loom_mp4_path() -> str:
+    """Return the configured MP4 strategy media path."""
+    strategy = get_contadores_strategy(LOOM_STEP, "loom_mp4")
+    definition = getattr(strategy, "definition", None)
+    media_path = str(getattr(definition, "media_path", "") or "").strip()
+    if not media_path:
+        raise RuntimeError("loom_mp4 strategy has no configured media_path")
+    return media_path
 
 
 def queue_outbound(
@@ -113,28 +123,27 @@ def list_loom_link_lead_ids() -> list[str]:
         return list(session.exec(statement).all())
 
 
-def queue_failed_followup_retries(*, dry_run: bool) -> int:
+def queue_failed_followup_retries(*, execute: bool) -> tuple[int, int]:
     """Queue template-backed retry rows for failed 24-hour follow-ups."""
     lead_ids = list_failed_followup_lead_ids()
-    if dry_run:
-        print(f"failed_followup_retry_leads={len(lead_ids)}")
-        return len(lead_ids)
+    if not execute:
+        return len(lead_ids), 0
 
+    media_path = get_loom_mp4_path()
     for lead_id in lead_ids:
         queue_outbound(
             lead_id=lead_id,
             text=build_opener_followup_text(),
             sequence_step=OPENER_FOLLOWUP_RETRY_SEQUENCE_STEP,
         )
-    return len(lead_ids)
+    return len(lead_ids), len(lead_ids)
 
 
-def queue_loom_link_mp4_messages(*, dry_run: bool) -> int:
+def queue_loom_link_mp4_messages(*, execute: bool) -> tuple[int, int]:
     """Queue the one-time MP4 replacement for Loom-link leads."""
     lead_ids = list_loom_link_lead_ids()
-    if dry_run:
-        print(f"loom_link_mp4_leads={len(lead_ids)}")
-        return len(lead_ids)
+    if not execute:
+        return len(lead_ids), 0
 
     for lead_id in lead_ids:
         queue_outbound(
@@ -147,21 +156,26 @@ def queue_loom_link_mp4_messages(*, dry_run: bool) -> int:
             text=LOOM_LINK_MP4_VIDEO_TEXT,
             sequence_step=LOOM_LINK_MP4_VIDEO_STEP,
             media_type="video",
-            media_path=LOOM_MP4_PATH,
+            media_path=media_path,
         )
-    return len(lead_ids)
+    return len(lead_ids), len(lead_ids)
 
 
 def main() -> None:
     """Run the one-time recovery safely and idempotently."""
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--execute", action="store_true", help="Actually queue recovery messages. Default is preview only.")
+    parser.add_argument("--dry-run", action="store_true", help="Preview only. Kept for older safe runbooks.")
     args = parser.parse_args()
+    if args.execute and args.dry_run:
+        parser.error("--execute cannot be combined with --dry-run")
 
-    retry_count = queue_failed_followup_retries(dry_run=args.dry_run)
-    mp4_count = queue_loom_link_mp4_messages(dry_run=args.dry_run)
-    print(f"queued_failed_followup_retries={0 if args.dry_run else retry_count}")
-    print(f"queued_loom_link_mp4_leads={0 if args.dry_run else mp4_count}")
+    retry_candidates, retry_queued = queue_failed_followup_retries(execute=args.execute)
+    mp4_candidates, mp4_queued = queue_loom_link_mp4_messages(execute=args.execute)
+    print(f"candidate_failed_followup_retry_leads={retry_candidates}")
+    print(f"queued_failed_followup_retries={retry_queued}")
+    print(f"candidate_loom_link_mp4_leads={mp4_candidates}")
+    print(f"queued_loom_link_mp4_leads={mp4_queued}")
 
 
 if __name__ == "__main__":

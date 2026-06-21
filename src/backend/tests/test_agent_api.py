@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from urllib.parse import parse_qs, urlparse
 
 from fastapi.testclient import TestClient
 
 import backend.database as database_module
 import backend.endpoints.agent as agent_endpoints
+from backend.ai.codex_agent_tools import call_tool, tool_specs
 from backend.auth import auth_manager
 from backend.database import (
     AgentToolCall,
@@ -17,7 +19,7 @@ from backend.database import (
     PlatformMetaInventorySnapshot,
 )
 from backend.main import app
-from backend.tests.test_contadores import add_recent_inbound, configure_contadores_db
+from backend.tests.support import add_recent_inbound, configure_contadores_db
 
 
 def configure_agent_db(monkeypatch, tmp_path) -> None:
@@ -65,6 +67,7 @@ def test_cli_login_flow_requires_browser_session_and_revokes_bearer(monkeypatch,
     auth_file.write_text("[users]\nfacu = \"secret\"\n", encoding="utf-8")
     monkeypatch.setenv("AUTH_DISABLE", "false")
     monkeypatch.setenv("AUTH_TOML", str(auth_file))
+    monkeypatch.setenv("AUTH_COOKIE_SECURE", "false")
     monkeypatch.setenv("INTERNAL_API_TOKEN", "internal-secret")
     auth_manager.reload_from_env()
 
@@ -214,6 +217,45 @@ def test_closed_send_and_unknown_tool_are_rejected(monkeypatch, tmp_path) -> Non
     assert unknown_tool.status_code == 404
 
 
+def test_live_tool_call_requires_idempotency_key_before_side_effect(monkeypatch, tmp_path) -> None:
+    """CLI/tool-path live side effects must declare a retry key."""
+    configure_agent_db(monkeypatch, tmp_path)
+    lead = move_to_needs_reply(create_agent_lead())
+
+    result = call_tool(
+        run_id="missing-key-run",
+        tool_name="send_whatsapp_text",
+        arguments={"lead_id": lead.id, "text": "sin key"},
+    )
+
+    assert result["ok"] is False
+    assert "idempotency_key" in result["error"]
+    assert len([item for item in ContadoresMessage.list_by_lead(lead.id) if item.from_me]) == 0
+
+
+def test_cli_tool_call_reuses_successful_idempotency_key(monkeypatch, tmp_path) -> None:
+    """A repeated CLI-style tool call should not repeat the queued WhatsApp side effect."""
+    configure_agent_db(monkeypatch, tmp_path)
+    lead = move_to_needs_reply(create_agent_lead())
+    arguments = {"lead_id": lead.id, "text": "con key", "idempotency_key": "cli-send-key"}
+
+    first = call_tool(run_id="cli-run-1", tool_name="send_whatsapp_text", arguments=arguments)
+    second = call_tool(run_id="cli-run-2", tool_name="send_whatsapp_text", arguments=arguments)
+
+    assert first["ok"] is True
+    assert second["duplicate"] is True
+    assert len([item for item in ContadoresMessage.list_by_lead(lead.id) if item.from_me]) == 1
+
+
+def test_registered_tool_manifest_keeps_platform_tools_available() -> None:
+    """Converted registry entries should still expose the same manifest shape."""
+    manifest = {spec.name: spec for spec in tool_specs()}
+
+    assert "read_platform_config" in manifest
+    assert "validate_platform_config" in manifest
+    assert "schema" in manifest["read_platform_config"].__dict__
+
+
 def test_agent_meta_readiness_and_inventory_sync(monkeypatch, tmp_path) -> None:
     """Agent API should expose Meta readiness and read-only inventory sync directly."""
     configure_agent_db(monkeypatch, tmp_path)
@@ -272,7 +314,8 @@ def test_agent_meta_readiness_and_inventory_sync(monkeypatch, tmp_path) -> None:
     assert readiness.status_code == 200
     readiness_payload = readiness.json()
     assert readiness_payload["configured"]["credentials_present"] is True
-    assert readiness_payload["configured"]["page_ids"] == ["page_env"]
+    assert readiness_payload["configured"]["page_ids_count"] == 1
+    assert "page_env" not in json.dumps(readiness_payload)
     assert readiness_payload["required_permissions"]["native_lead_forms"] == ["leads_retrieval", "pages_manage_ads"]
     assert readiness_payload["latest_snapshot"]["inventory_counts"]["campaigns"] == 1
 

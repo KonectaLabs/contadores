@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import mimetypes
+import os
 import shutil
 import subprocess
 import tempfile
@@ -17,6 +18,7 @@ from backend.config import (
     OPENAI_API_KEY,
 )
 from backend.database import DATA_DIR
+from backend.redaction import redact_sensitive_text
 
 logger = logging.getLogger(__name__)
 
@@ -30,10 +32,29 @@ SUPPORTED_TRANSCRIPTION_SUFFIXES = {
     ".webm",
 }
 OGG_AUDIO_SUFFIXES = {".ogg", ".opus"}
+DEFAULT_AUDIO_TRANSCRIPTION_MAX_SOURCE_BYTES = 25 * 1024 * 1024
+DEFAULT_AUDIO_TRANSCRIPTION_MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 
 
 class AudioTranscriptionError(RuntimeError):
     """Raised when inbound audio cannot be transcribed safely."""
+
+
+def _env_int(name: str, default: int) -> int:
+    """Return a positive integer env value or a safe default."""
+    try:
+        value = int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+def _max_source_bytes() -> int:
+    return _env_int("AUDIO_TRANSCRIPTION_MAX_SOURCE_BYTES", DEFAULT_AUDIO_TRANSCRIPTION_MAX_SOURCE_BYTES)
+
+
+def _max_upload_bytes() -> int:
+    return _env_int("AUDIO_TRANSCRIPTION_MAX_UPLOAD_BYTES", DEFAULT_AUDIO_TRANSCRIPTION_MAX_UPLOAD_BYTES)
 
 
 def resolve_audio_media_path(media_path: str | None) -> Path | None:
@@ -112,10 +133,14 @@ def transcribe_audio_media(media_path: str | None, *, mime_type: str | None = No
     source_path = resolve_audio_media_path(media_path)
     if source_path is None or not source_path.exists() or not source_path.is_file():
         raise AudioTranscriptionError("audio media file is not available")
+    if source_path.stat().st_size > _max_source_bytes():
+        raise AudioTranscriptionError("audio media file is too large")
 
     with tempfile.TemporaryDirectory(prefix="contadores-audio-") as temp_dir_name:
         temp_dir = Path(temp_dir_name)
         upload_path = _transcription_source_path(source_path, mime_type, temp_dir)
+        if upload_path.stat().st_size > _max_upload_bytes():
+            raise AudioTranscriptionError("audio upload file is too large")
         client = OpenAI(api_key=OPENAI_API_KEY)
         with upload_path.open("rb") as audio_file:
             response = client.audio.transcriptions.create(
@@ -133,5 +158,5 @@ def transcribe_audio_media(media_path: str | None, *, mime_type: str | None = No
     clean_transcript = " ".join(transcript.split()).strip()
     if not clean_transcript:
         raise AudioTranscriptionError("transcription returned empty text")
-    logger.info("Transcribed inbound WhatsApp audio from %s.", media_path)
+    logger.info("Transcribed inbound WhatsApp audio from %s.", redact_sensitive_text(media_path, limit=180))
     return clean_transcript

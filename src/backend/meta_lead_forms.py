@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 from typing import Any, Callable
@@ -105,6 +106,55 @@ def _encode_graph_params(params: dict[str, Any]) -> dict[str, Any]:
     return encoded
 
 
+def _stable_payload(value: Any) -> Any:
+    """Return a JSON-stable payload for idempotency comparisons."""
+    if isinstance(value, dict):
+        return {str(key): _stable_payload(value[key]) for key in sorted(value)}
+    if isinstance(value, list):
+        return [_stable_payload(item) for item in value]
+    return value
+
+
+def _payload_hash(value: Any) -> str:
+    encoded = json.dumps(_stable_payload(value), ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:16]
+
+
+def _meta_write_event_payload(idempotency_key: str) -> dict[str, Any] | None:
+    event = PlatformEvent.get_by_idempotency_key(idempotency_key)
+    return event.payload_dict() if event is not None else None
+
+
+def _ensure_meta_write_attempt(
+    *,
+    event_type: str,
+    idempotency_key: str,
+    page_id: str,
+    request_payload: dict[str, Any],
+    source: str,
+    actor: str,
+    summary: str,
+) -> dict[str, Any] | None:
+    """Create a pending write attempt or return the existing payload."""
+    existing_payload = _meta_write_event_payload(idempotency_key)
+    if existing_payload is not None:
+        if existing_payload.get("request") != _stable_payload(request_payload):
+            raise MetaLeadFormsError("Meta lead write idempotency conflict: request payload changed")
+        return existing_payload
+    PlatformEvent.add(
+        event_type=event_type,
+        lifecycle_stage="meta_publish",
+        target_type="meta_page",
+        target_id=page_id,
+        source=source,
+        actor=actor,
+        summary=summary,
+        payload={"status": "pending", "request": _stable_payload(request_payload)},
+        idempotency_key=idempotency_key,
+    )
+    return None
+
+
 def _default_graph_poster(*, api_version: str, access_token: str, timeout: float = 30) -> GraphPoster:
     base_url = _graph_base_url(api_version)
 
@@ -189,6 +239,36 @@ def create_meta_lead_form(
     if args.tracking_parameters:
         params["tracking_parameters"] = args.tracking_parameters
 
+    client_lead_source_id = _clean(args.client_lead_source_id)
+    form_identity = client_lead_source_id or _clean(args.name)
+    attempt_key = f"meta_lead_form_create:{page_id}:{form_identity}"
+    success_key = f"{attempt_key}:success"
+    success_payload = _meta_write_event_payload(success_key)
+    if success_payload is not None:
+        if success_payload.get("request") != _stable_payload(params):
+            raise MetaLeadFormsError("Meta lead form idempotency conflict: request payload changed")
+        return MetaLeadWriteResult(
+            status="created",
+            page_id=page_id,
+            lead_form_id=_clean(success_payload.get("lead_form_id")),
+            response_payload=success_payload.get("response") if isinstance(success_payload.get("response"), dict) else {},
+        )
+    pending_payload = _ensure_meta_write_attempt(
+        event_type="meta_lead.form_create_pending",
+        idempotency_key=attempt_key,
+        page_id=page_id,
+        request_payload=params,
+        source=source,
+        actor=actor,
+        summary=f"Started Meta lead form create on page {page_id}.",
+    )
+    if pending_payload is not None and _meta_write_event_payload(f"{attempt_key}:failure") is None:
+        return MetaLeadWriteResult(
+            status="blocked",
+            page_id=page_id,
+            blocked=["meta_lead_form_create.pending"],
+        )
+
     api_version = _clean(os.getenv("META_MARKETING_API_VERSION"))
     access_token = _clean(os.getenv("META_MARKETING_ACCESS_TOKEN")) or _clean(os.getenv("META_ACCESS_TOKEN"))
     poster = graph_post or _default_graph_poster(api_version=api_version, access_token=access_token)
@@ -196,8 +276,30 @@ def create_meta_lead_form(
         response_payload = poster(f"{page_id}/leadgen_forms", params)
     except httpx.HTTPStatusError as error:
         detail = error.response.text[:500] if error.response is not None else str(error)
+        PlatformEvent.add(
+            event_type="meta_lead.form_create_failed",
+            lifecycle_stage="meta_publish",
+            target_type="meta_page",
+            target_id=page_id,
+            source=source,
+            actor=actor,
+            summary=f"Meta lead form create failed on page {page_id}.",
+            payload={"request": _stable_payload(params), "error": _redact_graph_error(detail)},
+            idempotency_key=f"{attempt_key}:failure",
+        )
         raise MetaLeadFormsError(f"Meta lead form create failed: {_redact_graph_error(detail)}") from error
     except httpx.HTTPError as error:
+        PlatformEvent.add(
+            event_type="meta_lead.form_create_failed",
+            lifecycle_stage="meta_publish",
+            target_type="meta_page",
+            target_id=page_id,
+            source=source,
+            actor=actor,
+            summary=f"Meta lead form create failed on page {page_id}.",
+            payload={"request": _stable_payload(params), "error": _redact_graph_error(error)},
+            idempotency_key=f"{attempt_key}:failure",
+        )
         raise MetaLeadFormsError(f"Meta lead form create failed: {_redact_graph_error(error)}") from error
 
     lead_form_id = _clean(response_payload.get("id") or response_payload.get("leadgen_form_id"))
@@ -207,7 +309,26 @@ def create_meta_lead_form(
         lead_form_id=lead_form_id,
         response_payload=_sanitize_provider_payload(response_payload),
     )
-    client_lead_source_id = _clean(args.client_lead_source_id)
+    PlatformEvent.add(
+        event_type="meta_lead.form_created",
+        lifecycle_stage="meta_publish",
+        target_type="meta_page",
+        target_id=page_id,
+        source=source,
+        actor=actor,
+        summary=f"Created Meta lead form {lead_form_id or 'unknown'} on page {page_id}.",
+        payload={
+            "status": "created",
+            "reason": args.reason,
+            "name": args.name,
+            "lead_form_id": lead_form_id,
+            "client_lead_source_id": client_lead_source_id,
+            "request": _stable_payload(params),
+            "request_hash": _payload_hash(params),
+            "response": result.response_payload,
+        },
+        idempotency_key=success_key,
+    )
     if client_lead_source_id and lead_form_id:
         source_row = ClientLeadSource.get_by_id(client_lead_source_id)
         if source_row is not None:
@@ -228,23 +349,6 @@ def create_meta_lead_form(
                 column_mapping=source_row.column_mapping,
                 context_field_mapping=source_row.context_field_mapping,
             )
-    PlatformEvent.add(
-        event_type="meta_lead.form_created",
-        lifecycle_stage="meta_publish",
-        target_type="meta_page",
-        target_id=page_id,
-        source=source,
-        actor=actor,
-        summary=f"Created Meta lead form {lead_form_id or 'unknown'} on page {page_id}.",
-        payload={
-            "reason": args.reason,
-            "name": args.name,
-            "lead_form_id": lead_form_id,
-            "client_lead_source_id": client_lead_source_id,
-            "response": result.response_payload,
-        },
-        idempotency_key=f"meta_lead_form_created:{page_id}:{lead_form_id or args.name}",
-    )
     return result
 
 
@@ -280,6 +384,33 @@ def subscribe_meta_lead_webhook(
     if not fields:
         fields = ["leadgen"]
     params = {"subscribed_fields": ",".join(fields)}
+    attempt_key = f"meta_lead_webhook_subscribe:{page_id}:{','.join(fields)}"
+    success_key = f"{attempt_key}:success"
+    success_payload = _meta_write_event_payload(success_key)
+    if success_payload is not None:
+        if success_payload.get("request") != _stable_payload(params):
+            raise MetaLeadFormsError("Meta webhook subscription idempotency conflict: request payload changed")
+        return MetaLeadWriteResult(
+            status="subscribed",
+            page_id=page_id,
+            response_payload=success_payload.get("response") if isinstance(success_payload.get("response"), dict) else {},
+        )
+    pending_payload = _ensure_meta_write_attempt(
+        event_type="meta_lead.webhook_subscribe_pending",
+        idempotency_key=attempt_key,
+        page_id=page_id,
+        request_payload=params,
+        source=source,
+        actor=actor,
+        summary=f"Started Meta lead webhook subscription for page {page_id}.",
+    )
+    if pending_payload is not None and _meta_write_event_payload(f"{attempt_key}:failure") is None:
+        return MetaLeadWriteResult(
+            status="blocked",
+            page_id=page_id,
+            blocked=["meta_lead_webhook_subscribe.pending"],
+        )
+
     api_version = _clean(os.getenv("META_MARKETING_API_VERSION"))
     access_token = _clean(os.getenv("META_MARKETING_ACCESS_TOKEN")) or _clean(os.getenv("META_ACCESS_TOKEN"))
     poster = graph_post or _default_graph_poster(api_version=api_version, access_token=access_token)
@@ -287,8 +418,30 @@ def subscribe_meta_lead_webhook(
         response_payload = poster(f"{page_id}/subscribed_apps", params)
     except httpx.HTTPStatusError as error:
         detail = error.response.text[:500] if error.response is not None else str(error)
+        PlatformEvent.add(
+            event_type="meta_lead.webhook_subscribe_failed",
+            lifecycle_stage="meta_publish",
+            target_type="meta_page",
+            target_id=page_id,
+            source=source,
+            actor=actor,
+            summary=f"Meta lead webhook subscription failed for page {page_id}.",
+            payload={"request": _stable_payload(params), "error": _redact_graph_error(detail)},
+            idempotency_key=f"{attempt_key}:failure",
+        )
         raise MetaLeadFormsError(f"Meta lead webhook subscription failed: {_redact_graph_error(detail)}") from error
     except httpx.HTTPError as error:
+        PlatformEvent.add(
+            event_type="meta_lead.webhook_subscribe_failed",
+            lifecycle_stage="meta_publish",
+            target_type="meta_page",
+            target_id=page_id,
+            source=source,
+            actor=actor,
+            summary=f"Meta lead webhook subscription failed for page {page_id}.",
+            payload={"request": _stable_payload(params), "error": _redact_graph_error(error)},
+            idempotency_key=f"{attempt_key}:failure",
+        )
         raise MetaLeadFormsError(f"Meta lead webhook subscription failed: {_redact_graph_error(error)}") from error
 
     result = MetaLeadWriteResult(
@@ -304,7 +457,14 @@ def subscribe_meta_lead_webhook(
         source=source,
         actor=actor,
         summary=f"Subscribed page {page_id} to Meta lead webhooks.",
-        payload={"reason": args.reason, "fields": fields, "response": result.response_payload},
-        idempotency_key=f"meta_lead_webhook_subscribed:{page_id}:{','.join(fields)}",
+        payload={
+            "status": "subscribed",
+            "reason": args.reason,
+            "fields": fields,
+            "request": _stable_payload(params),
+            "request_hash": _payload_hash(params),
+            "response": result.response_payload,
+        },
+        idempotency_key=success_key,
     )
     return result

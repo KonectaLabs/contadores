@@ -75,18 +75,17 @@ CRM-owned Ads workspace rule:
   Meta cannot confirm, leave the CRM campaign visible instead of hiding possible
   live spend.
 
-Validated local Meta defaults for Contadores/Konecta as of 2026-05-31:
+Configure Meta defaults for Contadores/Konecta through local or server secrets:
 
 - API version: `v25.0`
-- Ad account: `act_396900435976478`
-- Business: `1017654719078489`
-- Page: `100444969619229`
-- WhatsApp phone number: `881994095003323`
-- WABA: `1873936066568522`
+- Ad account: `act_<META_AD_ACCOUNT_ID>`
+- Business: `<META_BUSINESS_ID>`
+- Page: `<META_PAGE_ID>`
+- WhatsApp phone number: `<META_WHATSAPP_PHONE_NUMBER_ID>`
+- WABA: `<META_WHATSAPP_BUSINESS_ACCOUNT_ID>`
 
-Keep the access token only in local secrets (`.env`, bashrc, or 1Password). Do not
-write it in tracked docs or prompts. These IDs are defaults for the validated
-Konecta setup, not permission to invent IDs for another client/funnel.
+Keep real provider IDs and access tokens only in local/server secrets (`.env`,
+bashrc, or 1Password). Do not write them in tracked docs or prompts.
 
 Credential boundary: never use CleverApply/Alejandro resources for Meta,
 Google, OAuth, browser-login, or quota/billing work in Konecta. If the active

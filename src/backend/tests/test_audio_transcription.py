@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 import backend.audio_transcription as audio_transcription
 
 
@@ -92,3 +94,59 @@ def test_transcribe_audio_media_uses_supported_file_without_conversion(monkeypat
     )
 
     assert transcript == "Hola directo"
+
+
+def test_transcribe_audio_media_rejects_large_source_before_openai(monkeypatch, tmp_path) -> None:
+    """Oversized stored audio should fail before conversion or OpenAI upload."""
+    data_dir = tmp_path / "data"
+    source_path = data_dir / "contadores" / "inbound_media" / "large.mp3"
+    source_path.parent.mkdir(parents=True)
+    source_path.write_bytes(b"x" * 12)
+
+    def fail_openai(*args, **kwargs):
+        del args
+        del kwargs
+        raise AssertionError("OpenAI should not be called")
+
+    def fail_convert(source: Path, target_dir: Path) -> Path:
+        del source
+        del target_dir
+        raise AssertionError("conversion should not run")
+
+    monkeypatch.setattr(audio_transcription, "DATA_DIR", data_dir)
+    monkeypatch.setattr(audio_transcription, "OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(audio_transcription, "OpenAI", fail_openai)
+    monkeypatch.setattr(audio_transcription, "_convert_audio_for_transcription", fail_convert)
+    monkeypatch.setenv("AUDIO_TRANSCRIPTION_MAX_SOURCE_BYTES", "10")
+
+    with pytest.raises(audio_transcription.AudioTranscriptionError, match="too large"):
+        audio_transcription.transcribe_audio_media("data/contadores/inbound_media/large.mp3", mime_type="audio/mpeg")
+
+
+def test_transcribe_audio_media_rejects_large_converted_upload_before_openai(monkeypatch, tmp_path) -> None:
+    """Converted audio should also fit the upload guard before OpenAI is called."""
+    data_dir = tmp_path / "data"
+    source_path = data_dir / "contadores" / "inbound_media" / "audio.ogg"
+    source_path.parent.mkdir(parents=True)
+    source_path.write_bytes(b"ogg")
+
+    def fake_convert(source: Path, target_dir: Path) -> Path:
+        assert source == source_path
+        target = target_dir / "audio-transcription.mp3"
+        target.write_bytes(b"x" * 12)
+        return target
+
+    def fail_openai(*args, **kwargs):
+        del args
+        del kwargs
+        raise AssertionError("OpenAI should not be called")
+
+    monkeypatch.setattr(audio_transcription, "DATA_DIR", data_dir)
+    monkeypatch.setattr(audio_transcription, "OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(audio_transcription, "_convert_audio_for_transcription", fake_convert)
+    monkeypatch.setattr(audio_transcription, "OpenAI", fail_openai)
+    monkeypatch.setenv("AUDIO_TRANSCRIPTION_MAX_SOURCE_BYTES", "100")
+    monkeypatch.setenv("AUDIO_TRANSCRIPTION_MAX_UPLOAD_BYTES", "10")
+
+    with pytest.raises(audio_transcription.AudioTranscriptionError, match="upload file is too large"):
+        audio_transcription.transcribe_audio_media("data/contadores/inbound_media/audio.ogg", mime_type="audio/ogg")

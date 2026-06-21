@@ -7,3 +7,5 @@ Versioned production templates used by backend/Codex workflows.
 
 Generated client work belongs in `data/`. Reference examples belong in
 `media/examples/`. Do not add new production templates under `tmp/`.
+Any new template binary must be added to `../MANIFEST.md` with owner/source and
+retention notes.

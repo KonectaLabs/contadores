@@ -14,6 +14,7 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
+from backend.csv_safety import neutralize_spreadsheet_formula
 from backend.database import (
     ContadoresLead,
     ContadoresLeadStage,
@@ -32,6 +33,8 @@ from backend.endpoints.contadores import (
     run_quick_action_for_lead,
     send_opener_followup,
 )
+from backend.redaction import redact_sensitive_text
+from operator_report_retention import list_report_targets
 
 
 WAVE_ID = "crm_followup_wave_20260502"
@@ -638,7 +641,7 @@ def planned_send_to_row(plan: PlannedSend) -> dict[str, object]:
     }
 
 
-def write_preview(plans: list[PlannedSend], path: Path) -> None:
+def write_preview(plans: list[PlannedSend], path: Path, *, include_sensitive: bool = False) -> None:
     """Write the exact resolved wave plan to a CSV file."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = [
@@ -658,7 +661,15 @@ def write_preview(plans: list[PlannedSend], path: Path) -> None:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         for plan in plans:
-            writer.writerow(planned_send_to_row(plan))
+            row = planned_send_to_row(plan)
+            if not include_sensitive:
+                row["text"] = redact_sensitive_text(row.get("text", ""), limit=160)
+            writer.writerow(
+                {
+                    field: neutralize_spreadsheet_formula(row.get(field, ""))
+                    for field in fieldnames
+                }
+            )
 
 
 def write_ledger(path: Path, *, plans: list[PlannedSend], queued_message_ids: list[int]) -> None:
@@ -698,14 +709,22 @@ def print_summary(plans: list[PlannedSend], *, live: bool, preview_path: Path) -
             print(f"- {reason}: {count}")
 
 
-def run(*, scope: str, live: bool, force: bool, preview_path: Path, ledger_path: Path) -> int:
+def run(
+    *,
+    scope: str,
+    live: bool,
+    force: bool,
+    preview_path: Path,
+    ledger_path: Path,
+    include_sensitive: bool = False,
+) -> int:
     """Resolve and optionally execute the follow-up wave."""
     if live and ledger_path.exists() and not force:
         raise SystemExit(f"ledger exists at {ledger_path}; pass --force to override")
 
     targets = build_targets(scope)
     plans = [plan_target(target) for target in targets]
-    write_preview(plans, preview_path)
+    write_preview(plans, preview_path, include_sensitive=include_sensitive)
     print_summary(plans, live=live, preview_path=preview_path)
 
     if not live:
@@ -743,7 +762,14 @@ def main() -> None:
     parser.add_argument("--force", action="store_true", help="Allow live run when the ledger already exists.")
     parser.add_argument("--preview-path", type=Path, default=DEFAULT_PREVIEW_PATH)
     parser.add_argument("--ledger-path", type=Path, default=DEFAULT_LEDGER_PATH)
+    parser.add_argument("--include-sensitive", action="store_true", help="Write full message text to preview CSV.")
+    parser.add_argument("--retention-days", type=int, default=30)
+    parser.add_argument("--list-retention-targets", action="store_true", help="Dry-run list of known one-off report files.")
     args = parser.parse_args()
+
+    if args.list_retention_targets:
+        print(json.dumps(list_report_targets([args.preview_path, args.ledger_path], retention_days=args.retention_days), indent=2))
+        return
 
     raise SystemExit(
         run(
@@ -752,6 +778,7 @@ def main() -> None:
             force=args.force,
             preview_path=args.preview_path,
             ledger_path=args.ledger_path,
+            include_sensitive=args.include_sensitive,
         )
     )
 

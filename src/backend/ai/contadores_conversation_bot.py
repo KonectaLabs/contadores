@@ -26,8 +26,9 @@ from backend.config import (
     CONVERSATION_BOT_CODEX_EFFORT,
     CONVERSATION_BOT_CODEX_MODEL,
     CONVERSATION_BOT_CODEX_SERVICE_TIER,
-    CONVERSATION_BOT_MODEL,
+    get_conversation_bot_model,
 )
+from backend.redaction import redact_sensitive_text
 
 ConversationBotAction = Literal[
     "send_reply",
@@ -497,7 +498,7 @@ def _normalize_result(
         scheduling_time=str(_prediction_value(payload, "scheduling_time") or "").strip(),
         timezone=str(_prediction_value(payload, "timezone") or "").strip(),
         runtime_provider=runtime_provider,
-        runtime_error=" ".join(str(runtime_error or "").split()).strip(),
+        runtime_error=redact_sensitive_text(runtime_error, limit=2000),
     )
 
 
@@ -552,7 +553,7 @@ class DspyConversationBotProgram(Program):
     """DSPy fallback that mirrors the Codex JSON contract."""
 
     def __init__(self, lm: dspy.LM | None = None):
-        super().__init__(lm=lm or CONVERSATION_BOT_MODEL)
+        super().__init__(lm=lm or get_conversation_bot_model())
         self.predict = dspy.Predict(ContadoresConversationBotSignature)
 
     async def aforward(
@@ -777,7 +778,10 @@ class ContadoresConversationBotProgram(Program):
                 conversation=conversation,
             )
         except Exception as chatgpt_error:
-            chatgpt_error_text = f"{chatgpt_error.__class__.__name__}: {chatgpt_error}"
+            chatgpt_error_text = redact_sensitive_text(
+                f"{chatgpt_error.__class__.__name__}: {chatgpt_error}",
+                limit=1200,
+            )
 
         primary_runtime_error = (
             f"Codex ChatGPT failed: {chatgpt_error_text}. {CODEX_CHATGPT_REAUTH_HELP}"
@@ -798,7 +802,10 @@ class ContadoresConversationBotProgram(Program):
                     conversation=conversation,
                 )
             except Exception as api_key_error:
-                api_key_error_text = f"{api_key_error.__class__.__name__}: {api_key_error}"
+                api_key_error_text = redact_sensitive_text(
+                    f"{api_key_error.__class__.__name__}: {api_key_error}",
+                    limit=1200,
+                )
 
         try:
             fallback = await self.dspy_fallback.aforward(**kwargs)

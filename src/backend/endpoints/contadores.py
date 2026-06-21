@@ -24,6 +24,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Upload
 from fastapi.responses import FileResponse, Response
 from phonenumbers import NumberParseException, parse as parse_phone_number, timezone as phone_timezone
 from pydantic import BaseModel, Field
+from sqlalchemy import update
 from sqlmodel import Session, select
 
 from backend.ai.codex_agent_runtime import run_codex_agent
@@ -45,6 +46,7 @@ from backend.contadores_strategies import (
     get_contadores_strategy_weight,
     list_funnel_strategies,
 )
+from backend.csv_safety import neutralize_spreadsheet_formula
 from backend.database import (
     CONTADORES_CLOSED_LEAD_DELIVERY_SEQUENCE_STEPS,
     CONTADORES_CONVERTED_LEAD_DELIVERY_SEQUENCE_STEPS,
@@ -55,10 +57,12 @@ from backend.database import (
     CONTADORES_LEAD_QUEUE_STATES,
     CONTADORES_LEAD_TERMINAL_STATES,
     ContadoresConfig,
+    ContadoresAlertDelivery,
     ContadoresLead,
     ContadoresLeadStage,
     ContadoresMessage,
     ContadoresRuntimeAlert,
+    ContadoresSheetSyncState,
     ContadoresStrategyAssignment,
     DATA_DIR,
     MessageDeliveryStatus,
@@ -70,7 +74,9 @@ from backend.database import (
     WorkstationClientWorkType,
     WorkstationMediaAsset,
     WORKSTATION_OPERATOR_HANDOFF_REASONS,
+    build_contadores_external_lead_id,
     engine,
+    normalize_contadores_funnel_id,
     normalize_contadores_tags,
     normalize_email,
     normalize_phone,
@@ -88,6 +94,20 @@ from backend.lead_template_utils import (
 
 contadores_router = APIRouter(prefix="/api/contadores", tags=["contadores"])
 logger = logging.getLogger(__name__)
+
+RUNNER_STATUS_TEXT_LIMIT = 12000
+RUNNER_STATUS_LOG_LIMIT = 8000
+RUNNER_STATUS_DELTA_LIMIT = 24000
+RUNNER_STATUS_DELTA_EVENT_LIMIT = 80
+
+SECRET_TEXT_RE = re.compile(
+    r"(?i)\b(bearer\s+)[a-z0-9._~+/=-]+|"
+    r"\b([a-z0-9_]*(?:token|secret|api[_-]?key)[a-z0-9_]*=)[^&\s'\"<>]+"
+)
+EMAIL_TEXT_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
+PHONE_TEXT_RE = re.compile(r"(?<!\d)(?:\+?\d[\d\s().-]{7,}\d)(?!\d)")
+URL_QUERY_TEXT_RE = re.compile(r"(https?://[^\s?\"'<>]+)\?[^\s\"'<>]+")
+LOCAL_PATH_TEXT_RE = re.compile(r"(?<!\w)/(?:Users|private|tmp|var|app|data)/[^\s\"'<>]+")
 
 
 async def await_if_needed(value):
@@ -141,6 +161,100 @@ CONTADORES_DELIVERY_RETRY_DELAY_SECONDS = max(
     0,
     int(os.getenv("CONTADORES_DELIVERY_RETRY_DELAY_SECONDS", "60")),
 )
+CONTADORES_ALERT_ALLOWED_EMAILS_ENV = "CONTADORES_ALERT_ALLOWED_EMAILS"
+CONTADORES_ALERT_ALLOWED_DOMAINS_ENV = "CONTADORES_ALERT_ALLOWED_DOMAINS"
+CONTADORES_ALERT_CLAIM_LEASE_SECONDS = 600
+OPERATOR_WHATSAPP_REPLY_MAX_CHARS = 1200
+CONTADORES_MANUAL_MEDIA_MAX_FILES = max(1, int(os.getenv("CONTADORES_MANUAL_MEDIA_MAX_FILES", "5")))
+CONTADORES_MANUAL_MEDIA_MAX_FILE_BYTES = max(
+    1,
+    int(os.getenv("CONTADORES_MANUAL_MEDIA_MAX_FILE_BYTES", str(25 * 1024 * 1024))),
+)
+CONTADORES_MANUAL_MEDIA_MAX_TOTAL_BYTES = max(
+    1,
+    int(os.getenv("CONTADORES_MANUAL_MEDIA_MAX_TOTAL_BYTES", str(50 * 1024 * 1024))),
+)
+SAFE_INLINE_MESSAGE_MEDIA_TYPES = {
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "image/gif",
+    "video/mp4",
+    "video/webm",
+    "audio/mpeg",
+    "audio/ogg",
+    "audio/wav",
+    "audio/webm",
+    "application/pdf",
+}
+DANGEROUS_MESSAGE_MEDIA_TYPES = {
+    "application/javascript",
+    "application/xhtml+xml",
+    "application/xml",
+    "image/svg+xml",
+    "text/html",
+    "text/javascript",
+    "text/xml",
+}
+OPERATOR_REPLY_LABEL_RE = re.compile(r"^\s*(respuesta|whatsapp|mensaje)\s*:\s*(.*)$", re.IGNORECASE)
+OPERATOR_REPLY_STOP_RE = re.compile(
+    r"^\s*(--\s*$|on .+ wrote:\s*$|el .+ escribi[oó]:\s*$|from:\s*|de:\s*|"
+    r"sent:\s*|para:\s*|subject:\s*|asunto:\s*|begin forwarded message:|[-]+ forwarded message [-]+)",
+    re.IGNORECASE,
+)
+
+
+def _split_env_list(name: str) -> list[str]:
+    """Read a comma/newline separated env list."""
+    raw = os.getenv(name, "")
+    return [part.strip() for part in re.split(r"[\s,]+", raw) if part.strip()]
+
+
+def allowed_alert_emails() -> set[str]:
+    """Return exact alert recipients allowed by env policy."""
+    return {email for value in _split_env_list(CONTADORES_ALERT_ALLOWED_EMAILS_ENV) if (email := normalize_email(value))}
+
+
+def allowed_alert_domains() -> set[str]:
+    """Return alert recipient domains allowed by env policy."""
+    domains: set[str] = set()
+    for value in _split_env_list(CONTADORES_ALERT_ALLOWED_DOMAINS_ENV):
+        domain = value.strip().lower().lstrip("@")
+        if domain and re.fullmatch(r"[a-z0-9.-]+\.[a-z]{2,}", domain):
+            domains.add(domain)
+    return domains
+
+
+def alert_recipient_policy_configured() -> bool:
+    """Return whether an explicit alert-recipient policy is configured."""
+    return bool(allowed_alert_emails() or allowed_alert_domains())
+
+
+def alert_recipient_policy_rejection(email: str) -> str | None:
+    """Return a rejection reason when an alert email is outside the policy."""
+    normalized = normalize_email(email)
+    if not normalized:
+        return "invalid_email"
+    if not alert_recipient_policy_configured():
+        return None
+    if normalized in allowed_alert_emails():
+        return None
+    domain = normalized.rsplit("@", 1)[-1]
+    if domain in allowed_alert_domains():
+        return None
+    return "recipient_not_allowed"
+
+
+def validate_alert_recipients_for_policy(emails: list[str] | None) -> list[str]:
+    """Normalize and validate configured alert recipients."""
+    normalized = [email for value in emails or [] if (email := normalize_email(str(value)))]
+    rejected = [email for email in normalized if alert_recipient_policy_rejection(email)]
+    if rejected:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Alert email recipient is not allowed: {rejected[0]}",
+        )
+    return normalized
 ABOGADOS_FUNNEL_ID = "abogados"
 ABOGADOS_PREFILLED_MESSAGE_ROUTE = "abogados_prefilled_proposal"
 FOLLOWUP_DEFAULT_FUNNEL_IDS = {"contadores", ABOGADOS_FUNNEL_ID}
@@ -156,6 +270,7 @@ WATCHED_VIDEO_CONFIRMATION_LABEL = "watched_video_confirmation"
 VENEZUELA_MOBILE_PREFIXES = ("412", "414", "416", "424", "426")
 PHONE_DIGITS_RE = re.compile(r"\D+")
 CONVERSATION_BOT_LOCKS: dict[str, asyncio.Lock] = {}
+contadores_automation_tick_locks: dict[str, asyncio.Lock] = {}
 REPO_ROOT = Path(__file__).resolve().parents[3]
 OPERATOR_LEARNED_ANSWER_PATHS = [
     REPO_ROOT
@@ -258,6 +373,37 @@ def normalize_followup_text(value: str | None) -> str:
 def now_utc() -> datetime:
     """Return current UTC timestamp."""
     return datetime.now(timezone.utc)
+
+
+async def claim_contadores_alert(
+    *,
+    kind: str,
+    identifier: str | int,
+    claimed_at: datetime | None = None,
+) -> bool:
+    """Reserve one pending alert across backend processes."""
+    now = claimed_at or now_utc()
+    if kind == "lead":
+        return ContadoresLead.claim_pending_alert(
+            lead_id=str(identifier),
+            claimed_at=now,
+            stale_after_seconds=CONTADORES_ALERT_CLAIM_LEASE_SECONDS,
+        )
+    if kind == "runtime":
+        return ContadoresRuntimeAlert.claim_pending_alert(
+            alert_id=int(identifier),
+            claimed_at=now,
+            stale_after_seconds=CONTADORES_ALERT_CLAIM_LEASE_SECONDS,
+        )
+    return False
+
+
+async def release_contadores_alert_claim(*, kind: str, identifier: str | int) -> None:
+    """Release one durable alert lease."""
+    if kind == "lead":
+        ContadoresLead.clear_alert_claim(lead_id=str(identifier))
+    elif kind == "runtime":
+        ContadoresRuntimeAlert.clear_alert_claim(alert_id=int(identifier))
 
 
 def clean_delivery_error_part(value: object | None) -> str:
@@ -520,19 +666,47 @@ def infer_timezone_from_phone(phone: str | None, normalized_phone: str | None = 
     return ""
 
 
+CONVERSATION_PROMPT_MAX_MESSAGES = 30
+CONVERSATION_PROMPT_MESSAGE_CHARS = 1200
+LATEST_INBOUND_PROMPT_CHARS = 2000
+CONVERSATION_PROMPT_TOTAL_CHARS = 12000
+
+
+def truncate_prompt_text(text: str, *, limit: int) -> str:
+    """Bound text that enters AI prompts and keep an explicit marker."""
+    clean_text = str(text or "").strip()
+    if len(clean_text) <= limit:
+        return clean_text
+    marker = f" [truncated {len(clean_text)} chars]"
+    keep = max(0, limit - len(marker))
+    marker = f" [truncated {len(clean_text) - keep} chars]"
+    keep = max(0, limit - len(marker))
+    return f"{clean_text[:keep].rstrip()}{marker}"
+
+
+def latest_inbound_prompt_text(message: ContadoresMessage) -> str:
+    """Return bounded latest-inbound text for model prompts."""
+    return truncate_prompt_text(message.text or "", limit=LATEST_INBOUND_PROMPT_CHARS)
+
+
 def format_conversation_for_bot(messages: list[ContadoresMessage]) -> str:
     """Render a compact chronological transcript for the conversation bot."""
     rows: list[str] = []
-    for message in messages[-30:]:
+    for message in messages[-CONVERSATION_PROMPT_MAX_MESSAGES:]:
         speaker = "KONECTA" if message.from_me else "LEAD"
-        text = (message.text or "").strip()
+        text = truncate_prompt_text(message.text or "", limit=CONVERSATION_PROMPT_MESSAGE_CHARS)
         if message.media_type:
             media_note = f"[media:{message.media_type}]"
             text = f"{media_note} {text}".strip()
         sequence = f" step={message.sequence_step}" if message.sequence_step else ""
         timestamp = format_timestamp_seconds(message.created_at) or ""
         rows.append(f"{timestamp} {speaker}{sequence}: {text}")
-    return "\n".join(rows)
+    return truncate_prompt_text("\n".join(rows), limit=CONVERSATION_PROMPT_TOTAL_CHARS)
+
+
+def conversation_prompt_text(messages: list[ContadoresMessage]) -> str:
+    """Return the bounded conversation transcript used in model prompts."""
+    return format_conversation_for_bot(messages)
 
 
 def is_active_offer_sequence_step(sequence_step: str | None) -> bool:
@@ -835,19 +1009,41 @@ def format_scheduling_handoff_reason(
     return "\n".join(lines)
 
 
-def extract_operator_whatsapp_reply(raw_text: str) -> str:
-    """Extract the WhatsApp reply text from one operator email body."""
+def parse_operator_whatsapp_reply(raw_text: str) -> tuple[str, str | None]:
+    """Extract the explicit WhatsApp reply block from one operator email body."""
     clean_text = "\n".join(line.rstrip() for line in str(raw_text or "").splitlines()).strip()
     if not clean_text:
-        return ""
+        return "", "empty_operator_reply"
 
-    casefold_text = clean_text.casefold()
-    for label in ["respuesta:", "whatsapp:", "mensaje:"]:
-        index = casefold_text.find(label)
-        if index >= 0:
-            return clean_text[index + len(label):].strip()
+    reply_lines: list[str] = []
+    collecting = False
+    for line in clean_text.splitlines():
+        if not collecting:
+            label_match = OPERATOR_REPLY_LABEL_RE.match(line)
+            if label_match is None:
+                continue
+            collecting = True
+            reply_lines.append(label_match.group(2).strip())
+            continue
+        if OPERATOR_REPLY_STOP_RE.match(line):
+            break
+        reply_lines.append(line.rstrip())
 
-    return clean_text
+    if not collecting:
+        return "", "missing_operator_reply_block"
+
+    reply = "\n".join(reply_lines).strip()
+    if not reply:
+        return "", "empty_operator_reply"
+    if len(reply) > OPERATOR_WHATSAPP_REPLY_MAX_CHARS:
+        return "", "operator_reply_too_long"
+    return reply, None
+
+
+def extract_operator_whatsapp_reply(raw_text: str) -> str:
+    """Extract the WhatsApp reply text from one operator email body."""
+    reply, _reason = parse_operator_whatsapp_reply(raw_text)
+    return reply
 
 
 def build_operator_learned_answer_entry(
@@ -1003,6 +1199,18 @@ def choose_contadores_strategy(
 def apply_funnel_to_config(config: ContadoresConfig, funnel, *, override_enabled: bool = True) -> ContadoresConfig:
     """Fill the legacy runtime config row from a file-backed funnel."""
     config.enabled = funnel.enabled if override_enabled else bool(config.enabled or funnel.enabled)
+    if override_enabled:
+        config.sheet_url = funnel.sheet_url
+        config.sheet_gid = funnel.sheet_gid
+        config.sheet_poll_seconds = funnel.sheet_poll_seconds
+        config.loom_url = funnel.loom_url
+        config.calendly_base_url = funnel.calendly_base_url
+        config.alert_emails_json = json.dumps(funnel.alert_emails)
+        config.initial_reply_quiet_seconds = funnel.initial_reply_quiet_seconds
+        config.post_loom_min_seconds = funnel.post_loom_min_seconds
+        config.post_loom_quiet_seconds = funnel.post_loom_quiet_seconds
+        config.strategy_weights_json = json.dumps(build_funnel_strategy_weights(funnel), ensure_ascii=True)
+        return config
     if not config.sheet_url:
         config.sheet_url = funnel.sheet_url
     if not config.sheet_gid:
@@ -1044,6 +1252,16 @@ def get_effective_funnel_config(funnel_id: str | None = None) -> ContadoresConfi
     return apply_funnel_to_config(config, seed_funnel, override_enabled=False)
 
 
+def get_contadores_automation_tick_lock(funnel_id: str | None) -> asyncio.Lock:
+    """Return the in-process tick lock for one funnel."""
+    clean_funnel_id = normalize_contadores_funnel_id(funnel_id)
+    lock = contadores_automation_tick_locks.get(clean_funnel_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        contadores_automation_tick_locks[clean_funnel_id] = lock
+    return lock
+
+
 def apply_config_update_to_file_backed_funnel(command: "UpdateContadoresConfigCommand") -> None:
     """Persist rollout-control edits into the shared funnel config file when enabled."""
     funnel = get_file_backed_funnel("contadores")
@@ -1076,6 +1294,37 @@ def apply_config_update_to_file_backed_funnel(command: "UpdateContadoresConfigCo
         next_funnel = next_funnel.model_copy(update={"strategies": strategies})
 
     upsert_funnel(next_funnel)
+
+
+def policy_checked_alert_emails(config: ContadoresConfig) -> list[str]:
+    """Return configured alert emails after the outbound safety policy passes."""
+    return validate_alert_recipients_for_policy(config.alert_emails)
+
+
+def runtime_alert_reply_event_key(command: "ContadoresAlertEmailReplyCommand") -> str | None:
+    """Return the idempotency key for one inbound AgentMail reply."""
+    message_id = (command.message_id or "").strip()
+    if not message_id:
+        return None
+    return f"contadores_runtime_alert_email_reply:{message_id}"
+
+
+def reject_unauthorized_runtime_alert_reply(
+    *,
+    command: "ContadoresAlertEmailReplyCommand",
+    alert: ContadoresRuntimeAlert,
+    config: ContadoresConfig,
+) -> str | None:
+    """Return a rejection reason when an AgentMail reply is not from an allowed operator."""
+    if alert.email_inbox_id and (command.inbox_id or "").strip() != alert.email_inbox_id:
+        return "email_inbox_mismatch"
+    sender = normalize_email(command.from_email)
+    if not sender:
+        return "invalid_sender_email"
+    allowed_senders = set(policy_checked_alert_emails(config))
+    if sender not in allowed_senders:
+        return "sender_not_allowed"
+    return None
 
 
 def lead_has_new_inbound_after_calendly(lead: ContadoresLead) -> bool:
@@ -1547,6 +1796,34 @@ def resolve_stage_after_reopening(lead: ContadoresLead) -> ContadoresLeadStage:
     return infer_stage_from_timestamps(lead)
 
 
+def emit_contadores_lead_lifecycle_event(
+    lead: ContadoresLead,
+    *,
+    event_type: str,
+    lifecycle_stage: str,
+    actor: str,
+    summary: str,
+    payload: dict[str, Any] | None = None,
+    idempotency_key: str | None = None,
+) -> None:
+    """Record one lead lifecycle event without blocking the operator action."""
+    try:
+        PlatformEvent.add(
+            event_type=f"contadores.lead.{event_type}",
+            lifecycle_stage=lifecycle_stage,
+            target_type="lead",
+            target_id=lead.id,
+            funnel_id=lead.funnel_id,
+            source="contadores",
+            actor=actor,
+            summary=summary,
+            payload=payload or {},
+            idempotency_key=idempotency_key,
+        )
+    except Exception:
+        logger.warning("Could not record Contadores lead lifecycle event.", exc_info=True)
+
+
 def infer_resume_stage_from_timestamps(lead: ContadoresLead) -> ContadoresLeadStage:
     """Infer the stage to resume without changing archived leads unexpectedly."""
     if lead.stage == ContadoresLeadStage.ARCHIVED or lead.archived_at is not None:
@@ -1554,8 +1831,9 @@ def infer_resume_stage_from_timestamps(lead: ContadoresLead) -> ContadoresLeadSt
     return infer_stage_from_timestamps(lead)
 
 
-def build_config_response(config: ContadoresConfig) -> "ContadoresConfigResponse":
+def build_config_response(config: ContadoresConfig, *, funnel_id: str | None = "contadores") -> "ContadoresConfigResponse":
     """Serialize config row for operator UI."""
+    sync_state = ContadoresSheetSyncState.get(funnel_id)
     return ContadoresConfigResponse(
         enabled=config.enabled,
         sheet_url=config.sheet_url,
@@ -1568,9 +1846,12 @@ def build_config_response(config: ContadoresConfig) -> "ContadoresConfigResponse
         post_loom_min_seconds=config.post_loom_min_seconds,
         post_loom_quiet_seconds=config.post_loom_quiet_seconds,
         strategy_weights=config.strategy_weights,
-        last_sheet_sync_at=format_timestamp_seconds(config.last_sheet_sync_at),
-        last_sheet_sync_status=config.last_sheet_sync_status,
-        last_sheet_sync_note=config.last_sheet_sync_note,
+        last_sheet_sync_at=format_timestamp_seconds(
+            sync_state.last_attempt_at if sync_state is not None else config.last_sheet_sync_at
+        ),
+        last_sheet_sync_success_at=format_timestamp_seconds(sync_state.last_success_at) if sync_state else None,
+        last_sheet_sync_status=sync_state.last_sync_status if sync_state is not None else config.last_sheet_sync_status,
+        last_sheet_sync_note=sync_state.last_sync_note if sync_state is not None else config.last_sheet_sync_note,
         last_alert_at=format_timestamp_seconds(config.last_alert_at),
     )
 
@@ -1591,12 +1872,28 @@ def build_lead_summary(
     *,
     config: ContadoresConfig,
     strategy_assignments: list[ContadoresStrategyAssignment] | None = None,
+    workstation_client_by_lead_id: dict[str, WorkstationClient] | None = None,
+    outbound_error_counts_by_lead_id: dict[str, int] | None = None,
+    latest_outbound_error_by_lead_id: dict[str, str] | None = None,
 ) -> "ContadoresLeadSummary":
     """Serialize one lead row for list/detail views."""
     effective_stage = derive_effective_lead_stage(lead)
-    workstation_client = WorkstationClient.get_by_lead_id(lead.id)
+    workstation_client = (
+        workstation_client_by_lead_id.get(lead.id)
+        if workstation_client_by_lead_id is not None
+        else WorkstationClient.get_by_lead_id(lead.id)
+    )
     manual_reply_status = derive_manual_reply_status(lead, effective_stage=effective_stage)
-    outbound_error_count = ContadoresMessage.count_delivery_issues_by_lead(lead.id)
+    outbound_error_count = (
+        outbound_error_counts_by_lead_id.get(lead.id, 0)
+        if outbound_error_counts_by_lead_id is not None
+        else ContadoresMessage.count_delivery_issues_by_lead(lead.id)
+    )
+    latest_outbound_error = (
+        latest_outbound_error_by_lead_id.get(lead.id)
+        if latest_outbound_error_by_lead_id is not None
+        else ContadoresMessage.latest_delivery_issue_for_lead(lead.id)
+    )
     pipeline_stage = derive_lead_pipeline_stage(lead, effective_stage=effective_stage)
     queue_state = derive_lead_queue_state(
         lead,
@@ -1668,8 +1965,8 @@ def build_lead_summary(
         automation_paused_reason=lead.automation_paused_reason,
         outbound_error_count=outbound_error_count,
         latest_outbound_error=(
-            format_whatsapp_delivery_error(ContadoresMessage.latest_delivery_issue_for_lead(lead.id))
-            if outbound_error_count
+            format_whatsapp_delivery_error(latest_outbound_error)
+            if outbound_error_count and latest_outbound_error
             else None
         ),
         created_at=format_timestamp_seconds(lead.created_at) or "",
@@ -1804,12 +2101,43 @@ def inbound_suggests_booking_time(message: ContadoresMessage | None) -> bool:
     return (has_time and (has_day or has_date or has_call_word)) or (has_email and has_call_word)
 
 
+def is_opener_followup_due(
+    lead: ContadoresLead,
+    *,
+    now: datetime,
+    messages: list[ContadoresMessage] | None = None,
+) -> bool:
+    """Return True when the 24h opener follow-up can actually be sent."""
+    opener_sent_at = ensure_utc_datetime(lead.opener_sent_at)
+    if (
+        lead.stage != ContadoresLeadStage.AWAITING_INITIAL_REPLY
+        or lead.first_reply_received_at is not None
+        or opener_sent_at is None
+        or now < opener_sent_at + OPENER_FOLLOWUP_DELAY
+    ):
+        return False
+    if messages is not None:
+        return not any(
+            message.from_me
+            and message.sequence_step == OPENER_FOLLOWUP_SEQUENCE_STEP
+            and ensure_utc_datetime(message.created_at) >= opener_sent_at
+            for message in messages
+        )
+    return not ContadoresMessage.has_outbound_sequence_step(
+        lead.id,
+        sequence_step=OPENER_FOLLOWUP_SEQUENCE_STEP,
+        created_after=opener_sent_at,
+    )
+
+
 def build_followup_suggested_buckets(
     lead: ContadoresLead,
     *,
     latest_inbound: ContadoresMessage | None,
     latest_outbound: ContadoresMessage | None,
     exclusion_reasons: list[str],
+    messages: list[ContadoresMessage] | None = None,
+    opener_followup_already_sent: bool | None = None,
 ) -> list[str]:
     """Return deterministic buckets for an automation to inspect."""
     if exclusion_reasons:
@@ -1841,7 +2169,18 @@ def build_followup_suggested_buckets(
         buckets.append("close_call")
     if effective_stage == ContadoresLeadStage.AWAITING_VIDEO_REPLY:
         buckets.append("retomar_video")
-    if effective_stage == ContadoresLeadStage.AWAITING_INITIAL_REPLY and lead.opener_sent_at is not None:
+    opener_messages = messages
+    if opener_followup_already_sent is not None:
+        opener_messages = [
+            ContadoresMessage(
+                lead_id=lead.id,
+                from_me=True,
+                text="",
+                sequence_step=OPENER_FOLLOWUP_SEQUENCE_STEP,
+                created_at=lead.opener_sent_at or now_utc(),
+            )
+        ] if opener_followup_already_sent else []
+    if is_opener_followup_due(lead, now=now_utc(), messages=opener_messages):
         buckets.append("opener_followup")
     return list(dict.fromkeys(buckets))
 
@@ -1850,13 +2189,20 @@ def build_followup_lead_snapshot(
     lead: ContadoresLead,
     *,
     messages_per_lead: int,
+    messages: list[ContadoresMessage] | None = None,
+    latest_inbound: ContadoresMessage | None = None,
+    latest_outbound: ContadoresMessage | None = None,
+    opener_followup_already_sent: bool | None = None,
+    workstation_client: WorkstationClient | None = None,
+    workstation_client_loaded: bool = False,
 ) -> ContadoresFollowupLeadSnapshot:
     """Build one read-only lead snapshot for external automation."""
-    messages = ContadoresMessage.list_by_lead(lead.id)
-    recent_messages = messages[-messages_per_lead:]
-    latest_inbound = next((message for message in reversed(messages) if not message.from_me), None)
-    latest_outbound = next((message for message in reversed(messages) if message.from_me), None)
-    workstation_client = WorkstationClient.get_by_lead_id(lead.id)
+    lead_messages = messages if messages is not None else ContadoresMessage.list_by_lead(lead.id)
+    recent_messages = lead_messages[-messages_per_lead:]
+    latest_inbound = latest_inbound or next((message for message in reversed(lead_messages) if not message.from_me), None)
+    latest_outbound = latest_outbound or next((message for message in reversed(lead_messages) if message.from_me), None)
+    if not workstation_client_loaded and workstation_client is None:
+        workstation_client = WorkstationClient.get_by_lead_id(lead.id)
     exclusion_reasons = build_followup_exclusion_reasons(
         lead,
         workstation_client=workstation_client,
@@ -1867,6 +2213,8 @@ def build_followup_lead_snapshot(
         latest_inbound=latest_inbound,
         latest_outbound=latest_outbound,
         exclusion_reasons=exclusion_reasons,
+        messages=lead_messages,
+        opener_followup_already_sent=opener_followup_already_sent,
     )
     effective_stage = derive_effective_lead_stage(lead)
     converted_at = format_timestamp_seconds(lead.booked_at)
@@ -1929,8 +2277,26 @@ def build_followup_snapshot_response(
     messages_per_lead: int,
 ) -> ContadoresFollowupSnapshotResponse:
     """Build a full read-only follow-up snapshot from lead rows."""
+    lead_ids = [lead.id for lead in leads]
+    messages_by_lead = ContadoresMessage.list_by_lead_ids(lead_ids, limit_per_lead=messages_per_lead)
+    latest_inbound_by_lead_id = ContadoresMessage.latest_by_lead_ids(lead_ids, from_me=False)
+    latest_outbound_by_lead_id = ContadoresMessage.latest_by_lead_ids(lead_ids, from_me=True)
+    opener_followup_sent_lead_ids = ContadoresMessage.lead_ids_with_outbound_sequence_step(
+        lead_ids,
+        sequence_step=OPENER_FOLLOWUP_SEQUENCE_STEP,
+    )
+    workstation_clients_by_lead_id = WorkstationClient.get_by_lead_ids(lead_ids)
     snapshots = [
-        build_followup_lead_snapshot(lead, messages_per_lead=messages_per_lead)
+        build_followup_lead_snapshot(
+            lead,
+            messages_per_lead=messages_per_lead,
+            messages=messages_by_lead.get(lead.id, []),
+            latest_inbound=latest_inbound_by_lead_id.get(lead.id),
+            latest_outbound=latest_outbound_by_lead_id.get(lead.id),
+            opener_followup_already_sent=lead.id in opener_followup_sent_lead_ids,
+            workstation_client=workstation_clients_by_lead_id.get(lead.id),
+            workstation_client_loaded=True,
+        )
         for lead in leads
     ]
 
@@ -1955,7 +2321,16 @@ def build_followup_snapshot_response(
     )
 
 
-def build_followup_snapshot_csv(snapshots: list[ContadoresFollowupLeadSnapshot]) -> str:
+def masked_csv_name(value: str | None) -> str:
+    """Keep summary CSV useful without exporting lead names by default."""
+    return "[redacted]" if (value or "").strip() else ""
+
+
+def build_followup_snapshot_csv(
+    snapshots: list[ContadoresFollowupLeadSnapshot],
+    *,
+    profile: Literal["summary", "full"] = "summary",
+) -> str:
     """Return a flat CSV view of lead snapshots for automation analysis."""
     output = StringIO()
     fieldnames = [
@@ -1985,13 +2360,18 @@ def build_followup_snapshot_csv(snapshots: list[ContadoresFollowupLeadSnapshot])
         "archived_at",
         "automation_paused",
         "workstation_client_id",
-        "latest_inbound_text",
-        "latest_outbound_text",
         "latest_outbound_status",
         "latest_outbound_error_code",
-        "latest_outbound_error",
-        "recent_transcript",
     ]
+    if profile == "full":
+        fieldnames.extend(
+            [
+                "latest_inbound_text",
+                "latest_outbound_text",
+                "latest_outbound_error",
+                "recent_transcript",
+            ]
+        )
     writer = csv.DictWriter(output, fieldnames=fieldnames)
     writer.writeheader()
     for snapshot in snapshots:
@@ -2000,42 +2380,51 @@ def build_followup_snapshot_csv(snapshots: list[ContadoresFollowupLeadSnapshot])
             f"{'me' if message.from_me else 'lead'}: {message.text}"
             for message in snapshot.recent_messages
         )
-        writer.writerow(
-            {
-                "lead_id": snapshot.id,
-                "funnel_id": snapshot.funnel_id,
-                "full_name": snapshot.full_name or "",
-                "email": snapshot.email or "",
-                "phone": snapshot.phone,
-                "normalized_phone": snapshot.normalized_phone,
-                "platform": snapshot.platform or "",
-                "stage": snapshot.stage,
-                "raw_stage": snapshot.raw_stage,
-                "manual_reply_status": snapshot.manual_reply_status or "",
-                "excluded": str(snapshot.excluded).lower(),
-                "exclusion_reasons": ",".join(snapshot.exclusion_reasons),
-                "suggested_buckets": ",".join(snapshot.suggested_buckets),
-                "last_inbound_at": snapshot.last_inbound_at or "",
-                "last_outbound_at": snapshot.last_outbound_at or "",
-                "opener_sent_at": snapshot.opener_sent_at or "",
-                "loom_sent_at": snapshot.loom_sent_at or "",
-                "video_check_sent_at": snapshot.video_check_sent_at or "",
-                "calendly_sent_at": snapshot.calendly_sent_at or "",
-                "meeting_scheduled_at": snapshot.meeting_scheduled_at or "",
-                "converted_at": snapshot.converted_at or "",
-                "booked_at": snapshot.booked_at or "",
-                "closed_at": snapshot.closed_at or "",
-                "archived_at": snapshot.archived_at or "",
-                "automation_paused": str(snapshot.automation_paused).lower(),
-                "workstation_client_id": snapshot.workstation_client_id or "",
-                "latest_inbound_text": snapshot.latest_inbound.text if snapshot.latest_inbound else "",
-                "latest_outbound_text": latest_outbound.text if latest_outbound else "",
-                "latest_outbound_status": latest_outbound.delivery_status if latest_outbound else "",
-                "latest_outbound_error_code": latest_outbound.last_delivery_error_code if latest_outbound else "",
-                "latest_outbound_error": latest_outbound.last_delivery_error if latest_outbound else "",
-                "recent_transcript": recent_transcript,
-            }
-        )
+        row = {
+            "lead_id": snapshot.id,
+            "funnel_id": snapshot.funnel_id,
+            "full_name": snapshot.full_name or "",
+            "email": snapshot.email or "",
+            "phone": snapshot.phone,
+            "normalized_phone": snapshot.normalized_phone,
+            "platform": snapshot.platform or "",
+            "stage": snapshot.stage,
+            "raw_stage": snapshot.raw_stage,
+            "manual_reply_status": snapshot.manual_reply_status or "",
+            "excluded": str(snapshot.excluded).lower(),
+            "exclusion_reasons": ",".join(snapshot.exclusion_reasons),
+            "suggested_buckets": ",".join(snapshot.suggested_buckets),
+            "last_inbound_at": snapshot.last_inbound_at or "",
+            "last_outbound_at": snapshot.last_outbound_at or "",
+            "opener_sent_at": snapshot.opener_sent_at or "",
+            "loom_sent_at": snapshot.loom_sent_at or "",
+            "video_check_sent_at": snapshot.video_check_sent_at or "",
+            "calendly_sent_at": snapshot.calendly_sent_at or "",
+            "meeting_scheduled_at": snapshot.meeting_scheduled_at or "",
+            "converted_at": snapshot.converted_at or "",
+            "booked_at": snapshot.booked_at or "",
+            "closed_at": snapshot.closed_at or "",
+            "archived_at": snapshot.archived_at or "",
+            "automation_paused": str(snapshot.automation_paused).lower(),
+            "workstation_client_id": snapshot.workstation_client_id or "",
+            "latest_outbound_status": latest_outbound.delivery_status if latest_outbound else "",
+            "latest_outbound_error_code": latest_outbound.last_delivery_error_code if latest_outbound else "",
+        }
+        if profile == "summary":
+            row["full_name"] = masked_csv_name(snapshot.full_name)
+            row["email"] = redact_diagnostic_text(snapshot.email)
+            row["phone"] = redact_diagnostic_text(snapshot.phone)
+            row["normalized_phone"] = redact_diagnostic_text(snapshot.normalized_phone)
+        else:
+            row.update(
+                {
+                    "latest_inbound_text": snapshot.latest_inbound.text if snapshot.latest_inbound else "",
+                    "latest_outbound_text": latest_outbound.text if latest_outbound else "",
+                    "latest_outbound_error": latest_outbound.last_delivery_error if latest_outbound else "",
+                    "recent_transcript": recent_transcript,
+                }
+            )
+        writer.writerow({field: neutralize_spreadsheet_formula(row.get(field, "")) for field in fieldnames})
     return output.getvalue()
 
 
@@ -2056,6 +2445,16 @@ def read_text_file(path: Path) -> str:
         return ""
 
 
+def read_text_file_with_error(path: Path) -> tuple[str, str | None]:
+    """Read a text artifact and preserve the read failure for diagnostics."""
+    try:
+        return path.read_text(encoding="utf-8", errors="replace"), None
+    except FileNotFoundError:
+        return "", "missing"
+    except OSError as error:
+        return "", error.__class__.__name__
+
+
 def read_json_object_file(path: Path) -> dict[str, Any] | None:
     """Read a JSON object file for operator-facing diagnostics."""
     try:
@@ -2063,6 +2462,67 @@ def read_json_object_file(path: Path) -> dict[str, Any] | None:
     except (OSError, json.JSONDecodeError):
         return None
     return value if isinstance(value, dict) else None
+
+
+def read_json_object_file_with_error(path: Path) -> tuple[dict[str, Any] | None, str | None]:
+    """Read a JSON object artifact and preserve missing/corrupt state."""
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None, "missing"
+    except json.JSONDecodeError:
+        return None, "invalid_json"
+    except OSError as error:
+        return None, error.__class__.__name__
+    if not isinstance(value, dict):
+        return None, "not_json_object"
+    return value, None
+
+
+def mask_diagnostic_phone(match: re.Match[str]) -> str:
+    """Mask a phone-like diagnostic string while keeping a correlation suffix."""
+    digits = re.sub(r"\D", "", match.group(0))
+    suffix = digits[-4:] if len(digits) >= 4 else digits
+    return f"[phone:*{suffix}]"
+
+
+def redact_diagnostic_text(value: object) -> str:
+    """Redact obvious secrets, contact details, local paths, and URL queries."""
+    text = str(value or "")
+    text = URL_QUERY_TEXT_RE.sub(r"\1?[redacted]", text)
+    text = SECRET_TEXT_RE.sub(lambda match: f"{match.group(1) or match.group(2)}[redacted]", text)
+    text = EMAIL_TEXT_RE.sub("[email:redacted]", text)
+    text = PHONE_TEXT_RE.sub(mask_diagnostic_phone, text)
+    text = LOCAL_PATH_TEXT_RE.sub("[local-path:redacted]", text)
+    return text
+
+
+def limit_diagnostic_text(value: object, limit: int) -> str:
+    """Redact and cap diagnostic text before returning or persisting it."""
+    text = redact_diagnostic_text(value)
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}\n[truncated]"
+
+
+def sanitize_runner_delta_payload(value: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Redact and cap one runner delta payload."""
+    if not isinstance(value, dict):
+        return None
+    clean = dict(value)
+    events = clean.get("events")
+    if isinstance(events, list):
+        clean["events"] = events[:RUNNER_STATUS_DELTA_EVENT_LIMIT]
+        if len(events) > RUNNER_STATUS_DELTA_EVENT_LIMIT:
+            clean["events_truncated"] = len(events) - RUNNER_STATUS_DELTA_EVENT_LIMIT
+    text = limit_diagnostic_text(json.dumps(clean, ensure_ascii=True, default=str), RUNNER_STATUS_DELTA_LIMIT)
+    try:
+        decoded = json.loads(text.removesuffix("\n[truncated]"))
+    except json.JSONDecodeError:
+        return {"summary": text}
+    if text.endswith("\n[truncated]"):
+        decoded["_truncated"] = True
+    return decoded if isinstance(decoded, dict) else {"summary": text}
 
 
 def read_text_tail(path: Path, max_lines: int) -> str:
@@ -2097,6 +2557,19 @@ def process_is_visible(pid: int | None) -> bool:
     except OSError:
         return False
     return True
+
+
+def classify_runner_lock(lock_dir: Path, pid: int | None, lock_age_seconds: int | None) -> tuple[str, bool, list[str]]:
+    """Return lock_state, running, and warnings for the local runner lock."""
+    if not lock_dir.exists():
+        return "missing", False, []
+    if pid is None:
+        return "missing_pid", False, ["runner lock exists without a readable pid"]
+    if process_is_visible(pid):
+        if lock_age_seconds is not None and lock_age_seconds >= 21600:
+            return "stuck", True, ["runner lock pid is live but older than six hours"]
+        return "healthy", True, []
+    return "stale", False, ["runner lock pid is not visible on this host"]
 
 
 def build_runner_log_item(path: Path) -> ContadoresRunnerLogItem:
@@ -2147,28 +2620,55 @@ def build_followup_runner_status(
             lock_age_seconds = max(0, int(now_utc().timestamp() - lock_dir.stat().st_mtime))
         except OSError:
             lock_age_seconds = None
-    running = lock_dir.exists() and (
-        process_is_visible(pid) or lock_age_seconds is None or lock_age_seconds < 21600
-    )
+    lock_state, running, warnings = classify_runner_lock(lock_dir, pid, lock_age_seconds)
 
     logs = list_followup_runner_logs(limit=log_limit)
     latest_log_path = Path(logs[0].path) if logs else None
+    latest_summary, latest_summary_error = read_text_file_with_error(latest_summary_path)
+    history_markdown, history_error = read_text_file_with_error(history_path)
+    delta, delta_error = read_json_object_file_with_error(delta_path)
+    launchd_out_tail, launchd_out_error = read_text_file_with_error(launchd_out_path)
+    launchd_err_tail, launchd_err_error = read_text_file_with_error(launchd_err_path)
+    artifact_errors = {
+        key: error
+        for key, error in {
+            "latest_summary": latest_summary_error,
+            "history": history_error,
+            "delta": delta_error,
+            "launchd_out": launchd_out_error,
+            "launchd_err": launchd_err_error,
+        }.items()
+        if error
+    }
+    if latest_log_path is None:
+        artifact_errors["latest_log"] = "missing"
+    state = "healthy" if running and not artifact_errors and not warnings else "degraded" if running or artifact_errors else "idle"
 
     return ContadoresRunnerStatusResponse(
         generated_at=format_timestamp_seconds(now_utc()) or "",
+        state=state,
+        warnings=warnings,
+        artifact_errors=artifact_errors,
+        lock_state=lock_state,
         running=running,
         pid=pid,
         started_at=read_text_file(lock_dir / "started_at").strip() or None,
         lock_age_seconds=lock_age_seconds,
-        latest_summary=read_text_file(latest_summary_path),
+        latest_summary=limit_diagnostic_text(latest_summary, RUNNER_STATUS_TEXT_LIMIT),
         latest_summary_updated_at=format_file_mtime(latest_summary_path),
-        history_markdown=read_text_file(history_path),
+        latest_delta_updated_at=format_file_mtime(delta_path),
+        history_markdown=limit_diagnostic_text(history_markdown, RUNNER_STATUS_TEXT_LIMIT),
         history_updated_at=format_file_mtime(history_path),
-        delta=read_json_object_file(delta_path),
+        delta=sanitize_runner_delta_payload(delta),
         latest_log_path=str(latest_log_path) if latest_log_path else None,
-        latest_log_tail=read_text_tail(latest_log_path, log_tail_lines) if latest_log_path else "",
-        launchd_out_tail=read_text_tail(launchd_out_path, log_tail_lines),
-        launchd_err_tail=read_text_tail(launchd_err_path, log_tail_lines),
+        latest_log_updated_at=format_file_mtime(latest_log_path) if latest_log_path else None,
+        latest_log_tail=limit_diagnostic_text(read_text_tail(latest_log_path, log_tail_lines), RUNNER_STATUS_LOG_LIMIT)
+        if latest_log_path
+        else "",
+        launchd_out_tail=limit_diagnostic_text("\n".join(launchd_out_tail.splitlines()[-log_tail_lines:]), RUNNER_STATUS_LOG_LIMIT),
+        launchd_out_updated_at=format_file_mtime(launchd_out_path),
+        launchd_err_tail=limit_diagnostic_text("\n".join(launchd_err_tail.splitlines()[-log_tail_lines:]), RUNNER_STATUS_LOG_LIMIT),
+        launchd_err_updated_at=format_file_mtime(launchd_err_path),
         logs=logs,
     )
 
@@ -2206,13 +2706,29 @@ def append_followup_runner_history(
         handle.write("\n")
 
 
+def prune_followup_runner_remote_artifacts(reports_dir: Path, *, retention_days: int = 30) -> None:
+    """Prune old timestamped remote runner sync artifacts."""
+    cutoff = now_utc().timestamp() - (max(1, retention_days) * 86400)
+    for pattern in ("contadores-crm-followup-delta-remote-*.json", "contadores-crm-followup-remote-*.log"):
+        for path in reports_dir.glob(pattern):
+            try:
+                if path.stat().st_mtime < cutoff:
+                    path.unlink()
+            except OSError:
+                logger.debug("Could not prune runner artifact %s", path)
+
+
 def write_followup_runner_status_sync(command: ContadoresRunnerStatusSyncCommand) -> None:
     """Persist a remote runner status sync under the reports directory."""
     reports_dir = DATA_DIR / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
     received_at = format_timestamp_seconds(now_utc()) or ""
     timestamp = now_utc().strftime("%Y%m%dT%H%M%SZ")
-    summary = command.latest_summary.strip() or f"Runner status: {command.status}"
+    summary = limit_diagnostic_text(command.latest_summary.strip(), RUNNER_STATUS_TEXT_LIMIT) or f"Runner status: {command.status}"
+    runner_delta = sanitize_runner_delta_payload(command.runner_delta)
+    latest_log_tail = limit_diagnostic_text(command.latest_log_tail.strip(), RUNNER_STATUS_LOG_LIMIT)
+    launchd_out_tail = limit_diagnostic_text(command.launchd_out_tail, RUNNER_STATUS_LOG_LIMIT)
+    launchd_err_tail = limit_diagnostic_text(command.launchd_err_tail, RUNNER_STATUS_LOG_LIMIT)
     log_text = "\n".join(
         part
         for part in [
@@ -2221,14 +2737,14 @@ def write_followup_runner_status_sync(command: ContadoresRunnerStatusSyncCommand
             f"generated_at={command.generated_at or '-'}",
             f"received_at={received_at}",
             "",
-            command.latest_log_tail.strip(),
+            latest_log_tail,
         ]
         if part
     )
 
     (reports_dir / "contadores-crm-followup-latest.md").write_text(summary, encoding="utf-8")
-    if command.runner_delta is not None:
-        delta_text = json.dumps(command.runner_delta, ensure_ascii=True, indent=2)
+    if runner_delta is not None:
+        delta_text = json.dumps(runner_delta, ensure_ascii=True, indent=2)
         (reports_dir / "contadores-crm-followup-delta-latest.json").write_text(
             delta_text,
             encoding="utf-8",
@@ -2246,19 +2762,25 @@ def write_followup_runner_status_sync(command: ContadoresRunnerStatusSyncCommand
     )
     (reports_dir / f"contadores-crm-followup-remote-{timestamp}.log").write_text(log_text, encoding="utf-8")
     (reports_dir / "launchd-contadores-crm-followup.out.log").write_text(
-        command.launchd_out_tail,
+        launchd_out_tail,
         encoding="utf-8",
     )
     (reports_dir / "launchd-contadores-crm-followup.err.log").write_text(
-        command.launchd_err_tail,
+        launchd_err_tail,
         encoding="utf-8",
     )
     sync_payload = command.model_dump()
+    sync_payload["latest_summary"] = summary
+    sync_payload["runner_delta"] = runner_delta
+    sync_payload["latest_log_tail"] = latest_log_tail
+    sync_payload["launchd_out_tail"] = launchd_out_tail
+    sync_payload["launchd_err_tail"] = launchd_err_tail
     sync_payload["received_at"] = received_at
     (reports_dir / "contadores-crm-followup-remote-status.json").write_text(
         json.dumps(sync_payload, ensure_ascii=True, indent=2),
         encoding="utf-8",
     )
+    prune_followup_runner_remote_artifacts(reports_dir)
 
 
 def normalize_message_for_dedupe(text: str) -> str:
@@ -2358,6 +2880,53 @@ def resolve_message_media_file(media_path: str | None) -> Path | None:
             continue
         return resolved
     return None
+
+
+def collect_lead_media_files(messages: list[ContadoresMessage]) -> list[Path]:
+    """Resolve deletable media files attached to one lead's messages."""
+    files: list[Path] = []
+    seen: set[Path] = set()
+    for message in messages:
+        path = resolve_message_media_file(message.media_path)
+        if path is None or path in seen:
+            continue
+        seen.add(path)
+        files.append(path)
+    return files
+
+
+def clean_message_media_content_type(value: str | None) -> str:
+    """Normalize one MIME type value for uploaded media decisions."""
+    return (value or "").split(";", 1)[0].strip().lower()
+
+
+def safe_message_media_content_type(filename: str, declared_content_type: str | None) -> str:
+    """Return a safe stored MIME type for operator-uploaded message media."""
+    guessed = clean_message_media_content_type(mimetypes.guess_type(filename)[0])
+    declared = clean_message_media_content_type(declared_content_type)
+    if guessed in DANGEROUS_MESSAGE_MEDIA_TYPES or declared in DANGEROUS_MESSAGE_MEDIA_TYPES:
+        return "application/octet-stream"
+    content_type = guessed or declared
+    if content_type in SAFE_INLINE_MESSAGE_MEDIA_TYPES:
+        return content_type
+    return "application/octet-stream"
+
+
+def message_media_file_response(
+    path: Path,
+    *,
+    filename: str,
+    content_type: str | None,
+) -> FileResponse:
+    """Serve stored message media inline only for explicitly safe preview types."""
+    media_type = safe_message_media_content_type(filename or path.name, content_type)
+    return FileResponse(
+        path,
+        media_type=media_type,
+        filename=filename or path.name,
+        content_disposition_type="inline" if media_type in SAFE_INLINE_MESSAGE_MEDIA_TYPES else "attachment",
+        headers={"X-Content-Type-Options": "nosniff"},
+    )
 
 
 def safe_message_media_filename(filename: str | None) -> str:
@@ -2494,7 +3063,7 @@ def try_reopen_failed_solo_page_workstation_after_inbound(
 
 def classify_message_media_type(content_type: str | None, filename: str) -> str:
     """Map an uploaded file to the WhatsApp media family used by the bot."""
-    media_type = (content_type or mimetypes.guess_type(filename)[0] or "").lower()
+    media_type = safe_message_media_content_type(filename, content_type)
     if media_type.startswith("image/"):
         return "image"
     if media_type.startswith("video/"):
@@ -2504,12 +3073,44 @@ def classify_message_media_type(content_type: str | None, filename: str) -> str:
     return "document"
 
 
-async def save_manual_outbound_media_async(*, lead: ContadoresLead, upload: UploadFile) -> tuple[str, str, str, str | None]:
-    """Persist one operator-uploaded outbound media file under the shared data volume."""
-    contents = await upload.read()
-    if not contents:
-        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+async def read_manual_outbound_media_uploads(
+    uploads: list[UploadFile],
+) -> list[tuple[UploadFile, bytes]]:
+    """Read and validate one manual media upload batch before any writes."""
+    if len(uploads) > CONTADORES_MANUAL_MEDIA_MAX_FILES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Attach at most {CONTADORES_MANUAL_MEDIA_MAX_FILES} files",
+        )
 
+    total_bytes = 0
+    prepared: list[tuple[UploadFile, bytes]] = []
+    for upload in uploads:
+        contents = await upload.read(CONTADORES_MANUAL_MEDIA_MAX_FILE_BYTES + 1)
+        if not contents:
+            raise HTTPException(status_code=400, detail="Uploaded file is empty")
+        if len(contents) > CONTADORES_MANUAL_MEDIA_MAX_FILE_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Each file must be at most {CONTADORES_MANUAL_MEDIA_MAX_FILE_BYTES} bytes",
+            )
+        total_bytes += len(contents)
+        if total_bytes > CONTADORES_MANUAL_MEDIA_MAX_TOTAL_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Attached files must total at most {CONTADORES_MANUAL_MEDIA_MAX_TOTAL_BYTES} bytes",
+            )
+        prepared.append((upload, contents))
+    return prepared
+
+
+async def save_manual_outbound_media_async(
+    *,
+    lead: ContadoresLead,
+    upload: UploadFile,
+    contents: bytes,
+) -> tuple[str, str, str, str | None]:
+    """Persist one operator-uploaded outbound media file under the shared data volume."""
     original_filename = Path(upload.filename or "file").name
     safe_name = safe_message_media_filename(original_filename)
     stored_filename = f"{uuid.uuid4().hex[:8]}-{safe_name}"
@@ -2518,7 +3119,7 @@ async def save_manual_outbound_media_async(*, lead: ContadoresLead, upload: Uplo
     target_path = target_dir / stored_filename
     target_path.write_bytes(contents)
 
-    content_type = upload.content_type or mimetypes.guess_type(safe_name)[0]
+    content_type = safe_message_media_content_type(safe_name, upload.content_type)
     media_type = classify_message_media_type(content_type, safe_name)
     relative_path = str(Path("data") / "contadores" / "outbound_media" / lead.id / stored_filename)
     return relative_path, media_type, original_filename, content_type
@@ -3149,6 +3750,8 @@ async def process_conversation_reply_batch(
         messages = ContadoresMessage.list_by_lead(lead.id)
         funnel = resolve_funnel(lead.funnel_id)
         inferred_timezone = infer_timezone_from_phone(lead.phone, lead.normalized_phone)
+        latest_inbound_for_prompt = latest_inbound_prompt_text(latest_inbound)
+        conversation_for_prompt = conversation_prompt_text(messages)
         if CODEX_AGENT_TOOLS_ENABLED and CODEX_AGENT_TOOLS_CONVERSATION_ENABLED:
             context_md = f"""
 # Lead
@@ -3164,10 +3767,10 @@ async def process_conversation_reply_batch(
 {build_funnel_info_for_bot(funnel)}
 
 # Latest Inbound
-{latest_inbound.text.strip()}
+{latest_inbound_for_prompt}
 
 # Conversation
-{format_conversation_for_bot(messages)}
+{conversation_for_prompt}
 
 # Operating Judgment
 - Use tools to actually act: send text/media, schedule follow-up, start Workstation, update state, or hand off.
@@ -3251,8 +3854,8 @@ async def process_conversation_reply_batch(
             phone=lead.phone,
             inferred_timezone=inferred_timezone,
             current_stage=lead.stage.value,
-            latest_inbound=latest_inbound.text,
-            conversation=format_conversation_for_bot(messages),
+            latest_inbound=latest_inbound_for_prompt,
+            conversation=conversation_for_prompt,
             codex_thread_id=lead.codex_conversation_thread_id,
         )
         if result.codex_thread_id and result.codex_thread_id != lead.codex_conversation_thread_id:
@@ -3596,7 +4199,16 @@ def run_quick_action_for_lead(
             automation_paused=True,
             automation_paused_reason=CONTADORES_LEAD_MANUAL_CONVERTED_REASON,
         )
-        return updated or lead, []
+        updated_lead = updated or lead
+        emit_contadores_lead_lifecycle_event(
+            updated_lead,
+            event_type="converted",
+            lifecycle_stage="converted",
+            actor="operator",
+            summary="Operator marked lead converted.",
+            payload={"action": normalized_action, "converted_at": updated_lead.booked_at},
+        )
+        return updated_lead, []
     elif normalized_action in {"manual-handoff", "pause-ai-reply"}:
         updated = ContadoresLead.update_flow_state(
             lead.id,
@@ -3656,7 +4268,19 @@ def run_quick_action_for_lead(
             closed_at=now_utc(),
             stage_before_closed=resolve_stage_before_closing(lead),
         )
-        return updated or lead, []
+        updated_lead = updated or lead
+        emit_contadores_lead_lifecycle_event(
+            updated_lead,
+            event_type="closed",
+            lifecycle_stage="closed",
+            actor="operator",
+            summary="Operator closed lead.",
+            payload={
+                "previous_stage": lead.stage.value,
+                "stage_before_closed": updated_lead.stage_before_closed.value if updated_lead.stage_before_closed else None,
+            },
+        )
+        return updated_lead, []
     elif normalized_action == "reopen":
         updated = ContadoresLead.update_flow_state(
             lead.id,
@@ -3664,14 +4288,32 @@ def run_quick_action_for_lead(
             clear_closed_at=True,
             clear_stage_before_closed=True,
         )
-        return updated or lead, []
+        updated_lead = updated or lead
+        emit_contadores_lead_lifecycle_event(
+            updated_lead,
+            event_type="reopened",
+            lifecycle_stage=updated_lead.stage.value,
+            actor="operator",
+            summary="Operator reopened lead.",
+            payload={"previous_stage": lead.stage.value, "restored_stage": updated_lead.stage.value},
+        )
+        return updated_lead, []
     elif normalized_action == "archive":
         updated = ContadoresLead.update_flow_state(
             lead.id,
             stage=ContadoresLeadStage.ARCHIVED,
             archived_at=now_utc(),
         )
-        return updated or lead, []
+        updated_lead = updated or lead
+        emit_contadores_lead_lifecycle_event(
+            updated_lead,
+            event_type="archived",
+            lifecycle_stage="archived",
+            actor="operator",
+            summary="Operator archived lead.",
+            payload={"previous_stage": lead.stage.value},
+        )
+        return updated_lead, []
     elif normalized_action == "unarchive":
         updated = ContadoresLead.update_flow_state(
             lead.id,
@@ -3823,6 +4465,7 @@ class ContadoresConfigResponse(BaseModel):
     post_loom_quiet_seconds: int
     strategy_weights: dict[str, dict[str, int]] = Field(default_factory=dict)
     last_sheet_sync_at: str | None = None
+    last_sheet_sync_success_at: str | None = None
     last_sheet_sync_status: str | None = None
     last_sheet_sync_note: str | None = None
     last_alert_at: str | None = None
@@ -4022,19 +4665,27 @@ class ContadoresRunnerStatusResponse(BaseModel):
     """Read-only status for the local CRM follow-up runner artifacts."""
 
     generated_at: str
+    state: str = "unknown"
+    warnings: list[str] = Field(default_factory=list)
+    artifact_errors: dict[str, str] = Field(default_factory=dict)
+    lock_state: str = "unknown"
     running: bool = False
     pid: int | None = None
     started_at: str | None = None
     lock_age_seconds: int | None = None
     latest_summary: str = ""
     latest_summary_updated_at: str | None = None
+    latest_delta_updated_at: str | None = None
     history_markdown: str = ""
     history_updated_at: str | None = None
     delta: dict[str, Any] | None = None
     latest_log_path: str | None = None
+    latest_log_updated_at: str | None = None
     latest_log_tail: str = ""
     launchd_out_tail: str = ""
+    launchd_out_updated_at: str | None = None
     launchd_err_tail: str = ""
+    launchd_err_updated_at: str | None = None
     logs: list[ContadoresRunnerLogItem] = Field(default_factory=list)
 
 
@@ -4098,6 +4749,14 @@ class ImportContadoresLeadsCommand(BaseModel):
 
     funnel_id: str = "contadores"
     rows: list[ImportContadoresLeadRow] = Field(default_factory=list)
+
+
+class MarkContadoresSheetSyncCommand(BaseModel):
+    """Persist scheduled sheet sync health for one funnel."""
+
+    funnel_id: str = "contadores"
+    status: str = Field(min_length=1)
+    note: str | None = None
 
 
 class ImportContadoresLeadsResponse(BaseModel):
@@ -4171,6 +4830,7 @@ class DeleteContadoresLeadResponse(BaseModel):
 
     status: str
     lead_id: str
+    deleted_media_files: int = 0
 
 
 class PendingContadoresDeliveryMessage(BaseModel):
@@ -4205,6 +4865,13 @@ class PendingContadoresDeliveryResponse(BaseModel):
     """Pending delivery payload for bot dispatch."""
 
     messages: list[PendingContadoresDeliveryMessage] = Field(default_factory=list)
+
+
+class ClaimPendingContadoresDeliveryCommand(BaseModel):
+    """Reserve due outbound messages before dispatch."""
+
+    limit: int = Field(default=100, ge=1, le=500)
+    lease_seconds: int = Field(default=300, ge=30, le=3600)
 
 
 class SetContadoresMessageDeliveryCommand(BaseModel):
@@ -4432,10 +5099,10 @@ def resolve_inbound_audio_transcript(command: ContadoresWhatsAppInboundCommand) 
     try:
         return transcribe_audio_media(command.media_path, mime_type=command.media_mime_type)
     except AudioTranscriptionError as error:
-        logger.warning("Could not transcribe inbound audio %s: %s", command.media_path, error)
+        logger.warning("Could not transcribe inbound audio %s: %s", redact_diagnostic_text(command.media_path), error)
         return None
     except Exception:
-        logger.exception("Unexpected inbound audio transcription failure for %s.", command.media_path)
+        logger.exception("Unexpected inbound audio transcription failure for %s.", redact_diagnostic_text(command.media_path))
         return None
 
 
@@ -4552,6 +5219,22 @@ class MarkContadoresAlertedCommand(BaseModel):
     """Command to mark a needs_human alert as already sent."""
 
     sent_at: datetime | None = None
+    recipients: list[str] = Field(default_factory=list)
+    email_thread_id: str | None = None
+    email_message_id: str | None = None
+    email_inbox_id: str | None = None
+    email_inbox_address: str | None = None
+
+
+class MarkContadoresAlertDeliveryCommand(BaseModel):
+    """Command to record one alert email recipient outcome."""
+
+    alert_kind: Literal["lead", "runtime"] = "lead"
+    target_id: str
+    recipient: str
+    success: bool
+    error: str | None = None
+    sent_at: datetime | None = None
     email_thread_id: str | None = None
     email_message_id: str | None = None
     email_inbox_id: str | None = None
@@ -4592,6 +5275,7 @@ class ContadoresCalendlyWebhookCommand(BaseModel):
     token: str = Field(min_length=1)
     event_type: str = Field(min_length=1)
     occurred_at: datetime | None = None
+    scheduled_start_at: datetime | None = None
 
 
 @contadores_router.get("/config", response_model=ContadoresConfigResponse)
@@ -4599,7 +5283,7 @@ async def get_contadores_config(
     funnel_id: str = Query(default="contadores"),
 ) -> ContadoresConfigResponse:
     """Return current Contadores config."""
-    return build_config_response(get_effective_funnel_config(funnel_id))
+    return build_config_response(get_effective_funnel_config(funnel_id), funnel_id=funnel_id)
 
 
 @contadores_router.put("/config", response_model=ContadoresConfigResponse)
@@ -4607,6 +5291,8 @@ async def update_contadores_config(
     command: UpdateContadoresConfigCommand,
 ) -> ContadoresConfigResponse:
     """Update Contadores config."""
+    if command.alert_emails is not None:
+        command.alert_emails = validate_alert_recipients_for_policy(command.alert_emails)
     apply_config_update_to_file_backed_funnel(command)
     config = ContadoresConfig.update(
         enabled=command.enabled,
@@ -4621,7 +5307,21 @@ async def update_contadores_config(
         post_loom_quiet_seconds=command.post_loom_quiet_seconds,
         strategy_weights=command.strategy_weights,
     )
-    return build_config_response(get_effective_contadores_config())
+    return build_config_response(get_effective_contadores_config(), funnel_id="contadores")
+
+
+@contadores_router.post("/sheet-sync-state", response_model=ContadoresConfigResponse)
+async def mark_contadores_sheet_sync_state(
+    command: MarkContadoresSheetSyncCommand,
+) -> ContadoresConfigResponse:
+    """Persist scheduled sheet sync attempt/failure state."""
+    funnel_id = normalize_contadores_funnel_id(command.funnel_id)
+    ContadoresSheetSyncState.mark_sync(
+        funnel_id=funnel_id,
+        status=command.status,
+        note=command.note,
+    )
+    return build_config_response(get_effective_funnel_config(funnel_id), funnel_id=funnel_id)
 
 
 @contadores_router.post("/leads/import", response_model=ImportContadoresLeadsResponse)
@@ -4644,7 +5344,7 @@ async def import_contadores_leads(
         if not normalize_phone(phone):
             skipped += 1
             continue
-        external_lead_id = row.id if funnel_id == "contadores" else f"{funnel_id}:{row.id}"
+        external_lead_id = build_contadores_external_lead_id(funnel_id=funnel_id, source_row_id=row.id)
         existing = ContadoresLead.get_by_external_lead_id(external_lead_id, funnel_id=funnel_id)
         lead = ContadoresLead.upsert(
             funnel_id=funnel_id,
@@ -4663,7 +5363,8 @@ async def import_contadores_leads(
         else:
             updated += 1
 
-    ContadoresConfig.mark_sheet_sync(
+    ContadoresSheetSyncState.mark_sync(
+        funnel_id=funnel_id,
         status="ok",
         note=f"imported={imported} updated={updated} skipped={skipped}",
     )
@@ -4714,6 +5415,7 @@ async def get_followup_snapshot_csv(
     messages_per_lead: int = Query(default=8, ge=1, le=30),
     funnel_id: str | None = Query(default=None),
     include_all_funnels: bool = Query(default=False),
+    profile: Literal["summary", "full"] = Query(default="summary"),
 ) -> Response:
     """Return a flat CSV CRM snapshot for external automation analysis."""
     require_internal_api_token(request)
@@ -4723,10 +5425,11 @@ async def get_followup_snapshot_csv(
         include_all_funnels=include_all_funnels,
     )
     snapshot = build_followup_snapshot_response(leads, messages_per_lead=messages_per_lead)
+    filename = f"contadores-followup-snapshot-{profile}.csv"
     return Response(
-        content=build_followup_snapshot_csv(snapshot.leads),
+        content=build_followup_snapshot_csv(snapshot.leads, profile=profile),
         media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": 'attachment; filename="contadores-followup-snapshot.csv"'},
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
@@ -4942,15 +5645,37 @@ async def list_contadores_leads(
                 detail=f"stage={LEGACY_BOOKED_STAGE} is a legacy alias for converted and cannot be combined with converted=false.",
             )
         converted_filter = True
-    base_leads = ContadoresLead.list_recent(
+    sql_stage_filter = (
+        normalized_stage
+        if normalized_stage not in {None, ContadoresLeadStage.BOOKED, ContadoresLeadStage.CALENDLY_SENT}
+        else None
+    )
+    metric_base_leads = ContadoresLead.list_recent(
         limit=1000,
         funnel_id=funnel_id,
+        stage=sql_stage_filter,
         platform=platform,
+        converted=converted_filter,
+        needs_human=needs_human,
+        archived=archived,
         include_archived=True,
     )
-    tag_options = build_tag_options(base_leads)
+    base_leads = ContadoresLead.list_recent(
+        limit=1000 if any([query, tag, strategy_step, strategy_id]) else limit,
+        funnel_id=funnel_id,
+        stage=sql_stage_filter,
+        platform=platform,
+        converted=converted_filter,
+        needs_human=needs_human,
+        archived=archived,
+        pipeline_stage=normalized_pipeline_stage,
+        queue_state=normalized_queue_state,
+        terminal_state=normalized_terminal_state,
+        attention_state=normalized_attention_state,
+        include_archived=True,
+    )
+    tag_options = build_tag_options(metric_base_leads)
     assignments_by_lead = group_strategy_assignments_by_lead(funnel_id)
-    metric_leads: list[ContadoresLead] = []
     visible_leads: list[ContadoresLead] = []
     query_value = normalize_lead_search_text(query)
     needs_pipeline_filter = (
@@ -4967,6 +5692,19 @@ async def list_contadores_leads(
         or needs_attention_filter
     )
 
+    metric_leads = [
+        lead
+        for lead in metric_base_leads
+        if lead_matches_search_query(lead, query_value)
+        and lead_matches_tag_filter(lead, tag)
+        and lead_matches_strategy_filter(
+            lead,
+            assignments_by_lead=assignments_by_lead,
+            strategy_step=strategy_step,
+            strategy_id=strategy_id,
+        )
+    ]
+
     for lead in base_leads:
         if not lead_matches_search_query(lead, query_value):
             continue
@@ -4980,7 +5718,6 @@ async def list_contadores_leads(
         ):
             continue
 
-        metric_leads.append(lead)
         effective_stage = derive_effective_lead_stage(lead)
         lead_manual_reply_status: str | None = None
         lead_pipeline_stage: str | None = None
@@ -5051,15 +5788,22 @@ async def list_contadores_leads(
         visible_leads.append(lead)
 
     visible_leads = sort_leads_by_last_interaction(visible_leads)[:limit]
+    visible_lead_ids = [lead.id for lead in visible_leads]
+    workstation_clients_by_lead_id = WorkstationClient.get_by_lead_ids(visible_lead_ids)
+    outbound_error_counts_by_lead_id = ContadoresMessage.count_delivery_issues_by_lead_ids(visible_lead_ids)
+    latest_outbound_error_by_lead_id = ContadoresMessage.latest_delivery_issues_by_lead_ids(visible_lead_ids)
     return ContadoresLeadListResponse(
         metrics=build_contadores_metrics(metric_leads),
-        config=build_config_response(config),
+        config=build_config_response(config, funnel_id=funnel_id),
         tag_options=tag_options,
         leads=[
             build_lead_summary(
                 item,
                 config=config,
                 strategy_assignments=assignments_by_lead.get(item.id, []),
+                workstation_client_by_lead_id=workstation_clients_by_lead_id,
+                outbound_error_counts_by_lead_id=outbound_error_counts_by_lead_id,
+                latest_outbound_error_by_lead_id=latest_outbound_error_by_lead_id,
             )
             for item in visible_leads
         ],
@@ -5081,7 +5825,7 @@ async def get_contadores_lead_detail(lead_id: str) -> ContadoresLeadDetailRespon
             config=config,
             strategy_assignments=assignments_by_lead.get(lead.id, []),
         ),
-        config=build_config_response(config),
+        config=build_config_response(config, funnel_id=lead.funnel_id),
         messages=messages,
     )
 
@@ -5094,30 +5838,49 @@ async def get_contadores_media_by_path(media_path_token: str) -> FileResponse:
     if media_file is None or not media_file.is_file():
         raise HTTPException(status_code=404, detail="Contadores media not found")
 
-    media_type = (
-        mimetypes.guess_type(media_file.name)[0]
-        or "application/octet-stream"
-    )
-    return FileResponse(
+    return message_media_file_response(
         media_file,
-        media_type=media_type,
         filename=media_file.name,
-        content_disposition_type="inline",
+        content_type=mimetypes.guess_type(media_file.name)[0],
     )
 
 
 @contadores_router.delete("/leads/{lead_id}", response_model=DeleteContadoresLeadResponse)
 async def delete_contadores_lead(lead_id: str) -> DeleteContadoresLeadResponse:
-    """Delete one Contadores lead together with its messages."""
+    """Delete one ordinary CRM lead and its owned child rows."""
+    media_files: list[Path] = []
     with Session(engine) as session:
         lead = session.get(ContadoresLead, lead_id)
         if lead is None:
             raise HTTPException(status_code=404, detail="Lead not found")
-        for message in session.exec(select(ContadoresMessage).where(ContadoresMessage.lead_id == lead_id)).all():
+        workstation_client = session.exec(select(WorkstationClient).where(WorkstationClient.lead_id == lead_id)).first()
+        if workstation_client is not None:
+            raise HTTPException(status_code=409, detail="Lead has a Workstation client; archive or close it instead.")
+        messages = list(session.exec(select(ContadoresMessage).where(ContadoresMessage.lead_id == lead_id)).all())
+        media_files = collect_lead_media_files(messages)
+        for message in messages:
             session.delete(message)
+        for assignment in session.exec(
+            select(ContadoresStrategyAssignment).where(ContadoresStrategyAssignment.lead_id == lead_id)
+        ).all():
+            session.delete(assignment)
+        for alert in session.exec(select(ContadoresRuntimeAlert).where(ContadoresRuntimeAlert.lead_id == lead_id)).all():
+            session.delete(alert)
+        for task in session.exec(
+            select(ScheduledAgentTask).where(
+                ScheduledAgentTask.target_type == "lead",
+                ScheduledAgentTask.target_id == lead_id,
+            )
+        ).all():
+            session.delete(task)
         session.delete(lead)
         session.commit()
-    return DeleteContadoresLeadResponse(status="deleted", lead_id=lead_id)
+    deleted_media_files = 0
+    for path in media_files:
+        if path.is_file():
+            path.unlink()
+            deleted_media_files += 1
+    return DeleteContadoresLeadResponse(status="deleted", lead_id=lead_id, deleted_media_files=deleted_media_files)
 
 
 @contadores_router.post("/leads/{lead_id}/messages/manual", response_model=ContadoresQuickActionResponse)
@@ -5153,11 +5916,13 @@ async def create_contadores_manual_media_message(
     assert_whatsapp_custom_window_open(lead, sequence_step="manual")
 
     config = get_effective_funnel_config(lead.funnel_id)
+    prepared_uploads = await read_manual_outbound_media_uploads(file)
     queued_rows: list[ContadoresMessage] = []
-    for index, upload in enumerate(file):
+    for index, (upload, contents) in enumerate(prepared_uploads):
         media_path, media_type, media_filename, media_mime_type = await save_manual_outbound_media_async(
             lead=lead,
             upload=upload,
+            contents=contents,
         )
         queued_rows.extend(
             queue_manual_message_for_lead(
@@ -5185,6 +5950,14 @@ async def update_contadores_lead_tags(
     updated = ContadoresLead.set_tags(lead_id, tags=command.tags)
     if updated is None:
         raise HTTPException(status_code=404, detail="Lead not found")
+    emit_contadores_lead_lifecycle_event(
+        updated,
+        event_type="converted",
+        lifecycle_stage="converted",
+        actor="operator",
+        summary="Operator marked lead converted.",
+        payload={"converted_at": updated.booked_at},
+    )
     config = get_effective_funnel_config(updated.funnel_id)
     return build_lead_summary(updated, config=config)
 
@@ -5331,24 +6104,33 @@ async def resume_contadores_automation(lead_id: str) -> ContadoresQuickActionRes
     if lead is None:
         raise HTTPException(status_code=404, detail="Lead not found")
     config = get_effective_funnel_config(lead.funnel_id)
+    if lead.stage == ContadoresLeadStage.CLOSED or lead.closed_at is not None:
+        raise HTTPException(status_code=409, detail="Lead is closed. Reopen it before resuming automation.")
     target_stage = infer_resume_stage_from_timestamps(lead)
     updated = ContadoresLead.update_flow_state(
         lead.id,
         stage=target_stage,
         automation_paused=False,
     )
+    if updated is not None:
+        emit_contadores_lead_lifecycle_event(
+            updated,
+            event_type="resumed",
+            lifecycle_stage=updated.stage.value,
+            actor="operator",
+            summary="Operator resumed lead automation.",
+            payload={"previous_stage": lead.stage.value, "resumed_stage": updated.stage.value},
+        )
     return ContadoresQuickActionResponse(
         lead=build_lead_summary(updated or lead, config=config),
         queued_message_ids=[],
     )
 
 
-@contadores_router.get("/messages/pending-delivery", response_model=PendingContadoresDeliveryResponse)
-async def list_pending_contadores_delivery_messages(
-    limit: int = Query(default=100, ge=1, le=500),
+def build_pending_contadores_delivery_response(
+    rows: list[ContadoresMessage],
 ) -> PendingContadoresDeliveryResponse:
-    """List pending Contadores outbound messages for bot dispatch."""
-    rows = ContadoresMessage.list_pending_delivery(limit=limit)
+    """Build the bot dispatch payload for pending Contadores rows."""
     items: list[PendingContadoresDeliveryMessage] = []
     for row in rows:
         lead = ContadoresLead.get_by_id(row.lead_id)
@@ -5397,6 +6179,94 @@ async def list_pending_contadores_delivery_messages(
     return PendingContadoresDeliveryResponse(messages=items)
 
 
+def claim_pending_contadores_delivery_messages(
+    *,
+    limit: int,
+    lease_seconds: int,
+) -> list[ContadoresMessage]:
+    """Reserve due Contadores outbound rows by moving dispatch_after forward."""
+    due_rows = ContadoresMessage.list_pending_delivery(limit=limit)
+    if not due_rows:
+        return []
+    now = datetime.now(timezone.utc)
+    lease_until = now + timedelta(seconds=lease_seconds)
+    claimed_ids: list[int] = []
+    with Session(engine) as session:
+        for row in due_rows:
+            if row.id is None:
+                continue
+            # ponytail: no schema lease; dispatch_after doubles as a short reservation until plan 020 unlocks schema work.
+            result = session.exec(
+                update(ContadoresMessage)
+                .where(
+                    ContadoresMessage.id == row.id,
+                    ContadoresMessage.from_me.is_(True),
+                    ContadoresMessage.delivery_status == MessageDeliveryStatus.UNDELIVERED,
+                    ContadoresMessage.dispatch_after <= now,
+                )
+                .values(dispatch_after=lease_until)
+            )
+            if result.rowcount:
+                claimed_ids.append(row.id)
+        session.commit()
+        claimed_rows: list[ContadoresMessage] = []
+        for message_id in claimed_ids:
+            claimed = session.get(ContadoresMessage, message_id)
+            if claimed is None:
+                continue
+            session.refresh(claimed)
+            session.expunge(claimed)
+            claimed_rows.append(claimed)
+    return claimed_rows
+
+
+def delivery_status_rank(status: MessageDeliveryStatus | str | None) -> int:
+    """Higher delivery statuses should not be overwritten by late callbacks."""
+    if isinstance(status, MessageDeliveryStatus):
+        normalized = status
+    else:
+        try:
+            normalized = MessageDeliveryStatus(str(status or "").strip().lower())
+        except ValueError:
+            normalized = MessageDeliveryStatus.UNDELIVERED
+    return {
+        MessageDeliveryStatus.UNDELIVERED: 0,
+        MessageDeliveryStatus.FAILED: 1,
+        MessageDeliveryStatus.SENT: 2,
+        MessageDeliveryStatus.DELIVERED: 3,
+    }[normalized]
+
+
+def should_apply_contadores_delivery_status(
+    *,
+    current: MessageDeliveryStatus | str | None,
+    incoming: MessageDeliveryStatus | str | None,
+) -> bool:
+    """Return whether an incoming delivery update is monotonic."""
+    return delivery_status_rank(incoming) >= delivery_status_rank(current)
+
+
+@contadores_router.get("/messages/pending-delivery", response_model=PendingContadoresDeliveryResponse)
+async def list_pending_contadores_delivery_messages(
+    limit: int = Query(default=100, ge=1, le=500),
+) -> PendingContadoresDeliveryResponse:
+    """List pending Contadores outbound messages for bot dispatch."""
+    rows = ContadoresMessage.list_pending_delivery(limit=limit)
+    return build_pending_contadores_delivery_response(rows)
+
+
+@contadores_router.post("/messages/pending-delivery/claim", response_model=PendingContadoresDeliveryResponse)
+async def claim_pending_contadores_delivery(
+    command: ClaimPendingContadoresDeliveryCommand,
+) -> PendingContadoresDeliveryResponse:
+    """Claim pending Contadores outbound messages for one bot worker."""
+    rows = claim_pending_contadores_delivery_messages(
+        limit=command.limit,
+        lease_seconds=command.lease_seconds,
+    )
+    return build_pending_contadores_delivery_response(rows)
+
+
 @contadores_router.put("/messages/{message_id}", response_model=ContadoresMessageResponse)
 async def update_contadores_message_text(
     message_id: int,
@@ -5418,15 +6288,23 @@ async def set_contadores_message_delivery_by_id(
     command: SetContadoresMessageDeliveryByIdCommand,
 ) -> ContadoresMessageResponse:
     """Update one Contadores outbound message status by local message id."""
-    updated = ContadoresMessage.update_delivery_status(
-        message_id=message_id,
-        delivery_status=command.status,
-        external_id=command.external_id,
-        clear_delivery_error=command.status.strip().lower() in {
-            MessageDeliveryStatus.SENT.value,
-            MessageDeliveryStatus.DELIVERED.value,
-        },
-    )
+    current = ContadoresMessage.get_by_id(message_id)
+    if current is None:
+        raise HTTPException(status_code=404, detail="Contadores message not found")
+    if not should_apply_contadores_delivery_status(current=current.delivery_status, incoming=command.status):
+        return build_message_response(current)
+    try:
+        updated = ContadoresMessage.update_delivery_status(
+            message_id=message_id,
+            delivery_status=command.status,
+            external_id=command.external_id,
+            clear_delivery_error=command.status.strip().lower() in {
+                MessageDeliveryStatus.SENT.value,
+                MessageDeliveryStatus.DELIVERED.value,
+            },
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if updated is None:
         raise HTTPException(status_code=404, detail="Contadores message not found")
     return build_message_response(updated)
@@ -5438,6 +6316,14 @@ async def record_contadores_message_delivery_failure(
     command: RecordContadoresMessageFailureCommand,
 ) -> ContadoresMessageResponse:
     """Record one failed WhatsApp send attempt and requeue up to the retry cap."""
+    current = ContadoresMessage.get_by_id(message_id)
+    if current is None:
+        raise HTTPException(status_code=404, detail="Contadores message not found")
+    if not should_apply_contadores_delivery_status(
+        current=current.delivery_status,
+        incoming=MessageDeliveryStatus.FAILED,
+    ):
+        return build_message_response(current)
     delivery_error = format_whatsapp_delivery_error(
         command.error,
         error_code=command.error_code,
@@ -5480,6 +6366,8 @@ async def set_contadores_message_delivery_by_external_id(
     if row.id is None:
         raise HTTPException(status_code=404, detail="Outbound Contadores message not found for external_id")
     if command.status.strip().lower() == MessageDeliveryStatus.FAILED.value:
+        if delivery_status_rank(row.delivery_status) >= delivery_status_rank(MessageDeliveryStatus.DELIVERED):
+            return build_message_response(row)
         delivery_error = format_whatsapp_delivery_error(
             command.error or "whatsapp_provider_status_failed",
             error_code=command.error_code,
@@ -5497,15 +6385,20 @@ async def set_contadores_message_delivery_by_external_id(
         if updated is None:
             raise HTTPException(status_code=404, detail="Outbound Contadores message not found for external_id")
         return build_message_response(updated)
-    updated = ContadoresMessage.update_delivery_status(
-        message_id=row.id,
-        delivery_status=command.status,
-        external_id=command.external_id,
-        clear_delivery_error=command.status.strip().lower() in {
-            MessageDeliveryStatus.SENT.value,
-            MessageDeliveryStatus.DELIVERED.value,
-        },
-    )
+    if not should_apply_contadores_delivery_status(current=row.delivery_status, incoming=command.status):
+        return build_message_response(row)
+    try:
+        updated = ContadoresMessage.update_delivery_status(
+            message_id=row.id,
+            delivery_status=command.status,
+            external_id=command.external_id,
+            clear_delivery_error=command.status.strip().lower() in {
+                MessageDeliveryStatus.SENT.value,
+                MessageDeliveryStatus.DELIVERED.value,
+            },
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if updated is None:
         raise HTTPException(status_code=404, detail="Outbound Contadores message not found for external_id")
     return build_message_response(updated)
@@ -5672,6 +6565,19 @@ async def run_contadores_automation_tick(
     funnel_id: str = Query(default="contadores"),
 ) -> ContadoresAutomationTickResponse:
     """Advance Contadores automation state and queue due outbound messages."""
+    funnel_id = normalize_contadores_funnel_id(funnel_id)
+    lock = get_contadores_automation_tick_lock(funnel_id)
+    if lock.locked():
+        return ContadoresAutomationTickResponse(status="busy")
+    async with lock:
+        return await run_contadores_automation_tick_locked(funnel_id=funnel_id)
+
+
+async def run_contadores_automation_tick_locked(
+    *,
+    funnel_id: str,
+) -> ContadoresAutomationTickResponse:
+    """Run one serialized Contadores automation tick."""
     funnel = resolve_funnel(funnel_id)
     if funnel.kind == "inbox":
         return ContadoresAutomationTickResponse(status="inbox")
@@ -5701,11 +6607,23 @@ async def run_contadores_automation_tick(
     scheduled_agent_tasks_processed = 0
 
     if CODEX_AGENT_TOOLS_ENABLED and CODEX_AGENT_TOOLS_CONVERSATION_ENABLED:
-        for task in ScheduledAgentTask.list_due(now=now, limit=20):
-            if task.target_type != "lead":
-                continue
+        for task in ScheduledAgentTask.claim_due(now=now, limit=20, target_type="lead"):
             lead = ContadoresLead.get_by_id(task.target_id)
-            if lead is None or lead.funnel_id != funnel_id:
+            if lead is None:
+                ScheduledAgentTask.mark_status(
+                    task.id,
+                    status="failed",
+                    error="Lead not found.",
+                    timestamp=now,
+                )
+                continue
+            if lead.funnel_id != funnel_id:
+                ScheduledAgentTask.mark_status(
+                    task.id,
+                    status="pending",
+                    error=f"Skipped by {funnel_id} tick.",
+                    timestamp=now,
+                )
                 continue
             if lead.automation_paused:
                 ScheduledAgentTask.mark_status(
@@ -5715,8 +6633,8 @@ async def run_contadores_automation_tick(
                     timestamp=now,
                 )
                 continue
-            ScheduledAgentTask.mark_status(task.id, status="running", timestamp=now)
             messages = ContadoresMessage.list_by_lead(lead.id)
+            conversation_for_prompt = conversation_prompt_text(messages)
             try:
                 agent_result = await await_if_needed(run_codex_agent(
                     target_type="lead",
@@ -5740,7 +6658,7 @@ async def run_contadores_automation_tick(
 - automation_paused: {lead.automation_paused}
 
 # Conversation
-{format_conversation_for_bot(messages)}
+{conversation_for_prompt}
 """.strip(),
                     tool_specs=codex_agent_tool_specs(),
                     skills=[
@@ -5886,18 +6804,7 @@ async def run_contadores_automation_tick(
             loom_sent += 1
             continue
 
-        opener_sent_at = ensure_utc_datetime(lead.opener_sent_at)
-        if (
-            lead.stage == ContadoresLeadStage.AWAITING_INITIAL_REPLY
-            and lead.first_reply_received_at is None
-            and opener_sent_at is not None
-            and now >= opener_sent_at + OPENER_FOLLOWUP_DELAY
-            and not ContadoresMessage.has_outbound_sequence_step(
-                lead.id,
-                sequence_step=OPENER_FOLLOWUP_SEQUENCE_STEP,
-                created_after=opener_sent_at,
-            )
-        ):
+        if is_opener_followup_due(lead, now=now):
             send_opener_followup(lead=lead)
             continue
 
@@ -6021,6 +6928,7 @@ async def list_pending_contadores_alerts(
 ) -> PendingContadoresAlertsResponse:
     """List leads waiting for needs_human alert emails."""
     config = get_effective_funnel_config(funnel_id)
+    alert_emails = policy_checked_alert_emails(config)
     items: list[PendingContadoresAlertItem] = []
     for lead in ContadoresLead.list_needs_human_without_notification(funnel_id=funnel_id, limit=100):
         if derive_effective_lead_stage(lead) != ContadoresLeadStage.NEEDS_HUMAN:
@@ -6032,6 +6940,16 @@ async def list_pending_contadores_alerts(
             continue
         messages = ContadoresMessage.list_by_lead(lead.id)
         latest_inbound = ContadoresMessage.get_latest_inbound_message(lead.id)
+        due_alert_emails = ContadoresAlertDelivery.list_due_recipients(
+            alert_kind="lead",
+            target_id=lead.id,
+            recipients=alert_emails,
+            now=now_utc(),
+        )
+        if not due_alert_emails:
+            continue
+        if not await claim_contadores_alert(kind="lead", identifier=lead.id):
+            continue
         items.append(
             PendingContadoresAlertItem(
                 lead_id=lead.id,
@@ -6043,10 +6961,22 @@ async def list_pending_contadores_alerts(
                 latest_inbound_text=latest_inbound.text if latest_inbound else None,
                 conversation_transcript=build_alert_conversation_transcript(messages),
                 reason=lead.last_classification_reason,
-                alert_emails=config.alert_emails,
+                alert_emails=due_alert_emails,
             )
         )
     for alert in ContadoresRuntimeAlert.list_pending(funnel_id=funnel_id, limit=100):
+        if alert.id is None:
+            continue
+        due_alert_emails = ContadoresAlertDelivery.list_due_recipients(
+            alert_kind="runtime",
+            target_id=str(alert.id),
+            recipients=alert_emails,
+            now=now_utc(),
+        )
+        if not due_alert_emails:
+            continue
+        if not await claim_contadores_alert(kind="runtime", identifier=alert.id):
+            continue
         if alert.alert_type == UNANSWERED_LEAD_QUESTION_REASON:
             alert_reason = (
                 "NO SE COMO RESPONDER A ESTO. "
@@ -6080,7 +7010,7 @@ async def list_pending_contadores_alerts(
                     ContadoresMessage.list_by_lead(alert.lead_id)
                 ),
                 reason=alert_reason,
-                alert_emails=config.alert_emails,
+                alert_emails=due_alert_emails,
                 alert_kind="runtime",
                 runtime_alert_id=alert.id,
                 funnel_label=alert.funnel_label,
@@ -6097,6 +7027,13 @@ async def mark_contadores_alerted(
     command: MarkContadoresAlertedCommand,
 ) -> ContadoresLeadSummary:
     """Mark that the needs_human notification email was sent."""
+    if command.recipients and not ContadoresAlertDelivery.all_delivered(
+        alert_kind="lead",
+        target_id=lead_id,
+        recipients=command.recipients,
+    ):
+        await release_contadores_alert_claim(kind="lead", identifier=lead_id)
+        raise HTTPException(status_code=409, detail="Alert recipients are not all delivered")
     updated = ContadoresLead.update_flow_state(
         lead_id,
         needs_human_notified_at=command.sent_at or now_utc(),
@@ -6105,6 +7042,7 @@ async def mark_contadores_alerted(
         raise HTTPException(status_code=404, detail="Lead not found")
     config = get_effective_funnel_config(updated.funnel_id)
     ContadoresConfig.mark_alert_sent(sent_at=command.sent_at or now_utc())
+    await release_contadores_alert_claim(kind="lead", identifier=lead_id)
     return build_lead_summary(updated, config=config)
 
 
@@ -6114,6 +7052,13 @@ async def mark_contadores_runtime_alerted(
     command: MarkContadoresAlertedCommand,
 ) -> dict[str, str]:
     """Mark that one runtime fallback alert email was sent."""
+    if command.recipients and not ContadoresAlertDelivery.all_delivered(
+        alert_kind="runtime",
+        target_id=str(alert_id),
+        recipients=command.recipients,
+    ):
+        await release_contadores_alert_claim(kind="runtime", identifier=alert_id)
+        raise HTTPException(status_code=409, detail="Alert recipients are not all delivered")
     updated = ContadoresRuntimeAlert.mark_notified(
         alert_id=alert_id,
         notified_at=command.sent_at or now_utc(),
@@ -6125,6 +7070,29 @@ async def mark_contadores_runtime_alerted(
     if updated is None:
         raise HTTPException(status_code=404, detail="Runtime alert not found")
     ContadoresConfig.mark_alert_sent(sent_at=command.sent_at or now_utc())
+    await release_contadores_alert_claim(kind="runtime", identifier=alert_id)
+    return {"status": "ok"}
+
+
+@contadores_router.post("/alert-deliveries/mark")
+async def mark_contadores_alert_delivery(
+    command: MarkContadoresAlertDeliveryCommand,
+) -> dict[str, str]:
+    """Record one AgentMail alert recipient delivery attempt."""
+    sent_at = command.sent_at or now_utc()
+    ContadoresAlertDelivery.mark_attempt(
+        alert_kind=command.alert_kind,
+        target_id=command.target_id,
+        recipient=command.recipient,
+        sent_at=sent_at,
+        success=command.success,
+        error=command.error or "",
+        retry_after_seconds=CONTADORES_DELIVERY_RETRY_DELAY_SECONDS,
+        email_thread_id=command.email_thread_id,
+        email_message_id=command.email_message_id,
+        email_inbox_id=command.email_inbox_id,
+        email_inbox_address=command.email_inbox_address,
+    )
     return {"status": "ok"}
 
 
@@ -6133,6 +7101,37 @@ async def handle_contadores_runtime_alert_email_reply(
     command: ContadoresAlertEmailReplyCommand,
 ) -> dict[str, Any]:
     """Resolve one unanswered lead question from an operator email reply."""
+    event_key = runtime_alert_reply_event_key(command)
+    return await process_contadores_runtime_alert_email_reply(command=command, event_key=event_key)
+
+
+async def process_contadores_runtime_alert_email_reply(
+    *,
+    command: ContadoresAlertEmailReplyCommand,
+    event_key: str | None,
+) -> dict[str, Any]:
+    """Process one operator email reply after optional idempotency locking."""
+    if event_key:
+        event, created = PlatformEvent.claim_idempotency_key(
+            idempotency_key=event_key,
+            event_type="agentmail.email_reply_processed",
+            lifecycle_stage="runtime_alert",
+            target_type="runtime_alert",
+            source="agentmail",
+            actor=normalize_email(command.from_email),
+            summary="AgentMail reply processing reserved.",
+            payload={"status": "processing", "queued_message_ids": []},
+        )
+        if not created:
+            payload = event.payload_dict()
+            return {
+                "status": "duplicate",
+                "reason": "duplicate_email_reply",
+                "lead_id": payload.get("lead_id"),
+                "runtime_alert_id": payload.get("runtime_alert_id"),
+                "queued_message_ids": payload.get("queued_message_ids", []),
+            }
+
     alert = ContadoresRuntimeAlert.get_unresolved_by_email_thread(
         thread_id=command.thread_id or "",
     )
@@ -6141,9 +7140,14 @@ async def handle_contadores_runtime_alert_email_reply(
     if alert.alert_type != UNANSWERED_LEAD_QUESTION_REASON:
         return {"status": "ignored", "reason": "runtime_alert_not_teachable"}
 
-    message_text = extract_operator_whatsapp_reply(command.plain_text)
+    config = get_effective_funnel_config(alert.funnel_id)
+    unauthorized_reason = reject_unauthorized_runtime_alert_reply(command=command, alert=alert, config=config)
+    if unauthorized_reason is not None:
+        return {"status": "ignored", "reason": unauthorized_reason}
+
+    message_text, reply_rejection_reason = parse_operator_whatsapp_reply(command.plain_text)
     if not message_text:
-        return {"status": "ignored", "reason": "empty_operator_reply"}
+        return {"status": "ignored", "reason": reply_rejection_reason or "empty_operator_reply"}
 
     lead = ContadoresLead.get_by_id(alert.lead_id)
     if lead is None:
@@ -6166,6 +7170,19 @@ async def handle_contadores_runtime_alert_email_reply(
             operator_reply_text=message_text,
             resolved_at=resolved_at,
         )
+        if event_key:
+            PlatformEvent.update_payload_by_idempotency_key(
+                idempotency_key=event_key,
+                target_id=str(alert.id or ""),
+                funnel_id=alert.funnel_id,
+                summary="Duplicate-safe AgentMail reply learned without WhatsApp send.",
+                payload={
+                    "lead_id": lead.id,
+                    "runtime_alert_id": alert.id,
+                    "queued_message_ids": [],
+                    "status": "learned_no_send",
+                },
+            )
         return {
             "status": "learned_no_send",
             "reason": "lead_already_answered",
@@ -6201,11 +7218,25 @@ async def handle_contadores_runtime_alert_email_reply(
         operator_reply_text=message_text,
         resolved_at=resolved_at,
     )
+    queued_message_ids = [row.id for row in queued_rows if row.id is not None]
+    if event_key:
+        PlatformEvent.update_payload_by_idempotency_key(
+            idempotency_key=event_key,
+            target_id=str(alert.id or ""),
+            funnel_id=alert.funnel_id,
+            summary="Duplicate-safe AgentMail reply queued a WhatsApp answer.",
+            payload={
+                "lead_id": lead.id,
+                "runtime_alert_id": alert.id,
+                "queued_message_ids": queued_message_ids,
+                "status": "processed",
+            },
+        )
     return {
         "status": "processed",
         "lead_id": lead.id,
         "runtime_alert_id": alert.id,
-        "queued_message_ids": [row.id for row in queued_rows if row.id is not None],
+        "queued_message_ids": queued_message_ids,
     }
 
 
@@ -6261,14 +7292,37 @@ async def register_contadores_calendly_event(
         raise HTTPException(status_code=404, detail="Lead not found for Calendly token")
     config = get_effective_funnel_config(lead.funnel_id)
     if command.event_type.strip().lower() in {"invitee.created", "booking_created", "scheduled"}:
-        scheduled_at = command.occurred_at or now_utc()
-        updated = ContadoresLead.update_flow_state(
-            lead.id,
-            stage=ContadoresLeadStage.CALENDLY_SENT,
-            meeting_scheduled_at=scheduled_at,
-            automation_paused=True,
-            automation_paused_reason="meeting_scheduled",
-            clear_needs_human_notified_at=True,
-        )
+        scheduled_at = command.scheduled_start_at
+        if scheduled_at is None:
+            raise HTTPException(status_code=400, detail="Calendly scheduled_start_at is required.")
+        if lead.stage == ContadoresLeadStage.CLOSED or lead.closed_at is not None:
+            updated = ContadoresLead.update_flow_state(
+                lead.id,
+                meeting_scheduled_at=scheduled_at,
+            )
+        else:
+            updated = ContadoresLead.update_flow_state(
+                lead.id,
+                stage=ContadoresLeadStage.CALENDLY_SENT,
+                meeting_scheduled_at=scheduled_at,
+                automation_paused=True,
+                automation_paused_reason="meeting_scheduled",
+                clear_needs_human_notified_at=True,
+            )
+        if updated is not None:
+            emit_contadores_lead_lifecycle_event(
+                updated,
+                event_type="calendly_scheduled",
+                lifecycle_stage="calendly_scheduled",
+                actor="provider",
+                summary="Calendly scheduled meeting recorded.",
+                payload={
+                    "event_type": command.event_type,
+                    "scheduled_start_at": scheduled_at,
+                    "lead_stage": updated.stage.value,
+                    "terminal_state": updated.terminal_state,
+                },
+                idempotency_key=f"contadores:calendly:{lead.id}:{scheduled_at.isoformat()}",
+            )
         return build_lead_summary(updated or lead, config=config)
     return build_lead_summary(lead, config=config)

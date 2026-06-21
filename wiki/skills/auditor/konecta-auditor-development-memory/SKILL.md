@@ -5,6 +5,11 @@ description: Canonical persistent memory log for Konecta Auditor. Use as the sin
 
 # Development Memory
 
+> Historical import: this is an archived Konecta Auditor memory log. Paths,
+> validation commands, and deploy notes that mention `konecta-auditor` are not
+> operational Contadores instructions unless a newer Contadores-specific skill
+> explicitly adapts them.
+
 ## 2026-04-23
 
 ### Contadores Uses One Lead Source And Manual Filter Is Needs Answer/Answered (2026-04-24)

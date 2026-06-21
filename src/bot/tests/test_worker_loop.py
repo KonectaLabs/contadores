@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import httpx
@@ -29,6 +30,23 @@ def test_build_sheet_sync_log_summary_omits_lead_ids() -> None:
         "skipped": 3,
         "lead_count": 3,
     }
+
+
+def test_sheet_sync_is_due_uses_backend_attempt_timestamp() -> None:
+    """Restarted bot loops should honor durable sheet-sync cadence."""
+    now = datetime(2026, 6, 21, 12, 0, tzinfo=timezone.utc)
+
+    assert bot_main.sheet_sync_is_due(last_attempt_at=None, poll_seconds=30, now=now) is True
+    assert bot_main.sheet_sync_is_due(
+        last_attempt_at=(now - timedelta(seconds=29)).isoformat(),
+        poll_seconds=30,
+        now=now,
+    ) is False
+    assert bot_main.sheet_sync_is_due(
+        last_attempt_at=(now - timedelta(seconds=30)).isoformat(),
+        poll_seconds=30,
+        now=now,
+    ) is True
 
 
 def test_worker_iteration_dispatches_pending_messages_without_campaign_funnels(monkeypatch) -> None:
@@ -74,7 +92,7 @@ def test_worker_iteration_dispatches_pending_messages_without_campaign_funnels(m
     async def fake_replay_pending(*, backend_client, inbox):
         del backend_client
         del inbox
-        return {"checked": 0, "delivered": 0, "failed": 0, "pending": 0}
+        return {"checked": 0, "delivered": 0, "failed": 0, "pending": 0, "dead_lettered": 0, "pruned": 0}
 
     monkeypatch.setattr(bot_main, "fetch_funnels", fail_if_funnels_are_refetched)
     monkeypatch.setattr(bot_main, "fetch_pending_contadores_outbound", fake_fetch_pending)
@@ -109,7 +127,7 @@ def test_worker_iteration_dispatches_delivery_when_one_funnel_returns_400(monkey
     async def fake_replay_pending(*, backend_client, inbox):
         del backend_client
         del inbox
-        return {"checked": 0, "delivered": 0, "failed": 0, "pending": 0}
+        return {"checked": 0, "delivered": 0, "failed": 0, "pending": 0, "dead_lettered": 0, "pruned": 0}
 
     async def fake_run_automation(client, *, funnel_id: str):
         del client

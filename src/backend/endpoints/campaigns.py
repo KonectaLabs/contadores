@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import os
 import re
 import secrets
+import time
+from collections import deque
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -59,6 +63,13 @@ from backend.ai.codex_agent_tools import stage_meta_publish_plan
 campaigns_router = APIRouter(prefix="/api/campaigns", tags=["campaigns"])
 public_campaigns_router = APIRouter(tags=["campaigns"])
 
+PUBLIC_MUTABLE_CACHE_HEADERS = {"Cache-Control": "no-store"}
+PUBLIC_SUBMISSION_THROTTLE_ENABLED_ENV = "PUBLIC_SUBMISSION_THROTTLE_ENABLED"
+PUBLIC_SUBMISSION_IP_WINDOW_SECONDS_ENV = "PUBLIC_SUBMISSION_IP_WINDOW_SECONDS"
+PUBLIC_SUBMISSION_IP_MAX_ENV = "PUBLIC_SUBMISSION_IP_MAX"
+PUBLIC_SUBMISSION_CAMPAIGN_WINDOW_SECONDS_ENV = "PUBLIC_SUBMISSION_CAMPAIGN_WINDOW_SECONDS"
+PUBLIC_SUBMISSION_CAMPAIGN_MAX_ENV = "PUBLIC_SUBMISSION_CAMPAIGN_MAX"
+PUBLIC_SUBMISSION_THROTTLE_BUCKETS: dict[str, deque[float]] = {}
 PUBLIC_ALLOWED_TRACKING_KEYS = {
     "href",
     "referrer",
@@ -85,6 +96,7 @@ CAMPAIGN_GEO_KEY_RE = re.compile(r"^[A-Za-z0-9_:-]{1,80}$")
 CAMPAIGN_GEO_SEARCH_LIMIT = 12
 DEFAULT_META_EVENT_NAME = "Lead"
 META_PIXEL_ENV_NAMES = ("META_PIXEL_ID", "META_DEFAULT_PIXEL_ID", "META_MARKETING_PIXEL_ID")
+CAMPAIGN_DELIVERY_PRESETS_ENV = "CAMPAIGN_DELIVERY_PRESETS_JSON"
 SUBMISSION_PHONE_MISSING_TRACKING_KEY = "_lead_phone_missing"
 SUBMISSION_INTERNAL_RAW_ROW_KEYS = {
     "id",
@@ -95,6 +107,23 @@ SUBMISSION_INTERNAL_RAW_ROW_KEYS = {
     "full_name",
     "phone_number",
     "email",
+}
+PUBLIC_PRESENTATION_TEXT_LIMITS = {
+    "title": 96,
+    "eyebrow": 48,
+    "subtitle": 180,
+    "trust_cue": 180,
+    "submit_label": 36,
+}
+PUBLIC_PRESENTATION_THEMES = {"default", "light", "contrast"}
+PUBLIC_PRESENTATION_TAG_RE = re.compile(r"<[^>]*>")
+PUBLIC_PRESENTATION_DEFAULT = {
+    "title": "Consulta",
+    "eyebrow": "Consulta",
+    "subtitle": "",
+    "trust_cue": "",
+    "submit_label": "Enviar",
+    "theme": "default",
 }
 
 CAMPAIGN_GEO_FALLBACKS: dict[str, dict[str, list[str]]] = {
@@ -156,7 +185,7 @@ CAMPAIGN_GEO_FALLBACKS: dict[str, dict[str, list[str]]] = {
     },
 }
 
-CAMPAIGN_DELIVERY_PRESETS = {
+DEFAULT_CAMPAIGN_DELIVERY_PRESETS = {
     "alan": {"id": "alan", "label": "Alan", "phone": "393716506381", "kind": "preset"},
     "mathi": {"id": "mathi", "label": "Mathi", "phone": "5491138033159", "kind": "preset"},
     "facu": {"id": "facu", "label": "Facu", "phone": "5491153484587", "kind": "preset"},
@@ -290,6 +319,21 @@ class CampaignDeliveryConfigCommand(BaseModel):
     contacts: list[CampaignDeliveryContactCommand] = Field(default_factory=list, max_length=12)
 
 
+class CampaignDeliveryPresetResponse(BaseModel):
+    """One configured Campaign Delivery preset returned to authenticated CRM users."""
+
+    id: str
+    label: str
+    phone: str
+    kind: str = "preset"
+
+
+class CampaignDeliveryPresetsResponse(BaseModel):
+    """Configured Campaign Delivery presets for the Ads UI."""
+
+    presets: list[CampaignDeliveryPresetResponse]
+
+
 class CampaignMetaOptimizationCommand(BaseModel):
     """Meta ad-set optimization for one owned campaign."""
 
@@ -406,6 +450,23 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _env_bool(name: str, *, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(name: str, *, default: int, minimum: int) -> int:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return max(minimum, int(raw))
+    except ValueError:
+        return default
+
+
 def _jsonable(value: Any) -> Any:
     if isinstance(value, dict):
         return {str(key): _jsonable(item) for key, item in value.items()}
@@ -414,6 +475,47 @@ def _jsonable(value: Any) -> Any:
     if value is None:
         return ""
     return value if isinstance(value, (str, int, float, bool)) else str(value)
+
+
+def _normalize_delivery_preset(raw_preset: Any, fallback_id: str) -> dict[str, str]:
+    if not isinstance(raw_preset, dict):
+        raise ValueError("campaign delivery preset must be an object")
+    raw_id = " ".join(str(raw_preset.get("id") or fallback_id).split()).strip().lower()
+    preset_id = _delivery_contact_key(raw_id, fallback_id)
+    if preset_id == "client":
+        raise ValueError("campaign delivery preset id cannot be client")
+    label = " ".join(str(raw_preset.get("label") or preset_id).split()).strip()
+    phone = " ".join(str(raw_preset.get("phone") or "").split()).strip()
+    if not label:
+        raise ValueError(f"campaign delivery preset {preset_id} needs a label")
+    if not normalize_phone(phone):
+        raise ValueError(f"campaign delivery preset {preset_id} phone is invalid")
+    return {"id": preset_id, "label": label, "phone": phone, "kind": "preset"}
+
+
+def _campaign_delivery_presets() -> dict[str, dict[str, str]]:
+    raw = os.getenv(CAMPAIGN_DELIVERY_PRESETS_ENV, "").strip()
+    if not raw:
+        return {key: dict(value) for key, value in DEFAULT_CAMPAIGN_DELIVERY_PRESETS.items()}
+    try:
+        loaded = json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise ValueError(f"{CAMPAIGN_DELIVERY_PRESETS_ENV} must be valid JSON") from error
+
+    if isinstance(loaded, dict):
+        items = loaded.items()
+    elif isinstance(loaded, list):
+        items = ((str(index), item) for index, item in enumerate(loaded))
+    else:
+        raise ValueError(f"{CAMPAIGN_DELIVERY_PRESETS_ENV} must be a JSON object or array")
+
+    presets: dict[str, dict[str, str]] = {}
+    for fallback_id, raw_preset in items:
+        preset = _normalize_delivery_preset(raw_preset, fallback_id)
+        if preset["id"] in presets:
+            raise ValueError(f"duplicate campaign delivery preset: {preset['id']}")
+        presets[preset["id"]] = preset
+    return presets
 
 
 def _clean_country_code(value: str | None) -> str:
@@ -748,6 +850,9 @@ def _campaign_info_with_geo(command: LeadCaptureCampaignCommand) -> tuple[dict[s
     campaign_info = _jsonable(command.campaign_info if isinstance(command.campaign_info, dict) else {})
     if not isinstance(campaign_info, dict):
         campaign_info = {}
+    campaign_info["public_presentation"] = _normalize_public_presentation(
+        campaign_info.get("public_presentation") if isinstance(campaign_info.get("public_presentation"), dict) else None
+    )
     geo = _build_geo_targeting(command.geo_targeting, command.location)
     if command.geo_targeting is not None:
         campaign_info["location_country"] = geo["country_code"]
@@ -759,6 +864,41 @@ def _campaign_info_with_geo(command: LeadCaptureCampaignCommand) -> tuple[dict[s
         campaign_info["meta_targeting"] = geo["targeting"]
     location_label = geo["label"] or " ".join(str(command.location or "").split()).strip()
     return campaign_info, location_label
+
+
+def _public_presentation_text(value: Any, *, limit: int) -> str:
+    """Return compact lead-facing text without accepting markup behavior."""
+    clean = PUBLIC_PRESENTATION_TAG_RE.sub("", str(value or ""))
+    clean = " ".join(clean.split()).strip()
+    return clean[:limit]
+
+
+def _normalize_public_presentation(raw: Any) -> dict[str, str]:
+    """Normalize safe lead-facing copy for public campaign forms."""
+    if not isinstance(raw, dict):
+        raw = {}
+    presentation = dict(PUBLIC_PRESENTATION_DEFAULT)
+    for key, limit in PUBLIC_PRESENTATION_TEXT_LIMITS.items():
+        text = _public_presentation_text(raw.get(key), limit=limit)
+        if text:
+            presentation[key] = text
+    theme = " ".join(str(raw.get("theme") or "").lower().split()).strip()
+    presentation["theme"] = theme if theme in PUBLIC_PRESENTATION_THEMES else "default"
+    return presentation
+
+
+def _campaign_public_presentation(campaign: LeadCaptureCampaign | dict[str, Any]) -> dict[str, str]:
+    """Return normalized public presentation from a campaign row or payload."""
+    if isinstance(campaign, LeadCaptureCampaign):
+        campaign_info = campaign.campaign_info if isinstance(campaign.campaign_info, dict) else {}
+        raw = campaign_info.get("public_presentation") if isinstance(campaign_info.get("public_presentation"), dict) else None
+    else:
+        if isinstance(campaign.get("public_presentation"), dict):
+            raw = campaign.get("public_presentation")
+            return _normalize_public_presentation(raw)
+        campaign_info = campaign.get("campaign_info") if isinstance(campaign.get("campaign_info"), dict) else {}
+        raw = campaign_info.get("public_presentation") if isinstance(campaign_info.get("public_presentation"), dict) else None
+    return _normalize_public_presentation(raw)
 
 
 def _campaign_client_delivery_contact(client_id: str) -> dict[str, Any] | None:
@@ -796,8 +936,9 @@ def _normalize_delivery_contact(raw_contact: Any, *, client_id: str, index: int)
     raw_kind = " ".join(str(raw.get("kind") or "").split()).strip().lower()
     if raw_id == "client" or raw_kind == "client":
         return _campaign_client_delivery_contact(client_id)
-    if raw_id in CAMPAIGN_DELIVERY_PRESETS:
-        return dict(CAMPAIGN_DELIVERY_PRESETS[raw_id])
+    presets = _campaign_delivery_presets()
+    if raw_id in presets:
+        return dict(presets[raw_id])
 
     clean_phone = " ".join(str(raw.get("phone") or "").split()).strip()
     clean_label = " ".join(str(raw.get("label") or "").split()).strip()
@@ -962,15 +1103,27 @@ def _aggregate_delivery_status(statuses: list[str]) -> str:
     return sorted(clean)[0]
 
 
-def _submission_payload(submission: LeadCaptureSubmission) -> dict[str, Any]:
-    delivery_prefix = f"campaign-submission:{submission.id}"
-    deliveries = ClientLeadDelivery.list_by_source_row_key_prefix(delivery_prefix)
-    if not deliveries and submission.client_lead_delivery_id:
-        primary = ClientLeadDelivery.get_by_id(submission.client_lead_delivery_id)
-        deliveries = [primary] if primary else []
+def _submission_payload(
+    submission: LeadCaptureSubmission,
+    *,
+    deliveries_by_submission_id: dict[str, list[ClientLeadDelivery]] | None = None,
+    source_by_id: dict[str, ClientLeadSource] | None = None,
+) -> dict[str, Any]:
+    if deliveries_by_submission_id is not None:
+        deliveries = deliveries_by_submission_id.get(submission.id, [])
+    else:
+        delivery_prefix = f"campaign-submission:{submission.id}"
+        deliveries = ClientLeadDelivery.list_by_source_row_key_prefix(delivery_prefix)
+        if not deliveries and submission.client_lead_delivery_id:
+            primary = ClientLeadDelivery.get_by_id(submission.client_lead_delivery_id)
+            deliveries = [primary] if primary else []
     delivery_statuses: list[dict[str, Any]] = []
     for delivery in deliveries:
-        source = ClientLeadSource.get_by_id(delivery.source_id)
+        source = (
+            source_by_id.get(delivery.source_id)
+            if source_by_id is not None
+            else ClientLeadSource.get_by_id(delivery.source_id)
+        )
         status = delivery.delivery_status.value if hasattr(delivery.delivery_status, "value") else str(delivery.delivery_status)
         delivery_statuses.append(
             {
@@ -1007,6 +1160,22 @@ def _submission_payload(submission: LeadCaptureSubmission) -> dict[str, Any]:
     }
 
 
+def _submission_payload_context(
+    submissions: list[LeadCaptureSubmission],
+) -> tuple[dict[str, list[ClientLeadDelivery]], dict[str, ClientLeadSource]]:
+    deliveries_by_submission_id = ClientLeadDelivery.list_by_campaign_submission_ids(
+        [submission.id for submission in submissions],
+        delivery_ids=[submission.client_lead_delivery_id for submission in submissions],
+    )
+    source_ids = {
+        delivery.source_id
+        for deliveries in deliveries_by_submission_id.values()
+        for delivery in deliveries
+        if delivery.source_id
+    }
+    return deliveries_by_submission_id, ClientLeadSource.get_by_ids(source_ids)
+
+
 def _public_submission_receipt(
     *,
     campaign: LeadCaptureCampaign,
@@ -1025,11 +1194,18 @@ def _public_submission_receipt(
     if spam:
         receipt["spam"] = True
     if submission is not None:
+        event_id = _public_submission_event_id(submission)
+        receipt["event_id"] = event_id
         receipt["submission"] = {
-            "id": submission.id,
+            "event_id": event_id,
             "created_at": format_timestamp_seconds(submission.created_at),
         }
     return receipt
+
+
+def _public_submission_event_id(submission: LeadCaptureSubmission) -> str:
+    seed = f"lead-capture-public-event:{submission.id}:{submission.created_at.isoformat()}"
+    return f"evt_{hashlib.sha256(seed.encode()).hexdigest()[:32]}"
 
 
 def _campaign_status_needs_public_form(status: str | None) -> bool:
@@ -1046,11 +1222,30 @@ def _campaign_payload(
     *,
     request: Request | None = None,
     include_submissions: bool = False,
+    client_by_id: dict[str, WorkstationClient] | None = None,
+    source_by_id: dict[str, ClientLeadSource] | None = None,
+    delivery_sources_by_prefix: dict[str, list[ClientLeadSource]] | None = None,
+    submission_counts: dict[str, int] | None = None,
 ) -> dict[str, Any]:
-    client = WorkstationClient.get_by_id(campaign.client_id) if campaign.client_id else None
-    source = ClientLeadSource.get_by_id(campaign.client_lead_source_id) if campaign.client_lead_source_id else None
-    delivery_sources = ClientLeadSource.list_by_id_prefix(_campaign_delivery_source_prefix(campaign))
-    counts = LeadCaptureSubmission.count_by_campaign()
+    delivery_prefix = _campaign_delivery_source_prefix(campaign)
+    client = (
+        client_by_id.get(campaign.client_id)
+        if client_by_id is not None
+        else (WorkstationClient.get_by_id(campaign.client_id) if campaign.client_id else None)
+    )
+    source = (
+        source_by_id.get(campaign.client_lead_source_id)
+        if source_by_id is not None
+        else (ClientLeadSource.get_by_id(campaign.client_lead_source_id) if campaign.client_lead_source_id else None)
+    )
+    delivery_sources = (
+        delivery_sources_by_prefix.get(delivery_prefix, [])
+        if delivery_sources_by_prefix is not None
+        else ClientLeadSource.list_by_id_prefix(delivery_prefix)
+    )
+    counts = submission_counts if submission_counts is not None else LeadCaptureSubmission.count_by_campaign()
+    campaign_info = dict(campaign.campaign_info if isinstance(campaign.campaign_info, dict) else {})
+    campaign_info["public_presentation"] = _campaign_public_presentation(campaign)
     payload = {
         "id": campaign.id,
         "client_id": campaign.client_id,
@@ -1064,7 +1259,7 @@ def _campaign_payload(
         "daily_budget_usd": campaign.daily_budget_usd,
         "budget_currency": campaign.budget_currency,
         "location": campaign.location,
-        "campaign_info": campaign.campaign_info,
+        "campaign_info": campaign_info,
         "meta_plan_graph": _campaign_meta_plan_graph(campaign),
         "creative_brief": campaign.creative_brief,
         "form_schema": campaign.form_schema,
@@ -1091,8 +1286,13 @@ def _campaign_payload(
     }
     if include_submissions:
         submissions = LeadCaptureSubmission.list_by_campaign(campaign.id, limit=500)
+        deliveries_by_submission_id, submission_source_by_id = _submission_payload_context(submissions)
         payload["submissions"] = [
-            _submission_payload(item)
+            _submission_payload(
+                item,
+                deliveries_by_submission_id=deliveries_by_submission_id,
+                source_by_id=submission_source_by_id,
+            )
             for item in reversed(submissions)
         ]
     return payload
@@ -1101,10 +1301,9 @@ def _campaign_payload(
 def _public_campaign_payload(campaign: LeadCaptureCampaign, *, request: Request) -> dict[str, Any]:
     meta_pixel_id = _clean_meta_pixel_id(campaign.meta_pixel_id) if campaign.meta_events_enabled else ""
     return {
-        "id": campaign.id,
-        "status": campaign.status,
         "public_slug": campaign.public_slug,
         "public_url": _public_url(request, campaign),
+        "public_presentation": _campaign_public_presentation(campaign),
         "form_schema": campaign.form_schema,
         "thank_you_title": campaign.thank_you_title,
         "thank_you_body": campaign.thank_you_body,
@@ -1506,9 +1705,26 @@ def _normalize_tracking(value: dict[str, Any]) -> dict[str, str]:
         if clean_key not in PUBLIC_ALLOWED_TRACKING_KEYS:
             continue
         clean_value = _field_value_to_text(item)
+        if clean_key in {"href", "referrer"}:
+            clean_value = _sanitize_public_tracking_url(clean_value)
         if clean_value:
             tracking[clean_key] = clean_value[:PUBLIC_MAX_TRACKING_TEXT]
     return tracking
+
+
+def _sanitize_public_tracking_url(value: str) -> str:
+    clean_value = " ".join(str(value or "").split()).strip()
+    if not clean_value:
+        return ""
+    parsed = urlsplit(clean_value)
+    if parsed.scheme:
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            return ""
+        netloc = parsed.hostname
+        if parsed.port:
+            netloc = f"{netloc}:{parsed.port}"
+        return urlunsplit((parsed.scheme, netloc, parsed.path, "", ""))
+    return urlunsplit(("", "", parsed.path, "", ""))
 
 
 def _submission_idempotency_key(campaign: LeadCaptureCampaign, idempotency_key: str | None) -> str:
@@ -1524,6 +1740,58 @@ def _submission_placeholder_phone(campaign: LeadCaptureCampaign, scoped_idempote
     digest = hashlib.sha256(seed).hexdigest()
     digits = "".join(str(int(char, 16) % 10) for char in digest[:18])
     return f"0000{digits}"
+
+
+def _reset_public_submission_throttle() -> None:
+    PUBLIC_SUBMISSION_THROTTLE_BUCKETS.clear()
+
+
+def _public_submission_throttle_settings() -> dict[str, int | bool]:
+    return {
+        "enabled": _env_bool(PUBLIC_SUBMISSION_THROTTLE_ENABLED_ENV, default=True),
+        "ip_window": _env_int(PUBLIC_SUBMISSION_IP_WINDOW_SECONDS_ENV, default=60, minimum=1),
+        "ip_max": _env_int(PUBLIC_SUBMISSION_IP_MAX_ENV, default=5, minimum=0),
+        "campaign_window": _env_int(PUBLIC_SUBMISSION_CAMPAIGN_WINDOW_SECONDS_ENV, default=60, minimum=1),
+        "campaign_max": _env_int(PUBLIC_SUBMISSION_CAMPAIGN_MAX_ENV, default=40, minimum=0),
+    }
+
+
+def _trim_submission_throttle_bucket(key: str, *, now: float, window_seconds: int) -> deque[float]:
+    bucket = PUBLIC_SUBMISSION_THROTTLE_BUCKETS.setdefault(key, deque())
+    cutoff = now - window_seconds
+    while bucket and bucket[0] <= cutoff:
+        bucket.popleft()
+    return bucket
+
+
+def _public_submission_is_throttled(request: Request, campaign: LeadCaptureCampaign) -> bool:
+    settings = _public_submission_throttle_settings()
+    if not settings["enabled"]:
+        return False
+
+    client_host = request.client.host if request.client else "unknown"
+    now = time.monotonic()
+    checks = [
+        (
+            f"public-submission:campaign:{campaign.id}",
+            int(settings["campaign_window"]),
+            int(settings["campaign_max"]),
+        ),
+        (
+            f"public-submission:campaign-ip:{campaign.id}:{client_host}",
+            int(settings["ip_window"]),
+            int(settings["ip_max"]),
+        ),
+    ]
+    buckets = [
+        _trim_submission_throttle_bucket(key, now=now, window_seconds=window_seconds)
+        for key, window_seconds, _limit in checks
+    ]
+    if any(len(bucket) >= limit for bucket, (_key, _window_seconds, limit) in zip(buckets, checks)):
+        return True
+    for bucket in buckets:
+        bucket.append(now)
+    return False
 
 
 def _submission_contact(command: PublicSubmissionCommand, answers: dict[str, Any]) -> tuple[str, str, str | None]:
@@ -1612,6 +1880,25 @@ def _queue_deliveries_for_submission(
     return deliveries
 
 
+def _ensure_submission_side_effects(
+    *,
+    request: Request,
+    campaign: LeadCaptureCampaign,
+    submission: LeadCaptureSubmission,
+) -> tuple[LeadCaptureSubmission, list[ClientLeadDelivery]]:
+    deliveries = _queue_deliveries_for_submission(campaign=campaign, submission=submission)
+    delivery = deliveries[0] if deliveries else None
+    if delivery is not None and not submission.client_lead_delivery_id:
+        submission = LeadCaptureSubmission.update_delivery_and_meta(
+            submission.id,
+            client_lead_delivery_id=delivery.id,
+        ) or submission
+
+    if (submission.meta_event_status or "").strip().lower() in {"", "pending"}:
+        submission = _track_meta_event(request=request, campaign=campaign, submission=submission)
+    return submission, deliveries
+
+
 def _track_meta_event(
     *,
     request: Request,
@@ -1636,7 +1923,7 @@ def _track_meta_event(
     result = send_meta_conversion_event(
         pixel_id=campaign.meta_pixel_id,
         event_name=campaign.meta_event_name,
-        event_id=submission.meta_event_id or submission.id,
+        event_id=submission.meta_event_id or _public_submission_event_id(submission),
         event_source_url=_public_url(request, campaign),
         user_data=user_data,
         custom_data={
@@ -1666,6 +1953,37 @@ def _track_meta_event(
         meta_event_status=result.status,
         meta_event_response=result.model_dump(mode="json"),
     ) or submission
+
+
+def _record_submission_created_event(
+    *,
+    campaign: LeadCaptureCampaign,
+    submission: LeadCaptureSubmission,
+    deliveries: list[ClientLeadDelivery],
+) -> None:
+    delivery = deliveries[0] if deliveries else None
+    PlatformEvent.add(
+        event_type="lead_capture_submission.created",
+        lifecycle_stage="lead_capture",
+        target_type="lead_capture_campaign",
+        target_id=campaign.id,
+        funnel_id=campaign.funnel_id,
+        source="public_campaign_form",
+        actor="visitor",
+        summary=f"New lead captured for {campaign.name}.",
+        payload={
+            "submission_id": submission.id,
+            "client_id": campaign.client_id,
+            "delivery_id": delivery.id if delivery else "",
+            "delivery_ids": [item.id for item in deliveries],
+            "delivery_status": (
+                delivery.delivery_status.value
+                if delivery and hasattr(delivery.delivery_status, "value")
+                else (str(delivery.delivery_status) if delivery else "")
+            ),
+        },
+        idempotency_key=f"lead-capture-submission:{submission.id}",
+    )
 
 
 @campaigns_router.post("/clients/converted")
@@ -1700,6 +2018,18 @@ async def get_campaign_meta_defaults() -> CampaignMetaDefaultsResponse:
         meta_event_name=DEFAULT_META_EVENT_NAME,
         pixel_source=source,
         pixel_label=_meta_pixel_label(pixel_id),
+    )
+
+
+@campaigns_router.get("/delivery/presets", response_model=CampaignDeliveryPresetsResponse)
+async def get_campaign_delivery_presets() -> CampaignDeliveryPresetsResponse:
+    """Return server-configured Campaign Delivery recipient presets."""
+    try:
+        presets = _campaign_delivery_presets()
+    except ValueError as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
+    return CampaignDeliveryPresetsResponse(
+        presets=[CampaignDeliveryPresetResponse(**preset) for preset in presets.values()],
     )
 
 
@@ -1739,9 +2069,25 @@ async def list_campaigns(
 ) -> dict[str, Any]:
     """List owned lead-capture campaigns."""
     rows = LeadCaptureCampaign.list_recent(client_id=client_id, status=status, query=query, limit=limit)
+    client_by_id = WorkstationClient.get_by_ids(row.client_id for row in rows if row.client_id)
+    source_by_id = ClientLeadSource.get_by_ids(row.client_lead_source_id for row in rows if row.client_lead_source_id)
+    delivery_sources_by_prefix = ClientLeadSource.list_by_id_prefixes(
+        _campaign_delivery_source_prefix(row) for row in rows
+    )
+    submission_counts = LeadCaptureSubmission.count_by_campaign(row.id for row in rows)
     return {
         "count": len(rows),
-        "campaigns": [_campaign_payload(row, request=request) for row in rows],
+        "campaigns": [
+            _campaign_payload(
+                row,
+                request=request,
+                client_by_id=client_by_id,
+                source_by_id=source_by_id,
+                delivery_sources_by_prefix=delivery_sources_by_prefix,
+                submission_counts=submission_counts,
+            )
+            for row in rows
+        ],
     }
 
 
@@ -1902,6 +2248,14 @@ async def patch_campaign(
     """Patch one owned lead-capture campaign."""
     current = _get_campaign_or_404(campaign_id)
     updates = command.model_dump(exclude_unset=True)
+    if "campaign_info" in updates:
+        campaign_info = _jsonable(updates.get("campaign_info") if isinstance(updates.get("campaign_info"), dict) else {})
+        if not isinstance(campaign_info, dict):
+            campaign_info = {}
+        campaign_info["public_presentation"] = _normalize_public_presentation(
+            campaign_info.get("public_presentation") if isinstance(campaign_info.get("public_presentation"), dict) else None
+        )
+        updates["campaign_info"] = campaign_info
     delivery_config = updates.pop("delivery_config", None)
     meta_optimization = updates.pop("meta_optimization", None)
     meta_optimize_for_pixel = updates.pop("meta_optimize_for_pixel", None)
@@ -2134,10 +2488,18 @@ async def list_campaign_submissions(
     campaign = _get_campaign_or_404(campaign_id)
     submissions = LeadCaptureSubmission.list_by_campaign(campaign.id, limit=limit)
     submissions = list(reversed(submissions))
+    deliveries_by_submission_id, source_by_id = _submission_payload_context(submissions)
     return {
         "campaign_id": campaign.id,
         "count": len(submissions),
-        "submissions": [_submission_payload(item) for item in submissions],
+        "submissions": [
+            _submission_payload(
+                item,
+                deliveries_by_submission_id=deliveries_by_submission_id,
+                source_by_id=source_by_id,
+            )
+            for item in submissions
+        ],
     }
 
 
@@ -2201,7 +2563,11 @@ async def stage_campaign_meta_plan(request: Request, campaign_id: str) -> dict[s
 async def redirect_public_campaign_form(public_slug: str) -> RedirectResponse:
     """Redirect slashless public campaign URLs to the form root."""
     _get_public_campaign_or_404(public_slug)
-    return RedirectResponse(url=f"/c/{public_slug}/", status_code=307)
+    return RedirectResponse(
+        url=f"/c/{public_slug}/",
+        status_code=307,
+        headers=PUBLIC_MUTABLE_CACHE_HEADERS,
+    )
 
 
 @public_campaigns_router.get("/c/{public_slug}/")
@@ -2209,7 +2575,7 @@ async def serve_public_campaign_form(request: Request, public_slug: str) -> HTML
     """Serve a mobile-first public campaign form."""
     campaign = _get_public_campaign_or_404(public_slug)
     payload = _public_campaign_payload(campaign, request=request)
-    return HTMLResponse(render_public_form_html(payload))
+    return HTMLResponse(render_public_form_html(payload), headers=PUBLIC_MUTABLE_CACHE_HEADERS)
 
 
 @public_campaigns_router.get("/api/public/campaigns/{public_slug}")
@@ -2232,7 +2598,18 @@ async def submit_public_campaign_form(
     scoped_idempotency_key = _submission_idempotency_key(campaign, command.idempotency_key)
     duplicate = LeadCaptureSubmission.get_by_idempotency_key(scoped_idempotency_key)
     if duplicate is not None:
-        return _public_submission_receipt(campaign=campaign, submission=duplicate, duplicate=True)
+        duplicate, deliveries = _ensure_submission_side_effects(
+            request=request,
+            campaign=campaign,
+            submission=duplicate,
+        )
+        _record_submission_created_event(campaign=campaign, submission=duplicate, deliveries=deliveries)
+        return _public_submission_receipt(
+            campaign=campaign,
+            submission=duplicate,
+            duplicate=True,
+            delivery_queued=any(item.delivery_status == ClientLeadDeliveryStatus.PENDING for item in deliveries),
+        )
 
     answers = _normalize_submission_answers(campaign, command)
     tracking = _normalize_tracking(command.tracking)
@@ -2244,9 +2621,23 @@ async def submit_public_campaign_form(
     if not normalized_phone:
         tracking[SUBMISSION_PHONE_MISSING_TRACKING_KEY] = "true"
     else:
+        # ponytail: phone dedupe stays best-effort until plan 020 owns schema/index changes.
         phone_duplicate = LeadCaptureSubmission.get_latest_by_campaign_phone(campaign.id, phone)
         if phone_duplicate is not None:
-            return _public_submission_receipt(campaign=campaign, submission=phone_duplicate, duplicate=True)
+            phone_duplicate, deliveries = _ensure_submission_side_effects(
+                request=request,
+                campaign=campaign,
+                submission=phone_duplicate,
+            )
+            _record_submission_created_event(campaign=campaign, submission=phone_duplicate, deliveries=deliveries)
+            return _public_submission_receipt(
+                campaign=campaign,
+                submission=phone_duplicate,
+                duplicate=True,
+                delivery_queued=any(item.delivery_status == ClientLeadDeliveryStatus.PENDING for item in deliveries),
+            )
+    if _public_submission_is_throttled(request, campaign):
+        return _public_submission_receipt(campaign=campaign)
     try:
         submission = LeadCaptureSubmission.add(
             campaign_id=campaign.id,
@@ -2262,37 +2653,12 @@ async def submit_public_campaign_form(
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
-    deliveries = _queue_deliveries_for_submission(campaign=campaign, submission=submission)
-    delivery = deliveries[0] if deliveries else None
-    if delivery is not None:
-        submission = LeadCaptureSubmission.update_delivery_and_meta(
-            submission.id,
-            client_lead_delivery_id=delivery.id,
-        ) or submission
-    submission = _track_meta_event(request=request, campaign=campaign, submission=submission)
-
-    PlatformEvent.add(
-        event_type="lead_capture_submission.created",
-        lifecycle_stage="lead_capture",
-        target_type="lead_capture_campaign",
-        target_id=campaign.id,
-        funnel_id=campaign.funnel_id,
-        source="public_campaign_form",
-        actor="visitor",
-        summary=f"New lead captured for {campaign.name}.",
-        payload={
-            "submission_id": submission.id,
-            "client_id": campaign.client_id,
-            "delivery_id": delivery.id if delivery else "",
-            "delivery_ids": [item.id for item in deliveries],
-            "delivery_status": (
-                delivery.delivery_status.value
-                if delivery and hasattr(delivery.delivery_status, "value")
-                else (str(delivery.delivery_status) if delivery else "")
-            ),
-        },
-        idempotency_key=f"lead-capture-submission:{submission.id}",
+    submission, deliveries = _ensure_submission_side_effects(
+        request=request,
+        campaign=campaign,
+        submission=submission,
     )
+    _record_submission_created_event(campaign=campaign, submission=submission, deliveries=deliveries)
     return _public_submission_receipt(
         campaign=campaign,
         submission=submission,
@@ -2304,53 +2670,75 @@ def render_public_form_html(campaign: dict[str, Any]) -> str:
     """Render a self-contained public lead form."""
     public_campaign = dict(campaign)
     public_campaign.pop("name", None)
+    presentation = _campaign_public_presentation(public_campaign)
+    title = html.escape(presentation["title"])
+    eyebrow = html.escape(presentation["eyebrow"])
+    subtitle = html.escape(presentation["subtitle"] or presentation["trust_cue"])
+    trust_cue = html.escape(presentation["trust_cue"])
+    submit_label = html.escape(presentation["submit_label"])
+    theme = presentation["theme"]
     payload_json = json.dumps(public_campaign, ensure_ascii=False).replace("</", "<\\/")
     return f"""<!doctype html>
 <html lang="es">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Consulta</title>
+  <title>{title}</title>
   <style>
     :root {{
       color-scheme: light;
       font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: #242423;
-      color: #f3eee6;
+      background: var(--page-bg);
+      color: var(--page-text);
+      --page-bg: #242423;
+      --page-text: #f3eee6;
+      --page-muted: #b7b1a7;
+      --page-subtle: #85827b;
+      --page-line: #5d5a54;
+      --page-input: #d8d3ca;
+      --page-accent: #f3eee6;
+      --page-accent-text: #242423;
+      --page-error: #f0a18d;
     }}
+    body.theme-light {{ --page-bg: #f7f5f0; --page-text: #232321; --page-muted: #59554e; --page-subtle: #756f65; --page-line: #d1cbc0; --page-input: #797268; --page-accent: #232321; --page-accent-text: #f7f5f0; --page-error: #a43420; }}
+    body.theme-contrast {{ --page-bg: #111111; --page-text: #ffffff; --page-muted: #d8d8d8; --page-subtle: #b9b9b9; --page-line: #777777; --page-input: #ffffff; --page-accent: #ffffff; --page-accent-text: #111111; --page-error: #ffb199; }}
     * {{ box-sizing: border-box; }}
-    body {{ margin: 0; min-height: 100vh; background: #242423; }}
+    body {{ margin: 0; min-height: 100vh; background: var(--page-bg); }}
     main {{ min-height: 100dvh; display: grid; place-items: stretch; padding: 0; }}
     .form-shell {{ width: min(100%, 1040px); min-height: 100dvh; display: grid; grid-template-rows: auto auto 1fr; overflow: hidden; margin: 0 auto; border: 0; border-radius: 0; background: transparent; box-shadow: none; }}
     .header {{ display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 28px clamp(24px, 7vw, 82px) 16px; border-bottom: 0; }}
-    .eyebrow {{ margin: 0; font-size: 11px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: #85827b; }}
-    .progress {{ height: 2px; margin: 0 clamp(24px, 7vw, 82px); background: #383735; }}
-    .progress > div {{ height: 100%; width: 0%; background: #f3eee6; transition: width .28s cubic-bezier(.16, 1, .3, 1); }}
+    .brand-copy {{ display: grid; gap: 10px; max-width: 720px; }}
+    .eyebrow {{ margin: 0; font-size: 11px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: var(--page-subtle); }}
+    .title {{ margin: 0; color: var(--page-text); font-size: clamp(29px, 5vw, 54px); line-height: 1.02; font-weight: 650; letter-spacing: 0; }}
+    .subtitle {{ margin: 0; max-width: 54ch; color: var(--page-muted); font-size: 16px; line-height: 1.45; }}
+    .trust-cue {{ margin: 0; color: var(--page-subtle); font-size: 13px; font-weight: 700; }}
+    .progress {{ height: 2px; margin: 0 clamp(24px, 7vw, 82px); background: color-mix(in srgb, var(--page-line) 58%, transparent); }}
+    .progress > div {{ height: 100%; width: 0%; background: var(--page-accent); transition: width .28s cubic-bezier(.16, 1, .3, 1); }}
     form {{ display: grid; align-content: start; min-height: 0; padding: clamp(76px, 12dvh, 128px) clamp(28px, 9vw, 112px) clamp(28px, 7vw, 72px); }}
     .step {{ display: none; min-height: 0; align-content: start; }}
     .step.active {{ display: grid; animation: step-in .32s cubic-bezier(.16, 1, .3, 1); }}
-    label {{ display: block; max-width: 820px; color: #f3eee6; font-size: clamp(32px, 5vw, 52px); font-weight: 500; line-height: 1.12; letter-spacing: 0; margin: 0 0 clamp(34px, 5vw, 56px); }}
-    label::before {{ content: attr(data-number); min-width: 30px; min-height: 30px; display: inline-flex; align-items: center; justify-content: center; margin-right: 16px; transform: translateY(-4px); border-radius: 7px; background: #f3eee6; color: #242423; font-size: 16px; font-weight: 850; line-height: 1; vertical-align: middle; }}
-    input, textarea, select {{ width: 100%; min-height: 68px; border: 0; border-bottom: 2px solid #d8d3ca; border-radius: 0; padding: 12px 0; font: inherit; font-size: clamp(27px, 4vw, 40px); font-weight: 450; color: #f3eee6; caret-color: #f3eee6; background: transparent; }}
+    label {{ display: block; max-width: 820px; color: var(--page-text); font-size: clamp(32px, 5vw, 52px); font-weight: 500; line-height: 1.12; letter-spacing: 0; margin: 0 0 clamp(34px, 5vw, 56px); }}
+    label::before {{ content: attr(data-number); min-width: 30px; min-height: 30px; display: inline-flex; align-items: center; justify-content: center; margin-right: 16px; transform: translateY(-4px); border-radius: 7px; background: var(--page-accent); color: var(--page-accent-text); font-size: 16px; font-weight: 850; line-height: 1; vertical-align: middle; }}
+    input, textarea, select {{ width: 100%; min-height: 68px; border: 0; border-bottom: 2px solid var(--page-input); border-radius: 0; padding: 12px 0; font: inherit; font-size: clamp(27px, 4vw, 40px); font-weight: 450; color: var(--page-text); caret-color: var(--page-text); background: transparent; }}
     textarea {{ min-height: 150px; resize: vertical; line-height: 1.25; }}
-    input::placeholder, textarea::placeholder {{ color: #6f6d68; }}
-    input:focus, textarea:focus, select:focus {{ outline: none; border-color: #f3eee6; }}
+    input::placeholder, textarea::placeholder {{ color: var(--page-subtle); }}
+    input:focus, textarea:focus, select:focus {{ outline: none; border-color: var(--page-accent); }}
     .options {{ display: grid; gap: 11px; max-width: 620px; }}
-    .option {{ min-height: 58px; border: 1px solid #5d5a54; border-radius: 8px; padding: 0 18px; font-size: 18px; background: transparent; color: #f3eee6; cursor: pointer; text-align: left; transition: transform .18s cubic-bezier(.16, 1, .3, 1), border-color .18s ease, background .18s ease; }}
-    .option:hover {{ transform: translateY(-1px); border-color: #f3eee6; background: #2d2c2a; }}
-    .option.selected {{ border-color: #f3eee6; background: #f3eee6; color: #242423; }}
+    .option {{ min-height: 58px; border: 1px solid var(--page-line); border-radius: 8px; padding: 0 18px; font-size: 18px; background: transparent; color: var(--page-text); cursor: pointer; text-align: left; transition: transform .18s cubic-bezier(.16, 1, .3, 1), border-color .18s ease, background .18s ease; }}
+    .option:hover {{ transform: translateY(-1px); border-color: var(--page-accent); background: color-mix(in srgb, var(--page-line) 22%, transparent); }}
+    .option.selected {{ border-color: var(--page-accent); background: var(--page-accent); color: var(--page-accent-text); }}
     .actions {{ display: grid; grid-template-columns: minmax(92px, auto) minmax(180px, 260px) minmax(92px, auto); align-items: center; justify-content: center; gap: 14px; margin-top: clamp(28px, 5dvh, 52px); }}
     button {{ min-height: 58px; border: 0; border-radius: 8px; padding: 0 24px; font: inherit; font-weight: 800; cursor: pointer; transition: transform .18s cubic-bezier(.16, 1, .3, 1), opacity .18s ease; }}
     button:active {{ transform: translateY(1px) scale(.99); }}
-    .back {{ justify-self: end; background: transparent; color: #aaa49b; }}
-    .next, .submit {{ grid-column: 2; justify-self: stretch; display: inline-flex; align-items: center; justify-content: center; gap: 10px; background: #f3eee6; color: #242423; box-shadow: none; }}
+    .back {{ justify-self: end; background: transparent; color: var(--page-muted); }}
+    .next, .submit {{ grid-column: 2; justify-self: stretch; display: inline-flex; align-items: center; justify-content: center; gap: 10px; background: var(--page-accent); color: var(--page-accent-text); box-shadow: none; }}
     .next span, .submit span {{ display: inline-flex; align-items: center; font-size: 1.18em; line-height: 1; transform: translateY(-1px); }}
     .next:disabled, .submit:disabled {{ opacity: .58; cursor: not-allowed; box-shadow: none; }}
-    .error {{ min-height: 22px; color: #f0a18d; font-size: 14px; font-weight: 700; margin-top: 12px; }}
+    .error {{ min-height: 22px; color: var(--page-error); font-size: 14px; font-weight: 700; margin-top: 12px; }}
     .thanks {{ display: none; align-content: center; min-height: 420px; padding: clamp(32px, 8vw, 86px); }}
     .thanks.active {{ display: block; }}
-    .thanks h2 {{ margin: 0 0 12px; color: #f3eee6; font-size: clamp(34px, 7vw, 62px); line-height: 1; letter-spacing: 0; }}
-    .thanks p {{ max-width: 46ch; margin: 0; color: #b7b1a7; font-size: 19px; line-height: 1.45; }}
+    .thanks h2 {{ margin: 0 0 12px; color: var(--page-text); font-size: clamp(34px, 7vw, 62px); line-height: 1; letter-spacing: 0; }}
+    .thanks p {{ max-width: 46ch; margin: 0; color: var(--page-muted); font-size: 19px; line-height: 1.45; }}
     .hidden {{ position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }}
     @keyframes step-in {{ from {{ opacity: 0; transform: translateY(10px); }} to {{ opacity: 1; transform: translateY(0); }} }}
     @media (max-width: 520px) {{
@@ -2364,18 +2752,23 @@ def render_public_form_html(campaign: dict[str, Any]) -> str:
       label {{ margin-bottom: 24px; }}
       label::before {{ min-width: 27px; min-height: 27px; margin-right: 11px; font-size: 14px; transform: translateY(-3px); }}
       input, textarea, select {{ font-size: 24px; }}
-      .actions {{ position: sticky; bottom: 0; grid-template-columns: 58px minmax(0, 1fr) 58px; gap: 10px; margin-top: clamp(30px, 6dvh, 58px); background: linear-gradient(180deg, rgba(36, 36, 35, .68), #242423 38%); padding-top: 14px; }}
+      .actions {{ position: sticky; bottom: 0; grid-template-columns: 58px minmax(0, 1fr) 58px; gap: 10px; margin-top: clamp(30px, 6dvh, 58px); background: linear-gradient(180deg, color-mix(in srgb, var(--page-bg) 68%, transparent), var(--page-bg) 38%); padding-top: 14px; }}
       .next, .submit {{ min-height: 64px; font-size: 18px; }}
       .back {{ width: 58px; min-height: 58px; padding: 0; overflow: hidden; color: transparent; }}
-      .back::before {{ content: "\\2190"; color: #aaa49b; font-size: 27px; line-height: 1; }}
+      .back::before {{ content: "\\2190"; color: var(--page-muted); font-size: 27px; line-height: 1; }}
     }}
   </style>
 </head>
-<body>
+<body class="theme-{theme}">
   <main>
     <section class="form-shell">
       <div class="header">
-        <p class="eyebrow">Consulta</p>
+        <div class="brand-copy">
+          <p class="eyebrow">{eyebrow}</p>
+          <h1 class="title">{title}</h1>
+          {f'<p class="subtitle">{subtitle}</p>' if subtitle else ''}
+          {f'<p class="trust-cue">{trust_cue}</p>' if trust_cue and trust_cue != subtitle else ''}
+        </div>
       </div>
       <div class="progress" aria-hidden="true"><div id="progressBar"></div></div>
       <form id="leadForm" novalidate>
@@ -2385,7 +2778,7 @@ def render_public_form_html(campaign: dict[str, Any]) -> str:
         <div class="actions">
           <button type="button" class="back" id="backBtn">Atras</button>
           <button type="button" class="next" id="nextBtn">Siguiente <span aria-hidden="true">&rarr;</span></button>
-          <button type="submit" class="submit" id="submitBtn">Enviar <span aria-hidden="true">&rarr;</span></button>
+          <button type="submit" class="submit" id="submitBtn">{submit_label} <span aria-hidden="true">&rarr;</span></button>
         </div>
       </form>
       <div class="thanks" id="thanks">
@@ -2430,8 +2823,30 @@ def render_public_form_html(campaign: dict[str, Any]) -> str:
       window.fbq("track", "PageView");
     }}
     function trackMetaLead(payload) {{
-      if (!metaTracking.events_enabled || !window.fbq || payload?.duplicate || !payload?.submission?.id) return;
-      window.fbq("track", metaTracking.event_name || "Lead", {{}}, {{ eventID: String(payload.submission.id) }});
+      if (!metaTracking.events_enabled || !window.fbq || payload?.duplicate || !payload?.event_id) return;
+      window.fbq("track", metaTracking.event_name || "Lead", {{}}, {{ eventID: String(payload.event_id) }});
+    }}
+    function safePublicUrl(value) {{
+      try {{
+        const parsed = new URL(value, window.location.origin);
+        return `${{parsed.origin}}${{parsed.pathname}}`;
+      }} catch {{
+        return "";
+      }}
+    }}
+    function buildTracking() {{
+      const tracking = {{
+        href: safePublicUrl(window.location.href),
+        referrer: document.referrer ? safePublicUrl(document.referrer) : "",
+        fbp: document.cookie.match(/(?:^|; )_fbp=([^;]+)/)?.[1] || "",
+        fbc: document.cookie.match(/(?:^|; )_fbc=([^;]+)/)?.[1] || ""
+      }};
+      const params = new URLSearchParams(window.location.search);
+      ["utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term"].forEach((key) => {{
+        const value = params.get(key);
+        if (value) tracking[key] = value;
+      }});
+      return tracking;
     }}
     function escapeHtml(value) {{
       return String(value ?? "").replace(/[&<>"']/g, (char) => htmlEscapes[char]);
@@ -2495,16 +2910,33 @@ def render_public_form_html(campaign: dict[str, Any]) -> str:
       const value = state.answers[field.id];
       return Array.isArray(value) ? value.join(", ").trim() : String(value || "").trim();
     }}
+    function validEmail(value) {{
+      return /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(String(value || "").trim());
+    }}
+    function validPhone(value) {{
+      return String(value || "").replace(/\\D/g, "").length >= 6;
+    }}
     function saveCurrent() {{
       const field = currentField();
       if (!field) return;
       const direct = document.getElementById(`field-${{field.id}}`);
       if (direct) state.answers[field.id] = direct.value.trim();
     }}
-    function validCurrent() {{
+    function currentValidation() {{
       const field = currentField();
-      if (!field || !field.required) return true;
-      return Boolean(currentValue());
+      if (!field) return {{ ok: true, message: "" }};
+      const value = currentValue();
+      if (field.required && !value) {{
+        const choiceTypes = ["select", "multi_select", "yes_no"];
+        return {{ ok: false, message: choiceTypes.includes(field.type) ? "Elegi una opcion." : "Completa este dato para seguir." }};
+      }}
+      if (!value) return {{ ok: true, message: "" }};
+      if (field.type === "email" && !validEmail(value)) return {{ ok: false, message: "Revisa el email." }};
+      if (field.type === "phone" && !validPhone(value)) return {{ ok: false, message: "Revisa el WhatsApp." }};
+      return {{ ok: true, message: "" }};
+    }}
+    function validCurrent() {{
+      return currentValidation().ok;
     }}
     function showStep() {{
       errorEl.textContent = "";
@@ -2516,7 +2948,8 @@ def render_public_form_html(campaign: dict[str, Any]) -> str:
       progressBar.style.width = `${{fields.length ? ((state.index + 1) / fields.length) * 100 : 100}}%`;
     }}
     function goNext() {{
-      if (!validCurrent()) {{ errorEl.textContent = "Completa este dato para seguir."; return; }}
+      const validation = currentValidation();
+      if (!validation.ok) {{ errorEl.textContent = validation.message; return; }}
       saveCurrent();
       state.index = Math.min(fields.length - 1, state.index + 1);
       showStep();
@@ -2539,7 +2972,8 @@ def render_public_form_html(campaign: dict[str, Any]) -> str:
     }});
     document.getElementById("leadForm").addEventListener("submit", async (event) => {{
       event.preventDefault();
-      if (!validCurrent()) {{ errorEl.textContent = "Completa este dato para enviar."; return; }}
+      const validation = currentValidation();
+      if (!validation.ok) {{ errorEl.textContent = validation.message; return; }}
       saveCurrent();
       submitBtn.disabled = true;
       errorEl.textContent = "";
@@ -2547,12 +2981,7 @@ def render_public_form_html(campaign: dict[str, Any]) -> str:
         answers: state.answers,
         idempotency_key: state.idempotencyKey,
         honeypot: document.getElementById("companyWebsite").value,
-        tracking: {{
-          href: window.location.href,
-          referrer: document.referrer,
-          fbp: document.cookie.match(/(?:^|; )_fbp=([^;]+)/)?.[1] || "",
-          fbc: document.cookie.match(/(?:^|; )_fbc=([^;]+)/)?.[1] || ""
-        }}
+        tracking: buildTracking()
       }};
       try {{
         const response = await fetch(`/api/public/campaigns/${{campaign.public_slug}}/submissions`, {{
