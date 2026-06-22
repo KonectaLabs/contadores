@@ -269,6 +269,13 @@ def test_configured_depends_on_initialized_pywa_client() -> None:
     assert provider.configured is True
 
 
+def test_resolve_repo_root_accepts_flat_container_layout(tmp_path) -> None:
+    app_dir = tmp_path / "app"
+    (app_dir / "media" / "templates").mkdir(parents=True)
+
+    assert providers._resolve_repo_root(app_dir / "providers.py") == app_dir
+
+
 def test_resolve_local_media_path_accepts_data_root(monkeypatch, tmp_path) -> None:
     provider = build_provider()
     data_dir = tmp_path / "data"

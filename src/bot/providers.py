@@ -52,7 +52,18 @@ AGENTMAIL_WEBHOOK_EVENT_TYPES = [
 WHATSAPP_MEDIA_TYPES = ("image", "video", "audio", "document", "sticker")
 EMAIL_LOCAL_DISALLOWED_CHARACTERS = set('<>,;:"[]\\()')
 DEFAULT_WA_INBOUND_MEDIA_MAX_BYTES = 25 * 1024 * 1024
-REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _resolve_repo_root(source_file: Path | None = None) -> Path:
+    """Return the repo root in local checkout and flattened Docker layouts."""
+    current = (source_file or Path(__file__)).resolve()
+    for candidate in (current.parent, *current.parents):
+        if (candidate / "media" / "templates").exists() or (candidate / "src" / "bot").exists():
+            return candidate
+    return Path.cwd().resolve()
+
+
+REPO_ROOT = _resolve_repo_root()
 OUTBOUND_MEDIA_TEMPLATE_ROOT = REPO_ROOT / "media" / "templates"
 
 

@@ -5,6 +5,7 @@ COPY src/bot/pyproject.toml src/bot/uv.lock ./
 RUN uv sync --frozen --no-dev
 
 COPY src/bot/ ./
+COPY media/templates/ ./media/templates/
 
 EXPOSE 8100
 CMD ["uv", "run", "fastapi", "run", "main.py", "--host", "0.0.0.0", "--port", "8100"]
