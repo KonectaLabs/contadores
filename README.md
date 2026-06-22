@@ -1809,9 +1809,9 @@ o `traefik` no quedan corriendo/healthy, o si falla `/health` desde Docker o
 `https://crm.fgoiriz.com/health`. La salida de error imprime `docker compose ps`
 y logs recientes de backend/bot sin imprimir secretos.
 Antes de construir y despues de verificar health, limpia imagenes Docker no
-usadas y cache de build; mantiene la cache de build bajo 3 GiB y exige al menos
-5 GiB libres en `/` antes del build. Esto no borra `data/`, `.env`, `auth.toml`
-ni archivos persistentes de la app.
+usadas y purga la cache de build no usada; ademas exige al menos 5 GiB libres en
+`/` antes del build. Esto no borra `data/`, `.env`, `auth.toml` ni archivos
+persistentes de la app.
 
 El primer provisionamiento del server debe crear `.env` y `auth.toml` propios
 de Contadores/Konecta. No usar archivos temporales ni fallback de CleverApply,

@@ -50,7 +50,7 @@ reject_cross_project_fallbacks() {
 
 prune_docker_disk() {
   docker image prune --all --force >/dev/null
-  docker buildx prune --force --max-used-space 3221225472 --min-free-space 5368709120 >/dev/null
+  docker buildx prune --all --force >/dev/null
 }
 
 require_free_disk_for_build() {

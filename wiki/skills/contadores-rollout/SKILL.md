@@ -169,10 +169,10 @@ provisioning must create Contadores/Konecta-owned `.env` and `auth.toml`; never
 copy them from CleverApply, Konecta Auditor, or another client. Failure output
 may show `docker compose ps` and recent backend/bot logs, but not secret files
 or full environment dumps.
-The deploy script prunes unused Docker images and build cache before each build
-and after a healthy deploy. Build cache is capped at 3 GiB, and deploy refuses to
-build if `/` has less than 5 GiB free after pruning. This guard must not delete
-`data/`, `.env`, `auth.toml`, or app-persistent files.
+The deploy script prunes unused Docker images and unused build cache before each
+build and after a healthy deploy. Deploy refuses to build if `/` has less than 5
+GiB free after pruning. This guard must not delete `data/`, `.env`, `auth.toml`,
+or app-persistent files.
 
 Docker Compose keeps `traefik`, `backend`, and `bot` on
 `restart: unless-stopped`. Backend and bot healthchecks are liveness checks

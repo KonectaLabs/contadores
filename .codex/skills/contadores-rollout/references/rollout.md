@@ -75,10 +75,10 @@ For new funnels, keep their definition in the same persistent config file used
 by the UI. Do not rely on local-only edits that are absent from the server
 volume.
 
-The deploy script prunes unused Docker images and build cache before build and
-after healthy deploy. Build cache is capped at 3 GiB, and the build is refused
-when `/` has less than 5 GiB free after pruning. This must never delete `data/`,
-`.env`, `auth.toml`, or app-persistent files.
+The deploy script prunes unused Docker images and unused build cache before build
+and after healthy deploy. The build is refused when `/` has less than 5 GiB free
+after pruning. This must never delete `data/`, `.env`, `auth.toml`, or
+app-persistent files.
 
 ## SQLite runtime guardrail
 
