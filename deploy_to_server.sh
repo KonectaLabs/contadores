@@ -38,10 +38,12 @@ require_file() {
 }
 
 reject_cross_project_fallbacks() {
-  if grep -E -l "konecta-auditor|/root/projects/(cleverapply|clever-apply|konecta-auditor)|cleverapply-gws|@cleverapply\\.com" \
-    deploy_to_server.sh .env auth.toml >/tmp/contadores-forbidden-config.txt; then
+  local matches
+  matches="$(grep -E -l "konecta-auditor|/root/projects/(cleverapply|clever-apply|konecta-auditor)|cleverapply-gws|@cleverapply\\.com" \
+    .env auth.toml || true)"
+  if [ -n "$matches" ]; then
     echo "Forbidden cross-project credential fallback reference found in:" >&2
-    cat /tmp/contadores-forbidden-config.txt >&2
+    printf '%s\n' "$matches" >&2
     exit 1
   fi
 }
