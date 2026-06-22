@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+import backend.endpoints.campaigns as campaigns_endpoints
 from backend.auth import CSRF_COOKIE_NAME, CSRF_HEADER_NAME, PrimitiveAuthManager, auth_manager
 from backend.main import (
     app,
@@ -105,6 +106,11 @@ def test_browser_session_unsafe_methods_require_origin_and_csrf(monkeypatch, tmp
 def test_public_routes_are_method_and_shape_allowlisted(monkeypatch, tmp_path) -> None:
     """Public-looking prefixes should not bypass auth unless the route shape is allowed."""
     enable_auth(monkeypatch, tmp_path, "[users]\nadmin = \"secret\"\n")
+    monkeypatch.setattr(
+        campaigns_endpoints.LeadCaptureCampaign,
+        "get_by_slug",
+        classmethod(lambda cls, public_slug: None),
+    )
     client = TestClient(app)
 
     public_campaign = client.get("/c/missing/")

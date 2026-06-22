@@ -48,6 +48,19 @@ reject_cross_project_fallbacks() {
   fi
 }
 
+prune_docker_disk() {
+  docker image prune --all --force >/dev/null
+  docker buildx prune --force --max-used-space 3221225472 --min-free-space 5368709120 >/dev/null
+}
+
+require_free_disk_for_build() {
+  local available_kb
+  available_kb="$(df -Pk / | awk 'NR == 2 { print $4 }')"
+  if [ "${available_kb:-0}" -lt 5242880 ]; then
+    fail "server disk has less than 5GB free after Docker prune"
+  fi
+}
+
 service_json() {
   docker compose ps --format json "$1" 2>/dev/null | tail -n 1
 }
@@ -91,6 +104,8 @@ require_clean_worktree
 require_file .env "environment config"
 require_file auth.toml "auth config"
 reject_cross_project_fallbacks
+prune_docker_disk
+require_free_disk_for_build
 docker compose build
 docker compose up -d
 docker compose ps
@@ -99,4 +114,5 @@ wait_for_service backend
 wait_for_service bot
 check_backend_from_docker_network
 check_public_health
+prune_docker_disk
 EOF

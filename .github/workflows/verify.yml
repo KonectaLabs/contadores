@@ -6,6 +6,10 @@ on:
     branches:
       - main
 
+env:
+  CONTADORES_TEST_CLEAR_PROVIDER_KEYS: "true"
+  PYTEST_KEEP_PROVIDER_SECRETS: "false"
+
 jobs:
   backend:
     runs-on: ubuntu-latest
