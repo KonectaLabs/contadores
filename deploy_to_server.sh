@@ -52,15 +52,25 @@ service_json() {
   docker compose ps --format json "$1" 2>/dev/null | tail -n 1
 }
 
-require_service() {
+wait_for_service() {
   local service="$1"
+  local deadline=$((SECONDS + 180))
   local info status health
-  info="$(service_json "$service")"
-  [ -n "$info" ] || fail "missing required service: $service"
-  status="$(printf '%s' "$info" | python -c 'import json,sys; data=json.load(sys.stdin); print((data.get("State") or data.get("Status") or "").lower())' 2>/dev/null || true)"
-  health="$(printf '%s' "$info" | python -c 'import json,sys; print((json.load(sys.stdin).get("Health") or "").lower())' 2>/dev/null || true)"
-  [ "$status" = "running" ] || fail "$service is not running"
-  [ -z "$health" ] || [ "$health" = "healthy" ] || fail "$service health is $health"
+  while true; do
+    info="$(service_json "$service")"
+    if [ -n "$info" ]; then
+      status="$(printf '%s' "$info" | python -c 'import json,sys; data=json.load(sys.stdin); print((data.get("State") or data.get("Status") or "").lower())' 2>/dev/null || true)"
+      health="$(printf '%s' "$info" | python -c 'import json,sys; print((json.load(sys.stdin).get("Health") or "").lower())' 2>/dev/null || true)"
+      if [ "$status" = "running" ] && { [ -z "$health" ] || [ "$health" = "healthy" ]; }; then
+        return
+      fi
+      if [ "$status" = "exited" ] || [ "$status" = "dead" ]; then
+        fail "$service is $status"
+      fi
+    fi
+    [ "$SECONDS" -lt "$deadline" ] || fail "$service did not become healthy before timeout"
+    sleep 2
+  done
 }
 
 check_backend_from_docker_network() {
@@ -84,9 +94,9 @@ reject_cross_project_fallbacks
 docker compose build
 docker compose up -d
 docker compose ps
-require_service traefik
-require_service backend
-require_service bot
+wait_for_service traefik
+wait_for_service backend
+wait_for_service bot
 check_backend_from_docker_network
 check_public_health
 EOF
