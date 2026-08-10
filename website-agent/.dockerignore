@@ -1,9 +1,0 @@
-.git
-.venv
-.env
-.langgraph_api
-.playwright-cli
-*.egg-info
-__pycache__
-.pytest_cache
-data

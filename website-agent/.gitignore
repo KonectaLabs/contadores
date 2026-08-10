@@ -1,8 +1,0 @@
-.env
-.venv/
-.pytest_cache/
-.playwright-cli/
-__pycache__/
-*.pyc
-*.egg-info/
-data/

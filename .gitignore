@@ -37,6 +37,7 @@ yarn-error.log*
 *.tsbuildinfo
 
 data/
+website-agent/
 test-results/
 playwright-report/
 blob-report/
