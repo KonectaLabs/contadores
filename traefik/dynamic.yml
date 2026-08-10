@@ -46,13 +46,13 @@ http:
       tls: {}
       service: bot
     website-agent:
-      rule: "Host(`chatterface.fgoiriz.com`) && Path(`/webhook/wa`)"
+      rule: "Host(`chatterface.fgoiriz.com`) && (Path(`/webhook/wa`) || PathPrefix(`/p/`))"
       priority: 100
       entryPoints:
         - web
       service: website-agent
     website-agent-secure:
-      rule: "Host(`chatterface.fgoiriz.com`) && Path(`/webhook/wa`)"
+      rule: "Host(`chatterface.fgoiriz.com`) && (Path(`/webhook/wa`) || PathPrefix(`/p/`))"
       priority: 100
       entryPoints:
         - websecure
