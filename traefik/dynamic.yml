@@ -45,6 +45,19 @@ http:
         - websecure
       tls: {}
       service: bot
+    website-agent:
+      rule: "Host(`chatterface.fgoiriz.com`) && Path(`/webhook/wa`)"
+      priority: 100
+      entryPoints:
+        - web
+      service: website-agent
+    website-agent-secure:
+      rule: "Host(`chatterface.fgoiriz.com`) && Path(`/webhook/wa`)"
+      priority: 100
+      entryPoints:
+        - websecure
+      tls: {}
+      service: website-agent
   services:
     didactiqo-education:
       loadBalancer:
@@ -62,3 +75,7 @@ http:
       loadBalancer:
         servers:
           - url: "http://bot:8100"
+    website-agent:
+      loadBalancer:
+        servers:
+          - url: "http://website-agent:8000"

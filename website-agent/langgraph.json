@@ -1,0 +1,10 @@
+{
+  "python_version": "3.13",
+  "dependencies": ["."],
+  "graphs": {
+    "website-agent": {
+      "path": "./backend/agent.py:agent",
+      "description": "Build and publish a customer's website through a Spanish WhatsApp conversation."
+    }
+  }
+}

@@ -1,0 +1,73 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      AGENT_SERVER_URL: http://agent-server:8000
+      AGENT_RUNTIME_API_KEY: ${AGENT_RUNTIME_API_KEY:-}
+      RUN_WEBHOOK_TOKEN: ${RUN_WEBHOOK_TOKEN:?Add RUN_WEBHOOK_TOKEN to .env}
+      WA_APP_ID: ${WA_APP_ID:-}
+      WA_WABA_ID: ${WA_WABA_ID:-}
+      WA_PHONE_ID: ${WA_PHONE_ID:-}
+      WA_APP_SECRET: ${WA_APP_SECRET:-}
+      WA_ACCESS_TOKEN: ${WA_ACCESS_TOKEN:-}
+      WA_VERIFY_TOKEN: ${WA_VERIFY_TOKEN:-}
+    depends_on:
+      agent-server:
+        condition: service_healthy
+    networks:
+      default:
+      gateway:
+        aliases:
+          - website-agent
+
+  agent-server:
+    build:
+      context: ../../agent-runtime
+      dockerfile: Dockerfile
+      additional_contexts:
+        agents: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:2024:8000"
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?Add OPENAI_API_KEY to .env}
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/agent_runtime
+      AGENT_RUNTIME_API_KEY: ${AGENT_RUNTIME_API_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/ok')"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: agent_runtime
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - agent-runtime-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d agent_runtime"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  agent-runtime-postgres:
+
+networks:
+  gateway:
+    name: contadores_default
+    external: true
