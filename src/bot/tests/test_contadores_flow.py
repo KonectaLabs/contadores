@@ -1153,13 +1153,98 @@ def test_send_contadores_pending_alerts_includes_direct_lead_link(monkeypatch) -
     assert [item["status"] for item in outcomes] == ["sent"]
     assert marked_leads == ["7bc8899e-f7ed-4c0b-90f4-ce9739b9b4fe"]
     assert len(sent_calls) == 1
+    body = sent_calls[0]["text"]
+    assert body.startswith(
+        "Se freno la automatizacion de Contadores y requiere revision humana.\n\n"
+        "Datos del lead:\n"
+        "- Lead ID: 7bc8899e-f7ed-4c0b-90f4-ce9739b9b4fe\n"
+        "- Lead link: "
+        "https://crm.fgoiriz.com/?section=contadores&contadores_lead=7bc8899e-f7ed-4c0b-90f4-ce9739b9b4fe\n"
+        "- Nombre: Facu\n"
+        "- WhatsApp: +5491153484587\n"
+        "- Email: -\n"
+        "- Stage: needs_human\n\n"
+        "Datos para Facu:\n"
+        "- Motivo: Tiene dudas, pregunta si sirve para consultoras y si hacen página."
+    )
+    assert "\n\nUltimo mensaje inbound:\nOk ya lo vi, pero tengo dudas" in body
+    assert "\n\nConversacion reciente:\n" in body
+    assert "2026-05-06T12:50:00Z - Konecta: Te paso el video" in body
+    assert "2026-05-06T13:04:00Z - Lead: Ok ya lo vi, pero tengo dudas" in body
+
+
+def test_send_contadores_pending_alerts_formats_unanswered_question_reply_instructions(monkeypatch) -> None:
+    """Question alerts should separate context and preserve the exact reply protocol."""
+    sent_calls: list[dict[str, str | None]] = []
+
+    async def fake_fetch_pending_contadores_alerts(client, *, funnel_id="contadores"):
+        del client
+        del funnel_id
+        return [
+            PendingContadoresAlertItem(
+                lead_id="question-lead-1",
+                full_name="Ana",
+                phone="+5491100000000",
+                email="ana@example.com",
+                stage="needs_human",
+                automation_paused_reason="unanswered_lead_question",
+                latest_inbound_text="¿Trabajan con exportadores?",
+                conversation_transcript="Lead: ¿Trabajan con exportadores?",
+                reason="No hay una respuesta aprendida para esta consulta.",
+                alert_emails=["ops@example.com"],
+                alert_kind="runtime",
+                runtime_alert_id=456,
+            )
+        ]
+
+    async def fake_ensure_alert_inbox():
+        return SimpleNamespace(inbox_id="alerts-inbox-1", inbox_address="alerts@example.com")
+
+    async def fake_send_message(**kwargs) -> DeliveryReceipt:
+        sent_calls.append(kwargs)
+        return DeliveryReceipt(external_id="agentmail-question-alert-1")
+
+    async def fake_mark_backend_contadores_runtime_alert_sent(
+        client, *, runtime_alert_id: int, receipt=None, recipients=None
+    ):
+        del client
+        del runtime_alert_id
+        del receipt
+        del recipients
+
+    async def fake_mark_backend_contadores_alert_delivery(client, **kwargs):
+        del client
+        del kwargs
+
+    monkeypatch.setattr(utils, "fetch_pending_contadores_alerts", fake_fetch_pending_contadores_alerts)
+    monkeypatch.setattr(
+        utils,
+        "mark_backend_contadores_runtime_alert_sent",
+        fake_mark_backend_contadores_runtime_alert_sent,
+    )
+    monkeypatch.setattr(utils, "mark_backend_contadores_alert_delivery", fake_mark_backend_contadores_alert_delivery)
+
+    outcomes = asyncio.run(
+        send_contadores_pending_alerts(
+            SimpleNamespace(),
+            email_provider=SimpleNamespace(
+                configured=True,
+                ensure_alert_inbox=fake_ensure_alert_inbox,
+                send_message=fake_send_message,
+            ),
+        )
+    )
+
+    assert [item["status"] for item in outcomes] == ["sent"]
+    body = sent_calls[0]["text"]
+    assert "\n\nContexto:\n- Motivo: No hay una respuesta aprendida para esta consulta." in body
+    assert "\n\nPregunta del lead:\n¿Trabajan con exportadores?" in body
+    assert "\n\nConversacion reciente:\nLead: ¿Trabajan con exportadores?" in body
     assert (
-        "Lead link: "
-        "https://crm.fgoiriz.com/?section=contadores&contadores_lead=7bc8899e-f7ed-4c0b-90f4-ce9739b9b4fe"
-    ) in sent_calls[0]["text"]
-    assert "Conversacion reciente:" in sent_calls[0]["text"]
-    assert "2026-05-06T12:50:00Z - Konecta: Te paso el video" in sent_calls[0]["text"]
-    assert "2026-05-06T13:04:00Z - Lead: Ok ya lo vi, pero tengo dudas" in sent_calls[0]["text"]
+        "\n\nComo responder:\n"
+        "Responde este email empezando con `Respuesta:` y el texto exacto para mandar por WhatsApp.\n"
+        "El sistema va a enviar esa respuesta tal cual y guardarla como aprendizaje para preguntas parecidas."
+    ) in body
 
 
 def test_send_contadores_pending_alerts_handles_provider_rejections(monkeypatch) -> None:
@@ -1381,18 +1466,19 @@ def test_send_contadores_pending_alerts_handles_runtime_fallback_alert(monkeypat
     assert marked_runtime_alerts == [123]
     assert marked_leads == []
     assert sent_calls[0]["subject"] == "[Abogados] codex_fallback +5491153484587"
-    assert "Resumen operativo:" in sent_calls[0]["text"]
-    assert "ChatGPT Codex se desconecto, pero el bot uso el fallback configurado." in sent_calls[0]["text"]
-    assert "Impacto en el lead:" in sent_calls[0]["text"]
-    assert "No se pauso solo por el error de Codex." in sent_calls[0]["text"]
-    assert "El fallback cerro el lead porque detecto rechazo o desinteres." in sent_calls[0]["text"]
-    assert "Accion aplicada: close_lead" in sent_calls[0]["text"]
-    assert "Que hacer ahora:" in sent_calls[0]["text"]
-    assert "Reautenticacion ChatGPT Codex:" in sent_calls[0]["text"]
-    assert "Detalle tecnico:" in sent_calls[0]["text"]
-    assert "Error Codex: Codex failed: timeout" in sent_calls[0]["text"]
-    assert "Link: https://auth.openai.com/codex/device" in sent_calls[0]["text"]
-    assert "codex login --device-auth" in sent_calls[0]["text"]
+    body = sent_calls[0]["text"]
+    assert "\n\nResumen operativo:\n" in body
+    assert "- ChatGPT Codex se desconecto, pero el bot uso el fallback configurado." in body
+    assert "- El fallback cerro el lead porque detecto rechazo o desinteres." in body
+    assert "\n\nImpacto en el lead:\n" in body
+    assert "- No se pauso solo por el error de Codex." in body
+    assert "- Accion aplicada: close_lead" in body
+    assert "\n\nQue hacer ahora:\n- Revisar el lead" in body
+    assert "\n\nReautenticacion ChatGPT Codex:\n" in body
+    assert "- Link: https://auth.openai.com/codex/device" in body
+    assert "- Comando para generar el codigo de 15 minutos: " in body
+    assert "codex login --device-auth" in body
+    assert "\n\nDetalle tecnico:\n- Error Codex: Codex failed: timeout" in body
     assert "Lead link: https://crm.fgoiriz.com/?section=contadores&contadores_lead=runtime-lead-1" in sent_calls[0]["text"]
 
 

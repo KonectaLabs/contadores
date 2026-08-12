@@ -1141,10 +1141,7 @@ async def send_contadores_pending_alerts(
                 first_line = f"{effective_funnel_label}: NO SE COMO RESPONDER A ESTO."
                 subject_prefix = "no se responder"
             else:
-                first_line = (
-                    f"{effective_funnel_label}: Codex fallo en el bot conversacional y se uso fallback "
-                    "sin pausar el lead."
-                )
+                first_line = f"{effective_funnel_label}: fallo Codex; se uso fallback sin pausar el lead."
                 subject_prefix = "codex_fallback"
         elif scheduling_handoff:
             first_line = f"{effective_funnel_label}: lead listo para que Facu agende una llamada."
@@ -1156,17 +1153,20 @@ async def send_contadores_pending_alerts(
         body_parts = [
             first_line,
             "",
-            f"Lead ID: {item.lead_id}",
-            f"Lead link: {build_contadores_lead_review_url(item.lead_id)}",
-            f"Nombre: {item.full_name or '-'}",
-            f"WhatsApp: {item.phone}",
-            f"Email: {item.email or '-'}",
-            f"Stage: {item.stage}",
+            "Datos del lead:",
+            f"- Lead ID: {item.lead_id}",
+            f"- Lead link: {build_contadores_lead_review_url(item.lead_id)}",
+            f"- Nombre: {item.full_name or '-'}",
+            f"- WhatsApp: {item.phone}",
+            f"- Email: {item.email or '-'}",
+            f"- Stage: {item.stage}",
         ]
         if item.automation_paused_reason == "unanswered_lead_question":
             body_parts.extend(
                 [
-                    f"Motivo: {item.reason or '-'}",
+                    "",
+                    "Contexto:",
+                    f"- Motivo: {item.reason or '-'}",
                     "",
                     "Pregunta del lead:",
                     item.latest_inbound_text or "-",
@@ -1174,6 +1174,7 @@ async def send_contadores_pending_alerts(
                     "Conversacion reciente:",
                     item.conversation_transcript or item.latest_inbound_text or "-",
                     "",
+                    "Como responder:",
                     "Responde este email empezando con `Respuesta:` y el texto exacto para mandar por WhatsApp.",
                     "El sistema va a enviar esa respuesta tal cual y guardarla como aprendizaje para preguntas parecidas.",
                 ]
@@ -1195,30 +1196,36 @@ async def send_contadores_pending_alerts(
 
             body_parts.extend(
                 [
+                    "",
                     "Resumen operativo:",
-                    "ChatGPT Codex se desconecto, pero el bot uso el fallback configurado.",
-                    operator_summary,
+                    "- ChatGPT Codex se desconecto, pero el bot uso el fallback configurado.",
+                    f"- {operator_summary}",
                     "",
                     "Impacto en el lead:",
-                    "No se pauso solo por el error de Codex.",
-                    f"Accion aplicada: {fallback_action}",
-                    f"Motivo de la decision: {item.reason or '-'}",
+                    "- No se pauso solo por el error de Codex.",
+                    f"- Accion aplicada: {fallback_action}",
+                    f"- Motivo de la decision: {item.reason or '-'}",
                     "",
                     "Que hacer ahora:",
-                    "1. Revisar el lead solo si la accion aplicada no coincide con el mensaje inbound.",
-                    "2. Reautenticar ChatGPT Codex para volver al runtime primario.",
+                    "- Revisar el lead solo si la accion aplicada no coincide con el mensaje inbound.",
+                    "- Reautenticar ChatGPT Codex para volver al runtime primario.",
                     "",
                     "Reautenticacion ChatGPT Codex:",
-                    f"Link: {CODEX_CHATGPT_REAUTH_URL or '-'}",
-                    "Comando para generar el codigo de 15 minutos:",
-                    CODEX_CHATGPT_REAUTH_COMMAND or "-",
+                    f"- Link: {CODEX_CHATGPT_REAUTH_URL or '-'}",
+                    f"- Comando para generar el codigo de 15 minutos: {CODEX_CHATGPT_REAUTH_COMMAND or '-'}",
                     "",
                     "Detalle tecnico:",
-                    f"Error Codex: {item.codex_error or '-'}",
+                    f"- Error Codex: {item.codex_error or '-'}",
                 ]
             )
         else:
-            body_parts.append(f"Motivo / datos para Facu: {item.reason or '-'}")
+            body_parts.extend(
+                [
+                    "",
+                    "Datos para Facu:",
+                    f"- Motivo: {item.reason or '-'}",
+                ]
+            )
         if item.automation_paused_reason != "unanswered_lead_question":
             body_parts.extend(
                 [
