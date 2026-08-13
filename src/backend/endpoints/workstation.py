@@ -698,36 +698,28 @@ def write_client_files(
     )
 
 
-def build_client_zip(client: WorkstationClient) -> Path:
-    """Refresh files and return a zip archive path for one client."""
-    write_client_files(client)
+def build_client_zip(client: WorkstationClient, public_page: WorkstationPublicPage) -> Path:
+    """Return a ZIP with the current public website files."""
     folder = client_folder(client)
-    zip_path = folder / f"{client.folder_name}.zip"
+    zip_path = folder / f"{client.folder_name}-{public_page.current_version}-website.zip"
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        for path, archive_name in workstation_zip_manifest(client):
+        for path, archive_name in workstation_zip_manifest(public_page):
             archive.write(path, archive_name)
     return zip_path
 
 
-def workstation_zip_manifest(client: WorkstationClient) -> list[tuple[Path, Path]]:
-    """Return the small set of client-safe files exported in the handoff ZIP."""
-    folder = client_folder(client)
+def workstation_zip_manifest(public_page: WorkstationPublicPage) -> list[tuple[Path, Path]]:
+    """Return the static files from the current public website version."""
+    current_page = resolve_public_page_version_dir(public_page)
     allowed: list[tuple[Path, Path]] = []
-    notes = folder / "notes.txt"
-    if notes.is_file():
-        allowed.append((notes, Path("notes.txt")))
-    media_root = folder / "media"
-    if media_root.is_dir():
-        allowed.extend((path, path.relative_to(folder)) for path in sorted(media_root.rglob("*")) if path.is_file())
-    current_page = latest_landing_page_version_dir(client)
-    if current_page is not None:
-        for name in ("index.html", "styles.css", "script.js"):
-            path = current_page / name
+    for name in ("index.html", "styles.css", "script.js"):
+        allowed.append((resolve_public_page_file(public_page, name), Path(name)))
+    assets = current_page / "assets"
+    if assets.is_dir():
+        for path in sorted(assets.rglob("*")):
             if path.is_file():
-                allowed.append((path, Path("landing-page") / current_page.name / name))
-        assets = current_page / "assets"
-        if assets.is_dir():
-            allowed.extend((path, path.relative_to(folder)) for path in sorted(assets.rglob("*")) if path.is_file())
+                archive_name = path.relative_to(current_page)
+                allowed.append((resolve_public_page_file(public_page, str(archive_name)), archive_name))
     return allowed
 
 
@@ -4965,9 +4957,12 @@ async def get_workstation_professional_photo_file(client_id: str, version: str) 
 
 @workstation_router.get("/clients/{client_id}/zip")
 async def download_workstation_zip(client_id: str) -> FileResponse:
-    """Download a complete client folder zip."""
+    """Download the latest website whose public link was sent to the client."""
     client = get_required_client(client_id)
-    zip_path = build_client_zip(client)
+    public_page = WorkstationPublicPage.get_by_client_id(client.id)
+    if public_page is None or public_page.last_sent_at is None:
+        raise HTTPException(status_code=404, detail="Published website not available for download")
+    zip_path = build_client_zip(client, public_page)
     return FileResponse(
         zip_path,
         media_type="application/zip",

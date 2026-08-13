@@ -1720,9 +1720,10 @@ El ZIP se descarga desde:
 curl -L http://127.0.0.1:8000/api/workstation/clients/{client_id}/zip -o client.zip
 ```
 
-El ZIP usa allowlist: incluye `notes.txt`, media del cliente y la version publica
-actual (`index.html`, `styles.css`, `script.js` y `assets/`). No exporta
-`profile.json`, `conversation.txt`, `.git/`, metadata, prompts ni zips previos.
+El boton de descarga aparece despues de enviar el link publico. El ZIP contiene
+la version web que sirve ese link: `index.html`, `styles.css`, `script.js` y
+`assets/`. No exporta notas, media de Workstation, datos del cliente, metadata,
+prompts, videos de preview ni versiones anteriores.
 
 Codex debe usar esa carpeta como fuente de verdad para trabajos manuales futuros
 como landing pages, imagenes o materiales de entrega. No se llama a GPT Image por

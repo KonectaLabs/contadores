@@ -600,14 +600,16 @@ export function WorkstationView({
                             <span>Copy public URL</span>
                           </button>
                         ) : null}
-                        <a
-                          className="workstation-menu-link"
-                          href={`/api/workstation/clients/${activeClient.id}/zip`}
-                          onClick={() => setActionsOpen(false)}
-                        >
-                          <DownloadSimple size={16} weight="bold" />
-                          <span>Download ZIP</span>
-                        </a>
+                        {publicPage?.last_sent_at ? (
+                          <a
+                            className="workstation-menu-link"
+                            href={`/api/workstation/clients/${activeClient.id}/zip`}
+                            onClick={() => setActionsOpen(false)}
+                          >
+                            <DownloadSimple size={16} weight="bold" />
+                            <span>Download website</span>
+                          </a>
+                        ) : null}
                         <button
                           type="button"
                           className="danger"
