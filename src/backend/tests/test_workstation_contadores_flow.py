@@ -955,7 +955,7 @@ def test_workstation_public_page_backfills_detail_profile_and_agent_context(monk
 
 
 def test_codex_tool_sends_workstation_public_page_link(monkeypatch, tmp_path) -> None:
-    """The public-link tool should enable a clean website ZIP download."""
+    """The Workstation tool should queue the public URL and mark it as sent."""
     configure_contadores_db(monkeypatch, tmp_path)
     monkeypatch.setattr(database_module, "DATA_DIR", tmp_path / "data")
     monkeypatch.setattr(workstation_endpoints, "WORKSTATION_PUBLIC_PAGE_BASE_URL", "https://preview.example.com")
@@ -976,20 +976,9 @@ def test_codex_tool_sends_workstation_public_page_link(monkeypatch, tmp_path) ->
     (version_dir / "index.html").write_text("<html><body>link page</body></html>", encoding="utf-8")
     (version_dir / "styles.css").write_text("", encoding="utf-8")
     (version_dir / "script.js").write_text("", encoding="utf-8")
-    (version_dir / "assets" / "brand.txt").write_text("brand", encoding="utf-8")
-    (version_dir / "metadata.json").write_text("{}", encoding="utf-8")
-    (version_dir / "preview.mp4").write_bytes(b"preview")
-    old_version_dir = workstation_endpoints.landing_page_root(workstation) / "v000"
-    old_version_dir.mkdir()
-    (old_version_dir / "index.html").write_text("old page", encoding="utf-8")
     public_page = workstation_endpoints.ensure_workstation_public_page(workstation, version_dir)
     assert public_page is not None
     assert public_page.last_sent_at is None
-
-    with TestClient(app) as client:
-        unavailable_zip = client.get(f"/api/workstation/clients/{workstation.id}/zip")
-
-    assert unavailable_zip.status_code == 404
 
     result = call_tool(
         run_id="agent-run-public-page-link",
@@ -1009,15 +998,6 @@ def test_codex_tool_sends_workstation_public_page_link(monkeypatch, tmp_path) ->
     updated_public_page = WorkstationPublicPage.get_by_client_id(workstation.id)
     assert updated_public_page is not None
     assert updated_public_page.last_sent_at is not None
-
-    with TestClient(app) as client:
-        zip_response = client.get(f"/api/workstation/clients/{workstation.id}/zip")
-
-    assert zip_response.status_code == 200
-    assert f"{workstation.folder_name}-v001-website.zip" in zip_response.headers["content-disposition"]
-    with zipfile.ZipFile(BytesIO(zip_response.content)) as archive:
-        assert set(archive.namelist()) == {"index.html", "styles.css", "script.js", "assets/brand.txt"}
-        assert archive.read("index.html") == b"<html><body>link page</body></html>"
 
 
 def test_workstation_approval_sends_public_link_before_final_handoff(monkeypatch, tmp_path) -> None:
@@ -2311,8 +2291,8 @@ def test_workstation_clients_can_be_filtered_by_funnel(monkeypatch, tmp_path) ->
     assert [item["funnel_id"] for item in abogados_response.json()["clients"]] == ["abogados"]
 
 
-def test_workstation_notes_and_media_are_persisted(monkeypatch, tmp_path) -> None:
-    """Notes and uploaded media should mirror the client folder."""
+def test_workstation_notes_media_and_zip_are_persisted(monkeypatch, tmp_path) -> None:
+    """Notes, uploaded media, and zip exports should mirror the client folder."""
     configure_contadores_db(monkeypatch, tmp_path)
     data_dir = tmp_path / "data"
     monkeypatch.setattr(database_module, "DATA_DIR", data_dir)
@@ -2344,6 +2324,7 @@ def test_workstation_notes_and_media_are_persisted(monkeypatch, tmp_path) -> Non
             json={"title": "Logo final", "original_filename": "logo-final.png"},
         )
         copy_response = client.get(f"/api/workstation/clients/{client_id}/copy-all")
+        zip_response = client.get(f"/api/workstation/clients/{client_id}/zip")
 
     assert notes_response.status_code == 200
     assert upload_response.status_code == 200
@@ -2360,6 +2341,15 @@ def test_workstation_notes_and_media_are_persisted(monkeypatch, tmp_path) -> Non
     assert (folder / "notes.txt").read_text(encoding="utf-8") == "Notas de reunion\nQuiere landing premium."
     assert "Necesito una web seria" in (folder / "conversation.txt").read_text(encoding="utf-8")
     assert (folder / "media" / upload_response.json()["stored_filename"]).read_bytes() == b"image-bytes"
+
+    assert zip_response.status_code == 200
+    with zipfile.ZipFile(BytesIO(zip_response.content)) as archive:
+        names = set(archive.namelist())
+        assert "notes.txt" in names
+        assert f"media/{upload_response.json()['stored_filename']}" in names
+        assert "profile.json" not in names
+        assert "conversation.txt" not in names
+
 
 def test_workstation_upload_rejects_oversized_media(monkeypatch, tmp_path) -> None:
     """Workstation uploads should be capped before writing files."""
