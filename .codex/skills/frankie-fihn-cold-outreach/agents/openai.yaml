@@ -1,0 +1,4 @@
+interface:
+  display_name: "Frankie Fihn Cold Outreach"
+  short_description: "Aplicar el flujo Cold Outreach."
+  default_prompt: "Usa $frankie-fihn-cold-outreach para resolver este pedido."

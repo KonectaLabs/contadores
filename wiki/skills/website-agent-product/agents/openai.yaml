@@ -1,0 +1,4 @@
+interface:
+  display_name: "Website Agent Product"
+  short_description: "Current product boundary and architecture"
+  default_prompt: "Use $website-agent-product to inspect or change the current Website Agent product."

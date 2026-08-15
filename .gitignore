@@ -22,6 +22,7 @@ build/
 *.spec
 pip-log.txt
 .pytest_cache/
+.langgraph_api/
 .mypy_cache/
 .ruff_cache/
 .coverage

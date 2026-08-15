@@ -1,0 +1,4 @@
+interface:
+  display_name: "Frankie Fihn Subniche Wedge"
+  short_description: "Aplicar el flujo Subniche Wedge."
+  default_prompt: "Usa $frankie-fihn-subniche-wedge para resolver este pedido."

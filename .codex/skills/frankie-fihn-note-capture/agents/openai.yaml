@@ -1,0 +1,4 @@
+interface:
+  display_name: "Frankie Fihn Note Capture"
+  short_description: "Aplicar el flujo Note Capture."
+  default_prompt: "Usa $frankie-fihn-note-capture para resolver este pedido."

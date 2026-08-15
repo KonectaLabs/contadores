@@ -1,0 +1,4 @@
+interface:
+  display_name: "Frankie Fihn Loom Offer"
+  short_description: "Aplicar el flujo Loom Offer."
+  default_prompt: "Usa $frankie-fihn-loom-offer para resolver este pedido."

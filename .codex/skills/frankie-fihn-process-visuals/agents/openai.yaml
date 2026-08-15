@@ -1,0 +1,4 @@
+interface:
+  display_name: "Frankie Fihn Process Visuals"
+  short_description: "Aplicar el flujo Process Visuals."
+  default_prompt: "Usa $frankie-fihn-process-visuals para resolver este pedido."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Frankie Fihn Offer Credibility"
+  short_description: "Aplicar el flujo Offer Credibility."
+  default_prompt: "Usa $frankie-fihn-offer-credibility para resolver este pedido."

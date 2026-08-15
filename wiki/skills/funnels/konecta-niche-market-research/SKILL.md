@@ -1,6 +1,6 @@
 ---
 name: konecta-niche-market-research
-description: Create and process market-research prompts for a new Konecta niche funnel. Use before ad prompts, offer copy, Loom decks, WhatsApp sequences, or CRM setup for a new industry.
+description: Create and process market-research prompts for a new Konecta niche. Use before ad prompts, offer copy, Loom decks, sales conversations, or marketing assets for a new industry; this skill does not configure runtime systems.
 ---
 
 # Konecta Niche Market Research
@@ -56,8 +56,7 @@ Summarize into:
 - `Offer wedge`
 - `Ad hooks`
 - `Loom angle`
-- `CRM sequence implications`
+- `Sales workflow implications`
 - `Open questions`
 
 Then hand off to `konecta-niche-ad-images`.
-

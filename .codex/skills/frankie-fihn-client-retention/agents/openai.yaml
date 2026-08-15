@@ -1,0 +1,4 @@
+interface:
+  display_name: "Frankie Fihn Client Retention"
+  short_description: "Aplicar el flujo Client Retention."
+  default_prompt: "Usa $frankie-fihn-client-retention para resolver este pedido."

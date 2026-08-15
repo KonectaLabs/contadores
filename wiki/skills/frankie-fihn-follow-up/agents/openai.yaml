@@ -1,0 +1,4 @@
+interface:
+  display_name: "Frankie Fihn Follow Up"
+  short_description: "Aplicar el flujo Follow Up."
+  default_prompt: "Usa $frankie-fihn-follow-up para resolver este pedido."

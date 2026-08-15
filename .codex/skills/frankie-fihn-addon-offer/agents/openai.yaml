@@ -1,0 +1,4 @@
+interface:
+  display_name: "Frankie Fihn Add On Offer"
+  short_description: "Aplicar el flujo Add On Offer."
+  default_prompt: "Usa $frankie-fihn-addon-offer para resolver este pedido."

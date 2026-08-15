@@ -1,0 +1,4 @@
+interface:
+  display_name: "Frankie Fihn Loom Opening"
+  short_description: "Aplicar el flujo Loom Opening."
+  default_prompt: "Usa $frankie-fihn-loom-opening para resolver este pedido."

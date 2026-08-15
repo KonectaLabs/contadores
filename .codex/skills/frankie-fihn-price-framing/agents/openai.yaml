@@ -1,0 +1,4 @@
+interface:
+  display_name: "Frankie Fihn Price Framing"
+  short_description: "Aplicar el flujo Price Framing."
+  default_prompt: "Usa $frankie-fihn-price-framing para resolver este pedido."

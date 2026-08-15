@@ -1,0 +1,4 @@
+interface:
+  display_name: "Frankie Fihn Client Experience"
+  short_description: "Aplicar el flujo Client Experience."
+  default_prompt: "Usa $frankie-fihn-client-experience para resolver este pedido."

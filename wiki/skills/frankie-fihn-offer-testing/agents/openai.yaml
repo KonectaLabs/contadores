@@ -1,0 +1,4 @@
+interface:
+  display_name: "Frankie Fihn Offer Testing"
+  short_description: "Aplicar el flujo Offer Testing."
+  default_prompt: "Usa $frankie-fihn-offer-testing para resolver este pedido."

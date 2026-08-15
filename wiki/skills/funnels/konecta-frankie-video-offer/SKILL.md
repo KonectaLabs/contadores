@@ -1,9 +1,13 @@
 ---
 name: konecta-frankie-video-offer
-description: Use when turning Konecta niche research into a specific outcome-led offer, Meta ad angle, GPT Image prompt, website copy, handraiser, or 60-second Loom/PPTX pitch using the Frankie Finn video-selling method.
+description: Use when turning Konecta niche research into a specific outcome-led offer, Meta ad angle, GPT Image prompt, website copy, handraiser, or 60-second Loom/PPTX pitch using the Frankie Fihn video-selling method.
 ---
 
 # Konecta Frankie Video Offer
+
+Read `frankie-fihn` first as the central router, then load only the smallest
+split skills needed for the task. This file remains the Konecta funnel
+integration, not the source index.
 
 For Meta ad image generation, read `konecta-meta-ads` before drafting prompts.
 It is the required source for problem-first visuals and compact trust/action

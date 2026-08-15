@@ -1,0 +1,4 @@
+interface:
+  display_name: "Website Agent Rollout"
+  short_description: "Deploy and verify Website Agent safely"
+  default_prompt: "Use $website-agent-rollout to deploy and verify Website Agent on the real server."

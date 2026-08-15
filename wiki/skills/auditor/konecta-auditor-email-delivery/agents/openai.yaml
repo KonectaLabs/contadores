@@ -1,3 +1,0 @@
-interface:
-  display_name: "Konecta Auditor Email Delivery"
-  short_description: "Help with messenger-layer email delivery (Gmail API, SMTP, outbox fallback)"

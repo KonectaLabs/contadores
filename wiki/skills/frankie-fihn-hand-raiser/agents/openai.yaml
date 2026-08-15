@@ -1,0 +1,4 @@
+interface:
+  display_name: "Frankie Fihn Hand Raiser"
+  short_description: "Aplicar el flujo Hand Raiser."
+  default_prompt: "Usa $frankie-fihn-hand-raiser para resolver este pedido."

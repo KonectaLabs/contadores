@@ -1,0 +1,4 @@
+interface:
+  display_name: "Frankie Fihn Source Evidence"
+  short_description: "Aplicar el flujo Source Evidence."
+  default_prompt: "Usa $frankie-fihn-source-evidence para resolver este pedido."

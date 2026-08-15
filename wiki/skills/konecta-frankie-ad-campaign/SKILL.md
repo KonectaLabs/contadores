@@ -1,6 +1,6 @@
 ---
 name: konecta-frankie-ad-campaign
-description: Use when creating, revising, or documenting Meta/Facebook/Instagram ad campaigns for a Konecta client from a sales call, Read AI transcript, Workstation notes, or client brief. Covers extracting the buyer's real pain, applying Frankie-style outcome-first offer logic, generating three ad image concepts, using image generation, and saving campaign assets under media/ads.
+description: Use when creating, revising, or documenting Meta/Facebook/Instagram ad campaigns for a Konecta client from a sales call, Read AI transcript, client notes, or current brief. Covers extracting the buyer's real pain, applying Frankie-style outcome-first offer logic, generating three ad image concepts, using image generation, and saving campaign assets under media/ads.
 ---
 
 # Konecta Frankie Ad Campaign
@@ -42,17 +42,17 @@ by WhatsApp, and receives a clear plan of action.
 
 Read the smallest useful set:
 
-1. `konecta-meta-ads`
-2. `konecta-frankie-video-offer`
-3. `konecta-niche-ad-images`
-4. `konecta-funnel-raw-memory`
-5. `imagegen`
+1. `frankie-fihn` as the central router; load only the split skills selected there.
+2. `konecta-meta-ads`
+3. `konecta-frankie-video-offer`
+4. `konecta-niche-ad-images`
+5. `konecta-funnel-raw-memory`
+6. `imagegen`
 
 Also read these when relevant:
 
 - `konecta-niche-market-research` if the niche/market is not understood yet.
 - `konecta-new-niche-funnel` if this is part of a new funnel, not a one-off client.
-- `workstation-client-delivery` if the client lives inside Workstation and has media/notes there.
 
 If the user asks to create or update this skill, also use `skill-creator`.
 
@@ -60,15 +60,15 @@ If the user asks to create or update this skill, also use `skill-creator`.
 
 Use the real source of truth before inventing angles.
 
-1. If the client exists in the Contadores platform and a conversion transcript
-   is already attached, use `extract_client_profile_from_meeting_transcript`
-   first and treat the saved `ClientProfile` as the campaign brief.
+1. If a current client brief or transcript is available, use it as the campaign
+   source. Do not infer unavailable platform records.
 2. Search Read AI first when the user mentions a client call or meeting.
    - Use the Read AI meeting list/search tools.
    - Find the meeting by title, participant, client name, or date.
    - Fetch `summary`, `topics`, `action_items`, `key_questions`, and especially `transcript`.
 3. If Read AI has no transcript, use available summaries and ask only for the missing business facts that block ad creation.
-4. If the client is in Workstation, inspect the client notes, transcript, uploaded media, page copy, and current public URL.
+4. Inspect any client-provided notes, transcript, media, current page copy and
+   public URL that are actually available.
 5. If legal, tax, platform, medical, financial, or ad-policy claims matter, verify current official sources before locking copy.
 
 Extract:

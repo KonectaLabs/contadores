@@ -1,0 +1,4 @@
+interface:
+  display_name: "Frankie Fihn Paid Trial Hiring"
+  short_description: "Aplicar el flujo Paid Trial Hiring."
+  default_prompt: "Usa $frankie-fihn-paid-trial-hiring para resolver este pedido."

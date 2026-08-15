@@ -238,3 +238,12 @@ La promo va hasta el viernes.
 ```text
 La promo va hasta el viernes.
 ```
+## 2026-06-22T00:53:06Z
+
+- Funnel: contadores
+- Lead question: hasta cuando?
+- Operator answer to reuse:
+
+```text
+La promo va hasta el viernes.
+```

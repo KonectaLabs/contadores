@@ -1,0 +1,4 @@
+interface:
+  display_name: "Frankie Fihn Lifestyle Agency"
+  short_description: "Aplicar el flujo Lifestyle Agency."
+  default_prompt: "Usa $frankie-fihn-lifestyle-agency para resolver este pedido."

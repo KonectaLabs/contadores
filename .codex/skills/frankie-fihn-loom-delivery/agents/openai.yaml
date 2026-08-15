@@ -1,0 +1,4 @@
+interface:
+  display_name: "Frankie Fihn Loom Delivery"
+  short_description: "Elegir cómo alojar, enviar y personalizar un Loom Frankie Fihn"
+  default_prompt: "Usa $frankie-fihn-loom-delivery para resolver este pedido."

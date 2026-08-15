@@ -1,8 +1,12 @@
 # Wiki
 
-Documentación operativa del proyecto.
+Conocimiento de negocio y operación de Website Agent y Konecta.
 
-- `skills/`: skills activas de Contadores y skills de referencia importadas desde `konecta-auditor`.
-- `skills/funnels/`: skills para crear nuevos funnels por nicho, desde research hasta CRM.
-- `platform-update-and-operator-guide.html`: resumen visual de features nuevas, bloqueos y guia operativa para empleados.
-- Las reglas que afectan runtime, rollout o sheet también deben reflejarse en `README.md`, `.env.example` y `.codex/skills/`.
+- `skills/`: mirror de skills operativas y conocimiento reutilizable.
+- `skills/frankie-fihn*`: método, fuentes y piezas especializadas.
+- `skills/funnels/`: research, oferta y materiales de adquisición. No configura
+  un CRM.
+- `platform-architecture.md`: arquitectura actual de Website Agent.
+
+El comportamiento que Juan carga en producción vive en
+`website-agent/skills/`, dentro del repo ejecutable separado.

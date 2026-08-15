@@ -1,0 +1,4 @@
+interface:
+  display_name: "Frankie Fihn Buying CTA"
+  short_description: "Aplicar el flujo Buying CTA."
+  default_prompt: "Usa $frankie-fihn-buying-cta para resolver este pedido."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Frankie Fihn Warm Audience Win"
+  short_description: "Aplicar el flujo Warm Audience Win."
+  default_prompt: "Usa $frankie-fihn-warm-audience-win para resolver este pedido."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Frankie Fihn Outcome Offer"
+  short_description: "Aplicar el flujo Outcome Offer."
+  default_prompt: "Usa $frankie-fihn-outcome-offer para resolver este pedido."
