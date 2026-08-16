@@ -122,7 +122,8 @@ No usar artefactos, comandos ni configuración del runtime histórico de la raí
 ## Deploy automático
 
 Cada repo operativo tiene su propio workflow y despliega únicamente cuando un
-push llega a `main`:
+push llega a `main`. Esto incluye el push que crea GitHub cuando un PR se mergea
+en `main`; no hace falta ejecutar un segundo deploy manual:
 
 - `website-agent`: prueba su código, actualiza su SHA exacto, construye `app` y
   la imagen concreta de `agent-server`, ejecuta ambos historiales Alembic y

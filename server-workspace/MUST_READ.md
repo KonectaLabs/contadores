@@ -170,7 +170,8 @@ porque un healthcheck responde.
 ## Deploy automático desde GitHub
 
 `website-agent` y `agent-runtime` tienen workflows independientes para cada
-push a `main`. No existe un repo coordinador. Ambos serializan cambios con
+push a `main`, incluidos los pushes creados al mergear PRs en `main`. No se
+ejecuta un segundo deploy manual. No existe un repo coordinador. Ambos serializan cambios con
 `/run/lock/website-agent-deploy.lock` porque Website Agent conserva el único
 Compose del producto.
 

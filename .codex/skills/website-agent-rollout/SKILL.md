@@ -70,7 +70,9 @@ another client or project.
 ## Automatic deployment
 
 Each operational repo owns an independent GitHub Actions workflow triggered by
-a push to `main`. Both use the GitHub `production` environment and the secrets
+every push to `main`. Merging a pull request into `main` creates such a push and
+therefore triggers the same automatic production deployment; no second manual
+deploy is required. Both use the GitHub `production` environment and the secrets
 `DEPLOY_HOST`, `DEPLOY_PORT`, `DEPLOY_USER`, `DEPLOY_SSH_PRIVATE_KEY` and
 `DEPLOY_KNOWN_HOSTS`.
 
