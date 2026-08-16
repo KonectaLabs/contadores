@@ -47,10 +47,10 @@ Website Agent levanta un único proyecto Docker Compose:
 - `agent-server`: Agent Runtime en `127.0.0.1:2024`;
 - `postgres`: PostgreSQL 16.
 
-`agent-runtime` produce un runtime genérico. `website-agent/Dockerfile.agent`
-es dueño de la imagen concreta de `agent-server` y agrega `agent.py`,
-`langgraph.json` y las skills de Juan. El runtime no conoce la implementación
-de Website Agent.
+`agent-runtime` produce una imagen genérica versionada.
+`website-agent/Dockerfile.agent` extiende esa imagen y es dueño de la imagen
+concreta de `agent-server`, donde agrega `agent.py`, `langgraph.json` y las
+skills de Juan. El runtime no conoce la implementación de Website Agent.
 
 El origen público es <https://chatterface.fgoiriz.com>.
 
@@ -100,7 +100,8 @@ Para cualquier cambio de producto:
 1. trabajar en `website-agent/` o `../agent-runtime` según la responsabilidad;
 2. validar el repo modificado;
 3. dejar el cambio en `main` y pushearlo;
-4. desplegar ambos SHAs compatibles en `/root/projects/`;
+4. desplegar ambos SHAs compatibles en `/root/projects/`, usando el SHA de
+   Agent Runtime como tag de la imagen base de `agent-server`;
 5. verificar contenedores, salud interna y
    `https://chatterface.fgoiriz.com/health`.
 

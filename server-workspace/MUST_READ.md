@@ -51,8 +51,8 @@ Es el producto activo. Contiene:
 - publicación y descarga de páginas estáticas;
 - proxy de actividad y costos de IA;
 - Compose, gateway, configuración y skills que recibe Juan.
-- `Dockerfile.agent`, que combina el runtime genérico con el agente y las
-  skills concretas de Website Agent.
+- `Dockerfile.agent`, que extiende la imagen genérica versionada del runtime con
+  el agente y las skills concretas de Website Agent.
 
 ### `agent-runtime/`
 
@@ -138,6 +138,8 @@ desplegar el runtime correspondiente.
 - Validar localmente antes de pushear.
 - Pushear cada repo por separado y registrar sus dos SHAs compatibles.
 - En el server, actualizar sólo a SHAs aprobados y usar fast-forward.
+- Construir la imagen genérica de Agent Runtime con su SHA aprobado y pasar ese
+  tag exacto como `AGENT_RUNTIME_IMAGE` al build de Website Agent.
 - Antes de una migración o cambio de datos, respaldar SQLite y PostgreSQL.
 - Construir y levantar desde `/root/projects/website-agent`.
 - Verificar Compose, `127.0.0.1:8000/health`, Agent Runtime en `:2024`, dominio

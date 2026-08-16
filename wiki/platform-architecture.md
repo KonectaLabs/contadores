@@ -6,10 +6,10 @@
 - `Fakamoto/agent-runtime`: ejecución durable compatible con LangGraph.
 
 En producción ambos repos son hermanos bajo `/root/projects/`. Agent Runtime
-mantiene una imagen genérica, sin agentes ni skills de un proyecto concreto.
-`website-agent/Dockerfile.agent` es dueño de la imagen final de `agent-server`:
-usa `../agent-runtime` como contexto de runtime y agrega el agente y las skills
-de Website Agent.
+mantiene una imagen genérica versionada, sin agentes ni skills de un proyecto
+concreto. `website-agent/Dockerfile.agent` extiende esa imagen y es dueño de la
+imagen final de `agent-server`, donde agrega el agente y las skills de Website
+Agent.
 
 ## Servicios
 

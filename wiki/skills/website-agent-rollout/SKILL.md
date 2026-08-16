@@ -39,13 +39,19 @@ Never treat a SQLite copy as a complete backup of Agent Runtime.
 
 On the server, update `agent-runtime` and `website-agent` to their approved
 `main` SHAs with fast-forward-only pulls. From `/root/projects/website-agent`,
-run:
+build a generic runtime image tagged with the approved runtime SHA. Then build
+the concrete Website Agent image from that exact base:
 
 ```bash
-docker compose build
+RUNTIME_SHA=<approved-agent-runtime-sha>
+docker build -t "agent-runtime:${RUNTIME_SHA}" /root/projects/agent-runtime
+AGENT_RUNTIME_IMAGE="agent-runtime:${RUNTIME_SHA}" docker compose build
 docker compose up -d
 docker compose ps
 ```
+
+Never build `agent-server` from an unversioned sibling checkout. Record the
+runtime image tag together with both repository SHAs.
 
 Do not delete volumes. Do not replace `.env`. Do not borrow credentials from
 another client or project.
