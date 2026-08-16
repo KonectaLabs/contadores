@@ -26,9 +26,19 @@ El server real usa esta estructura:
 
 ```text
 /root/projects/
+├── MUST_READ.md
+├── README.md
+├── AGENTS.md
+├── .codex/skills/
 ├── website-agent/
 └── agent-runtime/
 ```
+
+Los documentos raíz del server se versionan como templates en
+[`server-workspace/`](server-workspace/). `MUST_READ.md` define la estructura,
+los stores, los repos y el orden de lectura obligatorio. Las skills operativas
+se sincronizan desde `.codex/skills/`; las skills de Juan permanecen dentro de
+`website-agent/skills/`.
 
 Website Agent levanta un único proyecto Docker Compose:
 

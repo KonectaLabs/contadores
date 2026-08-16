@@ -46,6 +46,10 @@
   - `README.md`
   - `.codex/skills/*`
   - `wiki/skills/*`
+  - `server-workspace/*` con los documentos raíz de `/root/projects/`
+- Si cambian las skills operativas o la estructura, sincronizar
+  `.codex/skills/` y `server-workspace/` al server sin tocar
+  `website-agent/skills/`.
 - La configuración ejecutable vive en `website-agent/.env.example`.
 - Si cambia el rollout, actualizar `website-agent-rollout` en ambos catálogos.
 - Si cambia el comportamiento de Juan, actualizar la skill correspondiente
