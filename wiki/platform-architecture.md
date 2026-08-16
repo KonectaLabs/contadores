@@ -5,9 +5,11 @@
 - `Fakamoto/website-agent`: aplicación y skills del agente vendedor.
 - `Fakamoto/agent-runtime`: ejecución durable compatible con LangGraph.
 
-En producción ambos repos son hermanos bajo `/root/projects/`. El Compose de
-Website Agent usa `../agent-runtime` como contexto del servicio
-`agent-server`.
+En producción ambos repos son hermanos bajo `/root/projects/`. Agent Runtime
+mantiene una imagen genérica, sin agentes ni skills de un proyecto concreto.
+`website-agent/Dockerfile.agent` es dueño de la imagen final de `agent-server`:
+usa `../agent-runtime` como contexto de runtime y agrega el agente y las skills
+de Website Agent.
 
 ## Servicios
 

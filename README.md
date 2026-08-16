@@ -47,6 +47,11 @@ Website Agent levanta un único proyecto Docker Compose:
 - `agent-server`: Agent Runtime en `127.0.0.1:2024`;
 - `postgres`: PostgreSQL 16.
 
+`agent-runtime` produce un runtime genérico. `website-agent/Dockerfile.agent`
+es dueño de la imagen concreta de `agent-server` y agrega `agent.py`,
+`langgraph.json` y las skills de Juan. El runtime no conoce la implementación
+de Website Agent.
+
 El origen público es <https://chatterface.fgoiriz.com>.
 
 ## Persistencia

@@ -23,6 +23,10 @@ FastAPI uses `website-agent/data/website-agent.sqlite`. Agent Runtime uses the
 PostgreSQL volume `website-agent_agent-runtime-postgres`. Treat both stores as
 required production state.
 
+Agent Runtime is generic and does not contain a project agent or project
+skills. `website-agent/Dockerfile.agent` owns the concrete `agent-server` image
+and combines the sibling runtime source with Website Agent's graph and skills.
+
 ## Agent behavior
 
 Read only the relevant skill under `website-agent/skills/`:

@@ -51,12 +51,15 @@ Es el producto activo. Contiene:
 - publicación y descarga de páginas estáticas;
 - proxy de actividad y costos de IA;
 - Compose, gateway, configuración y skills que recibe Juan.
+- `Dockerfile.agent`, que combina el runtime genérico con el agente y las
+  skills concretas de Website Agent.
 
 ### `agent-runtime/`
 
-Es el runtime durable usado por `website-agent`. Contiene el servidor del
-agente y la persistencia de threads, checkpoints, runs, crons/timers, archivos
-virtuales por usuario y ledger de uso.
+Es el runtime durable genérico usado por `website-agent`. Contiene el servidor
+del agente y la persistencia de threads, checkpoints, runs, crons/timers,
+archivos virtuales por usuario y ledger de uso. No contiene ni instala skills
+de Website Agent; el producto las agrega en su propia imagen final.
 
 ## Stack en ejecución
 
