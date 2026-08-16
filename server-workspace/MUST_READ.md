@@ -24,7 +24,8 @@ no describen el producto actual y no deben usarse para operar o desplegar.
 │   ├── backend/                 # FastAPI, WhatsApp, panel y publicación
 │   ├── frontend/                # interfaz del panel
 │   ├── data/
-│   │   └── website-agent.sqlite # estado del producto/control plane
+│   │   ├── website-agent.sqlite # estado del producto/control plane
+│   │   └── gym.sqlite           # snapshot y anotaciones privadas de /gym/
 │   ├── skills/                  # skills de runtime de Juan
 │   ├── docker-compose.yml       # stack completo del producto
 │   └── .env                     # secretos; nunca imprimir ni reemplazar
@@ -77,7 +78,7 @@ El stack se opera desde `/root/projects/website-agent/docker-compose.yml` y
 debe tener cuatro servicios sanos: `gateway`, `app`, `agent-server` y
 `postgres`.
 
-## Persistencia: nunca confundir los dos stores
+## Persistencia: nunca confundir stores y sidecars
 
 ### SQLite
 
@@ -85,15 +86,21 @@ debe tener cuatro servicios sanos: `gateway`, `app`, `agent-server` y
 producto/control plane, incluyendo usuarios, mensajes, deduplicación de
 WhatsApp, entregas al agente, wakeups y el mapeo estable de sitios publicados.
 
+`/root/projects/website-agent/data/gym.sqlite` es un sidecar aislado con el
+snapshot y las anotaciones humanas de `/gym/`. Juan y Agent Runtime no lo leen.
+Su esquema auxiliar se inicializa al primer acceso y no pertenece al historial
+Alembic del control plane.
+
 ### PostgreSQL
 
 El volumen Docker `website-agent_agent-runtime-postgres` guarda el estado
 durable del Agent Runtime: threads, checkpoints, runs, crons/timers, archivos
 virtuales por usuario y uso.
 
-Un backup válido del producto debe incluir **SQLite y PostgreSQL**. No borrar,
-recrear ni reemplazar el volumen de PostgreSQL o el SQLite como parte de un
-rollout ordinario.
+Un backup válido del producto debe incluir **`website-agent.sqlite` y
+PostgreSQL**. Si existe `gym.sqlite`, también debe preservarlo para no perder el
+evalset humano. No borrar, recrear ni reemplazar el volumen de PostgreSQL ni
+ninguno de estos SQLite como parte de un rollout ordinario.
 
 Los cambios de esquema propios usan dos historiales Alembic independientes:
 Website Agent para SQLite y Agent Runtime para sus tablas en el schema
@@ -101,6 +108,8 @@ Website Agent para SQLite y Agent Runtime para sus tablas en el schema
 servicios; los procesos sólo validan el head. Las migraciones compatibles no
 requieren un backup ad hoc por rollout. Una migración destructiva requiere un
 recovery plan y un backup consistente de ambos stores.
+El sidecar `gym.sqlite` queda fuera de esos historiales y no requiere un
+`upgrade head`.
 
 ## Dos clases de skills
 

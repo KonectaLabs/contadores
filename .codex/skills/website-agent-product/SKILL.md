@@ -23,6 +23,11 @@ FastAPI uses `website-agent/data/website-agent.sqlite`. Agent Runtime uses the
 PostgreSQL volume `website-agent_agent-runtime-postgres`. Treat both stores as
 required production state.
 
+The private `/gym/` annotation tool uses the isolated sidecar
+`website-agent/data/gym.sqlite`. Juan and Agent Runtime never read it. It
+self-initializes outside the product Alembic history and must be included in
+backups whenever it contains annotation work.
+
 Agent Runtime provides a generic versioned image without a project agent or
 project skills. `website-agent/Dockerfile.agent` owns the concrete
 `agent-server` image and extends the pinned runtime image with Website Agent's
@@ -31,7 +36,7 @@ graph and skills.
 Website Agent and Agent Runtime own separate Alembic histories for SQLite and
 the `agent_runtime` PostgreSQL schema. Deploy migrations explicitly before
 startup; application startup validates the current head and never mutates the
-owned schema.
+owned schemas. This contract does not include the isolated Gym sidecar.
 
 ## Agent behavior
 

@@ -11,7 +11,8 @@
    operadores y las segundas son el runtime de Juan.
 6. No usar referencias históricas de CRM, funnels de Sheets, workstation, bots
    antiguos, `src/` del viejo Contadores ni `agent-runtime-release-*`.
-7. No imprimir ni reemplazar `.env`; no borrar SQLite ni el volumen PostgreSQL.
+7. No imprimir ni reemplazar `.env`; no borrar `website-agent.sqlite`,
+   `gym.sqlite` ni el volumen PostgreSQL.
 8. Mantener `main`, fast-forward y worktrees limpios. Nunca usar force-push o
    resets destructivos.
 9. Diferenciar siempre código, commit, push, deploy, health y QA funcional.

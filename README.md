@@ -58,19 +58,25 @@ El origen público es <https://chatterface.fgoiriz.com>.
 
 - `website-agent/data/website-agent.sqlite`: usuarios, mensajes, deduplicación
   de WhatsApp, entregas del agente, wakeups y publicaciones.
+- `website-agent/data/gym.sqlite`: snapshot y anotaciones del Gym en `/gym/`.
+  Es un sidecar aislado; Juan y el runtime no lo leen.
 - volumen PostgreSQL `website-agent_agent-runtime-postgres`: threads,
   checkpoints, runs, crons, archivos virtuales y uso de modelos.
 - `data/` en este repo: datos históricos o materiales locales. No es la base
   de producción de Website Agent y no se commitea.
 
-Un backup válido de producción debe cubrir SQLite y PostgreSQL. Respaldar sólo
-uno de los dos deja el producto incompleto.
+Un backup válido de producción debe cubrir `website-agent.sqlite`, PostgreSQL
+y, cuando exista trabajo anotado, `gym.sqlite`. Respaldar sólo uno de los dos
+stores operativos deja el producto incompleto; omitir el sidecar pierde el
+evalset humano.
 
-Cada store tiene su propio historial Alembic. Los rollouts ejecutan primero el
+Cada store operativo tiene su propio historial Alembic. Los rollouts ejecutan primero el
 `upgrade head` de Agent Runtime sobre PostgreSQL y después el de Website Agent
 sobre SQLite; los procesos sólo validan el head al iniciar. Las migraciones
 backward-compatible no generan un backup ad hoc en cada push. Las destructivas
 requieren un recovery plan y un backup consistente de ambos stores.
+`gym.sqlite` inicializa su propio esquema auxiliar al primer acceso y queda
+fuera de ambos historiales Alembic.
 
 ## Skills
 

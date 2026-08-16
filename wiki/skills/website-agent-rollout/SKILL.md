@@ -32,6 +32,9 @@ scripts.
    irreversible revision requires an explicit recovery plan and a consistent
    backup of both stores before rollout. Never treat a SQLite copy as a
    complete backup of Agent Runtime.
+6. If `website-agent/data/gym.sqlite` exists, preserve it with every production
+   backup. It is an annotation sidecar outside both Alembic histories; never
+   delete or recreate it during an ordinary rollout.
 
 ## Deploy
 
