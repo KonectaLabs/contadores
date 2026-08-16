@@ -66,6 +66,12 @@ El origen público es <https://chatterface.fgoiriz.com>.
 Un backup válido de producción debe cubrir SQLite y PostgreSQL. Respaldar sólo
 uno de los dos deja el producto incompleto.
 
+Cada store tiene su propio historial Alembic. Los rollouts ejecutan primero el
+`upgrade head` de Agent Runtime sobre PostgreSQL y después el de Website Agent
+sobre SQLite; los procesos sólo validan el head al iniciar. Las migraciones
+backward-compatible no generan un backup ad hoc en cada push. Las destructivas
+requieren un recovery plan y un backup consistente de ambos stores.
+
 ## Skills
 
 Hay dos grupos distintos:

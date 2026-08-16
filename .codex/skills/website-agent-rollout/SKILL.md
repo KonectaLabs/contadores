@@ -27,13 +27,11 @@ scripts.
    - Website Agent: `docker compose run --rm --no-deps app uv run --no-sync pytest`.
    - Agent Runtime contract against a running local runtime:
      `RUNTIME_URL=http://127.0.0.1:8000 uv run pytest`.
-5. If data or schema can change, back up both stores before building:
-   - `website-agent/data/website-agent.sqlite` with SQLite's online backup;
-   - PostgreSQL `agent_runtime` in volume
-     `website-agent_agent-runtime-postgres`, with `pg_dump` from the
-     `postgres` container.
-
-Never treat a SQLite copy as a complete backup of Agent Runtime.
+5. Inspect every pending Alembic revision. Routine backward-compatible
+   revisions run without an ad hoc per-deploy backup. A destructive or
+   irreversible revision requires an explicit recovery plan and a consistent
+   backup of both stores before rollout. Never treat a SQLite copy as a
+   complete backup of Agent Runtime.
 
 ## Deploy
 
@@ -46,9 +44,19 @@ the concrete Website Agent image from that exact base:
 RUNTIME_SHA=<approved-agent-runtime-sha>
 docker build -t "agent-runtime:${RUNTIME_SHA}" /root/projects/agent-runtime
 AGENT_RUNTIME_IMAGE="agent-runtime:${RUNTIME_SHA}" docker compose build
+docker compose up -d postgres
+docker compose run --rm --no-deps agent-server \
+  uv run --no-sync alembic -c /runtime/alembic.ini upgrade head
+docker compose run --rm --no-deps app \
+  uv run --no-sync alembic -c /app/alembic.ini upgrade head
 docker compose up -d
 docker compose ps
 ```
+
+Do not put migrations in container startup commands. A failed migration stops
+the rollout before the application services are replaced. The initial
+revisions are forward-only adoption revisions: they preserve extra legacy
+tables or columns, and Agent Runtime refuses a partial owned PostgreSQL schema.
 
 Never build `agent-server` from an unversioned sibling checkout. Record the
 runtime image tag together with both repository SHAs.

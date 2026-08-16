@@ -28,6 +28,11 @@ project skills. `website-agent/Dockerfile.agent` owns the concrete
 `agent-server` image and extends the pinned runtime image with Website Agent's
 graph and skills.
 
+Website Agent and Agent Runtime own separate Alembic histories for SQLite and
+the `agent_runtime` PostgreSQL schema. Deploy migrations explicitly before
+startup; application startup validates the current head and never mutates the
+owned schema.
+
 ## Agent behavior
 
 Read only the relevant skill under `website-agent/skills/`:

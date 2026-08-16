@@ -95,6 +95,13 @@ Un backup válido del producto debe incluir **SQLite y PostgreSQL**. No borrar,
 recrear ni reemplazar el volumen de PostgreSQL o el SQLite como parte de un
 rollout ordinario.
 
+Los cambios de esquema propios usan dos historiales Alembic independientes:
+Website Agent para SQLite y Agent Runtime para sus tablas en el schema
+`agent_runtime`. El deploy ejecuta ambos `upgrade head` antes de levantar los
+servicios; los procesos sólo validan el head. Las migraciones compatibles no
+requieren un backup ad hoc por rollout. Una migración destructiva requiere un
+recovery plan y un backup consistente de ambos stores.
+
 ## Dos clases de skills
 
 ### Skills operativas de Codex
@@ -140,7 +147,9 @@ desplegar el runtime correspondiente.
 - En el server, actualizar sólo a SHAs aprobados y usar fast-forward.
 - Construir la imagen genérica de Agent Runtime con su SHA aprobado y pasar ese
   tag exacto como `AGENT_RUNTIME_IMAGE` al build de Website Agent.
-- Antes de una migración o cambio de datos, respaldar SQLite y PostgreSQL.
+- Ejecutar Alembic para PostgreSQL y SQLite antes de levantar los servicios.
+- Reservar el backup obligatorio para migraciones destructivas o un recovery
+  plan explícito, no para cada revisión compatible.
 - Construir y levantar desde `/root/projects/website-agent`.
 - Verificar Compose, `127.0.0.1:8000/health`, Agent Runtime en `:2024`, dominio
   público, panel, webhook de WhatsApp y publicación de páginas según el cambio.
