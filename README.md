@@ -112,3 +112,25 @@ Para cualquier cambio de producto:
    `https://chatterface.fgoiriz.com/health`.
 
 No usar artefactos, comandos ni configuración del runtime histórico de la raíz.
+
+## Deploy automático
+
+Cada repo operativo tiene su propio workflow y despliega únicamente cuando un
+push llega a `main`:
+
+- `website-agent`: prueba su código, actualiza su SHA exacto, construye `app` y
+  la imagen concreta de `agent-server`, ejecuta ambos historiales Alembic y
+  levanta el Compose completo.
+- `agent-runtime`: prueba y construye la imagen genérica, actualiza su SHA
+  exacto, ejecuta sólo Alembic de PostgreSQL y reemplaza sólo `agent-server`.
+
+Los workflows no se llaman entre sí ni dependen de un tercer repo. En el server
+comparten `/run/lock/website-agent-deploy.lock` porque ambos consumen el mismo
+Compose. Los SHAs desplegados se registran en `/root/projects/.deploy/`; así un
+deploy de Website Agent usa la última imagen de runtime confirmada y un deploy
+de Agent Runtime usa la última versión confirmada de Website Agent.
+
+Cada repo usa un environment de GitHub llamado `production` con estos secrets:
+`DEPLOY_HOST`, `DEPLOY_PORT`, `DEPLOY_USER`, `DEPLOY_SSH_PRIVATE_KEY` y
+`DEPLOY_KNOWN_HOSTS`. El SSH no acepta hosts desconocidos y los workflows nunca
+imprimen secretos.

@@ -158,6 +158,32 @@ Código local, commit, push, deploy, health técnico y QA funcional son gates
 distintos. No afirmar que algo está en producción sólo porque está pusheado o
 porque un healthcheck responde.
 
+## Deploy automático desde GitHub
+
+`website-agent` y `agent-runtime` tienen workflows independientes para cada
+push a `main`. No existe un repo coordinador. Ambos serializan cambios con
+`/run/lock/website-agent-deploy.lock` porque Website Agent conserva el único
+Compose del producto.
+
+- Website Agent construye y reconcilia el producto completo y ejecuta las dos
+  migraciones Alembic.
+- Agent Runtime construye su base versionada, migra PostgreSQL y reemplaza sólo
+  `agent-server`.
+
+Los SHAs confirmados viven en `/root/projects/.deploy/website-agent.sha` y
+`/root/projects/.deploy/agent-runtime.sha`. No editar estos archivos antes de
+que terminen build, migraciones y healthchecks. Un workflow viejo debe salir
+sin hacer rollback si su SHA ya no coincide con `origin/main`.
+
+Website Agent crea `website-agent.pending` justo antes de reemplazar
+contenedores y lo elimina sólo después de confirmar salud y estado. Agent
+Runtime debe rechazar un deploy mientras ese marcador exista; primero se
+reintenta o reconcilia el rollout de Website Agent.
+
+En la primera activación de estos workflows, desplegar Agent Runtime antes que
+Website Agent. Después del bootstrap, ambos repos despliegan de forma
+independiente.
+
 ## Credenciales y límites
 
 - Los secretos activos viven en `/root/projects/website-agent/.env`.

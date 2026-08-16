@@ -64,6 +64,39 @@ runtime image tag together with both repository SHAs.
 Do not delete volumes. Do not replace `.env`. Do not borrow credentials from
 another client or project.
 
+## Automatic deployment
+
+Each operational repo owns an independent GitHub Actions workflow triggered by
+a push to `main`. Both use the GitHub `production` environment and the secrets
+`DEPLOY_HOST`, `DEPLOY_PORT`, `DEPLOY_USER`, `DEPLOY_SSH_PRIVATE_KEY` and
+`DEPLOY_KNOWN_HOSTS`.
+
+- Website Agent deploys its exact pushed SHA, builds `app` and the concrete
+  `agent-server`, runs both Alembic histories, and reconciles the full Compose.
+- Agent Runtime deploys its exact pushed SHA, builds the versioned generic
+  runtime image, runs only its PostgreSQL Alembic history, and replaces only
+  `agent-server`.
+
+The repos do not dispatch each other's workflows. The server serializes both
+pipelines with `/run/lock/website-agent-deploy.lock`. Confirmed release SHAs
+live under `/root/projects/.deploy/`. A stale workflow that no longer matches
+the fetched `origin/main` exits without rolling production backward.
+
+Website Agent writes `website-agent.pending` immediately before replacing live
+containers and removes it only after health and confirmed state. Agent Runtime
+must refuse deployment while that marker exists; rerun or reconcile Website
+Agent first. A checkout/state difference without the marker is safe because
+Runtime builds the confirmed Website SHA from an immutable archive.
+
+GitHub Actions must use strict host-key checking and an exact known-hosts
+secret. Never use a third-party SSH action or put production application
+secrets in GitHub; `.env` remains only on the server.
+
+For the first activation, deploy Agent Runtime before Website Agent. The first
+Website Agent revision that calls `/runtime/alembic.ini` requires the new
+versioned runtime image to be confirmed first. After this bootstrap, the two
+push workflows operate independently.
+
 ## Verification
 
 Require all four services to be running. Require PostgreSQL and Agent Runtime
