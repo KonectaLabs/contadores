@@ -59,7 +59,9 @@ El origen público es <https://chatterface.fgoiriz.com>.
 - `website-agent/data/website-agent.sqlite`: usuarios, mensajes, deduplicación
   de WhatsApp, entregas del agente, wakeups y publicaciones.
 - `website-agent/data/gym.sqlite`: snapshot y anotaciones del Gym en `/gym/`.
-  Es un sidecar aislado; Juan y el runtime no lo leen.
+  Es un sidecar aislado; Juan y el runtime no lo leen. El snapshot se congela
+  una sola vez y no incorpora conversaciones nuevas. El progreso y las
+  anotaciones se guardan de forma independiente para cada administrador.
 - volumen PostgreSQL `website-agent_agent-runtime-postgres`: threads,
   checkpoints, runs, crons, archivos virtuales y uso de modelos.
 - `data/` en este repo: datos históricos o materiales locales. No es la base

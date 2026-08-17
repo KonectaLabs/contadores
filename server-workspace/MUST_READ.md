@@ -88,8 +88,9 @@ WhatsApp, entregas al agente, wakeups y el mapeo estable de sitios publicados.
 
 `/root/projects/website-agent/data/gym.sqlite` es un sidecar aislado con el
 snapshot y las anotaciones humanas de `/gym/`. Juan y Agent Runtime no lo leen.
-Su esquema auxiliar se inicializa al primer acceso y no pertenece al historial
-Alembic del control plane.
+Su snapshot se congela al primer acceso, no incorpora conversaciones nuevas y
+mantiene progreso y anotaciones independientes por administrador. Su esquema
+auxiliar no pertenece al historial Alembic del control plane.
 
 ### PostgreSQL
 

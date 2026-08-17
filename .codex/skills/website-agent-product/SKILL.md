@@ -25,7 +25,9 @@ required production state.
 
 The private `/gym/` annotation tool uses the isolated sidecar
 `website-agent/data/gym.sqlite`. Juan and Agent Runtime never read it. It
-self-initializes outside the product Alembic history and must be included in
+self-initializes outside the product Alembic history, freezes one shared source
+snapshot without later conversations, and stores progress and annotations
+independently for each authenticated administrator. It must be included in
 backups whenever it contains annotation work.
 
 Agent Runtime provides a generic versioned image without a project agent or
