@@ -72,7 +72,7 @@ Internet
           -> PostgreSQL 16
 ```
 
-El dominio público es `https://chatterface.fgoiriz.com`.
+El dominio público es `https://sites.konectalabs.com`.
 
 El stack se opera desde `/root/projects/website-agent/docker-compose.yml` y
 debe tener cuatro servicios sanos: `gateway`, `app`, `agent-server` y

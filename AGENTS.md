@@ -19,7 +19,7 @@
 - Agent Runtime guarda threads, checkpoints, runs, crons, archivos virtuales y
   usage ledger en PostgreSQL.
 - Las skills runtime canónicas viven en `website-agent/skills/`.
-- El dominio público es `https://chatterface.fgoiriz.com`.
+- El dominio público es `https://sites.konectalabs.com`.
 
 ## Credenciales
 
@@ -36,7 +36,7 @@
 - `website-agent/docker-compose.yml` lee `website-agent/.env` y es el único
   Compose del producto.
 - Verificar los cuatro servicios, salud interna y
-  `https://chatterface.fgoiriz.com/health` después del deploy.
+  `https://sites.konectalabs.com/health` después del deploy.
 - Un backup de producción debe incluir SQLite y el volumen PostgreSQL.
 - Nunca ejecutar scripts de despliegue del runtime histórico.
 

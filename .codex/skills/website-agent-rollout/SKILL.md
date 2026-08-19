@@ -12,7 +12,7 @@ Production uses:
 ```text
 /root/projects/website-agent
 /root/projects/agent-runtime
-https://chatterface.fgoiriz.com
+https://sites.konectalabs.com
 ```
 
 Use only the paths and public origin above. Never use historical root deploy
@@ -110,7 +110,7 @@ to be healthy. Then verify:
 ```bash
 curl -fsS http://127.0.0.1:8000/health
 curl -fsS http://127.0.0.1:2024/health
-curl -fsS https://chatterface.fgoiriz.com/health
+curl -fsS https://sites.konectalabs.com/health
 ```
 
 Inspect recent `app`, `agent-server`, `postgres` and `gateway` logs for new
