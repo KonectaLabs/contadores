@@ -52,7 +52,7 @@ Website Agent levanta un único proyecto Docker Compose:
 concreta de `agent-server`, donde agrega `agent.py`, `langgraph.json` y las
 skills de Juan. El runtime no conoce la implementación de Website Agent.
 
-El origen público es <https://chatterface.fgoiriz.com>.
+El origen público es <https://sites.konectalabs.com>.
 
 ## Persistencia
 
@@ -117,7 +117,7 @@ Para cualquier cambio de producto:
 4. desplegar ambos SHAs compatibles en `/root/projects/`, usando el SHA de
    Agent Runtime como tag de la imagen base de `agent-server`;
 5. verificar contenedores, salud interna y
-   `https://chatterface.fgoiriz.com/health`.
+   `https://sites.konectalabs.com/health`.
 
 No usar artefactos, comandos ni configuración del runtime histórico de la raíz.
 
